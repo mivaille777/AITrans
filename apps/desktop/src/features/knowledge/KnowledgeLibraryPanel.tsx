@@ -136,7 +136,7 @@ export default function KnowledgeLibraryPanel({
         )}
 
         {items.length === 0 && !loadError ? (
-          <div className="p-5 lg:p-7"><EmptyState icon={<LibraryBig size={25} strokeWidth={1.6} />} title="Build your knowledge workspace" description="Import a paper or document, or create a note, concept, highlight, or manual paper card." actions={<div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setCreateOpen(true)}><Plus size={15} />New card</Button><Button variant="primary" disabled={addMutation.isPending} onClick={() => setImportOpen(true)}><FilePlus2 size={15} />Add document</Button></div>} /></div>
+          <div className="p-5 lg:p-7"><EmptyState icon={<LibraryBig size={25} strokeWidth={1.6} />} title="Build your knowledge workspace" description="Import a paper or document, or create a note, concept, highlight, or manual paper card." actions={<div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setCreateOpen(true)}><Plus size={15} />Create first card</Button><Button variant="primary" disabled={addMutation.isPending} onClick={() => setImportOpen(true)}><FilePlus2 size={15} />Import first document</Button></div>} /></div>
         ) : visibleItems.length === 0 ? (
           <div className="p-7"><EmptyState title="No cards match this view" description="Try a different search term or card type." /></div>
         ) : (
