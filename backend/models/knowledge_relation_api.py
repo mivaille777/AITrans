@@ -18,6 +18,12 @@ class KnowledgeRelationCreateRequest(KnowledgeRelationApiModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+class KnowledgeRelationUpdateRequest(KnowledgeRelationApiModel):
+    relation_type: str | None = Field(default=None, min_length=1, max_length=128)
+    label: str | None = Field(default=None, max_length=500)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class KnowledgeRelationListResponse(KnowledgeRelationApiModel):
     total: int = Field(ge=0)
     relations: list[KnowledgeRelation] = Field(default_factory=list)
@@ -32,4 +38,5 @@ __all__ = [
     "KnowledgeRelationCreateRequest",
     "KnowledgeRelationDeleteResponse",
     "KnowledgeRelationListResponse",
+    "KnowledgeRelationUpdateRequest",
 ]
