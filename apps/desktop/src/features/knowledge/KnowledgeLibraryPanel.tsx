@@ -51,7 +51,9 @@ export default function KnowledgeLibraryPanel({
   const [openError, setOpenError] = useState("")
   const actionError = addMutation.error ?? createItemMutation.error ?? deleteItemMutation.error ?? deleteMutation.error ?? reindexMutation.error
   const requestedDocument = documents.find((document) => document.document_id === searchParams.get("document")) ?? null
+  const requestedItem = items.find((item) => item.item_id === searchParams.get("item")) ?? null
   const activeDocument = selectedDocument ?? requestedDocument
+  const activeItem = selectedItem ?? requestedItem
 
   const documentsById = useMemo(
     () => new Map(documents.map((document) => [document.document_id, document] as const)),
@@ -78,6 +80,14 @@ export default function KnowledgeLibraryPanel({
     if (!searchParams.has("document")) return
     const next = new URLSearchParams(searchParams)
     next.delete("document")
+    setSearchParams(next, { replace: true })
+  }
+
+  function closeItemDetail() {
+    setSelectedItem(null)
+    if (!searchParams.has("item")) return
+    const next = new URLSearchParams(searchParams)
+    next.delete("item")
     setSearchParams(next, { replace: true })
   }
 
@@ -157,7 +167,7 @@ export default function KnowledgeLibraryPanel({
       <KnowledgeImportDialog open={importOpen} adding={addMutation.isPending} onClose={() => !addMutation.isPending && setImportOpen(false)} onBrowse={() => addMutation.mutate(undefined, { onSuccess: (result) => { if (result) setImportOpen(false) } })} />
       <KnowledgeCreateCardDialog open={createOpen} creating={createItemMutation.isPending} onClose={() => !createItemMutation.isPending && setCreateOpen(false)} onCreate={(payload) => createItemMutation.mutate(payload, { onSuccess: () => setCreateOpen(false) })} />
       {activeDocument && <KnowledgeDocumentDetail document={activeDocument} reindexing={reindexMutation.isPending && reindexMutation.variables === activeDocument.document_id} onClose={closeDocumentDetail} onReindex={() => reindexMutation.mutate(activeDocument.document_id)} onRemove={() => setRemoveTarget(activeDocument)} />}
-      {selectedItem && <KnowledgeItemDetail item={selectedItem} deleting={deleteItemMutation.isPending && deleteItemMutation.variables === selectedItem.item_id} onClose={() => setSelectedItem(null)} onDelete={() => deleteItemMutation.mutate(selectedItem.item_id, { onSuccess: () => setSelectedItem(null) })} onOpenGraph={onOpenGraph ? () => onOpenGraph(selectedItem.item_id) : undefined} />}
+      {activeItem && <KnowledgeItemDetail item={activeItem} deleting={deleteItemMutation.isPending && deleteItemMutation.variables === activeItem.item_id} onClose={closeItemDetail} onDelete={() => deleteItemMutation.mutate(activeItem.item_id, { onSuccess: closeItemDetail })} onOpenGraph={onOpenGraph ? () => onOpenGraph(activeItem.item_id) : undefined} />}
       <KnowledgeDeleteDialog document={removeTarget} deleting={deleteMutation.isPending} onCancel={() => !deleteMutation.isPending && setRemoveTarget(null)} onConfirm={() => removeTarget && deleteMutation.mutate(removeTarget.document_id, { onSuccess: () => { if (activeDocument?.document_id === removeTarget.document_id) closeDocumentDetail(); setRemoveTarget(null) } })} />
     </div>
   )
