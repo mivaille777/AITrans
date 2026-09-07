@@ -22,5 +22,6 @@ export {
   reindexKnowledgeDocument,
   removeKnowledgeBoardNode,
   updateKnowledgeItem,
+  updateKnowledgeRelation,
   upsertKnowledgeBoardNode,
 } from "../../api/knowledge"
