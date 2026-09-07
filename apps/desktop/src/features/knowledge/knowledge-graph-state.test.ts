@@ -87,6 +87,20 @@ describe("buildLocalKnowledgeGraph", () => {
     expect(snapshot.edges.map((edge) => edge.relation.relation_id)).toEqual(["r1"])
   })
 
+  it("keeps only the focus when every relation origin is disabled", () => {
+    const items = [item("paper", "paper"), item("note", "note")]
+    const relations = [relation("r1", "note", "paper", "derived_from")]
+
+    const snapshot = buildLocalKnowledgeGraph(items, relations, "paper", 2, {
+      itemTypes: ALL_KNOWLEDGE_ITEM_TYPES,
+      relationTypes: [],
+      origins: [],
+    })
+
+    expect(snapshot.nodes.map((node) => node.item.item_id)).toEqual(["paper"])
+    expect(snapshot.edges).toHaveLength(0)
+  })
+
   it("always keeps the focus visible while respecting neighboring item type filters", () => {
     const items = [item("paper", "paper"), item("note", "note"), item("concept", "concept")]
     const relations = [
