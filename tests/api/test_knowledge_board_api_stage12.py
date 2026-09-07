@@ -46,7 +46,7 @@ def test_board_api_persists_card_position_and_size(tmp_path) -> None:
     assert snapshot["nodes"][0]["width"] == 300
 
 
-def test_relation_api_creates_and_deletes_manual_relation(tmp_path) -> None:
+def test_relation_api_supports_create_read_update_list_and_delete(tmp_path) -> None:
     client, workspace = _client(tmp_path)
     paper = workspace.create_item(item_type=KnowledgeItemType.PAPER, title="Paper")
     concept = workspace.create_item(item_type=KnowledgeItemType.CONCEPT, title="Safe BO")
@@ -63,12 +63,110 @@ def test_relation_api_creates_and_deletes_manual_relation(tmp_path) -> None:
     relation_id = created.json()["relation_id"]
     assert created.json()["origin"] == "manual"
 
-    listed = client.get("/api/knowledge/relations").json()
+    fetched = client.get(f"/api/knowledge/relations/{relation_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["relation_type"] == "uses"
+
+    updated = client.patch(
+        f"/api/knowledge/relations/{relation_id}",
+        json={
+            "relation_type": "supports",
+            "label": "Provides experimental evidence",
+            "confidence": 0.9,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["relation_type"] == "supports"
+    assert updated.json()["label"] == "Provides experimental evidence"
+    assert updated.json()["confidence"] == 0.9
+
+    cleared = client.patch(
+        f"/api/knowledge/relations/{relation_id}",
+        json={"confidence": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["confidence"] is None
+
+    listed = client.get(
+        "/api/knowledge/relations",
+        params={"item_id": concept.item_id},
+    ).json()
     assert listed["total"] == 1
+    assert listed["relations"][0]["relation_id"] == relation_id
 
     deleted = client.delete(f"/api/knowledge/relations/{relation_id}")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
+    assert client.get(f"/api/knowledge/relations/{relation_id}").status_code == 404
+
+
+def test_relation_api_rejects_unknown_relation_type_and_duplicate_edge(tmp_path) -> None:
+    client, workspace = _client(tmp_path)
+    paper = workspace.create_item(item_type=KnowledgeItemType.PAPER, title="Paper")
+    concept = workspace.create_item(item_type=KnowledgeItemType.CONCEPT, title="Concept")
+
+    unknown = client.post(
+        "/api/knowledge/relations",
+        json={
+            "source_item_id": paper.item_id,
+            "target_item_id": concept.item_id,
+            "relation_type": "invented_relation",
+        },
+    )
+    assert unknown.status_code == 422
+    assert "unsupported knowledge relation type" in unknown.json()["detail"]
+
+    first = client.post(
+        "/api/knowledge/relations",
+        json={
+            "source_item_id": paper.item_id,
+            "target_item_id": concept.item_id,
+            "relation_type": "explains",
+        },
+    )
+    assert first.status_code == 201
+
+    duplicate = client.post(
+        "/api/knowledge/relations",
+        json={
+            "source_item_id": paper.item_id,
+            "target_item_id": concept.item_id,
+            "relation_type": "explains",
+        },
+    )
+    assert duplicate.status_code == 422
+    assert "already exists" in duplicate.json()["detail"]
+
+
+def test_relation_update_rejects_duplicate_semantic_edge(tmp_path) -> None:
+    client, workspace = _client(tmp_path)
+    paper = workspace.create_item(item_type=KnowledgeItemType.PAPER, title="Paper")
+    concept = workspace.create_item(item_type=KnowledgeItemType.CONCEPT, title="Concept")
+
+    supports = client.post(
+        "/api/knowledge/relations",
+        json={
+            "source_item_id": paper.item_id,
+            "target_item_id": concept.item_id,
+            "relation_type": "supports",
+        },
+    ).json()
+    uses = client.post(
+        "/api/knowledge/relations",
+        json={
+            "source_item_id": paper.item_id,
+            "target_item_id": concept.item_id,
+            "relation_type": "uses",
+        },
+    ).json()
+
+    response = client.patch(
+        f"/api/knowledge/relations/{uses['relation_id']}",
+        json={"relation_type": "supports"},
+    )
+    assert response.status_code == 422
+    assert "already exists" in response.json()["detail"]
+    assert client.get(f"/api/knowledge/relations/{supports['relation_id']}").status_code == 200
 
 
 def test_board_rejects_unknown_item(tmp_path) -> None:
