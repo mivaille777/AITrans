@@ -24,6 +24,10 @@ import type {
 } from "./knowledge-types"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 
+const READER_CARD_TEXT_LIMIT = 50_000
+const READER_AGENT_TEXT_LIMIT = 12_000
+const READER_TRANSLATION_TEXT_LIMIT = 8_000
+
 type DerivedCardType = Extract<KnowledgeItemType, "note" | "concept" | "highlight">
 
 interface DerivedCardRequest {
@@ -104,7 +108,7 @@ export function usePaperReader(
     mutationFn: async ({ itemType, text, relationType }: DerivedCardRequest) => {
       if (!paper || !document) throw new Error("This paper is not attached to an indexed document.")
       const section = sectionQuery.data
-      const normalizedText = text.trim()
+      const normalizedText = text.trim().slice(0, READER_CARD_TEXT_LIMIT)
       const titleFallback = itemType === "highlight"
         ? "Paper highlight"
         : itemType === "concept"
@@ -144,7 +148,7 @@ export function usePaperReader(
 
   const translationMutation = useMutation({
     mutationFn: (text: string) => translateText({
-      source_text: text,
+      source_text: text.trim().slice(0, READER_TRANSLATION_TEXT_LIMIT),
       source_language: workspace.sourceLanguage,
       target_language: workspace.targetLanguage,
     }),
@@ -156,7 +160,8 @@ export function usePaperReader(
 
   function attachSelectionToAgent(selectedText: string) {
     if (!paper || !document || !sectionQuery.data) return false
-    const context = buildPaperSelectionContext(sectionQuery.data, selectedText)
+    const boundedSelection = selectedText.trim().slice(0, READER_AGENT_TEXT_LIMIT)
+    const context = buildPaperSelectionContext(sectionQuery.data, boundedSelection)
     if (!context.text) return false
     workspace.useAcademicReadingContext({
       context_id: `knowledge:${document.document_id}:${sectionQuery.data.section_id}:selection`,
@@ -175,16 +180,18 @@ export function usePaperReader(
   function attachSectionToAgent() {
     if (!paper || !document || !sectionQuery.data) return false
     const section = sectionQuery.data
-    if (!section.text.trim()) return false
+    const boundedText = section.text.trim().slice(0, READER_AGENT_TEXT_LIMIT)
+    if (!boundedText) return false
+    const boundedByReader = boundedText.length < section.text.trim().length
     workspace.useAcademicReadingContext({
       context_id: `knowledge:${document.document_id}:${section.section_id}`,
       document_id: document.document_id,
-      text: section.text,
+      text: boundedText,
       resource_url: document.source_uri,
       resource_title: paper.title,
       section_heading: section.heading,
       context_before: "",
-      context_after: section.truncated ? "This section preview is truncated." : "",
+      context_after: section.truncated || boundedByReader ? "This section exceeds the bounded Agent reading context; only the leading portion is attached." : "",
       source_kind: "knowledge_document",
     })
     return true
