@@ -24,6 +24,7 @@ import type {
   KnowledgeRelationCreateInput,
   KnowledgeRelationDeleteResponse,
   KnowledgeRelationListResponse,
+  KnowledgeRelationUpdateInput,
   KnowledgeRuntime,
 } from "../features/knowledge/knowledge-types"
 
@@ -141,14 +142,25 @@ export function deleteKnowledgeBoard(boardId: string): Promise<KnowledgeBoardDel
   return apiDelete(`${KNOWLEDGE_BOARDS_PATH}/${encodeURIComponent(boardId)}`)
 }
 
-export function listKnowledgeRelations(): Promise<KnowledgeRelationListResponse> {
-  return apiGet(KNOWLEDGE_RELATIONS_PATH)
+export function listKnowledgeRelations(itemId?: string): Promise<KnowledgeRelationListResponse> {
+  const query = itemId ? `?item_id=${encodeURIComponent(itemId)}` : ""
+  return apiGet(`${KNOWLEDGE_RELATIONS_PATH}${query}`)
 }
 
 export function createKnowledgeRelation(
   payload: KnowledgeRelationCreateInput,
 ): Promise<KnowledgeRelation> {
   return apiPost<KnowledgeRelation, KnowledgeRelationCreateInput>(KNOWLEDGE_RELATIONS_PATH, payload)
+}
+
+export function updateKnowledgeRelation(
+  relationId: string,
+  payload: KnowledgeRelationUpdateInput,
+): Promise<KnowledgeRelation> {
+  return apiPatch<KnowledgeRelation, KnowledgeRelationUpdateInput>(
+    `${KNOWLEDGE_RELATIONS_PATH}/${encodeURIComponent(relationId)}`,
+    payload,
+  )
 }
 
 export function deleteKnowledgeRelation(
