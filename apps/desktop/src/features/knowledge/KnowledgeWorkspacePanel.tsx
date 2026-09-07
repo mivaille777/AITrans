@@ -32,7 +32,7 @@ export default function KnowledgeWorkspacePanel({
     ? "reader"
     : requestedView === "graph"
       ? "graph"
-      : searchParams.has("document") || requestedView === "library"
+      : searchParams.has("document") || searchParams.has("item") || requestedView === "library"
         ? "library"
         : "board"
 
@@ -40,6 +40,7 @@ export default function KnowledgeWorkspacePanel({
     const next = new URLSearchParams(searchParams)
     next.delete("paper")
     next.delete("document")
+    next.delete("item")
     if (nextView !== "graph") next.delete("focus")
     if (nextView === "board") next.delete("view")
     else next.set("view", nextView)
@@ -51,6 +52,7 @@ export default function KnowledgeWorkspacePanel({
     next.set("view", "reader")
     next.set("paper", itemId)
     next.delete("document")
+    next.delete("item")
     next.delete("focus")
     setSearchParams(next)
   }
@@ -61,6 +63,7 @@ export default function KnowledgeWorkspacePanel({
     next.set("focus", itemId)
     next.delete("paper")
     next.delete("document")
+    next.delete("item")
     setSearchParams(next)
   }
 
@@ -69,7 +72,13 @@ export default function KnowledgeWorkspacePanel({
       openPaper(item.item_id)
       return
     }
-    setView("library")
+    const next = new URLSearchParams(searchParams)
+    next.set("view", "library")
+    next.set("item", item.item_id)
+    next.delete("paper")
+    next.delete("document")
+    next.delete("focus")
+    setSearchParams(next)
   }
 
   function closeReader() {
