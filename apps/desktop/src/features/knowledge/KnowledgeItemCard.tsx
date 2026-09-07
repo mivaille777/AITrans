@@ -13,7 +13,6 @@ import {
 } from "lucide-react"
 
 import { Badge } from "../../shared/ui/Badge"
-import { Button } from "../../shared/ui/Button"
 import {
   isKnowledgeDocumentActive,
   knowledgeStatusLabel,
