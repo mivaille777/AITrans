@@ -1,0 +1,212 @@
+import { useEffect, useMemo, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+
+import { translateText } from "../../api/translation"
+import { queryKeys } from "../../shared/query/query-keys"
+import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
+import {
+  createKnowledgeItem,
+  createKnowledgeRelation,
+  deleteKnowledgeItem,
+  getKnowledgeDocumentOutline,
+  getKnowledgeDocumentSection,
+  listKnowledgeRelations,
+} from "./knowledge-api"
+import {
+  buildPaperSelectionContext,
+  buildSelectionCardTitle,
+  resolvePaperReaderSectionId,
+} from "./paper-reader-state"
+import type {
+  KnowledgeItem,
+  KnowledgeItemType,
+  KnowledgeRelation,
+} from "./knowledge-types"
+import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
+
+type DerivedCardType = Extract<KnowledgeItemType, "note" | "concept" | "highlight">
+
+interface DerivedCardRequest {
+  itemType: DerivedCardType
+  text: string
+  relationType?: "derived_from" | "reading_note"
+}
+
+export function usePaperReader(
+  paperItemId: string,
+  library: KnowledgeLibraryController,
+  workspace: TranslationWorkspaceController,
+) {
+  const queryClient = useQueryClient()
+  const [preferredSectionId, setPreferredSectionId] = useState("")
+  const items = library.itemsQuery.data?.items ?? []
+  const documents = library.documentsQuery.data?.documents ?? []
+  const paper = items.find((item) => item.item_id === paperItemId) ?? null
+  const document = paper?.resource_document_id
+    ? documents.find((item) => item.document_id === paper.resource_document_id) ?? null
+    : null
+
+  const outlineQuery = useQuery({
+    queryKey: ["knowledge", "paper-reader", "outline", document?.document_id ?? "none"],
+    queryFn: () => getKnowledgeDocumentOutline(document?.document_id as string),
+    enabled: Boolean(document?.document_id && document.status === "ready"),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const sections = outlineQuery.data?.sections ?? []
+  const activeSectionId = resolvePaperReaderSectionId(sections, preferredSectionId)
+  const activeOutlineSection = sections.find((section) => section.section_id === activeSectionId) ?? null
+  const sectionQuery = useQuery({
+    queryKey: ["knowledge", "paper-reader", "section", document?.document_id ?? "none", activeSectionId],
+    queryFn: () => getKnowledgeDocumentSection(document?.document_id as string, activeSectionId),
+    enabled: Boolean(document?.document_id && activeSectionId && document.status === "ready"),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const relationsQuery = useQuery({
+    queryKey: queryKeys.knowledge.relations,
+    queryFn: listKnowledgeRelations,
+  })
+
+  useEffect(() => {
+    setPreferredSectionId("")
+  }, [paperItemId])
+
+  const itemById = useMemo(
+    () => new Map(items.map((item) => [item.item_id, item] as const)),
+    [items],
+  )
+  const linked = useMemo(() => {
+    if (!paper) return []
+    return (relationsQuery.data?.relations ?? [])
+      .filter((relation) => relation.source_item_id === paper.item_id || relation.target_item_id === paper.item_id)
+      .map((relation) => {
+        const otherId = relation.source_item_id === paper.item_id
+          ? relation.target_item_id
+          : relation.source_item_id
+        return { relation, item: itemById.get(otherId) ?? null }
+      })
+      .filter((entry): entry is { relation: KnowledgeRelation; item: KnowledgeItem } => Boolean(entry.item))
+  }, [itemById, paper, relationsQuery.data?.relations])
+
+  const readingNote = linked.find(
+    ({ relation, item }) => relation.relation_type === "reading_note" && item.item_type === "note",
+  )?.item ?? null
+
+  const refreshKnowledge = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.items }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.relations }),
+    ])
+  }
+
+  const createDerivedMutation = useMutation({
+    mutationFn: async ({ itemType, text, relationType }: DerivedCardRequest) => {
+      if (!paper || !document) throw new Error("This paper is not attached to an indexed document.")
+      const section = sectionQuery.data
+      const normalizedText = text.trim()
+      const titleFallback = itemType === "highlight"
+        ? "Paper highlight"
+        : itemType === "concept"
+          ? "Paper concept"
+          : `Reading note · ${paper.title}`
+      const title = buildSelectionCardTitle(normalizedText, titleFallback)
+      const card = await createKnowledgeItem({
+        item_type: itemType,
+        title,
+        summary: normalizedText,
+        source_uri: paper.source_uri,
+        metadata: {
+          paper_item_id: paper.item_id,
+          document_id: document.document_id,
+          section_id: section?.section_id ?? "",
+          section_heading: section?.heading ?? "",
+          page_start: section?.page_start ?? null,
+          page_end: section?.page_end ?? null,
+          provenance: "paper_reader",
+        },
+      })
+      try {
+        await createKnowledgeRelation({
+          source_item_id: card.item_id,
+          target_item_id: paper.item_id,
+          relation_type: relationType ?? (itemType === "note" ? "reading_note" : "derived_from"),
+          origin: "manual",
+        })
+      } catch (error) {
+        await deleteKnowledgeItem(card.item_id).catch(() => undefined)
+        throw error
+      }
+      return card
+    },
+    onSuccess: () => void refreshKnowledge(),
+  })
+
+  const translationMutation = useMutation({
+    mutationFn: (text: string) => translateText({
+      source_text: text,
+      source_language: workspace.sourceLanguage,
+      target_language: workspace.targetLanguage,
+    }),
+  })
+
+  function selectSection(sectionId: string) {
+    setPreferredSectionId(sectionId.trim())
+  }
+
+  function attachSelectionToAgent(selectedText: string) {
+    if (!paper || !document || !sectionQuery.data) return false
+    const context = buildPaperSelectionContext(sectionQuery.data, selectedText)
+    if (!context.text) return false
+    workspace.useAcademicReadingContext({
+      context_id: `knowledge:${document.document_id}:${sectionQuery.data.section_id}:selection`,
+      document_id: document.document_id,
+      text: context.text,
+      resource_url: document.source_uri,
+      resource_title: paper.title,
+      section_heading: sectionQuery.data.heading,
+      context_before: context.contextBefore,
+      context_after: context.contextAfter,
+      source_kind: "knowledge_document",
+    })
+    return true
+  }
+
+  function attachSectionToAgent() {
+    if (!paper || !document || !sectionQuery.data) return false
+    const section = sectionQuery.data
+    if (!section.text.trim()) return false
+    workspace.useAcademicReadingContext({
+      context_id: `knowledge:${document.document_id}:${section.section_id}`,
+      document_id: document.document_id,
+      text: section.text,
+      resource_url: document.source_uri,
+      resource_title: paper.title,
+      section_heading: section.heading,
+      context_before: "",
+      context_after: section.truncated ? "This section preview is truncated." : "",
+      source_kind: "knowledge_document",
+    })
+    return true
+  }
+
+  return {
+    paper,
+    document,
+    outlineQuery,
+    sections,
+    activeSectionId,
+    activeOutlineSection,
+    sectionQuery,
+    relationsQuery,
+    linked,
+    readingNote,
+    createDerivedMutation,
+    translationMutation,
+    selectSection,
+    attachSelectionToAgent,
+    attachSectionToAgent,
+  }
+}
+
+export type PaperReaderController = ReturnType<typeof usePaperReader>

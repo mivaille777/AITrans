@@ -75,7 +75,7 @@ function App() {
               <Route path="/reading" element={<ReadingWorkspace workspace={workspace} />} />
               <Route path="/chat" element={<CompanionWorkspaceV2 />} />
               <Route path="/agent" element={<AgentWorkspace workspace={workspace} />} />
-              <Route path="/knowledge" element={<KnowledgeRoute backendState={workspace.backendState} />} />
+              <Route path="/knowledge" element={<KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />} />
               <Route
                 path="/research"
                 element={<ResearchRoute backendState={workspace.backendState} workspace={workspace} />}

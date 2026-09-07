@@ -19,7 +19,13 @@ type CardFilter = "all" | Extract<KnowledgeItemType, "paper" | "note" | "concept
 
 const filters: CardFilter[] = ["all", "paper", "note", "concept", "highlight", "document"]
 
-export default function KnowledgeLibraryPanel({ library }: { library: KnowledgeLibraryController }) {
+export default function KnowledgeLibraryPanel({
+  library,
+  onOpenPaper,
+}: {
+  library: KnowledgeLibraryController
+  onOpenPaper?: (itemId: string) => void
+}) {
   const {
     documentsQuery,
     itemsQuery,
@@ -75,6 +81,12 @@ export default function KnowledgeLibraryPanel({ library }: { library: KnowledgeL
 
   function openItem(item: KnowledgeItem) {
     const document = item.resource_document_id ? documentsById.get(item.resource_document_id) : undefined
+    if (document && item.item_type === "paper" && onOpenPaper) {
+      setSelectedDocument(null)
+      setSelectedItem(null)
+      onOpenPaper(item.item_id)
+      return
+    }
     if (document) {
       setSelectedItem(null)
       setSelectedDocument(document)
