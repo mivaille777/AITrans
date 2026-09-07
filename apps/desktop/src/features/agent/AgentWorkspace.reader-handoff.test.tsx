@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { render, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
