@@ -59,7 +59,7 @@ export function buildLocalKnowledgeGraph(
   const boundedDepth = Math.max(0, Math.min(3, Math.trunc(maxDepth)))
   const visibleRelations = relations.filter((relation) => (
     (allowedRelationTypes.size === 0 || allowedRelationTypes.has(relation.relation_type))
-    && (allowedOrigins.size === 0 || allowedOrigins.has(relation.origin))
+    && allowedOrigins.has(relation.origin)
   ))
 
   const adjacency = new Map<string, KnowledgeRelation[]>()
