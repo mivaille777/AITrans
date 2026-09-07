@@ -36,6 +36,7 @@ from backend.api.knowledge_board_dependencies import close_knowledge_board_servi
 from backend.api.knowledge_boards import router as knowledge_boards_router
 from backend.api.knowledge_dependencies import close_rag_runtime
 from backend.api.knowledge_items import router as knowledge_items_router
+from backend.api.knowledge_preview import router as knowledge_preview_router
 from backend.api.knowledge_relations import router as knowledge_relations_router
 from backend.api.knowledge_workspace_dependencies import close_knowledge_workspace_service
 from backend.api.llm_settings import router as llm_settings_router
@@ -124,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(evidence_ledger_router)
     app.include_router(evidence_review_router)
     app.include_router(knowledge_router)
+    app.include_router(knowledge_preview_router)
     app.include_router(knowledge_items_router)
     app.include_router(knowledge_boards_router)
     app.include_router(knowledge_relations_router)
