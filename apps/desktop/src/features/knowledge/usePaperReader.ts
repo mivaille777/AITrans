@@ -87,7 +87,7 @@ export function usePaperReader(
 
   const relationsQuery = useQuery({
     queryKey: queryKeys.knowledge.relations,
-    queryFn: listKnowledgeRelations,
+    queryFn: () => listKnowledgeRelations(),
   })
 
   useEffect(() => {
@@ -272,11 +272,11 @@ export function usePaperReader(
     document,
     previewUrl,
     outlineQuery,
+    sectionQuery,
+    relationsQuery,
     sections,
     activeSectionId,
     activeOutlineSection,
-    sectionQuery,
-    relationsQuery,
     linked,
     readingNote,
     createDerivedMutation,
@@ -288,5 +288,3 @@ export function usePaperReader(
     attachSectionToAgent,
   }
 }
-
-export type PaperReaderController = ReturnType<typeof usePaperReader>
