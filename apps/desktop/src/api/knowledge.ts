@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./client"
+import { API_BASE_URL, apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./client"
 import type {
   KnowledgeBoard,
   KnowledgeBoardCreateInput,
@@ -38,6 +38,10 @@ export function listKnowledgeDocuments(): Promise<KnowledgeDocumentListResponse>
 
 export function getKnowledgeDocument(documentId: string): Promise<KnowledgeDocument> {
   return apiGet(`${KNOWLEDGE_PATH}/${encodeURIComponent(documentId)}`)
+}
+
+export function getKnowledgeDocumentPreviewUrl(documentId: string): string {
+  return `${API_BASE_URL}${KNOWLEDGE_PATH}/${encodeURIComponent(documentId)}/preview`
 }
 
 export function getKnowledgeDocumentOutline(documentId: string): Promise<KnowledgeDocumentOutline> {
