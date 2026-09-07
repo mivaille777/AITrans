@@ -4,6 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from backend.knowledge.domain import (
+    KNOWN_RELATION_TYPES,
     KnowledgeCollection,
     KnowledgeItem,
     KnowledgeItemType,
@@ -15,8 +16,21 @@ from backend.knowledge.domain import (
 from backend.knowledge.repository import KnowledgeRepository
 
 
+_UNSET = object()
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
+
+
+def _validated_relation_type(value: str) -> str:
+    normalized = str(value or "").strip().casefold().replace(" ", "_")
+    if normalized not in KNOWN_RELATION_TYPES:
+        allowed = ", ".join(sorted(KNOWN_RELATION_TYPES))
+        raise ValueError(
+            f"unsupported knowledge relation type: {normalized or '<empty>'}; allowed: {allowed}"
+        )
+    return normalized
 
 
 class KnowledgeWorkspaceService:
@@ -67,7 +81,9 @@ class KnowledgeWorkspaceService:
         normalized_title = title.strip() or "Untitled document"
         normalized_source_uri = source_uri.strip()
         normalized_source_type = source_type.strip().lower()
-        existing = self._repository.find_item_by_resource_document_id(normalized_document_id)
+        existing = self._repository.find_item_by_resource_document_id(
+            normalized_document_id
+        )
         if existing is not None:
             metadata = dict(existing.metadata)
             if normalized_source_type:
@@ -79,7 +95,10 @@ class KnowledgeWorkspaceService:
                 updates["source_uri"] = normalized_source_uri
             if existing.metadata != metadata:
                 updates["metadata"] = metadata
-            if existing.item_type is KnowledgeItemType.DOCUMENT and item_type is KnowledgeItemType.PAPER:
+            if (
+                existing.item_type is KnowledgeItemType.DOCUMENT
+                and item_type is KnowledgeItemType.PAPER
+            ):
                 updates["item_type"] = item_type
             if not updates:
                 return existing
@@ -158,11 +177,21 @@ class KnowledgeWorkspaceService:
             raise ValueError("source knowledge item does not exist")
         if self.get_item(target_item_id) is None:
             raise ValueError("target knowledge item does not exist")
+
+        normalized_type = _validated_relation_type(relation_type)
+        for existing in self.list_relations(item_id=source_item_id):
+            if (
+                existing.source_item_id == source_item_id
+                and existing.target_item_id == target_item_id
+                and existing.relation_type == normalized_type
+            ):
+                raise ValueError("knowledge relation already exists")
+
         relation = KnowledgeRelation(
             relation_id=_new_id("kr"),
             source_item_id=source_item_id,
             target_item_id=target_item_id,
-            relation_type=relation_type,
+            relation_type=normalized_type,
             label=label,
             origin=origin,
             confidence=confidence,
@@ -175,6 +204,40 @@ class KnowledgeWorkspaceService:
 
     def list_relations(self, *, item_id: str | None = None) -> list[KnowledgeRelation]:
         return self._repository.list_relations(item_id=item_id)
+
+    def update_relation(
+        self,
+        relation_id: str,
+        *,
+        relation_type: str | None = None,
+        label: str | None = None,
+        confidence: float | None | object = _UNSET,
+    ) -> KnowledgeRelation | None:
+        existing = self.get_relation(relation_id)
+        if existing is None:
+            return None
+
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        normalized_type = existing.relation_type
+        if relation_type is not None:
+            normalized_type = _validated_relation_type(relation_type)
+            updates["relation_type"] = normalized_type
+        if label is not None:
+            updates["label"] = label
+        if confidence is not _UNSET:
+            updates["confidence"] = confidence
+
+        if normalized_type != existing.relation_type:
+            for candidate in self.list_relations(item_id=existing.source_item_id):
+                if (
+                    candidate.relation_id != relation_id
+                    and candidate.source_item_id == existing.source_item_id
+                    and candidate.target_item_id == existing.target_item_id
+                    and candidate.relation_type == normalized_type
+                ):
+                    raise ValueError("knowledge relation already exists")
+
+        return self._repository.save_relation(existing.model_copy(update=updates))
 
     def delete_relation(self, relation_id: str) -> bool:
         return self._repository.delete_relation(relation_id)
@@ -190,7 +253,10 @@ class KnowledgeWorkspaceService:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("collection name must not be empty")
-        if parent_collection_id and self._repository.get_collection(parent_collection_id) is None:
+        if (
+            parent_collection_id
+            and self._repository.get_collection(parent_collection_id) is None
+        ):
             raise ValueError("parent knowledge collection does not exist")
         collection = KnowledgeCollection(
             collection_id=_new_id("kc"),
@@ -222,7 +288,11 @@ class KnowledgeWorkspaceService:
         if not normalized_name:
             raise ValueError("tag name must not be empty")
         return self._repository.save_tag(
-            KnowledgeTag(tag_id=_new_id("kt"), name=normalized_name, color=color.strip())
+            KnowledgeTag(
+                tag_id=_new_id("kt"),
+                name=normalized_name,
+                color=color.strip(),
+            )
         )
 
     def list_tags(self) -> list[KnowledgeTag]:
