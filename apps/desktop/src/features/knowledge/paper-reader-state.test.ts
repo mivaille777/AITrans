@@ -5,6 +5,7 @@ import {
   buildPaperSelectionContext,
   buildSelectionCardTitle,
   paperPageLabel,
+  resolveDerivedPaperRelationType,
   resolvePaperReaderSectionId,
 } from "./paper-reader-state"
 
@@ -62,6 +63,13 @@ describe("paper reader state", () => {
       contextBefore: "",
       contextAfter: "",
     })
+  })
+
+  it("keeps selection notes distinct from the single paper reading note", () => {
+    expect(resolveDerivedPaperRelationType("note")).toBe("derived_from")
+    expect(resolveDerivedPaperRelationType("highlight")).toBe("derived_from")
+    expect(resolveDerivedPaperRelationType("concept")).toBe("derived_from")
+    expect(resolveDerivedPaperRelationType("note", "reading_note")).toBe("reading_note")
   })
 
   it("builds compact card titles and page labels", () => {
