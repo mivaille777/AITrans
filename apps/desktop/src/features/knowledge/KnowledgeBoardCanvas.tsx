@@ -35,6 +35,8 @@ import type { KnowledgeBoardNode, KnowledgeItem, KnowledgeItemType, KnowledgeRel
 const CARD_DRAG_TYPE = "application/x-aitrans-knowledge-item"
 const MIN_CARD_WIDTH = 180
 const MIN_CARD_HEIGHT = 100
+const MAX_CARD_WIDTH = 720
+const MAX_CARD_HEIGHT = 600
 
 interface NodeInteraction {
   kind: "move" | "resize"
@@ -103,8 +105,8 @@ export default function KnowledgeBoardCanvas({
           }
           return {
             ...node,
-            width: Math.max(MIN_CARD_WIDTH, interaction.startNode.width + dx),
-            height: Math.max(MIN_CARD_HEIGHT, interaction.startNode.height + dy),
+            width: Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, interaction.startNode.width + dx)),
+            height: Math.min(MAX_CARD_HEIGHT, Math.max(MIN_CARD_HEIGHT, interaction.startNode.height + dy)),
           }
         }))
         return
@@ -139,6 +141,10 @@ export default function KnowledgeBoardCanvas({
 
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLinkingSourceId(null)
+        return
+      }
       if (event.key !== "Delete" && event.key !== "Backspace") return
       const target = event.target as HTMLElement | null
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return
