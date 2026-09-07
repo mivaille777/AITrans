@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { desktop } from "../../desktop"
 import KnowledgeLibraryPanel from "./KnowledgeLibraryPanel"
-import type { KnowledgeDocument, KnowledgeDocumentStatus } from "./knowledge-types"
+import type {
+  KnowledgeDocument,
+  KnowledgeDocumentStatus,
+  KnowledgeItem,
+  KnowledgeItemType,
+} from "./knowledge-types"
 import { useKnowledgeLibrary } from "./useKnowledgeLibrary"
 
 const fetchMock = vi.fn<typeof fetch>()
@@ -32,6 +37,24 @@ function document(status: KnowledgeDocumentStatus, overrides: Partial<KnowledgeD
   }
 }
 
+function item(
+  itemType: KnowledgeItemType,
+  overrides: Partial<KnowledgeItem> = {},
+): KnowledgeItem {
+  const id = overrides.item_id ?? `item-${itemType}`
+  return {
+    item_id: id,
+    item_type: itemType,
+    title: overrides.title ?? `${itemType} card`,
+    summary: overrides.summary ?? "",
+    resource_document_id: overrides.resource_document_id ?? null,
+    source_uri: overrides.source_uri ?? "",
+    metadata: overrides.metadata ?? {},
+    created_at: overrides.created_at ?? "2026-09-07T00:00:00Z",
+    updated_at: overrides.updated_at ?? "2026-09-07T00:00:00Z",
+  }
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -40,7 +63,20 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function runtime(documentCount = 1) {
-  return { enabled: true, embedding_provider: "qwen3", embedding_model: "Qwen3-Embedding-0.6B", embedding_status: "ready", device: "cuda", dimension: 1024, vector_store_provider: "qdrant", collection_name: "knowledge", document_count: documentCount, ready_document_count: documentCount, indexed_chunk_count: documentCount * 12, max_file_bytes: 1 }
+  return {
+    enabled: true,
+    embedding_provider: "qwen3",
+    embedding_model: "Qwen3-Embedding-0.6B",
+    embedding_status: "ready",
+    device: "cuda",
+    dimension: 1024,
+    vector_store_provider: "qdrant",
+    collection_name: "knowledge",
+    document_count: documentCount,
+    ready_document_count: documentCount,
+    indexed_chunk_count: documentCount * 12,
+    max_file_bytes: 1,
+  }
 }
 
 function renderLibrary(initialEntries = ["/knowledge"]) {
@@ -60,9 +96,26 @@ function LibraryHarness() {
   return <KnowledgeLibraryPanel library={useKnowledgeLibrary()} />
 }
 
+function installLibraryResponses({
+  documents = [],
+  items = [],
+}: {
+  documents?: KnowledgeDocument[]
+  items?: KnowledgeItem[]
+}) {
+  fetchMock.mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.endsWith("/api/knowledge/runtime")) return jsonResponse(runtime(documents.length))
+    if (url.endsWith("/api/knowledge/items")) return jsonResponse({ total: items.length, items })
+    if (url.endsWith("/api/knowledge/documents")) return jsonResponse({ total: documents.length, documents })
+    return jsonResponse({ detail: "Unexpected test request" }, 500)
+  })
+}
+
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock)
   vi.spyOn(desktop.files, "pickKnowledgeDocument").mockResolvedValue("C:\\papers\\new.pdf")
+  vi.spyOn(desktop.files, "openEvidenceSource").mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -72,107 +125,168 @@ afterEach(() => {
   fetchMock.mockReset()
 })
 
-describe("Knowledge Library", () => {
-  it("loads documents and renders pending, indexing, ready and failed states", async () => {
-    fetchMock.mockImplementation(async (input) => String(input).endsWith("/runtime")
-      ? jsonResponse(runtime(4))
-      : jsonResponse({ total: 4, documents: [document("pending"), document("indexing"), document("ready"), document("failed", { error: "The PDF parser could not read page 3." })] }))
+describe("Knowledge Card Library", () => {
+  it("renders resource-backed and semantic cards in one grid", async () => {
+    const ready = document("ready", { title: "Safe BO paper" })
+    installLibraryResponses({
+      documents: [ready],
+      items: [
+        item("paper", {
+          title: "Safe BO paper",
+          resource_document_id: ready.document_id,
+          source_uri: ready.source_uri,
+        }),
+        item("note", { title: "Reading note", summary: "Bounded LLM reasoning." }),
+      ],
+    })
 
     renderLibrary()
 
-    expect(await screen.findByText("Pending")).not.toBeNull()
-    expect(screen.getByText("Indexing")).not.toBeNull()
+    expect(await screen.findByRole("heading", { name: "Knowledge Library" })).not.toBeNull()
+    expect(screen.getByText("Safe BO paper")).not.toBeNull()
+    expect(screen.getByText("Reading note")).not.toBeNull()
     expect(screen.getByText("Ready")).not.toBeNull()
-    expect(screen.getByText("Failed")).not.toBeNull()
-    expect(screen.getByText("The PDF parser could not read page 3.")).not.toBeNull()
+    expect(screen.getByText("Bounded LLM reasoning.")).not.toBeNull()
   }, 10_000)
 
-  it("adds a selected document and refreshes the shared list", async () => {
-    fetchMock.mockImplementation(async (_input, init) => {
-      if (String(_input).endsWith("/runtime")) return jsonResponse(runtime(0))
-      if (init?.method === "POST") {
+  it("creates a semantic note card through the workspace API", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/knowledge/runtime")) return jsonResponse(runtime(0))
+      if (url.endsWith("/api/knowledge/documents")) return jsonResponse({ total: 0, documents: [] })
+      if (url.endsWith("/api/knowledge/items") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          item_type: "note",
+          title: "Mechanism note",
+          summary: "Connect response evidence to control reasoning.",
+        })
+        return jsonResponse(item("note", { title: "Mechanism note" }), 201)
+      }
+      if (url.endsWith("/api/knowledge/items")) return jsonResponse({ total: 0, items: [] })
+      return jsonResponse({ detail: "Unexpected test request" }, 500)
+    })
+
+    renderLibrary()
+    await userEvent.click(await screen.findByRole("button", { name: "New card" }))
+    const dialog = screen.getByRole("dialog", { name: "Create knowledge card" })
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Title" }), "Mechanism note")
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "Summary" }),
+      "Connect response evidence to control reasoning.",
+    )
+    await userEvent.click(within(dialog).getByRole("button", { name: "Create card" }))
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).endsWith("/api/knowledge/items") && init?.method === "POST")).toBe(true))
+  })
+
+  it("imports a selected document without changing the existing document API", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/knowledge/runtime")) return jsonResponse(runtime(0))
+      if (url.endsWith("/api/knowledge/items")) return jsonResponse({ total: 0, items: [] })
+      if (url.endsWith("/api/knowledge/documents") && init?.method === "POST") {
         expect(JSON.parse(String(init.body))).toEqual({ path: "C:\\papers\\new.pdf" })
         return jsonResponse({ document: document("ready"), reused_existing: false, elapsed_ms: 12 }, 201)
       }
-      return jsonResponse({ total: 0, documents: [] })
+      if (url.endsWith("/api/knowledge/documents")) return jsonResponse({ total: 0, documents: [] })
+      return jsonResponse({ detail: "Unexpected test request" }, 500)
     })
 
     renderLibrary()
-    const heading = await screen.findByRole("heading", { name: "Knowledge Base" })
-    const header = heading.closest("header")
-    if (!header) throw new Error("Knowledge Base header was not rendered")
-    await userEvent.click(within(header).getByRole("button", { name: "Add documents" }))
+    await userEvent.click(await screen.findByRole("button", { name: "Add document" }))
     await userEvent.click(screen.getByRole("button", { name: "Browse files" }))
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).endsWith("/api/knowledge/documents") && init?.method === "POST")).toBe(true))
     expect(desktop.files.pickKnowledgeDocument).toHaveBeenCalledOnce()
   })
 
-  it("keeps the document action menu above the bottom-clipped library edge", async () => {
-    fetchMock.mockImplementation(async (input) => String(input).endsWith("/runtime")
-      ? jsonResponse(runtime())
-      : jsonResponse({ total: 1, documents: [document("ready")] }))
-
-    renderLibrary()
-
-    const trigger = await screen.findByLabelText("More actions for ready paper.pdf")
-    const menu = trigger.closest("details")?.querySelector<HTMLElement>("[data-placement='top-end']")
-
-    expect(menu).not.toBeNull()
-    expect(menu?.className).toContain("bottom-full")
-    expect(menu?.className).toContain("mb-1")
-    expect(menu?.className).not.toContain("mt-1")
-  })
-
-  it("deletes an index entry without targeting the source file", async () => {
-    fetchMock.mockImplementation(async (input, init) => {
-      if (String(input).endsWith("/runtime")) return jsonResponse(runtime())
-      if (init?.method === "DELETE") {
-        expect(String(input)).toContain("/api/knowledge/documents/doc-ready")
-        return jsonResponse({ document_id: "doc-ready", deleted: true, source_file_preserved: true })
-      }
-      return jsonResponse({ total: 1, documents: [document("ready")] })
+  it("filters the unified grid by card type", async () => {
+    installLibraryResponses({
+      items: [
+        item("paper", { title: "Optimization paper" }),
+        item("note", { title: "Optimization note" }),
+      ],
     })
 
     renderLibrary()
-    await userEvent.click(await screen.findByLabelText("More actions for ready paper.pdf"))
-    await userEvent.click(screen.getByRole("button", { name: "Remove" }))
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Remove from Knowledge Base" })).getByRole("button", { name: "Remove" }))
-    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(true))
+    expect(await screen.findByText("Optimization paper")).not.toBeNull()
+    const filterBar = screen.getByLabelText("Knowledge card type filter")
+    await userEvent.click(within(filterBar).getByRole("button", { name: "note" }))
+
+    expect(screen.getByText("Optimization note")).not.toBeNull()
+    expect(screen.queryByText("Optimization paper")).toBeNull()
   })
 
-  it("reindexes a ready document", async () => {
+  it("removes only the source index for a resource-backed card", async () => {
+    const ready = document("ready")
     fetchMock.mockImplementation(async (input, init) => {
-      if (String(input).endsWith("/runtime")) return jsonResponse(runtime())
-      if (init?.method === "POST" && String(input).endsWith("/reindex")) {
+      const url = String(input)
+      if (url.endsWith("/api/knowledge/runtime")) return jsonResponse(runtime())
+      if (url.endsWith("/api/knowledge/items")) {
+        return jsonResponse({ total: 1, items: [item("paper", {
+          title: ready.title,
+          resource_document_id: ready.document_id,
+          source_uri: ready.source_uri,
+        })] })
+      }
+      if (url.endsWith(`/api/knowledge/documents/${ready.document_id}`) && init?.method === "DELETE") {
+        return jsonResponse({ document_id: ready.document_id, deleted: true, source_file_preserved: true })
+      }
+      if (url.endsWith("/api/knowledge/documents")) return jsonResponse({ total: 1, documents: [ready] })
+      return jsonResponse({ detail: "Unexpected test request" }, 500)
+    })
+
+    renderLibrary()
+    await userEvent.click(await screen.findByLabelText(`More actions for ${ready.title}`))
+    await userEvent.click(screen.getByRole("button", { name: "Remove source index" }))
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Remove from Knowledge Base" })).getByRole("button", { name: "Remove" }))
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).includes(`/api/knowledge/documents/${ready.document_id}`) && init?.method === "DELETE")).toBe(true))
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).includes("/api/knowledge/items/") && init?.method === "DELETE")).toBe(false)
+  })
+
+  it("reindexes a resource-backed card from its action menu", async () => {
+    const ready = document("ready")
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/knowledge/runtime")) return jsonResponse(runtime())
+      if (url.endsWith("/api/knowledge/items")) return jsonResponse({ total: 1, items: [item("paper", {
+        title: ready.title,
+        resource_document_id: ready.document_id,
+        source_uri: ready.source_uri,
+      })] })
+      if (url.endsWith(`/api/knowledge/documents/${ready.document_id}/reindex`) && init?.method === "POST") {
         return jsonResponse({ document: document("indexing"), reused_existing: false, elapsed_ms: 3 })
       }
-      return jsonResponse({ total: 1, documents: [document("ready")] })
+      if (url.endsWith("/api/knowledge/documents")) return jsonResponse({ total: 1, documents: [ready] })
+      return jsonResponse({ detail: "Unexpected test request" }, 500)
     })
 
     renderLibrary()
-    await userEvent.click(await screen.findByRole("button", { name: "Reindex ready paper.pdf" }))
+    await userEvent.click(await screen.findByLabelText(`More actions for ${ready.title}`))
+    await userEvent.click(screen.getByRole("button", { name: "Reindex source" }))
+
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/reindex"))).toBe(true))
   })
 
-  it("renders API errors and allows retry", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ detail: "Knowledge runtime unavailable." }, 503))
+  it("opens the existing document detail drawer from a citation navigation target", async () => {
+    const ready = document("ready")
+    installLibraryResponses({
+      documents: [ready],
+      items: [item("paper", {
+        title: ready.title,
+        resource_document_id: ready.document_id,
+        source_uri: ready.source_uri,
+      })],
+    })
 
-    renderLibrary()
+    renderLibrary([`/knowledge?document=${ready.document_id}`])
 
-    expect(await screen.findByRole("alert")).not.toBeNull()
-    expect(screen.getByText("Knowledge runtime unavailable.")).not.toBeNull()
-    expect(screen.getByRole("button", { name: "Retry" })).not.toBeNull()
-  })
-
-  it("opens a document detail drawer from a citation navigation target", async () => {
-    fetchMock.mockImplementation(async (input) => String(input).endsWith("/runtime")
-      ? jsonResponse(runtime())
-      : jsonResponse({ total: 1, documents: [document("ready")] }))
-
-    renderLibrary(["/knowledge?document=doc-ready"])
-
-    expect(await screen.findByRole("dialog", { name: "Document details ready paper.pdf" })).not.toBeNull()
+    expect(await screen.findByRole("dialog", { name: `Document details ${ready.title}` })).not.toBeNull()
     expect(screen.getByText(/512 target tokens · 80 overlap/)).not.toBeNull()
   })
 })

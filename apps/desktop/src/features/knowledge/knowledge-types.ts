@@ -101,3 +101,43 @@ export interface KnowledgeRuntime {
   indexed_chunk_count: number
   max_file_bytes: number
 }
+
+export type KnowledgeItemType = "paper" | "note" | "concept" | "highlight" | "document" | "web"
+
+export interface KnowledgeItem {
+  item_id: string
+  item_type: KnowledgeItemType
+  title: string
+  summary: string
+  resource_document_id: string | null
+  source_uri: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeItemListResponse {
+  total: number
+  items: KnowledgeItem[]
+}
+
+export interface KnowledgeItemCreateInput {
+  item_type: Exclude<KnowledgeItemType, "document" | "web">
+  title: string
+  summary?: string
+  source_uri?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface KnowledgeItemUpdateInput {
+  item_type?: KnowledgeItemType
+  title?: string
+  summary?: string
+  source_uri?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface KnowledgeItemDeleteResponse {
+  item_id: string
+  deleted: boolean
+}

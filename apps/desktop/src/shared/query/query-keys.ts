@@ -35,6 +35,8 @@ export const queryKeys = {
   knowledge: {
     documents: ["knowledge", "documents"] as const,
     document: (documentId: string) => ["knowledge", "documents", documentId] as const,
+    items: ["knowledge", "items"] as const,
+    item: (itemId: string) => ["knowledge", "items", itemId] as const,
     runtime: ["knowledge", "runtime"] as const,
   },
   ragModels: {

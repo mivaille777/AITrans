@@ -1,11 +1,16 @@
 export {
   addKnowledgeDocument,
+  createKnowledgeItem,
   deleteKnowledgeDocument,
+  deleteKnowledgeItem,
   getKnowledgeDocument,
   getKnowledgeDocumentOutline,
   getKnowledgeDocumentSection,
   getKnowledgeDocumentStatus,
+  getKnowledgeItem,
   getKnowledgeRuntime,
   listKnowledgeDocuments,
+  listKnowledgeItems,
   reindexKnowledgeDocument,
+  updateKnowledgeItem,
 } from "../../api/knowledge"

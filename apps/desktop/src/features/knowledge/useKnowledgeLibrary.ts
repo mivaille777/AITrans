@@ -4,12 +4,17 @@ import { desktop } from "../../desktop"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
 import {
   addKnowledgeDocument,
+  createKnowledgeItem,
   deleteKnowledgeDocument,
+  deleteKnowledgeItem,
   getKnowledgeRuntime,
   listKnowledgeDocuments,
+  listKnowledgeItems,
   reindexKnowledgeDocument,
+  updateKnowledgeItem,
 } from "./knowledge-api"
 import { hasActiveKnowledgeDocuments } from "./knowledge-state"
+import type { KnowledgeItemCreateInput, KnowledgeItemUpdateInput } from "./knowledge-types"
 
 export function useKnowledgeLibrary() {
   const queryClient = useQueryClient()
@@ -21,6 +26,11 @@ export function useKnowledgeLibrary() {
         ? queryPolling.knowledgeActiveDocuments
         : queryPolling.knowledgeDocuments,
   })
+  const itemsQuery = useQuery({
+    queryKey: queryKeys.knowledge.items,
+    queryFn: listKnowledgeItems,
+    refetchInterval: queryPolling.knowledgeDocuments,
+  })
   const runtimeQuery = useQuery({
     queryKey: queryKeys.knowledge.runtime,
     queryFn: getKnowledgeRuntime,
@@ -30,6 +40,7 @@ export function useKnowledgeLibrary() {
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.documents }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.items }),
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.runtime }),
     ])
   }
@@ -43,6 +54,19 @@ export function useKnowledgeLibrary() {
       if (result) void refresh()
     },
   })
+  const createItemMutation = useMutation({
+    mutationFn: (payload: KnowledgeItemCreateInput) => createKnowledgeItem(payload),
+    onSuccess: () => void refresh(),
+  })
+  const updateItemMutation = useMutation({
+    mutationFn: ({ itemId, payload }: { itemId: string; payload: KnowledgeItemUpdateInput }) =>
+      updateKnowledgeItem(itemId, payload),
+    onSuccess: () => void refresh(),
+  })
+  const deleteItemMutation = useMutation({
+    mutationFn: deleteKnowledgeItem,
+    onSuccess: () => void refresh(),
+  })
   const deleteMutation = useMutation({
     mutationFn: deleteKnowledgeDocument,
     onSuccess: () => void refresh(),
@@ -54,8 +78,12 @@ export function useKnowledgeLibrary() {
 
   return {
     documentsQuery,
+    itemsQuery,
     runtimeQuery,
     addMutation,
+    createItemMutation,
+    updateItemMutation,
+    deleteItemMutation,
     deleteMutation,
     reindexMutation,
   }

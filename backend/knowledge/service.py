@@ -59,19 +59,38 @@ class KnowledgeWorkspaceService:
         title: str,
         source_uri: str,
         source_type: str = "",
+        item_type: KnowledgeItemType = KnowledgeItemType.DOCUMENT,
     ) -> KnowledgeItem:
         normalized_document_id = document_id.strip()
         if not normalized_document_id:
             raise ValueError("document_id must not be empty")
+        normalized_title = title.strip() or "Untitled document"
+        normalized_source_uri = source_uri.strip()
+        normalized_source_type = source_type.strip().lower()
         existing = self._repository.find_item_by_resource_document_id(normalized_document_id)
         if existing is not None:
-            return existing
+            metadata = dict(existing.metadata)
+            if normalized_source_type:
+                metadata["source_type"] = normalized_source_type
+            updates: dict[str, Any] = {}
+            if existing.title != normalized_title:
+                updates["title"] = normalized_title
+            if existing.source_uri != normalized_source_uri:
+                updates["source_uri"] = normalized_source_uri
+            if existing.metadata != metadata:
+                updates["metadata"] = metadata
+            if existing.item_type is KnowledgeItemType.DOCUMENT and item_type is KnowledgeItemType.PAPER:
+                updates["item_type"] = item_type
+            if not updates:
+                return existing
+            updates["updated_at"] = utc_now()
+            return self._repository.save_item(existing.model_copy(update=updates))
         return self.create_item(
-            item_type=KnowledgeItemType.DOCUMENT,
-            title=title.strip() or "Untitled document",
+            item_type=item_type,
+            title=normalized_title,
             resource_document_id=normalized_document_id,
-            source_uri=source_uri,
-            metadata={"source_type": source_type.strip().lower()},
+            source_uri=normalized_source_uri,
+            metadata={"source_type": normalized_source_type},
         )
 
     def get_item(self, item_id: str) -> KnowledgeItem | None:

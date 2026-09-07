@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "./client"
+import { apiDelete, apiGet, apiPatch, apiPost } from "./client"
 import type {
   KnowledgeDocument,
   KnowledgeDocumentDeleteResponse,
@@ -7,10 +7,16 @@ import type {
   KnowledgeDocumentOutline,
   KnowledgeDocumentSection,
   KnowledgeDocumentStatusResponse,
+  KnowledgeItem,
+  KnowledgeItemCreateInput,
+  KnowledgeItemDeleteResponse,
+  KnowledgeItemListResponse,
+  KnowledgeItemUpdateInput,
   KnowledgeRuntime,
 } from "../features/knowledge/knowledge-types"
 
 const KNOWLEDGE_PATH = "/api/knowledge/documents"
+const KNOWLEDGE_ITEMS_PATH = "/api/knowledge/items"
 
 export function listKnowledgeDocuments(): Promise<KnowledgeDocumentListResponse> {
   return apiGet(KNOWLEDGE_PATH)
@@ -53,4 +59,30 @@ export function reindexKnowledgeDocument(documentId: string): Promise<KnowledgeD
 
 export function getKnowledgeRuntime(): Promise<KnowledgeRuntime> {
   return apiGet("/api/knowledge/runtime")
+}
+
+export function listKnowledgeItems(): Promise<KnowledgeItemListResponse> {
+  return apiGet(KNOWLEDGE_ITEMS_PATH)
+}
+
+export function getKnowledgeItem(itemId: string): Promise<KnowledgeItem> {
+  return apiGet(`${KNOWLEDGE_ITEMS_PATH}/${encodeURIComponent(itemId)}`)
+}
+
+export function createKnowledgeItem(payload: KnowledgeItemCreateInput): Promise<KnowledgeItem> {
+  return apiPost<KnowledgeItem, KnowledgeItemCreateInput>(KNOWLEDGE_ITEMS_PATH, payload)
+}
+
+export function updateKnowledgeItem(
+  itemId: string,
+  payload: KnowledgeItemUpdateInput,
+): Promise<KnowledgeItem> {
+  return apiPatch<KnowledgeItem, KnowledgeItemUpdateInput>(
+    `${KNOWLEDGE_ITEMS_PATH}/${encodeURIComponent(itemId)}`,
+    payload,
+  )
+}
+
+export function deleteKnowledgeItem(itemId: string): Promise<KnowledgeItemDeleteResponse> {
+  return apiDelete(`${KNOWLEDGE_ITEMS_PATH}/${encodeURIComponent(itemId)}`)
 }
