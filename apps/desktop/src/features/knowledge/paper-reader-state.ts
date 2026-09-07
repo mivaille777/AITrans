@@ -1,6 +1,7 @@
 import type {
   KnowledgeDocumentOutlineSection,
   KnowledgeDocumentSection,
+  KnowledgeItemType,
 } from "./knowledge-types"
 
 export interface PaperSelectionContext {
@@ -8,6 +9,9 @@ export interface PaperSelectionContext {
   contextBefore: string
   contextAfter: string
 }
+
+export type DerivedPaperCardType = Extract<KnowledgeItemType, "note" | "concept" | "highlight">
+export type DerivedPaperRelationType = "derived_from" | "reading_note"
 
 export function resolvePaperReaderSectionId(
   sections: KnowledgeDocumentOutlineSection[],
@@ -51,4 +55,11 @@ export function buildSelectionCardTitle(
   if (!normalized) return fallback
   if (normalized.length <= maxLength) return normalized
   return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`
+}
+
+export function resolveDerivedPaperRelationType(
+  _itemType: DerivedPaperCardType,
+  requested?: DerivedPaperRelationType,
+): DerivedPaperRelationType {
+  return requested ?? "derived_from"
 }
