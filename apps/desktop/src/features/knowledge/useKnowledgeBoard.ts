@@ -1,0 +1,116 @@
+import { useEffect, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+
+import { queryKeys } from "../../shared/query/query-keys"
+import {
+  createKnowledgeBoard,
+  createKnowledgeRelation,
+  deleteKnowledgeBoard,
+  deleteKnowledgeRelation,
+  getKnowledgeBoard,
+  listKnowledgeBoards,
+  listKnowledgeRelations,
+  removeKnowledgeBoardNode,
+  upsertKnowledgeBoardNode,
+} from "./knowledge-api"
+import type {
+  KnowledgeBoardCreateInput,
+  KnowledgeBoardNodeInput,
+  KnowledgeRelationCreateInput,
+} from "./knowledge-types"
+
+export function useKnowledgeBoard() {
+  const queryClient = useQueryClient()
+  const [activeBoardId, setActiveBoardId] = useState<string | null>(null)
+
+  const boardsQuery = useQuery({
+    queryKey: queryKeys.knowledge.boards,
+    queryFn: listKnowledgeBoards,
+  })
+  const relationsQuery = useQuery({
+    queryKey: queryKeys.knowledge.relations,
+    queryFn: listKnowledgeRelations,
+  })
+
+  useEffect(() => {
+    const boards = boardsQuery.data?.boards ?? []
+    if (boards.length === 0) return
+    if (!activeBoardId || !boards.some((board) => board.board_id === activeBoardId)) {
+      setActiveBoardId(boards[0].board_id)
+    }
+  }, [activeBoardId, boardsQuery.data?.boards])
+
+  const boardQuery = useQuery({
+    queryKey: queryKeys.knowledge.board(activeBoardId ?? "none"),
+    queryFn: () => getKnowledgeBoard(activeBoardId as string),
+    enabled: Boolean(activeBoardId),
+  })
+
+  const refreshBoard = async (boardId = activeBoardId) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.boards }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.relations }),
+      boardId
+        ? queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.board(boardId) })
+        : Promise.resolve(),
+    ])
+  }
+
+  const createBoardMutation = useMutation({
+    mutationFn: (payload: KnowledgeBoardCreateInput) => createKnowledgeBoard(payload),
+    onSuccess: (board) => {
+      setActiveBoardId(board.board_id)
+      void refreshBoard(board.board_id)
+    },
+  })
+
+  const deleteBoardMutation = useMutation({
+    mutationFn: deleteKnowledgeBoard,
+    onSuccess: (_result, boardId) => {
+      if (activeBoardId === boardId) setActiveBoardId(null)
+      void refreshBoard(null)
+    },
+  })
+
+  const upsertNodeMutation = useMutation({
+    mutationFn: ({ itemId, payload }: { itemId: string; payload: KnowledgeBoardNodeInput }) => {
+      if (!activeBoardId) throw new Error("No active knowledge board.")
+      return upsertKnowledgeBoardNode(activeBoardId, itemId, payload)
+    },
+    onSuccess: () => void refreshBoard(),
+  })
+
+  const removeNodeMutation = useMutation({
+    mutationFn: (itemId: string) => {
+      if (!activeBoardId) throw new Error("No active knowledge board.")
+      return removeKnowledgeBoardNode(activeBoardId, itemId)
+    },
+    onSuccess: () => void refreshBoard(),
+  })
+
+  const createRelationMutation = useMutation({
+    mutationFn: (payload: KnowledgeRelationCreateInput) => createKnowledgeRelation(payload),
+    onSuccess: () => void refreshBoard(),
+  })
+
+  const deleteRelationMutation = useMutation({
+    mutationFn: deleteKnowledgeRelation,
+    onSuccess: () => void refreshBoard(),
+  })
+
+  return {
+    activeBoardId,
+    setActiveBoardId,
+    boardsQuery,
+    boardQuery,
+    relationsQuery,
+    createBoardMutation,
+    deleteBoardMutation,
+    upsertNodeMutation,
+    removeNodeMutation,
+    createRelationMutation,
+    deleteRelationMutation,
+  }
+}
+
+export type KnowledgeBoardController = ReturnType<typeof useKnowledgeBoard>

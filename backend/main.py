@@ -32,8 +32,11 @@ from backend.api.evidence_review import router as evidence_review_router
 from backend.api.evidence_review_dependencies import close_evidence_review_service
 from backend.api.health import router as health_router
 from backend.api.knowledge import router as knowledge_router
+from backend.api.knowledge_board_dependencies import close_knowledge_board_service
+from backend.api.knowledge_boards import router as knowledge_boards_router
 from backend.api.knowledge_dependencies import close_rag_runtime
 from backend.api.knowledge_items import router as knowledge_items_router
+from backend.api.knowledge_relations import router as knowledge_relations_router
 from backend.api.knowledge_workspace_dependencies import close_knowledge_workspace_service
 from backend.api.llm_settings import router as llm_settings_router
 from backend.api.overlay import router as overlay_router
@@ -88,6 +91,7 @@ async def lifespan(_: FastAPI):
         close_evidence_review_service()
         close_evidence_ledger_service()
         close_research_memory_service()
+        close_knowledge_board_service()
         close_knowledge_workspace_service()
         close_rag_runtime()
         close_rag_model_manager()
@@ -121,6 +125,8 @@ def create_app() -> FastAPI:
     app.include_router(evidence_review_router)
     app.include_router(knowledge_router)
     app.include_router(knowledge_items_router)
+    app.include_router(knowledge_boards_router)
+    app.include_router(knowledge_relations_router)
     app.include_router(llm_settings_router)
     app.include_router(rag_models_router)
     app.include_router(agent_router)

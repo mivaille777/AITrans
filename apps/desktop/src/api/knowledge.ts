@@ -1,5 +1,13 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from "./client"
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./client"
 import type {
+  KnowledgeBoard,
+  KnowledgeBoardCreateInput,
+  KnowledgeBoardDeleteResponse,
+  KnowledgeBoardListResponse,
+  KnowledgeBoardNode,
+  KnowledgeBoardNodeDeleteResponse,
+  KnowledgeBoardNodeInput,
+  KnowledgeBoardSnapshot,
   KnowledgeDocument,
   KnowledgeDocumentDeleteResponse,
   KnowledgeDocumentImportResponse,
@@ -12,11 +20,17 @@ import type {
   KnowledgeItemDeleteResponse,
   KnowledgeItemListResponse,
   KnowledgeItemUpdateInput,
+  KnowledgeRelation,
+  KnowledgeRelationCreateInput,
+  KnowledgeRelationDeleteResponse,
+  KnowledgeRelationListResponse,
   KnowledgeRuntime,
 } from "../features/knowledge/knowledge-types"
 
 const KNOWLEDGE_PATH = "/api/knowledge/documents"
 const KNOWLEDGE_ITEMS_PATH = "/api/knowledge/items"
+const KNOWLEDGE_BOARDS_PATH = "/api/knowledge/boards"
+const KNOWLEDGE_RELATIONS_PATH = "/api/knowledge/relations"
 
 export function listKnowledgeDocuments(): Promise<KnowledgeDocumentListResponse> {
   return apiGet(KNOWLEDGE_PATH)
@@ -85,4 +99,56 @@ export function updateKnowledgeItem(
 
 export function deleteKnowledgeItem(itemId: string): Promise<KnowledgeItemDeleteResponse> {
   return apiDelete(`${KNOWLEDGE_ITEMS_PATH}/${encodeURIComponent(itemId)}`)
+}
+
+export function listKnowledgeBoards(): Promise<KnowledgeBoardListResponse> {
+  return apiGet(KNOWLEDGE_BOARDS_PATH)
+}
+
+export function createKnowledgeBoard(payload: KnowledgeBoardCreateInput): Promise<KnowledgeBoard> {
+  return apiPost<KnowledgeBoard, KnowledgeBoardCreateInput>(KNOWLEDGE_BOARDS_PATH, payload)
+}
+
+export function getKnowledgeBoard(boardId: string): Promise<KnowledgeBoardSnapshot> {
+  return apiGet(`${KNOWLEDGE_BOARDS_PATH}/${encodeURIComponent(boardId)}`)
+}
+
+export function upsertKnowledgeBoardNode(
+  boardId: string,
+  itemId: string,
+  payload: KnowledgeBoardNodeInput,
+): Promise<KnowledgeBoardNode> {
+  return apiPut<KnowledgeBoardNode, KnowledgeBoardNodeInput>(
+    `${KNOWLEDGE_BOARDS_PATH}/${encodeURIComponent(boardId)}/nodes/${encodeURIComponent(itemId)}`,
+    payload,
+  )
+}
+
+export function removeKnowledgeBoardNode(
+  boardId: string,
+  itemId: string,
+): Promise<KnowledgeBoardNodeDeleteResponse> {
+  return apiDelete(
+    `${KNOWLEDGE_BOARDS_PATH}/${encodeURIComponent(boardId)}/nodes/${encodeURIComponent(itemId)}`,
+  )
+}
+
+export function deleteKnowledgeBoard(boardId: string): Promise<KnowledgeBoardDeleteResponse> {
+  return apiDelete(`${KNOWLEDGE_BOARDS_PATH}/${encodeURIComponent(boardId)}`)
+}
+
+export function listKnowledgeRelations(): Promise<KnowledgeRelationListResponse> {
+  return apiGet(KNOWLEDGE_RELATIONS_PATH)
+}
+
+export function createKnowledgeRelation(
+  payload: KnowledgeRelationCreateInput,
+): Promise<KnowledgeRelation> {
+  return apiPost<KnowledgeRelation, KnowledgeRelationCreateInput>(KNOWLEDGE_RELATIONS_PATH, payload)
+}
+
+export function deleteKnowledgeRelation(
+  relationId: string,
+): Promise<KnowledgeRelationDeleteResponse> {
+  return apiDelete(`${KNOWLEDGE_RELATIONS_PATH}/${encodeURIComponent(relationId)}`)
 }

@@ -1,7 +1,8 @@
 import { ServerOff } from "lucide-react"
 
 import { EmptyState } from "../../shared/ui/EmptyState"
-import KnowledgeLibraryPanel from "./KnowledgeLibraryPanel"
+import KnowledgeWorkspacePanel from "./KnowledgeWorkspacePanel"
+import { useKnowledgeBoard } from "./useKnowledgeBoard"
 import { useKnowledgeLibrary } from "./useKnowledgeLibrary"
 
 type BackendState = "checking" | "connected" | "offline"
@@ -17,16 +18,17 @@ export default function KnowledgeRoute({ backendState }: { backendState: Backend
       <EmptyState
         className="ait-surface border-solid bg-white/90 py-16"
         icon={<ServerOff size={24} strokeWidth={1.6} />}
-        title="Knowledge Library is waiting for the backend"
-        description="Reconnect the local AITranslator service to view or update the document index."
+        title="Knowledge workspace is waiting for the backend"
+        description="Reconnect the local AITranslator service to open your board, cards, and document index."
       />
     )
   }
 
-  return <ConnectedKnowledgeLibrary />
+  return <ConnectedKnowledgeWorkspace />
 }
 
-function ConnectedKnowledgeLibrary() {
+function ConnectedKnowledgeWorkspace() {
   const library = useKnowledgeLibrary()
-  return <KnowledgeLibraryPanel library={library} />
+  const board = useKnowledgeBoard()
+  return <KnowledgeWorkspacePanel library={library} board={board} />
 }

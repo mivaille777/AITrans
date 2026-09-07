@@ -141,3 +141,93 @@ export interface KnowledgeItemDeleteResponse {
   item_id: string
   deleted: boolean
 }
+
+export type KnowledgeRelationOrigin = "manual" | "imported" | "ai" | "citation" | "rag"
+
+export interface KnowledgeRelation {
+  relation_id: string
+  source_item_id: string
+  target_item_id: string
+  relation_type: string
+  label: string
+  origin: KnowledgeRelationOrigin
+  confidence: number | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeRelationListResponse {
+  total: number
+  relations: KnowledgeRelation[]
+}
+
+export interface KnowledgeRelationCreateInput {
+  source_item_id: string
+  target_item_id: string
+  relation_type: string
+  label?: string
+  origin?: KnowledgeRelationOrigin
+  confidence?: number | null
+}
+
+export interface KnowledgeRelationDeleteResponse {
+  relation_id: string
+  deleted: boolean
+}
+
+export interface KnowledgeBoard {
+  board_id: string
+  name: string
+  description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeBoardNode {
+  board_id: string
+  item_id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  collapsed: boolean
+  z_index: number
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeBoardListResponse {
+  total: number
+  boards: KnowledgeBoard[]
+}
+
+export interface KnowledgeBoardSnapshot {
+  board: KnowledgeBoard
+  nodes: KnowledgeBoardNode[]
+}
+
+export interface KnowledgeBoardCreateInput {
+  name: string
+  description?: string
+}
+
+export interface KnowledgeBoardNodeInput {
+  x: number
+  y: number
+  width?: number
+  height?: number
+  collapsed?: boolean
+  z_index?: number
+}
+
+export interface KnowledgeBoardNodeDeleteResponse {
+  board_id: string
+  item_id: string
+  deleted: boolean
+}
+
+export interface KnowledgeBoardDeleteResponse {
+  board_id: string
+  deleted: boolean
+}
