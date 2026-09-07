@@ -10,6 +10,7 @@ export {
   getKnowledgeBoard,
   getKnowledgeDocument,
   getKnowledgeDocumentOutline,
+  getKnowledgeDocumentPreviewUrl,
   getKnowledgeDocumentSection,
   getKnowledgeDocumentStatus,
   getKnowledgeItem,
