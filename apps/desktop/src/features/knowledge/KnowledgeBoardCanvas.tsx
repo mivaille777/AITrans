@@ -1,7 +1,6 @@
 import {
   BookOpenText,
   FileText,
-  Fit,
   Highlighter,
   Lightbulb,
   Link2,
@@ -252,7 +251,7 @@ export default function KnowledgeBoardCanvas({
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Zoom out" onClick={() => setViewport((current) => ({ ...current, zoom: clampBoardZoom(current.zoom / 1.15) }))}><Minus size={14} /></button>
         <span className="min-w-12 text-center text-[10px] font-semibold text-slate-500">{Math.round(viewport.zoom * 100)}%</span>
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Zoom in" onClick={() => setViewport((current) => ({ ...current, zoom: clampBoardZoom(current.zoom * 1.15) }))}><Plus size={14} /></button>
-        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Fit board" onClick={fitView}><Fit size={14} /></button>
+        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Fit board" onClick={fitView}><Maximize2 size={14} /></button>
       </div>
 
       {linkingSourceId && <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[10px] font-semibold text-cyan-800 shadow-sm">Select a target card to create a relation · Esc/canvas to cancel</div>}
