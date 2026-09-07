@@ -1,3 +1,6 @@
+import { useEffect, useRef } from "react"
+import { useLocation } from "react-router-dom"
+
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import { AgentHeader } from "../companion/components/AgentHeader"
 import { AgentInputComposer } from "../companion/components/AgentInputComposer"
@@ -9,8 +12,40 @@ import { AgentDecisionPanel } from "./components/AgentDecisionPanel"
 import { AgentTimeline } from "./components/AgentTimeline"
 import { useAgentRuntime } from "./hooks/useAgentRuntime"
 
+interface AgentNavigationState {
+  agentDraftPrompt?: string
+  autoSubmitAgentPrompt?: boolean
+}
+
 export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceController }) {
+  const location = useLocation()
+  const navigationState = (location.state ?? null) as AgentNavigationState | null
+  const draftPrompt = navigationState?.agentDraftPrompt?.trim() ?? ""
+  const autoSubmitDraft = Boolean(navigationState?.autoSubmitAgentPrompt)
   const runtime = useAgentRuntime(workspace)
+  const appliedDraftRef = useRef("")
+  const submittedDraftRef = useRef("")
+
+  useEffect(() => {
+    if (!draftPrompt || appliedDraftRef.current === draftPrompt) return
+    appliedDraftRef.current = draftPrompt
+    runtime.setPrompt(draftPrompt)
+  }, [draftPrompt, runtime.setPrompt])
+
+  useEffect(() => {
+    if (!autoSubmitDraft || !draftPrompt || !runtime.sourceText) return
+    if (runtime.prompt !== draftPrompt || runtime.pending) return
+    if (submittedDraftRef.current === draftPrompt) return
+    submittedDraftRef.current = draftPrompt
+    runtime.submitPrompt()
+  }, [
+    autoSubmitDraft,
+    draftPrompt,
+    runtime.pending,
+    runtime.prompt,
+    runtime.sourceText,
+    runtime.submitPrompt,
+  ])
 
   return (
     <section aria-label="Agent Workspace" className="space-y-4 pb-2">
