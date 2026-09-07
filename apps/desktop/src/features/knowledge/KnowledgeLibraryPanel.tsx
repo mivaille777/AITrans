@@ -22,9 +22,11 @@ const filters: CardFilter[] = ["all", "paper", "note", "concept", "highlight", "
 export default function KnowledgeLibraryPanel({
   library,
   onOpenPaper,
+  onOpenGraph,
 }: {
   library: KnowledgeLibraryController
   onOpenPaper?: (itemId: string) => void
+  onOpenGraph?: (itemId: string) => void
 }) {
   const {
     documentsQuery,
@@ -155,7 +157,7 @@ export default function KnowledgeLibraryPanel({
       <KnowledgeImportDialog open={importOpen} adding={addMutation.isPending} onClose={() => !addMutation.isPending && setImportOpen(false)} onBrowse={() => addMutation.mutate(undefined, { onSuccess: (result) => { if (result) setImportOpen(false) } })} />
       <KnowledgeCreateCardDialog open={createOpen} creating={createItemMutation.isPending} onClose={() => !createItemMutation.isPending && setCreateOpen(false)} onCreate={(payload) => createItemMutation.mutate(payload, { onSuccess: () => setCreateOpen(false) })} />
       {activeDocument && <KnowledgeDocumentDetail document={activeDocument} reindexing={reindexMutation.isPending && reindexMutation.variables === activeDocument.document_id} onClose={closeDocumentDetail} onReindex={() => reindexMutation.mutate(activeDocument.document_id)} onRemove={() => setRemoveTarget(activeDocument)} />}
-      {selectedItem && <KnowledgeItemDetail item={selectedItem} deleting={deleteItemMutation.isPending && deleteItemMutation.variables === selectedItem.item_id} onClose={() => setSelectedItem(null)} onDelete={() => deleteItemMutation.mutate(selectedItem.item_id, { onSuccess: () => setSelectedItem(null) })} />}
+      {selectedItem && <KnowledgeItemDetail item={selectedItem} deleting={deleteItemMutation.isPending && deleteItemMutation.variables === selectedItem.item_id} onClose={() => setSelectedItem(null)} onDelete={() => deleteItemMutation.mutate(selectedItem.item_id, { onSuccess: () => setSelectedItem(null) })} onOpenGraph={onOpenGraph ? () => onOpenGraph(selectedItem.item_id) : undefined} />}
       <KnowledgeDeleteDialog document={removeTarget} deleting={deleteMutation.isPending} onCancel={() => !deleteMutation.isPending && setRemoveTarget(null)} onConfirm={() => removeTarget && deleteMutation.mutate(removeTarget.document_id, { onSuccess: () => { if (activeDocument?.document_id === removeTarget.document_id) closeDocumentDetail(); setRemoveTarget(null) } })} />
     </div>
   )
