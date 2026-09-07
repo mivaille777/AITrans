@@ -3,15 +3,17 @@ import {
   Bot,
   BookOpenCheck,
   ExternalLink,
+  FileText,
   Highlighter,
   Languages,
   Lightbulb,
   LoaderCircle,
   NotebookPen,
+  Save,
   Sparkles,
   StickyNote,
 } from "lucide-react"
-import { useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { desktop } from "../../desktop"
@@ -24,6 +26,7 @@ import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 import { usePaperReader } from "./usePaperReader"
 
 type InspectorTab = "overview" | "notes" | "ai" | "translation"
+type ReaderMode = "text" | "pdf"
 
 interface TextSelectionState {
   text: string
@@ -47,9 +50,17 @@ export default function KnowledgePaperReaderPanel({
   const articleRef = useRef<HTMLDivElement | null>(null)
   const [selection, setSelection] = useState<TextSelectionState | null>(null)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview")
+  const [readerMode, setReaderMode] = useState<ReaderMode>("text")
+  const [aiQuestion, setAiQuestion] = useState("")
   const [openError, setOpenError] = useState("")
 
   const { paper, document, sectionQuery } = reader
+
+  useEffect(() => {
+    setReaderMode("text")
+    setAiQuestion("")
+    setSelection(null)
+  }, [paperItemId])
 
   function captureSelection() {
     window.setTimeout(() => {
@@ -98,7 +109,10 @@ export default function KnowledgePaperReaderPanel({
 
   function askAi() {
     if (!selection) return
-    if (reader.attachSelectionToAgent(selection.text)) setInspectorTab("ai")
+    if (reader.attachSelectionToAgent(selection.text)) {
+      setInspectorTab("ai")
+      setAiQuestion((current) => current || "Explain this passage in the context of the paper.")
+    }
     clearSelection()
   }
 
@@ -109,6 +123,23 @@ export default function KnowledgePaperReaderPanel({
     clearSelection()
   }
 
+  function attachCurrentSection() {
+    if (!reader.attachSectionToAgent()) return
+    setInspectorTab("ai")
+    setAiQuestion((current) => current || "Summarize this section and explain its main contribution.")
+  }
+
+  function openAgentWithQuestion(question: string) {
+    const normalized = question.trim()
+    if (!normalized) return
+    navigate("/agent", {
+      state: {
+        agentDraftPrompt: normalized,
+        autoSubmitAgentPrompt: true,
+      },
+    })
+  }
+
   if (!paper || paper.item_type !== "paper") {
     return <ReaderMessage title="Paper unavailable" description="The requested knowledge card no longer exists or is not a paper." onBack={onBack} />
   }
@@ -116,6 +147,10 @@ export default function KnowledgePaperReaderPanel({
   if (!document) {
     return <ReaderMessage title="No indexed source attached" description="This manual paper card does not have a local indexed document yet." onBack={onBack} />
   }
+
+  const canPreviewPdf = document.source_type === "pdf" && Boolean(reader.previewUrl)
+  const pdfPage = reader.activeOutlineSection?.page_start ?? sectionQuery.data?.page_start ?? 1
+  const pdfPreviewUrl = canPreviewPdf ? `${reader.previewUrl}#page=${Math.max(1, pdfPage)}` : ""
 
   return (
     <section className="ait-surface overflow-hidden">
@@ -129,13 +164,17 @@ export default function KnowledgePaperReaderPanel({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {canPreviewPdf && (
+            <div className="flex rounded-[10px] bg-slate-100 p-1" aria-label="Paper reader mode">
+              <button type="button" className={`flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5 text-[10px] font-semibold ${readerMode === "text" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setReaderMode("text")}><BookOpenCheck size={12} />Text</button>
+              <button type="button" className={`flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5 text-[10px] font-semibold ${readerMode === "pdf" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => { clearSelection(); setReaderMode("pdf") }}><FileText size={12} />PDF</button>
+            </div>
+          )}
           <Button variant="ghost" size="sm" onClick={() => {
             setOpenError("")
             void desktop.files.openEvidenceSource(document.source_uri).catch((error: unknown) => setOpenError(error instanceof Error ? error.message : "Unable to open source."))
-          }}><ExternalLink size={14} />Open source PDF</Button>
-          <Button size="sm" onClick={() => {
-            if (reader.attachSectionToAgent()) setInspectorTab("ai")
-          }} disabled={!sectionQuery.data}><BookOpenCheck size={14} />Use section in AI</Button>
+          }}><ExternalLink size={14} />Open externally</Button>
+          <Button size="sm" onClick={attachCurrentSection} disabled={!sectionQuery.data}><BookOpenCheck size={14} />Use section in AI</Button>
         </div>
       </header>
 
@@ -173,7 +212,20 @@ export default function KnowledgePaperReaderPanel({
         </aside>
 
         <main className="flex min-h-0 flex-col border-b border-slate-200/70 bg-white xl:border-b-0 xl:border-r">
-          {sectionQuery.isPending ? (
+          {readerMode === "pdf" && canPreviewPdf ? (
+            <>
+              <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">
+                <span>Visual PDF preview · page {Math.max(1, pdfPage)}</span>
+                <span>Switch to Text mode for Highlight, Note, Translate, and Ask AI selection actions.</span>
+              </div>
+              <iframe
+                key={pdfPreviewUrl}
+                title={`PDF preview · ${paper.title}`}
+                src={pdfPreviewUrl}
+                className="min-h-0 flex-1 border-0 bg-slate-100"
+              />
+            </>
+          ) : sectionQuery.isPending ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-sm text-slate-500"><LoaderCircle size={15} className="animate-spin" />Loading section…</div>
           ) : sectionQuery.data ? (
             <>
@@ -207,13 +259,21 @@ export default function KnowledgePaperReaderPanel({
           <div className="ait-scroll-panel mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {inspectorTab === "overview" && <OverviewInspector paper={paper} document={document} sectionCount={reader.sections.length} />}
             {inspectorTab === "notes" && <NotesInspector reader={reader} />}
-            {inspectorTab === "ai" && <AiInspector workspace={workspace} documentId={document.document_id} onOpenAgent={() => navigate("/agent")} />}
+            {inspectorTab === "ai" && (
+              <AiInspector
+                workspace={workspace}
+                documentId={document.document_id}
+                question={aiQuestion}
+                onQuestionChange={setAiQuestion}
+                onAsk={openAgentWithQuestion}
+              />
+            )}
             {inspectorTab === "translation" && <TranslationInspector reader={reader} />}
           </div>
         </aside>
       </div>
 
-      {selection && (
+      {selection && readerMode === "text" && (
         <div className="fixed z-[70] -translate-x-1/2 -translate-y-full rounded-[13px] border border-slate-200 bg-white p-1.5 shadow-2xl" style={{ left: selection.left, top: selection.top }} role="toolbar" aria-label="Paper selection actions">
           <div className="flex items-center gap-1">
             <SelectionAction icon={<Highlighter size={13} />} label="Highlight" onClick={() => createSelectionCard("highlight")} />
@@ -237,18 +297,98 @@ function OverviewInspector({ paper, document, sectionCount }: { paper: Knowledge
 }
 
 function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> }) {
-  const noteLike = reader.linked.filter(({ item }) => item.item_type === "note" || item.item_type === "highlight" || item.item_type === "concept")
-  return <div><div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Derived knowledge</p><Button size="xs" disabled={reader.createDerivedMutation.isPending || Boolean(reader.readingNote)} onClick={() => reader.createDerivedMutation.mutate({ itemType: "note", text: "", relationType: "reading_note" })}><NotebookPen size={12} />{reader.readingNote ? "Reading note exists" : "Reading note"}</Button></div><div className="mt-3 space-y-2">{noteLike.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in the paper to create highlights, notes, or concept cards.</p> : noteLike.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty reading note."}</p></div>)}</div></div>
+  const [draft, setDraft] = useState(reader.readingNote?.summary ?? "")
+  useEffect(() => {
+    setDraft(reader.readingNote?.summary ?? "")
+  }, [reader.readingNote?.item_id, reader.readingNote?.summary])
+
+  const derived = reader.linked.filter(({ relation, item }) => (
+    relation.relation_type !== "reading_note"
+    && (item.item_type === "note" || item.item_type === "highlight" || item.item_type === "concept")
+  ))
+  const createError = reader.createDerivedMutation.error
+  const updateError = reader.updateReadingNoteMutation.error
+
+  return (
+    <div className="space-y-5">
+      <section>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Reading note</p>
+          {!reader.readingNote && (
+            <Button size="xs" disabled={reader.createDerivedMutation.isPending} onClick={() => reader.createDerivedMutation.mutate({ itemType: "note", text: "", relationType: "reading_note" })}><NotebookPen size={12} />Create</Button>
+          )}
+        </div>
+        {reader.readingNote ? (
+          <div className="mt-3 rounded-[13px] border border-slate-200 bg-white p-3">
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              className="min-h-36 w-full resize-y bg-transparent text-xs leading-6 text-slate-700 outline-none placeholder:text-slate-400"
+              placeholder="Write your evolving understanding, questions, and synthesis for this paper…"
+            />
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+              <span className="text-[9px] text-slate-400">Persistent paper-level note</span>
+              <Button size="xs" disabled={reader.updateReadingNoteMutation.isPending || draft === reader.readingNote.summary} onClick={() => reader.updateReadingNoteMutation.mutate(draft)}><Save size={11} />{reader.updateReadingNoteMutation.isPending ? "Saving…" : "Save"}</Button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Create one persistent reading note for this paper. Selection notes remain separate derived cards.</p>
+        )}
+        {(createError || updateError) && <p className="mt-2 text-xs text-rose-600">{(createError ?? updateError) instanceof Error ? (createError ?? updateError as Error)?.message : "Unable to save reading note."}</p>}
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Derived knowledge</p><span className="text-[9px] text-slate-400">{derived.length}</span></div>
+        <div className="mt-3 space-y-2">
+          {derived.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in Text mode to create highlights, notes, or concept cards.</p> : derived.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty note."}</p></div>)}
+        </div>
+      </section>
+    </div>
+  )
 }
 
-function AiInspector({ workspace, documentId, onOpenAgent }: { workspace: TranslationWorkspaceController; documentId: string; onOpenAgent: () => void }) {
+function AiInspector({
+  workspace,
+  documentId,
+  question,
+  onQuestionChange,
+  onAsk,
+}: {
+  workspace: TranslationWorkspaceController
+  documentId: string
+  question: string
+  onQuestionChange: (value: string) => void
+  onAsk: (question: string) => void
+}) {
   const attached = workspace.academicReadingContext?.document_id === documentId
-  return <div className="space-y-3"><div className="rounded-[14px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><Bot size={14} />Reader context</div><p className="mt-2 text-[11px] leading-5 text-slate-500">{attached ? "The current paper selection or section is attached as frozen Agent reading context." : "Select text and choose Ask AI, or attach the current section."}</p>{attached && <p className="mt-2 line-clamp-6 whitespace-pre-wrap rounded-[10px] bg-slate-50 p-2 text-[10px] leading-5 text-slate-600">{workspace.academicReadingContext?.text}</p>}</div><Button variant="primary" size="sm" disabled={!attached} onClick={onOpenAgent}><Sparkles size={14} />Open Agent with context</Button></div>
+  return (
+    <div className="space-y-3">
+      <div className="rounded-[14px] border border-slate-200 bg-white p-3">
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><Bot size={14} />Reader context</div>
+        <p className="mt-2 text-[11px] leading-5 text-slate-500">{attached ? "The current paper selection or section is frozen as Agent reading context." : "Select text and choose Ask AI, or attach the current section."}</p>
+        {attached && <p className="mt-2 line-clamp-6 whitespace-pre-wrap rounded-[10px] bg-slate-50 p-2 text-[10px] leading-5 text-slate-600">{workspace.academicReadingContext?.text}</p>}
+      </div>
+      <label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Question<textarea value={question} onChange={(event) => onQuestionChange(event.target.value)} className="mt-2 min-h-24 w-full resize-y rounded-[12px] border border-slate-200 bg-white p-3 text-xs font-normal leading-5 text-slate-700 outline-none focus:border-cyan-300" placeholder="What do you want the Agent to explain, compare, critique, or extract?" /></label>
+      <Button variant="primary" size="sm" disabled={!attached || !question.trim()} onClick={() => onAsk(question)}><Sparkles size={14} />Ask in Agent</Button>
+      <p className="text-[9px] leading-4 text-slate-400">The Agent opens with this question and the frozen paper context, then starts the run automatically.</p>
+    </div>
+  )
 }
 
 function TranslationInspector({ reader }: { reader: ReturnType<typeof usePaperReader> }) {
   const mutation = reader.translationMutation
-  return <div className="space-y-3"><div className="rounded-[14px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><Languages size={14} />Selection translation</div>{mutation.isPending ? <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><LoaderCircle size={13} className="animate-spin" />Translating…</p> : mutation.data ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{mutation.data.translated_text}</p> : <p className="mt-2 text-[11px] leading-5 text-slate-500">Select text in the reader and choose Translate. The configured translation provider is reused in-place.</p>}{mutation.error && <p className="mt-2 text-xs text-rose-600">{mutation.error instanceof Error ? mutation.error.message : "Translation failed."}</p>}</div></div>
+  const saveMutation = reader.saveTranslationAsNoteMutation
+  const sourceText = typeof mutation.variables === "string" ? mutation.variables : ""
+  return (
+    <div className="space-y-3">
+      <div className="rounded-[14px] border border-slate-200 bg-white p-3">
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><Languages size={14} />Selection translation</div>
+        {mutation.isPending ? <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><LoaderCircle size={13} className="animate-spin" />Translating…</p> : mutation.data ? <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{mutation.data.translated_text}</p><div className="mt-3 border-t border-slate-100 pt-3"><Button size="xs" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ sourceText, translatedText: mutation.data.translated_text })}><StickyNote size={11} />{saveMutation.isPending ? "Saving…" : "Save as note"}</Button>{saveMutation.data && <span className="ml-2 text-[9px] text-emerald-600">Saved to knowledge cards.</span>}</div></> : <p className="mt-2 text-[11px] leading-5 text-slate-500">Select text in Text mode and choose Translate. The configured translation provider is reused in-place.</p>}
+        {mutation.error && <p className="mt-2 text-xs text-rose-600">{mutation.error instanceof Error ? mutation.error.message : "Translation failed."}</p>}
+        {saveMutation.error && <p className="mt-2 text-xs text-rose-600">{saveMutation.error instanceof Error ? saveMutation.error.message : "Unable to save translation note."}</p>}
+      </div>
+    </div>
+  )
 }
 
 function InspectorBlock({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
