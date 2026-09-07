@@ -11,12 +11,14 @@ import {
   listKnowledgeBoards,
   listKnowledgeRelations,
   removeKnowledgeBoardNode,
+  updateKnowledgeRelation,
   upsertKnowledgeBoardNode,
 } from "./knowledge-api"
 import type {
   KnowledgeBoardCreateInput,
   KnowledgeBoardNodeInput,
   KnowledgeRelationCreateInput,
+  KnowledgeRelationUpdateInput,
 } from "./knowledge-types"
 
 export function useKnowledgeBoard() {
@@ -29,7 +31,7 @@ export function useKnowledgeBoard() {
   })
   const relationsQuery = useQuery({
     queryKey: queryKeys.knowledge.relations,
-    queryFn: listKnowledgeRelations,
+    queryFn: () => listKnowledgeRelations(),
   })
 
   useEffect(() => {
@@ -93,6 +95,12 @@ export function useKnowledgeBoard() {
     onSuccess: () => void refreshBoard(),
   })
 
+  const updateRelationMutation = useMutation({
+    mutationFn: ({ relationId, payload }: { relationId: string; payload: KnowledgeRelationUpdateInput }) =>
+      updateKnowledgeRelation(relationId, payload),
+    onSuccess: () => void refreshBoard(),
+  })
+
   const deleteRelationMutation = useMutation({
     mutationFn: deleteKnowledgeRelation,
     onSuccess: () => void refreshBoard(),
@@ -109,6 +117,7 @@ export function useKnowledgeBoard() {
     upsertNodeMutation,
     removeNodeMutation,
     createRelationMutation,
+    updateRelationMutation,
     deleteRelationMutation,
   }
 }
