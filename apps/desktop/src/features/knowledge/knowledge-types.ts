@@ -171,6 +171,12 @@ export interface KnowledgeRelationCreateInput {
   confidence?: number | null
 }
 
+export interface KnowledgeRelationUpdateInput {
+  relation_type?: string
+  label?: string
+  confidence?: number | null
+}
+
 export interface KnowledgeRelationDeleteResponse {
   relation_id: string
   deleted: boolean
