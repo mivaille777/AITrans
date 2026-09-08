@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.ai.errors import AIConfigurationError, AIError
 from backend.api.knowledge_relation_suggestion_dependencies import (
@@ -32,7 +32,10 @@ SuggestionServiceDependency = Annotated[
 def list_relation_suggestions(
     service: SuggestionServiceDependency,
     focus_item_id: str | None = None,
-    status_filter: KnowledgeRelationSuggestionStatus | None = None,
+    status_filter: Annotated[
+        KnowledgeRelationSuggestionStatus | None,
+        Query(alias="status"),
+    ] = None,
 ) -> KnowledgeRelationSuggestionListResponse:
     suggestions = service.list(
         focus_item_id=focus_item_id,
