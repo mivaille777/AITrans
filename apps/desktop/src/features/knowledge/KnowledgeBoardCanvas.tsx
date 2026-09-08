@@ -21,6 +21,7 @@ import {
   type WheelEvent,
 } from "react"
 
+import { knowledgeBoardCardDragType } from "./knowledge-board-dnd"
 import {
   boardEdgePath,
   clampBoardZoom,
@@ -31,7 +32,6 @@ import {
 } from "./knowledge-board-layout"
 import type { KnowledgeBoardNode, KnowledgeItem, KnowledgeItemType, KnowledgeRelation } from "./knowledge-types"
 
-const CARD_DRAG_TYPE = "application/x-aitrans-knowledge-item"
 const MIN_CARD_WIDTH = 180
 const MIN_CARD_HEIGHT = 100
 const MAX_CARD_WIDTH = 720
@@ -45,6 +45,11 @@ interface NodeInteraction {
   startNode: KnowledgeBoardNode
 }
 
+interface LocalNodeState {
+  sourceNodes: KnowledgeBoardNode[]
+  nodes: KnowledgeBoardNode[]
+}
+
 function KnowledgeNodeIcon({ type }: { type: KnowledgeItemType }) {
   const props = { size: 16, strokeWidth: 1.7 }
   if (type === "paper") return <BookOpenText {...props} />
@@ -53,8 +58,6 @@ function KnowledgeNodeIcon({ type }: { type: KnowledgeItemType }) {
   if (type === "highlight") return <Highlighter {...props} />
   return <FileText {...props} />
 }
-
-export const knowledgeBoardCardDragType = CARD_DRAG_TYPE
 
 export default function KnowledgeBoardCanvas({
   items,
@@ -80,16 +83,16 @@ export default function KnowledgeBoardCanvas({
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const interactionRef = useRef<NodeInteraction | null>(null)
   const panRef = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null)
-  const [localNodes, setLocalNodes] = useState(nodes)
+  const [localNodeState, setLocalNodeState] = useState<LocalNodeState>(() => ({
+    sourceNodes: nodes,
+    nodes,
+  }))
   const [viewport, setViewport] = useState<BoardViewport>(DEFAULT_BOARD_VIEWPORT)
   const [linkingSourceId, setLinkingSourceId] = useState<string | null>(null)
+  const localNodes = localNodeState.sourceNodes === nodes ? localNodeState.nodes : nodes
   const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
   const nodeById = useMemo(() => new Map(localNodes.map((node) => [node.item_id, node] as const)), [localNodes])
   const selectedSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds])
-
-  useEffect(() => {
-    setLocalNodes(nodes)
-  }, [nodes])
 
   useEffect(() => {
     function move(event: PointerEvent) {
@@ -97,17 +100,23 @@ export default function KnowledgeBoardCanvas({
       if (interaction) {
         const dx = (event.clientX - interaction.startClientX) / viewport.zoom
         const dy = (event.clientY - interaction.startClientY) / viewport.zoom
-        setLocalNodes((current) => current.map((node) => {
-          if (node.item_id !== interaction.itemId) return node
-          if (interaction.kind === "move") {
-            return { ...node, x: interaction.startNode.x + dx, y: interaction.startNode.y + dy }
-          }
+        setLocalNodeState((current) => {
+          const baseNodes = current.sourceNodes === nodes ? current.nodes : nodes
           return {
-            ...node,
-            width: Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, interaction.startNode.width + dx)),
-            height: Math.min(MAX_CARD_HEIGHT, Math.max(MIN_CARD_HEIGHT, interaction.startNode.height + dy)),
+            sourceNodes: nodes,
+            nodes: baseNodes.map((node) => {
+              if (node.item_id !== interaction.itemId) return node
+              if (interaction.kind === "move") {
+                return { ...node, x: interaction.startNode.x + dx, y: interaction.startNode.y + dy }
+              }
+              return {
+                ...node,
+                width: Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, interaction.startNode.width + dx)),
+                height: Math.min(MAX_CARD_HEIGHT, Math.max(MIN_CARD_HEIGHT, interaction.startNode.height + dy)),
+              }
+            }),
           }
-        }))
+        })
         return
       }
 
@@ -136,7 +145,7 @@ export default function KnowledgeBoardCanvas({
       window.removeEventListener("pointermove", move)
       window.removeEventListener("pointerup", up)
     }
-  }, [localNodes, onPersistNode, viewport.zoom])
+  }, [localNodes, nodes, onPersistNode, viewport.zoom])
 
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
@@ -222,7 +231,7 @@ export default function KnowledgeBoardCanvas({
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
-    const itemId = event.dataTransfer.getData(CARD_DRAG_TYPE)
+    const itemId = event.dataTransfer.getData(knowledgeBoardCardDragType)
     if (!itemId || nodeById.has(itemId)) return
     const bounds = canvasRef.current?.getBoundingClientRect()
     if (!bounds) return
