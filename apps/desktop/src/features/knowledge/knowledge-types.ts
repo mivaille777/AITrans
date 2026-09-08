@@ -182,6 +182,41 @@ export interface KnowledgeRelationDeleteResponse {
   deleted: boolean
 }
 
+export type KnowledgeRelationSuggestionStatus = "pending" | "accepted" | "rejected"
+
+export interface KnowledgeRelationSuggestion {
+  suggestion_id: string
+  focus_item_id: string
+  source_item_id: string
+  target_item_id: string
+  relation_type: string
+  label: string
+  rationale: string
+  confidence: number
+  evidence_item_ids: string[]
+  status: KnowledgeRelationSuggestionStatus
+  accepted_relation_id: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeRelationSuggestionGenerateInput {
+  focus_item_id: string
+  candidate_item_ids?: string[]
+  max_suggestions?: number
+}
+
+export interface KnowledgeRelationSuggestionListResponse {
+  total: number
+  suggestions: KnowledgeRelationSuggestion[]
+}
+
+export interface KnowledgeRelationSuggestionDecisionResponse {
+  suggestion: KnowledgeRelationSuggestion
+  relation: KnowledgeRelation | null
+}
+
 export interface KnowledgeBoard {
   board_id: string
   name: string
