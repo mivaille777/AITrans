@@ -11,40 +11,27 @@ function Add-Report($Text) {
     $Text | Tee-Object -FilePath $Report -Append
 }
 
+function Run-Check($Name, $ScriptPath) {
+    Add-Report ""
+    Add-Report "[$Name]"
+    if (Test-Path $ScriptPath) {
+        & $ScriptPath 2>&1 | Tee-Object -FilePath $Report -Append
+    } else {
+        Add-Report "Missing checker: $ScriptPath"
+    }
+}
+
 Add-Report "===================================="
 Add-Report "AITranslator Diagnosis Report"
 Add-Report "===================================="
 Add-Report "Time: $(Get-Date)"
 Add-Report "Root: $Root"
 
-Add-Report ""
-Add-Report "[Environment]"
-python --version 2>&1 | Tee-Object -FilePath $Report -Append
-node --version 2>&1 | Tee-Object -FilePath $Report -Append
-cargo --version 2>&1 | Tee-Object -FilePath $Report -Append
-
-Add-Report ""
-Add-Report "[Backend]"
-try {
-    python -c "from backend.main import create_app; app=create_app(); print(app.title, app.version)" 2>&1 | Tee-Object -FilePath $Report -Append
-} catch {
-    Add-Report "Backend import failed"
-}
-
-try {
-    Invoke-RestMethod "http://127.0.0.1:8766/api/health" -TimeoutSec 3 | Out-String | Add-Content $Report
-    Add-Report "Backend health OK"
-} catch {
-    Add-Report "Backend health unavailable"
-}
-
-Add-Report ""
-Add-Report "[Frontend]"
-if (Test-Path (Join-Path $Root "apps\desktop\node_modules")) {
-    Add-Report "node_modules exists"
-} else {
-    Add-Report "node_modules missing"
-}
+Run-Check "Environment" (Join-Path $PSScriptRoot "diagnostic\check_environment.ps1")
+Run-Check "Backend" (Join-Path $PSScriptRoot "diagnostic\check_backend.ps1")
+Run-Check "Frontend" (Join-Path $PSScriptRoot "diagnostic\check_frontend.ps1")
+Run-Check "Database" (Join-Path $PSScriptRoot "diagnostic\check_database.ps1")
+Run-Check "LLM" (Join-Path $PSScriptRoot "diagnostic\check_llm.ps1")
 
 Add-Report ""
 Add-Report "Report saved: $Report"
