@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { translateText } from "../../api/translation"
@@ -31,6 +31,7 @@ import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 const READER_CARD_TEXT_LIMIT = 50_000
 const READER_AGENT_TEXT_LIMIT = 12_000
 const READER_TRANSLATION_TEXT_LIMIT = 8_000
+const EMPTY_ITEMS: KnowledgeItem[] = []
 
 interface DerivedCardRequest {
   itemType: DerivedPaperCardType
@@ -51,14 +52,25 @@ interface TranslationNoteRequest {
   translatedText: string
 }
 
+interface SectionPreference {
+  paperItemId: string
+  sectionId: string
+}
+
 export function usePaperReader(
   paperItemId: string,
   library: KnowledgeLibraryController,
   workspace: TranslationWorkspaceController,
 ) {
   const queryClient = useQueryClient()
-  const [preferredSectionId, setPreferredSectionId] = useState("")
-  const items = library.itemsQuery.data?.items ?? []
+  const [sectionPreference, setSectionPreference] = useState<SectionPreference>({
+    paperItemId,
+    sectionId: "",
+  })
+  const preferredSectionId = sectionPreference.paperItemId === paperItemId
+    ? sectionPreference.sectionId
+    : ""
+  const items = library.itemsQuery.data?.items ?? EMPTY_ITEMS
   const documents = library.documentsQuery.data?.documents ?? []
   const paper = items.find((item) => item.item_id === paperItemId) ?? null
   const document = paper?.resource_document_id
@@ -89,10 +101,6 @@ export function usePaperReader(
     queryKey: queryKeys.knowledge.relations,
     queryFn: () => listKnowledgeRelations(),
   })
-
-  useEffect(() => {
-    setPreferredSectionId("")
-  }, [paperItemId])
 
   const itemById = useMemo(
     () => new Map(items.map((item) => [item.item_id, item] as const)),
@@ -225,7 +233,10 @@ export function usePaperReader(
   })
 
   function selectSection(sectionId: string) {
-    setPreferredSectionId(sectionId.trim())
+    setSectionPreference({
+      paperItemId,
+      sectionId: sectionId.trim(),
+    })
   }
 
   function attachSelectionToAgent(selectedText: string) {
