@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RuntimeDir = Join-Path $RepoRoot "runtime"
@@ -7,14 +8,20 @@ $LogFile = Join-Path $RuntimeDir "startup.log"
 function Write-StartupLog {
     param(
         [Parameter(Mandatory=$true)]
-        [string]$Message
+        [string]$Message,
+        [ValidateSet("INFO","WARN","ERROR")]
+        [string]$Level = "INFO"
     )
 
     New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $Message"
-
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
     Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    Write-Host $line
 }
 
-Export-ModuleMember -Function Write-StartupLog
+function Initialize-StartupLogging {
+    Write-StartupLog "AITranslator startup begin"
+}
+
+Export-ModuleMember -Function Write-StartupLog, Initialize-StartupLogging
