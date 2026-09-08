@@ -1,5 +1,5 @@
 import { ArrowRight, Link2, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
 import type { KnowledgeItem, KnowledgeRelationCreateInput } from "./knowledge-types"
@@ -27,16 +27,35 @@ export function KnowledgeRelationDialog({
   onClose: () => void
   onCreate: (payload: KnowledgeRelationCreateInput) => void
 }) {
+  if (!source || !target) return null
+
+  return (
+    <KnowledgeRelationDialogContent
+      key={`${source.item_id}:${target.item_id}`}
+      source={source}
+      target={target}
+      creating={creating}
+      onClose={onClose}
+      onCreate={onCreate}
+    />
+  )
+}
+
+function KnowledgeRelationDialogContent({
+  source,
+  target,
+  creating,
+  onClose,
+  onCreate,
+}: {
+  source: KnowledgeItem
+  target: KnowledgeItem
+  creating: boolean
+  onClose: () => void
+  onCreate: (payload: KnowledgeRelationCreateInput) => void
+}) {
   const [relationType, setRelationType] = useState("related_to")
   const [label, setLabel] = useState("")
-
-  useEffect(() => {
-    if (!source || !target) return
-    setRelationType("related_to")
-    setLabel("")
-  }, [source, target])
-
-  if (!source || !target) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-[2px]" role="presentation" onMouseDown={onClose}>
