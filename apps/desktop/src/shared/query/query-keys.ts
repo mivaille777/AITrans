@@ -40,6 +40,7 @@ export const queryKeys = {
     boards: ["knowledge", "boards"] as const,
     board: (boardId: string) => ["knowledge", "boards", boardId] as const,
     relations: ["knowledge", "relations"] as const,
+    relationSuggestions: (focusItemId: string, status = "pending") => ["knowledge", "relation-suggestions", focusItemId, status] as const,
     runtime: ["knowledge", "runtime"] as const,
   },
   ragModels: {
