@@ -3,11 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from backend.services.agent_knowledge_retrieval import AgentKnowledgeRetriever
 from backend.services.knowledge_graph_service import suggest_relations
 from backend.services.knowledge_graph_repository import KnowledgeGraphRepository
 
 router = APIRouter(prefix="/knowledge/canvas", tags=["knowledge-canvas"])
 repository = KnowledgeGraphRepository()
+retriever = AgentKnowledgeRetriever(repository)
 
 
 class CanvasNode(BaseModel):
@@ -32,6 +34,11 @@ class CanvasGraph(BaseModel):
 
 class CanvasAnalyzeRequest(BaseModel):
     nodes: list[CanvasNode] = Field(default_factory=list)
+
+
+class KnowledgeRetrievalRequest(BaseModel):
+    query: str
+    top_k: int = 5
 
 
 def default_graph() -> CanvasGraph:
@@ -75,3 +82,11 @@ def add_relation(edge: CanvasEdge):
 @router.post("/analyze")
 def analyze_canvas(payload: CanvasAnalyzeRequest):
     return {"edges": suggest_relations([node.model_dump() for node in payload.nodes])}
+
+
+@router.post("/retrieve")
+def retrieve_knowledge(payload: KnowledgeRetrievalRequest):
+    return {
+        "query": payload.query,
+        "results": retriever.retrieve(payload.query, payload.top_k),
+    }
