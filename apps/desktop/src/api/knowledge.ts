@@ -24,6 +24,10 @@ import type {
   KnowledgeRelationCreateInput,
   KnowledgeRelationDeleteResponse,
   KnowledgeRelationListResponse,
+  KnowledgeRelationSuggestionDecisionResponse,
+  KnowledgeRelationSuggestionGenerateInput,
+  KnowledgeRelationSuggestionListResponse,
+  KnowledgeRelationSuggestionStatus,
   KnowledgeRelationUpdateInput,
   KnowledgeRuntime,
 } from "../features/knowledge/knowledge-types"
@@ -32,6 +36,7 @@ const KNOWLEDGE_PATH = "/api/knowledge/documents"
 const KNOWLEDGE_ITEMS_PATH = "/api/knowledge/items"
 const KNOWLEDGE_BOARDS_PATH = "/api/knowledge/boards"
 const KNOWLEDGE_RELATIONS_PATH = "/api/knowledge/relations"
+const KNOWLEDGE_RELATION_SUGGESTIONS_PATH = "/api/knowledge/relation-suggestions"
 
 export function listKnowledgeDocuments(): Promise<KnowledgeDocumentListResponse> {
   return apiGet(KNOWLEDGE_PATH)
@@ -167,4 +172,36 @@ export function deleteKnowledgeRelation(
   relationId: string,
 ): Promise<KnowledgeRelationDeleteResponse> {
   return apiDelete(`${KNOWLEDGE_RELATIONS_PATH}/${encodeURIComponent(relationId)}`)
+}
+
+export function listKnowledgeRelationSuggestions(
+  focusItemId?: string,
+  status?: KnowledgeRelationSuggestionStatus,
+): Promise<KnowledgeRelationSuggestionListResponse> {
+  const params = new URLSearchParams()
+  if (focusItemId) params.set("focus_item_id", focusItemId)
+  if (status) params.set("status", status)
+  const query = params.size > 0 ? `?${params.toString()}` : ""
+  return apiGet(`${KNOWLEDGE_RELATION_SUGGESTIONS_PATH}${query}`)
+}
+
+export function generateKnowledgeRelationSuggestions(
+  payload: KnowledgeRelationSuggestionGenerateInput,
+): Promise<KnowledgeRelationSuggestionListResponse> {
+  return apiPost<KnowledgeRelationSuggestionListResponse, KnowledgeRelationSuggestionGenerateInput>(
+    `${KNOWLEDGE_RELATION_SUGGESTIONS_PATH}/generate`,
+    payload,
+  )
+}
+
+export function acceptKnowledgeRelationSuggestion(
+  suggestionId: string,
+): Promise<KnowledgeRelationSuggestionDecisionResponse> {
+  return apiPost(`${KNOWLEDGE_RELATION_SUGGESTIONS_PATH}/${encodeURIComponent(suggestionId)}/accept`, {})
+}
+
+export function rejectKnowledgeRelationSuggestion(
+  suggestionId: string,
+): Promise<KnowledgeRelationSuggestionDecisionResponse> {
+  return apiPost(`${KNOWLEDGE_RELATION_SUGGESTIONS_PATH}/${encodeURIComponent(suggestionId)}/reject`, {})
 }
