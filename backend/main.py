@@ -37,6 +37,12 @@ from backend.api.knowledge_boards import router as knowledge_boards_router
 from backend.api.knowledge_dependencies import close_rag_runtime
 from backend.api.knowledge_items import router as knowledge_items_router
 from backend.api.knowledge_preview import router as knowledge_preview_router
+from backend.api.knowledge_relation_suggestion_dependencies import (
+    close_knowledge_relation_suggestion_service,
+)
+from backend.api.knowledge_relation_suggestions import (
+    router as knowledge_relation_suggestions_router,
+)
 from backend.api.knowledge_relations import router as knowledge_relations_router
 from backend.api.knowledge_workspace_dependencies import close_knowledge_workspace_service
 from backend.api.llm_settings import router as llm_settings_router
@@ -93,6 +99,7 @@ async def lifespan(_: FastAPI):
         close_evidence_ledger_service()
         close_research_memory_service()
         close_knowledge_board_service()
+        close_knowledge_relation_suggestion_service()
         close_knowledge_workspace_service()
         close_rag_runtime()
         close_rag_model_manager()
@@ -101,7 +108,7 @@ async def lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="AITranslator API",
-        version="0.17.0",
+        version="0.18.0",
         description="Local API boundary for the AITranslator WebReBuild desktop client.",
         lifespan=lifespan,
     )
@@ -129,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_items_router)
     app.include_router(knowledge_boards_router)
     app.include_router(knowledge_relations_router)
+    app.include_router(knowledge_relation_suggestions_router)
     app.include_router(llm_settings_router)
     app.include_router(rag_models_router)
     app.include_router(agent_router)
