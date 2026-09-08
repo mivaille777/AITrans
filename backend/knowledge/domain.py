@@ -32,6 +32,12 @@ class KnowledgeRelationOrigin(str, Enum):
     RAG = "rag"
 
 
+class KnowledgeRelationSuggestionStatus(str, Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
 class ReadingStatus(str, Enum):
     UNREAD = "unread"
     READING = "reading"
@@ -50,6 +56,17 @@ KNOWN_RELATION_TYPES = frozenset(
         "cites",
         "reading_note",
         "custom",
+    }
+)
+
+AI_SUGGESTIBLE_RELATION_TYPES = frozenset(
+    {
+        "related_to",
+        "supports",
+        "contradicts",
+        "explains",
+        "extends",
+        "uses",
     }
 )
 
@@ -97,6 +114,31 @@ class KnowledgeRelation(KnowledgeDomainModel):
         return normalized
 
 
+class KnowledgeRelationSuggestion(KnowledgeDomainModel):
+    suggestion_id: str = Field(min_length=1, max_length=128)
+    focus_item_id: str = Field(min_length=1, max_length=128)
+    source_item_id: str = Field(min_length=1, max_length=128)
+    target_item_id: str = Field(min_length=1, max_length=128)
+    relation_type: str = Field(min_length=1, max_length=128)
+    label: str = Field(default="", max_length=500)
+    rationale: str = Field(default="", max_length=8_000)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    evidence_item_ids: list[str] = Field(default_factory=list, max_length=8)
+    status: KnowledgeRelationSuggestionStatus = KnowledgeRelationSuggestionStatus.PENDING
+    accepted_relation_id: str | None = Field(default=None, max_length=128)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("relation_type")
+    @classmethod
+    def normalize_relation_type(cls, value: str) -> str:
+        normalized = str(value or "").strip().casefold().replace(" ", "_")
+        if not normalized:
+            raise ValueError("relation_type must not be empty")
+        return normalized
+
+
 class KnowledgeCollection(KnowledgeDomainModel):
     collection_id: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=500)
@@ -116,6 +158,7 @@ class KnowledgeTag(KnowledgeDomainModel):
 
 
 __all__ = [
+    "AI_SUGGESTIBLE_RELATION_TYPES",
     "KNOWN_RELATION_TYPES",
     "KnowledgeCollection",
     "KnowledgeDomainModel",
@@ -123,6 +166,8 @@ __all__ = [
     "KnowledgeItemType",
     "KnowledgeRelation",
     "KnowledgeRelationOrigin",
+    "KnowledgeRelationSuggestion",
+    "KnowledgeRelationSuggestionStatus",
     "KnowledgeTag",
     "PaperMetadata",
     "ReadingStatus",
