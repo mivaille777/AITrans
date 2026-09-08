@@ -10,6 +10,7 @@ from backend.core.middleware import RequestLoggingMiddleware
 
 from backend.api.agent import router as agent_router
 from backend.api.agent_knowledge import router as agent_knowledge_router
+from backend.api.agent_routing import router as agent_routing_router
 from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
 from backend.api.browser_context import router as browser_context_router
@@ -78,6 +79,7 @@ def create_app():
         knowledge_canvas_router,
         agent_router,
         agent_knowledge_router,
+        agent_routing_router,
         agent_observability_router,
         agent_runtime_config_router,
         translation_router,
