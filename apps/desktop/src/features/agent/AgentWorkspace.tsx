@@ -23,28 +23,35 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
   const draftPrompt = navigationState?.agentDraftPrompt?.trim() ?? ""
   const autoSubmitDraft = Boolean(navigationState?.autoSubmitAgentPrompt)
   const runtime = useAgentRuntime(workspace)
+  const {
+    pending,
+    prompt,
+    setPrompt,
+    sourceText,
+    submitPrompt,
+  } = runtime
   const appliedDraftRef = useRef("")
   const submittedDraftRef = useRef("")
 
   useEffect(() => {
     if (!draftPrompt || appliedDraftRef.current === draftPrompt) return
     appliedDraftRef.current = draftPrompt
-    runtime.setPrompt(draftPrompt)
-  }, [draftPrompt, runtime.setPrompt])
+    setPrompt(draftPrompt)
+  }, [draftPrompt, setPrompt])
 
   useEffect(() => {
-    if (!autoSubmitDraft || !draftPrompt || !runtime.sourceText) return
-    if (runtime.prompt !== draftPrompt || runtime.pending) return
+    if (!autoSubmitDraft || !draftPrompt || !sourceText) return
+    if (prompt !== draftPrompt || pending) return
     if (submittedDraftRef.current === draftPrompt) return
     submittedDraftRef.current = draftPrompt
-    runtime.submitPrompt()
+    submitPrompt()
   }, [
     autoSubmitDraft,
     draftPrompt,
-    runtime.pending,
-    runtime.prompt,
-    runtime.sourceText,
-    runtime.submitPrompt,
+    pending,
+    prompt,
+    sourceText,
+    submitPrompt,
   ])
 
   return (
