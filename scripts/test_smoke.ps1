@@ -16,7 +16,7 @@ Write-Host "===================================="
 Write-Host "[1/5] Python config and logging"
 Push-Location $Root
 try {
-    python -c "from backend.config import settings; from backend.core import get_logger; print(settings.APP_ENV); get_logger('smoke')('')"
+    python -c "from backend.config import settings; from backend.core import get_logger; logger=get_logger('smoke'); logger.info('smoke logging ok'); print(settings.APP_ENV)"
 }
 finally {
     Pop-Location
