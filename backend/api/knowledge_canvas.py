@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from backend.services.agent_context_builder import AgentContextBuilder
 from backend.services.agent_knowledge_retrieval import AgentKnowledgeRetriever
 from backend.services.knowledge_graph_service import suggest_relations
 from backend.services.knowledge_graph_repository import KnowledgeGraphRepository
@@ -10,6 +11,7 @@ from backend.services.knowledge_graph_repository import KnowledgeGraphRepository
 router = APIRouter(prefix="/knowledge/canvas", tags=["knowledge-canvas"])
 repository = KnowledgeGraphRepository()
 retriever = AgentKnowledgeRetriever(repository)
+context_builder = AgentContextBuilder()
 
 
 class CanvasNode(BaseModel):
@@ -37,6 +39,11 @@ class CanvasAnalyzeRequest(BaseModel):
 
 
 class KnowledgeRetrievalRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+class AgentContextRequest(BaseModel):
     query: str
     top_k: int = 5
 
@@ -90,3 +97,9 @@ def retrieve_knowledge(payload: KnowledgeRetrievalRequest):
         "query": payload.query,
         "results": retriever.retrieve(payload.query, payload.top_k),
     }
+
+
+@router.post("/context")
+def build_agent_context(payload: AgentContextRequest):
+    evidence = retriever.retrieve(payload.query, payload.top_k)
+    return context_builder.build(payload.query, evidence)
