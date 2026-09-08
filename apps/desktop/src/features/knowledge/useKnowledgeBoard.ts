@@ -46,7 +46,7 @@ export function useKnowledgeBoard() {
     enabled: Boolean(activeBoardId),
   })
 
-  const refreshBoard = async (boardId = activeBoardId) => {
+  const refreshBoard = async (boardId: string | null = activeBoardId) => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.boards }),
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.relations }),
