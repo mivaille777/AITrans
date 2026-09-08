@@ -10,7 +10,7 @@ import {
   StickyNote,
   Trash2,
 } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
 import { EmptyState } from "../../shared/ui/EmptyState"
@@ -25,6 +25,8 @@ import type {
 } from "./knowledge-types"
 import type { KnowledgeBoardController } from "./useKnowledgeBoard"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
+
+const EMPTY_ITEMS: KnowledgeItem[] = []
 
 function TrayIcon({ type }: { type: KnowledgeItemType }) {
   const props = { size: 14, strokeWidth: 1.7 }
@@ -52,21 +54,17 @@ export default function KnowledgeBoardPanel({
   library: KnowledgeLibraryController
   board: KnowledgeBoardController
 }) {
-  const items = library.itemsQuery.data?.items ?? []
+  const items = library.itemsQuery.data?.items ?? EMPTY_ITEMS
   const boards = board.boardsQuery.data?.boards ?? []
   const snapshot = board.boardQuery.data
   const relations = board.relationsQuery.data?.relations ?? []
   const [search, setSearch] = useState("")
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
+  const [selectedItemIdsState, setSelectedItemIdsState] = useState<string[]>([])
   const [createBoardOpen, setCreateBoardOpen] = useState(false)
   const [relationPair, setRelationPair] = useState<{ source: KnowledgeItem; target: KnowledgeItem } | null>(null)
   const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
   const nodeItemIds = useMemo(() => new Set((snapshot?.nodes ?? []).map((node) => node.item_id)), [snapshot?.nodes])
-
-  useEffect(() => {
-    const valid = selectedItemIds.filter((itemId) => nodeItemIds.has(itemId))
-    if (valid.length !== selectedItemIds.length) setSelectedItemIds(valid)
-  }, [nodeItemIds, selectedItemIds])
+  const selectedItemIds = selectedItemIdsState.filter((itemId) => nodeItemIds.has(itemId))
 
   const trayItems = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase()
@@ -100,6 +98,11 @@ export default function KnowledgeBoardPanel({
     })
   }
 
+  function removeNode(itemId: string) {
+    setSelectedItemIdsState((current) => current.filter((candidate) => candidate !== itemId))
+    board.removeNodeMutation.mutate(itemId)
+  }
+
   function requestRelation(sourceItemId: string, targetItemId: string) {
     const source = itemById.get(sourceItemId)
     const target = itemById.get(targetItemId)
@@ -114,7 +117,7 @@ export default function KnowledgeBoardPanel({
   return (
     <section className="ait-surface overflow-hidden">
       <header className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-slate-950 text-white"><LayoutDashboard size={17} /></span><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Visual knowledge board</p><div className="mt-1 flex items-center gap-2"><select value={board.activeBoardId ?? ""} onChange={(event) => board.setActiveBoardId(event.target.value || null)} className="max-w-xs truncate bg-transparent text-base font-semibold text-slate-950 outline-none">{boards.map((candidate) => <option key={candidate.board_id} value={candidate.board_id}>{candidate.name}</option>)}</select><span className="text-[10px] text-slate-400">{snapshot?.nodes.length ?? 0} cards · {relationsForBoard.length} relations</span></div></div></div>
+        <div className="flex min-w-0 items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-slate-950 text-white"><LayoutDashboard size={17} /></span><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Visual knowledge board</p><div className="mt-1 flex items-center gap-2"><select value={board.activeBoardId ?? ""} onChange={(event) => { setSelectedItemIdsState([]); board.setActiveBoardId(event.target.value || null) }} className="max-w-xs truncate bg-transparent text-base font-semibold text-slate-950 outline-none">{boards.map((candidate) => <option key={candidate.board_id} value={candidate.board_id}>{candidate.name}</option>)}</select><span className="text-[10px] text-slate-400">{snapshot?.nodes.length ?? 0} cards · {relationsForBoard.length} relations</span></div></div></div>
         <div className="flex flex-wrap items-center gap-2"><Button size="sm" onClick={() => setCreateBoardOpen(true)}><Plus size={14} />New board</Button></div>
       </header>
 
@@ -134,7 +137,7 @@ export default function KnowledgeBoardPanel({
           </aside>
 
           <main className="min-w-0 bg-slate-50/60 p-3">
-            <KnowledgeBoardCanvas items={items} nodes={snapshot.nodes} relations={relations} selectedItemIds={selectedItemIds} onSelectionChange={setSelectedItemIds} onAddNode={addNode} onPersistNode={persistNode} onRemoveNode={(itemId) => board.removeNodeMutation.mutate(itemId)} onLinkRequest={requestRelation} />
+            <KnowledgeBoardCanvas items={items} nodes={snapshot.nodes} relations={relations} selectedItemIds={selectedItemIds} onSelectionChange={setSelectedItemIdsState} onAddNode={addNode} onPersistNode={persistNode} onRemoveNode={removeNode} onLinkRequest={requestRelation} />
           </main>
 
           <aside className="hidden min-h-0 border-l border-slate-100 bg-white p-3 xl:block">
@@ -144,7 +147,7 @@ export default function KnowledgeBoardPanel({
         </div>
       ) : null}
 
-      <KnowledgeBoardCreateDialog open={createBoardOpen} creating={board.createBoardMutation.isPending} onClose={() => !board.createBoardMutation.isPending && setCreateBoardOpen(false)} onCreate={(payload) => board.createBoardMutation.mutate(payload, { onSuccess: () => setCreateBoardOpen(false) })} />
+      <KnowledgeBoardCreateDialog open={createBoardOpen} creating={board.createBoardMutation.isPending} onClose={() => !board.createBoardMutation.isPending && setCreateBoardOpen(false)} onCreate={(payload) => board.createBoardMutation.mutate(payload, { onSuccess: () => { setSelectedItemIdsState([]); setCreateBoardOpen(false) } })} />
       <KnowledgeRelationDialog source={relationPair?.source ?? null} target={relationPair?.target ?? null} creating={board.createRelationMutation.isPending} onClose={() => !board.createRelationMutation.isPending && setRelationPair(null)} onCreate={(payload) => board.createRelationMutation.mutate(payload, { onSuccess: () => setRelationPair(null) })} />
     </section>
   )
