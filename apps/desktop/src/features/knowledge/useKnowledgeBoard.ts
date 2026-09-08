@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { queryKeys } from "../../shared/query/query-keys"
@@ -23,7 +23,7 @@ import type {
 
 export function useKnowledgeBoard() {
   const queryClient = useQueryClient()
-  const [activeBoardId, setActiveBoardId] = useState<string | null>(null)
+  const [preferredBoardId, setPreferredBoardId] = useState<string | null>(null)
 
   const boardsQuery = useQuery({
     queryKey: queryKeys.knowledge.boards,
@@ -34,13 +34,11 @@ export function useKnowledgeBoard() {
     queryFn: () => listKnowledgeRelations(),
   })
 
-  useEffect(() => {
-    const boards = boardsQuery.data?.boards ?? []
-    if (boards.length === 0) return
-    if (!activeBoardId || !boards.some((board) => board.board_id === activeBoardId)) {
-      setActiveBoardId(boards[0].board_id)
-    }
-  }, [activeBoardId, boardsQuery.data?.boards])
+  const boards = boardsQuery.data?.boards ?? []
+  const activeBoardId = preferredBoardId && boards.some((board) => board.board_id === preferredBoardId)
+    ? preferredBoardId
+    : boards[0]?.board_id ?? null
+  const setActiveBoardId = setPreferredBoardId
 
   const boardQuery = useQuery({
     queryKey: queryKeys.knowledge.board(activeBoardId ?? "none"),
@@ -61,7 +59,7 @@ export function useKnowledgeBoard() {
   const createBoardMutation = useMutation({
     mutationFn: (payload: KnowledgeBoardCreateInput) => createKnowledgeBoard(payload),
     onSuccess: (board) => {
-      setActiveBoardId(board.board_id)
+      setPreferredBoardId(board.board_id)
       void refreshBoard(board.board_id)
     },
   })
@@ -69,7 +67,7 @@ export function useKnowledgeBoard() {
   const deleteBoardMutation = useMutation({
     mutationFn: deleteKnowledgeBoard,
     onSuccess: (_result, boardId) => {
-      if (activeBoardId === boardId) setActiveBoardId(null)
+      if (activeBoardId === boardId) setPreferredBoardId(null)
       void refreshBoard(null)
     },
   })
