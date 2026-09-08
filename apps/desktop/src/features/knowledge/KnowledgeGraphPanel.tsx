@@ -17,7 +17,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react"
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 
 import { Badge } from "../../shared/ui/Badge"
 import { Button } from "../../shared/ui/Button"
@@ -58,51 +58,26 @@ const originLabels: Record<KnowledgeRelationOrigin, string> = {
   rag: "RAG",
 }
 
+const EMPTY_ITEMS: KnowledgeItem[] = []
+const EMPTY_RELATIONS: KnowledgeRelation[] = []
+
+interface KnowledgeGraphPanelProps {
+  library: KnowledgeLibraryController
+  board: KnowledgeBoardController
+  focusItemId: string
+  onFocusChange: (itemId: string) => void
+  onOpenItem: (item: KnowledgeItem) => void
+}
+
 export default function KnowledgeGraphPanel({
   library,
   board,
   focusItemId,
   onFocusChange,
   onOpenItem,
-}: {
-  library: KnowledgeLibraryController
-  board: KnowledgeBoardController
-  focusItemId: string
-  onFocusChange: (itemId: string) => void
-  onOpenItem: (item: KnowledgeItem) => void
-}) {
-  const items = library.itemsQuery.data?.items ?? []
-  const relations = board.relationsQuery.data?.relations ?? []
-  const [depth, setDepth] = useState<1 | 2 | 3>(1)
-  const [visibleItemTypes, setVisibleItemTypes] = useState<KnowledgeItemType[]>(ALL_KNOWLEDGE_ITEM_TYPES)
-  const [visibleOrigins, setVisibleOrigins] = useState<KnowledgeRelationOrigin[]>(ALL_KNOWLEDGE_RELATION_ORIGINS)
-  const [relationType, setRelationType] = useState("all")
-  const [selectedItemId, setSelectedItemId] = useState(focusItemId)
-  const [selectedRelationId, setSelectedRelationId] = useState("")
-
-  const resolvedFocusId = items.some((item) => item.item_id === focusItemId)
-    ? focusItemId
-    : items.find((item) => item.item_type === "paper")?.item_id ?? items[0]?.item_id ?? ""
-  const suggestions = useKnowledgeRelationSuggestions(resolvedFocusId)
-  const relationTypes = useMemo(() => localGraphRelationTypes(relations), [relations])
-  const snapshot = useMemo(() => buildLocalKnowledgeGraph(items, relations, resolvedFocusId, depth, {
-    itemTypes: visibleItemTypes,
-    relationTypes: relationType === "all" ? [] : [relationType],
-    origins: visibleOrigins,
-  }), [depth, items, relationType, relations, resolvedFocusId, visibleItemTypes, visibleOrigins])
-  const positions = useMemo(() => layoutGraph(snapshot.nodes.map((node) => ({ id: node.item.item_id, depth: node.depth }))), [snapshot.nodes])
-  const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
-  const selectedItem = itemById.get(selectedItemId) ?? snapshot.focus
-  const selectedRelation = snapshot.edges.find((edge) => edge.relation.relation_id === selectedRelationId)?.relation ?? null
-
-  useEffect(() => {
-    setSelectedItemId(resolvedFocusId)
-    setSelectedRelationId("")
-  }, [resolvedFocusId])
-
-  useEffect(() => {
-    if (relationType !== "all" && !relationTypes.includes(relationType)) setRelationType("all")
-  }, [relationType, relationTypes])
+}: KnowledgeGraphPanelProps) {
+  const items = library.itemsQuery.data?.items ?? EMPTY_ITEMS
+  const relations = board.relationsQuery.data?.relations ?? EMPTY_RELATIONS
 
   if (library.itemsQuery.isPending || board.relationsQuery.isPending) {
     return <section className="ait-surface min-h-[660px] p-7" aria-busy="true"><div className="ait-skeleton h-5 w-44 rounded-full" /><div className="ait-skeleton mt-5 h-[560px] rounded-[18px]" /></section>
@@ -112,6 +87,58 @@ export default function KnowledgeGraphPanel({
     return <section className="ait-surface min-h-[560px] p-8 text-center"><Network size={30} className="mx-auto mt-20 text-slate-300" /><h2 className="mt-4 text-lg font-semibold text-slate-900">No knowledge graph yet</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">Import a paper or create knowledge cards first. Existing Reader and Board relations will appear here automatically.</p></section>
   }
 
+  const resolvedFocusId = items.some((item) => item.item_id === focusItemId)
+    ? focusItemId
+    : items.find((item) => item.item_type === "paper")?.item_id ?? items[0].item_id
+
+  return (
+    <KnowledgeGraphContent
+      key={resolvedFocusId}
+      items={items}
+      relations={relations}
+      board={board}
+      resolvedFocusId={resolvedFocusId}
+      onFocusChange={onFocusChange}
+      onOpenItem={onOpenItem}
+    />
+  )
+}
+
+function KnowledgeGraphContent({
+  items,
+  relations,
+  board,
+  resolvedFocusId,
+  onFocusChange,
+  onOpenItem,
+}: {
+  items: KnowledgeItem[]
+  relations: KnowledgeRelation[]
+  board: KnowledgeBoardController
+  resolvedFocusId: string
+  onFocusChange: (itemId: string) => void
+  onOpenItem: (item: KnowledgeItem) => void
+}) {
+  const [depth, setDepth] = useState<1 | 2 | 3>(1)
+  const [visibleItemTypes, setVisibleItemTypes] = useState<KnowledgeItemType[]>(ALL_KNOWLEDGE_ITEM_TYPES)
+  const [visibleOrigins, setVisibleOrigins] = useState<KnowledgeRelationOrigin[]>(ALL_KNOWLEDGE_RELATION_ORIGINS)
+  const [relationType, setRelationType] = useState("all")
+  const [selectedItemId, setSelectedItemId] = useState(resolvedFocusId)
+  const [selectedRelationId, setSelectedRelationId] = useState("")
+  const suggestions = useKnowledgeRelationSuggestions(resolvedFocusId)
+  const relationTypes = useMemo(() => localGraphRelationTypes(relations), [relations])
+  const effectiveRelationType = relationType === "all" || relationTypes.includes(relationType)
+    ? relationType
+    : "all"
+  const snapshot = useMemo(() => buildLocalKnowledgeGraph(items, relations, resolvedFocusId, depth, {
+    itemTypes: visibleItemTypes,
+    relationTypes: effectiveRelationType === "all" ? [] : [effectiveRelationType],
+    origins: visibleOrigins,
+  }), [depth, effectiveRelationType, items, relations, resolvedFocusId, visibleItemTypes, visibleOrigins])
+  const positions = useMemo(() => layoutGraph(snapshot.nodes.map((node) => ({ id: node.item.item_id, depth: node.depth }))), [snapshot.nodes])
+  const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
+  const selectedItem = itemById.get(selectedItemId) ?? snapshot.focus
+  const selectedRelation = snapshot.edges.find((edge) => edge.relation.relation_id === selectedRelationId)?.relation ?? null
   const pendingSuggestionCount = suggestions.suggestionsQuery.data?.total ?? 0
 
   return (
@@ -132,7 +159,7 @@ export default function KnowledgeGraphPanel({
         <aside className="border-b border-slate-200/70 bg-slate-50/45 p-4 xl:border-b-0 xl:border-r">
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400"><Filter size={12} />Graph filters</div>
           <FilterSection label="Depth"><div className="grid grid-cols-3 gap-1 rounded-[10px] bg-slate-100 p-1">{([1, 2, 3] as const).map((value) => <button key={value} type="button" className={`rounded-[8px] py-1.5 text-[10px] font-semibold ${depth === value ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setDepth(value)}>{value}</button>)}</div></FilterSection>
-          <FilterSection label="Relation type"><select value={relationType} onChange={(event) => setRelationType(event.target.value)} className="w-full rounded-[10px] border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-600 outline-none"><option value="all">All relation types</option>{relationTypes.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></FilterSection>
+          <FilterSection label="Relation type"><select value={effectiveRelationType} onChange={(event) => setRelationType(event.target.value)} className="w-full rounded-[10px] border border-slate-200 bg-white px-2.5 py-2 text-[11px] text-slate-600 outline-none"><option value="all">All relation types</option>{relationTypes.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></FilterSection>
           <FilterSection label="Knowledge types"><div className="space-y-1">{ALL_KNOWLEDGE_ITEM_TYPES.map((type) => <FilterToggle key={type} checked={visibleItemTypes.includes(type)} label={itemTypeLabels[type]} onChange={() => setVisibleItemTypes(toggleValue(visibleItemTypes, type))} />)}</div></FilterSection>
           <FilterSection label="Origins"><div className="space-y-1">{ALL_KNOWLEDGE_RELATION_ORIGINS.map((origin) => <FilterToggle key={origin} checked={visibleOrigins.includes(origin)} label={originLabels[origin]} onChange={() => setVisibleOrigins(toggleValue(visibleOrigins, origin))} />)}</div></FilterSection>
           <div className="mt-5 rounded-[12px] border border-slate-200 bg-white p-3 text-[10px] leading-5 text-slate-500"><span className="font-semibold text-slate-700">{snapshot.nodes.length}</span> nodes · <span className="font-semibold text-slate-700">{snapshot.edges.length}</span> relations<br />Double-click a node to make it the new focus.</div>
@@ -318,13 +345,6 @@ function RelationInspector({
   onOpenItem: (item: KnowledgeItem) => void
 }) {
   const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
-  const [draftType, setDraftType] = useState("")
-  const [draftLabel, setDraftLabel] = useState("")
-
-  useEffect(() => {
-    setDraftType(selectedRelation?.relation_type ?? "")
-    setDraftLabel(selectedRelation?.label ?? "")
-  }, [selectedRelation?.relation_id, selectedRelation?.label, selectedRelation?.relation_type])
 
   if (selectedRelation) {
     const source = itemById.get(selectedRelation.source_item_id)
@@ -332,12 +352,25 @@ function RelationInspector({
     const workflowRelation = Boolean(source && typeof source.metadata.provenance === "string" && source.metadata.provenance.startsWith("paper_reader"))
     const editable = selectedRelation.origin === "manual" && !workflowRelation
     const suggestionRationale = typeof selectedRelation.metadata.rationale === "string" ? selectedRelation.metadata.rationale : ""
-    return <div><InspectorTitle icon={<Link2 size={14} />} eyebrow="Relation inspector" title={selectedRelation.label || selectedRelation.relation_type.replaceAll("_", " ")} /><div className="mt-4 space-y-3"><RelationEndpoint label="Source" item={source} onSelect={onSelectItem} /><div className="flex justify-center text-slate-300"><ArrowDownLeft size={15} className="rotate-[-45deg]" /></div><RelationEndpoint label="Target" item={target} onSelect={onSelectItem} /></div><div className="mt-5 grid grid-cols-2 gap-2"><MetaCard label="Origin" value={workflowRelation ? "Reader workflow" : originLabels[selectedRelation.origin]} /><MetaCard label="Confidence" value={selectedRelation.confidence == null ? "—" : `${Math.round(selectedRelation.confidence * 100)}%`} /></div>{selectedRelation.origin === "ai" && suggestionRationale && <div className="mt-3 rounded-[11px] border border-amber-100 bg-amber-50/50 p-2.5"><p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-amber-700">Accepted AI rationale</p><p className="mt-1 text-[10px] leading-5 text-slate-600">{suggestionRationale}</p></div>}{editable ? <div className="mt-5 space-y-3 border-t border-slate-100 pt-4"><label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Relation type<input value={draftType} onChange={(event) => setDraftType(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label><label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Label<input value={draftLabel} onChange={(event) => setDraftLabel(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label><div className="flex gap-2"><Button size="xs" variant="primary" disabled={board.updateRelationMutation.isPending || !draftType.trim()} onClick={() => board.updateRelationMutation.mutate({ relationId: selectedRelation.relation_id, payload: { relation_type: draftType.trim(), label: draftLabel.trim() } })}><Save size={11} />Save</Button><Button size="xs" variant="ghost" disabled={board.deleteRelationMutation.isPending} onClick={() => board.deleteRelationMutation.mutate(selectedRelation.relation_id)}><Trash2 size={11} />Delete</Button></div></div> : <p className="mt-5 rounded-[12px] border border-slate-200 bg-slate-50 p-3 text-[10px] leading-5 text-slate-500">This relation is provenance or reviewed system evidence. It is read-only here so the graph cannot silently rewrite how a knowledge relation was produced.</p>}</div>
+    return <div><InspectorTitle icon={<Link2 size={14} />} eyebrow="Relation inspector" title={selectedRelation.label || selectedRelation.relation_type.replaceAll("_", " ")} /><div className="mt-4 space-y-3"><RelationEndpoint label="Source" item={source} onSelect={onSelectItem} /><div className="flex justify-center text-slate-300"><ArrowDownLeft size={15} className="rotate-[-45deg]" /></div><RelationEndpoint label="Target" item={target} onSelect={onSelectItem} /></div><div className="mt-5 grid grid-cols-2 gap-2"><MetaCard label="Origin" value={workflowRelation ? "Reader workflow" : originLabels[selectedRelation.origin]} /><MetaCard label="Confidence" value={selectedRelation.confidence == null ? "—" : `${Math.round(selectedRelation.confidence * 100)}%`} /></div>{selectedRelation.origin === "ai" && suggestionRationale && <div className="mt-3 rounded-[11px] border border-amber-100 bg-amber-50/50 p-2.5"><p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-amber-700">Accepted AI rationale</p><p className="mt-1 text-[10px] leading-5 text-slate-600">{suggestionRationale}</p></div>}{editable ? <EditableRelationForm key={`${selectedRelation.relation_id}:${selectedRelation.updated_at}`} relation={selectedRelation} board={board} /> : <p className="mt-5 rounded-[12px] border border-slate-200 bg-slate-50 p-3 text-[10px] leading-5 text-slate-500">This relation is provenance or reviewed system evidence. It is read-only here so the graph cannot silently rewrite how a knowledge relation was produced.</p>}</div>
   }
 
   if (!selectedItem) return <div className="text-xs text-slate-500">Select a node or relation.</div>
   const connected = relations.filter((relation) => relation.source_item_id === selectedItem.item_id || relation.target_item_id === selectedItem.item_id)
   return <div><InspectorTitle icon={<CircleDot size={14} />} eyebrow="Knowledge object" title={selectedItem.title} /><div className="mt-3 flex flex-wrap gap-1.5"><Badge>{selectedItem.item_type}</Badge>{selectedItem.item_id === focusItemId && <Badge tone="info">focus</Badge>}</div><p className="mt-4 line-clamp-6 whitespace-pre-wrap text-xs leading-6 text-slate-500">{selectedItem.summary || "No summary yet."}</p><div className="mt-4 flex flex-wrap gap-2"><Button size="xs" disabled={selectedItem.item_id === focusItemId} onClick={() => onFocusChange(selectedItem.item_id)}><Focus size={11} />Focus graph</Button><Button size="xs" variant="ghost" onClick={() => onOpenItem(selectedItem)}><BookOpenText size={11} />Open</Button></div><section className="mt-5 border-t border-slate-100 pt-4"><div className="flex items-center justify-between"><p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Visible relations</p><span className="text-[9px] text-slate-400">{connected.length}</span></div><div className="mt-2 space-y-2">{connected.length === 0 ? <p className="rounded-[10px] border border-dashed border-slate-200 p-3 text-[10px] leading-5 text-slate-500">No relations match the current graph filters.</p> : connected.map((relation) => { const outgoing = relation.source_item_id === selectedItem.item_id; const other = itemById.get(outgoing ? relation.target_item_id : relation.source_item_id); return <button key={relation.relation_id} type="button" className="w-full rounded-[11px] border border-slate-200 bg-white p-2.5 text-left hover:border-slate-300 hover:bg-slate-50" onClick={() => onSelectRelation(relation.relation_id)}><div className="flex items-center gap-2 text-[9px] font-semibold text-slate-400">{outgoing ? <ArrowUpRight size={11} /> : <ArrowDownLeft size={11} />}{relation.relation_type.replaceAll("_", " ")} · {originLabels[relation.origin]}</div><p className="mt-1 truncate text-[11px] font-semibold text-slate-700">{other?.title ?? "Missing knowledge object"}</p></button> })}</div></section></div>
+}
+
+function EditableRelationForm({ relation, board }: { relation: KnowledgeRelation; board: KnowledgeBoardController }) {
+  const [draftType, setDraftType] = useState(relation.relation_type)
+  const [draftLabel, setDraftLabel] = useState(relation.label)
+
+  return (
+    <div className="mt-5 space-y-3 border-t border-slate-100 pt-4">
+      <label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Relation type<input value={draftType} onChange={(event) => setDraftType(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label>
+      <label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Label<input value={draftLabel} onChange={(event) => setDraftLabel(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label>
+      <div className="flex gap-2"><Button size="xs" variant="primary" disabled={board.updateRelationMutation.isPending || !draftType.trim()} onClick={() => board.updateRelationMutation.mutate({ relationId: relation.relation_id, payload: { relation_type: draftType.trim(), label: draftLabel.trim() } })}><Save size={11} />Save</Button><Button size="xs" variant="ghost" disabled={board.deleteRelationMutation.isPending} onClick={() => board.deleteRelationMutation.mutate(relation.relation_id)}><Trash2 size={11} />Delete</Button></div>
+    </div>
+  )
 }
 
 function FilterSection({ label, children }: { label: string; children: ReactNode }) {
