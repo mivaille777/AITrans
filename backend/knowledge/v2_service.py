@@ -22,31 +22,32 @@ class KnowledgeV2Service:
         return datetime.now(timezone.utc).isoformat()
 
     def create_card(self, *, card_type: str, title: str, summary: str = "", content: dict[str, Any] | None = None, confidence: float = 0.0) -> dict[str, Any]:
-        return {
+        now = self._now()
+        return self.repository.create_card({
             "id": self._id("card"),
             "type": card_type,
             "title": title.strip(),
             "summary": summary,
             "content": content or {},
             "confidence": confidence,
-            "created_at": self._now(),
-            "updated_at": self._now(),
-        }
+            "created_at": now,
+            "updated_at": now,
+        })
 
     def list_cards(self) -> list[dict[str, Any]]:
-        return []
+        return self.repository.list_cards()
 
     def get_card(self, card_id: str) -> dict[str, Any] | None:
-        return None
+        return self.repository.get_card(card_id)
 
     def get_graph(self) -> dict[str, list[Any]]:
-        return {"nodes": [], "edges": []}
+        return self.repository.get_graph()
 
     def list_agent_events(self) -> list[dict[str, Any]]:
-        return []
+        return self.repository.list_agent_events()
 
     def record_agent_event(self, *, agent_name: str, action: str, target_id: str, input_data: dict[str, Any] | None = None, output_data: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {
+        return self.repository.record_agent_event({
             "id": self._id("event"),
             "agent_name": agent_name,
             "action": action,
@@ -54,7 +55,7 @@ class KnowledgeV2Service:
             "input": input_data or {},
             "output": output_data or {},
             "created_at": self._now(),
-        }
+        })
 
 
 __all__ = ["KnowledgeV2Service"]
