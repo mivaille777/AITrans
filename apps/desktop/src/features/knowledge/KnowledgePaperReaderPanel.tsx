@@ -13,7 +13,7 @@ import {
   Sparkles,
   StickyNote,
 } from "lucide-react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { desktop } from "../../desktop"
@@ -34,17 +34,23 @@ interface TextSelectionState {
   top: number
 }
 
-export default function KnowledgePaperReaderPanel({
-  paperItemId,
-  library,
-  workspace,
-  onBack,
-}: {
+interface KnowledgePaperReaderPanelProps {
   paperItemId: string
   library: KnowledgeLibraryController
   workspace: TranslationWorkspaceController
   onBack: () => void
-}) {
+}
+
+export default function KnowledgePaperReaderPanel(props: KnowledgePaperReaderPanelProps) {
+  return <KnowledgePaperReaderContent key={props.paperItemId} {...props} />
+}
+
+function KnowledgePaperReaderContent({
+  paperItemId,
+  library,
+  workspace,
+  onBack,
+}: KnowledgePaperReaderPanelProps) {
   const navigate = useNavigate()
   const reader = usePaperReader(paperItemId, library, workspace)
   const articleRef = useRef<HTMLDivElement | null>(null)
@@ -55,12 +61,6 @@ export default function KnowledgePaperReaderPanel({
   const [openError, setOpenError] = useState("")
 
   const { paper, document, sectionQuery } = reader
-
-  useEffect(() => {
-    setReaderMode("text")
-    setAiQuestion("")
-    setSelection(null)
-  }, [paperItemId])
 
   function captureSelection() {
     window.setTimeout(() => {
@@ -297,11 +297,6 @@ function OverviewInspector({ paper, document, sectionCount }: { paper: Knowledge
 }
 
 function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> }) {
-  const [draft, setDraft] = useState(reader.readingNote?.summary ?? "")
-  useEffect(() => {
-    setDraft(reader.readingNote?.summary ?? "")
-  }, [reader.readingNote?.item_id, reader.readingNote?.summary])
-
   const derived = reader.linked.filter(({ relation, item }) => (
     relation.relation_type !== "reading_note"
     && (item.item_type === "note" || item.item_type === "highlight" || item.item_type === "concept")
@@ -319,18 +314,11 @@ function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> 
           )}
         </div>
         {reader.readingNote ? (
-          <div className="mt-3 rounded-[13px] border border-slate-200 bg-white p-3">
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              className="min-h-36 w-full resize-y bg-transparent text-xs leading-6 text-slate-700 outline-none placeholder:text-slate-400"
-              placeholder="Write your evolving understanding, questions, and synthesis for this paper…"
-            />
-            <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
-              <span className="text-[9px] text-slate-400">Persistent paper-level note</span>
-              <Button size="xs" disabled={reader.updateReadingNoteMutation.isPending || draft === reader.readingNote.summary} onClick={() => reader.updateReadingNoteMutation.mutate(draft)}><Save size={11} />{reader.updateReadingNoteMutation.isPending ? "Saving…" : "Save"}</Button>
-            </div>
-          </div>
+          <ReadingNoteEditor
+            key={`${reader.readingNote.item_id}:${reader.readingNote.updated_at}`}
+            reader={reader}
+            note={reader.readingNote}
+          />
         ) : (
           <p className="mt-2 rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Create one persistent reading note for this paper. Selection notes remain separate derived cards.</p>
         )}
@@ -343,6 +331,31 @@ function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> 
           {derived.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in Text mode to create highlights, notes, or concept cards.</p> : derived.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty note."}</p></div>)}
         </div>
       </section>
+    </div>
+  )
+}
+
+function ReadingNoteEditor({
+  reader,
+  note,
+}: {
+  reader: ReturnType<typeof usePaperReader>
+  note: KnowledgeItem
+}) {
+  const [draft, setDraft] = useState(note.summary)
+
+  return (
+    <div className="mt-3 rounded-[13px] border border-slate-200 bg-white p-3">
+      <textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        className="min-h-36 w-full resize-y bg-transparent text-xs leading-6 text-slate-700 outline-none placeholder:text-slate-400"
+        placeholder="Write your evolving understanding, questions, and synthesis for this paper…"
+      />
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+        <span className="text-[9px] text-slate-400">Persistent paper-level note</span>
+        <Button size="xs" disabled={reader.updateReadingNoteMutation.isPending || draft === note.summary} onClick={() => reader.updateReadingNoteMutation.mutate(draft)}><Save size={11} />{reader.updateReadingNoteMutation.isPending ? "Saving…" : "Save"}</Button>
+      </div>
     </div>
   )
 }
