@@ -18,6 +18,8 @@ import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 type CardFilter = "all" | Extract<KnowledgeItemType, "paper" | "note" | "concept" | "highlight" | "document">
 
 const filters: CardFilter[] = ["all", "paper", "note", "concept", "highlight", "document"]
+const EMPTY_DOCUMENTS: KnowledgeDocument[] = []
+const EMPTY_ITEMS: KnowledgeItem[] = []
 
 export default function KnowledgeLibraryPanel({
   library,
@@ -39,8 +41,8 @@ export default function KnowledgeLibraryPanel({
     reindexMutation,
   } = library
   const [searchParams, setSearchParams] = useSearchParams()
-  const documents = documentsQuery.data?.documents ?? []
-  const items = itemsQuery.data?.items ?? []
+  const documents = documentsQuery.data?.documents ?? EMPTY_DOCUMENTS
+  const items = itemsQuery.data?.items ?? EMPTY_ITEMS
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<CardFilter>("all")
   const [importOpen, setImportOpen] = useState(false)
