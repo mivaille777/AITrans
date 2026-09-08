@@ -1,5 +1,5 @@
 import { LayoutDashboard, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
 import type { KnowledgeBoardCreateInput } from "./knowledge-types"
@@ -15,16 +15,28 @@ export function KnowledgeBoardCreateDialog({
   onClose: () => void
   onCreate: (payload: KnowledgeBoardCreateInput) => void
 }) {
+  if (!open) return null
+
+  return (
+    <KnowledgeBoardCreateDialogContent
+      creating={creating}
+      onClose={onClose}
+      onCreate={onCreate}
+    />
+  )
+}
+
+function KnowledgeBoardCreateDialogContent({
+  creating,
+  onClose,
+  onCreate,
+}: {
+  creating: boolean
+  onClose: () => void
+  onCreate: (payload: KnowledgeBoardCreateInput) => void
+}) {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-
-  useEffect(() => {
-    if (!open) return
-    setName("")
-    setDescription("")
-  }, [open])
-
-  if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-[2px]" role="presentation" onMouseDown={onClose}>
