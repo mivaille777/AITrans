@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.middleware import RequestLoggingMiddleware
 
-# Existing application routers
 from backend.api.agent import router as agent_router
 from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
@@ -34,9 +33,6 @@ from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
-
-# Knowledge 2.0
-from backend.api.knowledge_v2 import router as knowledge_v2_router
 
 DEV_ORIGINS = [
     "http://localhost:5173",
@@ -107,7 +103,6 @@ def create_app():
         companion_router,
         companion_stream_router,
         conversations_router,
-        knowledge_v2_router,
     ]:
         app.include_router(router)
 
