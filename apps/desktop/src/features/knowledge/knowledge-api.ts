@@ -1,4 +1,5 @@
 export {
+  acceptKnowledgeRelationSuggestion,
   addKnowledgeDocument,
   createKnowledgeBoard,
   createKnowledgeItem,
@@ -7,6 +8,7 @@ export {
   deleteKnowledgeDocument,
   deleteKnowledgeItem,
   deleteKnowledgeRelation,
+  generateKnowledgeRelationSuggestions,
   getKnowledgeBoard,
   getKnowledgeDocument,
   getKnowledgeDocumentOutline,
@@ -19,7 +21,9 @@ export {
   listKnowledgeDocuments,
   listKnowledgeItems,
   listKnowledgeRelations,
+  listKnowledgeRelationSuggestions,
   reindexKnowledgeDocument,
+  rejectKnowledgeRelationSuggestion,
   removeKnowledgeBoardNode,
   updateKnowledgeItem,
   updateKnowledgeRelation,
