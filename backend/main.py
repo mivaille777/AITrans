@@ -20,6 +20,7 @@ from backend.api.evidence_review import router as evidence_review_router
 from backend.api.health import router as health_router
 from backend.api.knowledge import router as knowledge_router
 from backend.api.knowledge_boards import router as knowledge_boards_router
+from backend.api.knowledge_canvas import router as knowledge_canvas_router
 from backend.api.knowledge_items import router as knowledge_items_router
 from backend.api.knowledge_preview import router as knowledge_preview_router
 from backend.api.knowledge_relation_suggestions import router as knowledge_relation_suggestions_router
@@ -90,6 +91,7 @@ def create_app():
         evidence_ledger_router,
         evidence_review_router,
         knowledge_router,
+        knowledge_canvas_router,
         knowledge_preview_router,
         knowledge_items_router,
         knowledge_boards_router,
