@@ -2,6 +2,7 @@ import { ServerOff } from "lucide-react"
 
 import { EmptyState } from "../../shared/ui/EmptyState"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
+import KnowledgeCanvas from "./KnowledgeCanvas"
 import KnowledgeWorkspacePanel from "./KnowledgeWorkspacePanel"
 import { useKnowledgeBoard } from "./useKnowledgeBoard"
 import { useKnowledgeLibrary } from "./useKnowledgeLibrary"
@@ -37,5 +38,10 @@ export default function KnowledgeRoute({
 function ConnectedKnowledgeWorkspace({ workspace }: { workspace: TranslationWorkspaceController }) {
   const library = useKnowledgeLibrary()
   const board = useKnowledgeBoard()
-  return <KnowledgeWorkspacePanel library={library} board={board} workspace={workspace} />
+  return (
+    <div className="space-y-5">
+      <KnowledgeCanvas />
+      <KnowledgeWorkspacePanel library={library} board={board} workspace={workspace} />
+    </div>
+  )
 }
