@@ -14,7 +14,8 @@ import { useMemo, useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
 import { EmptyState } from "../../shared/ui/EmptyState"
-import KnowledgeBoardCanvas, { knowledgeBoardCardDragType } from "./KnowledgeBoardCanvas"
+import { knowledgeBoardCardDragType } from "./knowledge-board-dnd"
+import KnowledgeBoardCanvas from "./KnowledgeBoardCanvas"
 import { KnowledgeBoardCreateDialog } from "./KnowledgeBoardCreateDialog"
 import { KnowledgeRelationDialog } from "./KnowledgeRelationDialog"
 import type {
