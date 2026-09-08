@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.middleware import RequestLoggingMiddleware
 
 from backend.api.agent import router as agent_router
+from backend.api.agent_knowledge import router as agent_knowledge_router
 from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
 from backend.api.browser_context import router as browser_context_router
@@ -61,18 +62,11 @@ async def lifespan(_: FastAPI):
 
 
 def create_app():
-    app = FastAPI(
-        title="AITranslator API",
-        version="0.18.0",
-        description="Local API boundary for the AITranslator WebReBuild desktop client.",
-        lifespan=lifespan,
-    )
-
+    app = FastAPI(title="AITranslator API", version="0.18.0")
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=get_dev_origins(),
-        allow_origin_regex=r"^https?://(localhost|127\\.0\\.1)(:\\d+)?$",
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
@@ -80,6 +74,12 @@ def create_app():
 
     for router in [
         health_router,
+        knowledge_router,
+        knowledge_canvas_router,
+        agent_router,
+        agent_knowledge_router,
+        agent_observability_router,
+        agent_runtime_config_router,
         translation_router,
         translation_cascade_router,
         browser_context_router,
@@ -90,8 +90,6 @@ def create_app():
         research_memory_router,
         evidence_ledger_router,
         evidence_review_router,
-        knowledge_router,
-        knowledge_canvas_router,
         knowledge_preview_router,
         knowledge_items_router,
         knowledge_boards_router,
@@ -99,9 +97,6 @@ def create_app():
         knowledge_relation_suggestions_router,
         llm_settings_router,
         rag_models_router,
-        agent_router,
-        agent_observability_router,
-        agent_runtime_config_router,
         companion_router,
         companion_stream_router,
         conversations_router,
@@ -116,9 +111,12 @@ app = create_app()
 
 def main():
     import uvicorn
-    host = os.getenv("AITRANS_API_HOST", DEFAULT_API_HOST)
-    port = int(os.getenv("AITRANS_API_PORT", str(DEFAULT_API_PORT)))
-    uvicorn.run("backend.main:app", host=host, port=port, reload=False)
+    uvicorn.run(
+        "backend.main:app",
+        host=os.getenv("AITRANS_API_HOST", DEFAULT_API_HOST),
+        port=int(os.getenv("AITRANS_API_PORT", str(DEFAULT_API_PORT))),
+        reload=False,
+    )
 
 
 if __name__ == "__main__":
