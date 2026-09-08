@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.core.middleware import RequestLoggingMiddleware
+
 from backend.api.agent import router as agent_router
 from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_observability_dependencies import close_agent_trace_store_service
@@ -37,12 +39,8 @@ from backend.api.knowledge_boards import router as knowledge_boards_router
 from backend.api.knowledge_dependencies import close_rag_runtime
 from backend.api.knowledge_items import router as knowledge_items_router
 from backend.api.knowledge_preview import router as knowledge_preview_router
-from backend.api.knowledge_relation_suggestion_dependencies import (
-    close_knowledge_relation_suggestion_service,
-)
-from backend.api.knowledge_relation_suggestions import (
-    router as knowledge_relation_suggestions_router,
-)
+from backend.api.knowledge_relation_suggestion_dependencies import close_knowledge_relation_suggestion_service
+from backend.api.knowledge_relation_suggestions import router as knowledge_relation_suggestions_router
 from backend.api.knowledge_relations import router as knowledge_relations_router
 from backend.api.knowledge_workspace_dependencies import close_knowledge_workspace_service
 from backend.api.llm_settings import router as llm_settings_router
@@ -69,9 +67,7 @@ DEFAULT_API_HOST = "127.0.0.1"
 DEFAULT_API_PORT = 8766
 
 
-def get_dev_origins() -> list[str]:
-    """Return the built-in origins plus an optional local frontend origin."""
-
+def get_dev_origins():
     origins = list(DEV_ORIGINS)
     configured_origin = os.getenv("AITRANS_FRONTEND_ORIGIN", "").strip().rstrip("/")
     if configured_origin and configured_origin not in origins:
@@ -105,21 +101,25 @@ async def lifespan(_: FastAPI):
         close_rag_model_manager()
 
 
-def create_app() -> FastAPI:
+def create_app():
     app = FastAPI(
         title="AITranslator API",
         version="0.18.0",
         description="Local API boundary for the AITranslator WebReBuild desktop client.",
         lifespan=lifespan,
     )
+
+    app.add_middleware(RequestLoggingMiddleware)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=get_dev_origins(),
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_origin_regex=r"^https?://(localhost|127\\.0\\.1)(:\\d+)?$",
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
     app.include_router(health_router)
     app.include_router(translation_router)
     app.include_router(translation_cascade_router)
@@ -151,9 +151,8 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
-def main() -> None:
+def main():
     import uvicorn
-
     host = os.getenv("AITRANS_API_HOST", DEFAULT_API_HOST)
     port = int(os.getenv("AITRANS_API_PORT", str(DEFAULT_API_PORT)))
     uvicorn.run("backend.main:app", host=host, port=port, reload=False)
