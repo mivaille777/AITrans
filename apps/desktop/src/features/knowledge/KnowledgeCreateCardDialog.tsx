@@ -1,5 +1,5 @@
 import { Highlighter, Lightbulb, Plus, StickyNote, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
 import type { KnowledgeItemCreateInput } from "./knowledge-types"
@@ -14,18 +14,29 @@ const choices: Array<{ type: CreatableType; label: string; icon: typeof StickyNo
 ]
 
 export function KnowledgeCreateCardDialog({ open, creating, onClose, onCreate }: { open: boolean; creating: boolean; onClose: () => void; onCreate: (payload: KnowledgeItemCreateInput) => void }) {
+  if (!open) return null
+
+  return (
+    <KnowledgeCreateCardDialogContent
+      creating={creating}
+      onClose={onClose}
+      onCreate={onCreate}
+    />
+  )
+}
+
+function KnowledgeCreateCardDialogContent({
+  creating,
+  onClose,
+  onCreate,
+}: {
+  creating: boolean
+  onClose: () => void
+  onCreate: (payload: KnowledgeItemCreateInput) => void
+}) {
   const [type, setType] = useState<CreatableType>("note")
   const [title, setTitle] = useState("")
   const [summary, setSummary] = useState("")
-
-  useEffect(() => {
-    if (!open) return
-    setType("note")
-    setTitle("")
-    setSummary("")
-  }, [open])
-
-  if (!open) return null
   const canCreate = title.trim().length > 0 && !creating
 
   return (
