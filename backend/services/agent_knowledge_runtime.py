@@ -15,17 +15,13 @@ class AgentKnowledgeContext:
 
 
 class AgentKnowledgeRuntime:
-    """Bridge between Agent Runtime and Knowledge Runtime.
-
-    Keeps knowledge retrieval independent from execution while providing a
-    stable context injection boundary for Planner/Reader/Translation agents.
-    """
+    """Bridge between Agent Runtime and Knowledge Runtime."""
 
     def __init__(self, repository: KnowledgeGraphRepository | None = None):
         self.builder = AgentContextBuilder(repository)
 
     def build_context(self, query: str, top_k: int = 5) -> AgentKnowledgeContext:
-        payload = self.builder.build(query, top_k)
+        payload = self.builder.build(query, top_k=top_k)
         return AgentKnowledgeContext(
             query=query,
             context=payload.get("context", ""),
