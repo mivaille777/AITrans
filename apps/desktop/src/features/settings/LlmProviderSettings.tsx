@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, Save, ServerCog, ShieldCheck } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 
 import {
   getLlmSettings,
@@ -44,25 +44,45 @@ function errorMessage(error: unknown): string | null {
 }
 
 export function LlmProviderSettings() {
-  const queryClient = useQueryClient()
   const settingsQuery = useQuery({ queryKey: QUERY_KEY, queryFn: getLlmSettings })
-  const [draft, setDraft] = useState<Draft | null>(null)
+
+  if (settingsQuery.isPending) {
+    return <section className="ait-surface p-6 lg:p-7"><div className="ait-skeleton h-44 rounded-[17px]" /></section>
+  }
+
+  if (settingsQuery.isError || !settingsQuery.data) {
+    return (
+      <section className="ait-surface p-6 lg:p-7">
+        <p className="text-sm text-slate-700">Cloud LLM settings are unavailable.</p>
+        <Button className="mt-3" size="xs" onClick={() => void settingsQuery.refetch()}>Retry</Button>
+      </section>
+    )
+  }
+
+  const settings = settingsQuery.data
+  return (
+    <LlmProviderSettingsForm
+      key={`${settings.provider}:${settings.model}:${settings.base_url}`}
+      settings={settings}
+    />
+  )
+}
+
+function LlmProviderSettingsForm({ settings }: { settings: LlmSettings }) {
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState<Draft>(() => draftFrom(settings))
   const [showKey, setShowKey] = useState(false)
   const desktopVaultAvailable = hasTauriCredentialVault()
 
   const credentialQuery = useQuery({
-    queryKey: ["settings", "llm", "credential", draft?.provider],
-    queryFn: () => getLlmCredentialStatus(draft!.provider),
-    enabled: desktopVaultAvailable && Boolean(draft),
+    queryKey: ["settings", "llm", "credential", draft.provider],
+    queryFn: () => getLlmCredentialStatus(draft.provider),
+    enabled: desktopVaultAvailable,
   })
-
-  useEffect(() => {
-    if (settingsQuery.data) setDraft(draftFrom(settingsQuery.data))
-  }, [settingsQuery.data])
 
   const mutation = useMutation({
     mutationFn: async ({ draft: current, clearApiKey }: SaveRequest) => {
-      const settings = await updateLlmSettings({
+      const nextSettings = await updateLlmSettings({
         provider: current.provider,
         model: current.model.trim(),
         base_url: current.baseUrl.trim(),
@@ -76,34 +96,21 @@ export function LlmProviderSettings() {
         await saveLlmCredential(current.provider, current.apiKey.trim())
       }
 
-      return settings
+      return nextSettings
     },
-    onSuccess: (settings) => {
-      setDraft(draftFrom(settings))
+    onSuccess: (nextSettings) => {
+      setDraft(draftFrom(nextSettings))
       setShowKey(false)
-      queryClient.setQueryData(QUERY_KEY, settings)
+      queryClient.setQueryData(QUERY_KEY, nextSettings)
       void queryClient.invalidateQueries({ queryKey: ["settings", "llm", "credential"] })
       void queryClient.invalidateQueries({ queryKey: ["agent", "runtime", "config"] })
     },
   })
 
   const selected = useMemo(
-    () => settingsQuery.data?.providers.find((provider) => provider.id === draft?.provider),
-    [draft?.provider, settingsQuery.data?.providers],
+    () => settings.providers.find((provider) => provider.id === draft.provider),
+    [draft.provider, settings.providers],
   )
-
-  if (settingsQuery.isPending || !draft) {
-    return <section className="ait-surface p-6 lg:p-7"><div className="ait-skeleton h-44 rounded-[17px]" /></section>
-  }
-
-  if (settingsQuery.isError) {
-    return (
-      <section className="ait-surface p-6 lg:p-7">
-        <p className="text-sm text-slate-700">Cloud LLM settings are unavailable.</p>
-        <Button className="mt-3" size="xs" onClick={() => void settingsQuery.refetch()}>Retry</Button>
-      </section>
-    )
-  }
 
   const configured = desktopVaultAvailable && Boolean(credentialQuery.data?.configured)
   const busy = mutation.isPending
@@ -117,19 +124,18 @@ export function LlmProviderSettings() {
         : "No API key saved"
 
   function chooseProvider(provider: LlmProviderId) {
-    const next = settingsQuery.data?.providers.find((option) => option.id === provider)
+    const next = settings.providers.find((option) => option.id === provider)
     if (!next) return
-    setDraft((current) => current ? {
+    setDraft((current) => ({
       ...current,
       provider,
       model: next.default_model || current.model,
       baseUrl: next.default_base_url || current.baseUrl,
       apiKey: "",
-    } : current)
+    }))
   }
 
   function save(clearApiKey = false) {
-    if (!draft) return
     mutation.mutate({ draft, clearApiKey })
   }
 
@@ -153,7 +159,7 @@ export function LlmProviderSettings() {
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Choose provider</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {settingsQuery.data.providers.map((provider) => {
+            {settings.providers.map((provider) => {
               const active = draft.provider === provider.id
               return (
                 <button key={provider.id} type="button" disabled={busy} onClick={() => chooseProvider(provider.id)} className={`rounded-[15px] border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${active ? "border-cyan-500 bg-cyan-50/70 shadow-[0_8px_20px_rgba(8,145,178,.10)]" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}>
