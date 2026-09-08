@@ -2,20 +2,37 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.services.agent_knowledge_retrieval import AgentKnowledgeRetriever
+
 
 class AgentContextBuilder:
-    """Build grounded agent context from graph retrieval evidence.
+    """Build grounded agent context from knowledge retrieval evidence.
 
-    Keeps retrieved knowledge separate from the generation layer so future
-    LLM providers, rerankers and citation systems can be plugged in.
+    The builder owns the transformation from retrieved evidence into an
+    agent-consumable context package. Retrieval dependencies are injected so
+    the runtime layer can compose Knowledge Graph, RAG and future rerankers.
     """
 
-    def build(self, query: str, evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    def __init__(self, repository: Any | None = None):
+        self.retriever = AgentKnowledgeRetriever(repository) if repository else None
+
+    def build(
+        self,
+        query: str,
+        top_k: int = 5,
+        evidence: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if evidence is None:
+            if self.retriever is not None:
+                evidence = self.retriever.retrieve(query, top_k=top_k)
+            else:
+                evidence = []
+
         citations = [
             {
                 "id": item.get("id", ""),
                 "title": item.get("title", ""),
-                "source_type": item.get("type", ""),
+                "source_type": item.get("type", item.get("source_type", "")),
                 "score": item.get("score", 0.0),
             }
             for item in evidence
