@@ -2,16 +2,20 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   BookOpenText,
+  CheckCircle2,
   CircleDot,
   Filter,
   Focus,
   Highlighter,
   Lightbulb,
   Link2,
+  LoaderCircle,
   Network,
   Save,
+  Sparkles,
   StickyNote,
   Trash2,
+  XCircle,
 } from "lucide-react"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 
@@ -28,9 +32,14 @@ import type {
   KnowledgeItemType,
   KnowledgeRelation,
   KnowledgeRelationOrigin,
+  KnowledgeRelationSuggestion,
 } from "./knowledge-types"
 import type { KnowledgeBoardController } from "./useKnowledgeBoard"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
+import {
+  useKnowledgeRelationSuggestions,
+  type KnowledgeRelationSuggestionController,
+} from "./useKnowledgeRelationSuggestions"
 
 const itemTypeLabels: Record<KnowledgeItemType, string> = {
   paper: "Papers",
@@ -74,6 +83,7 @@ export default function KnowledgeGraphPanel({
   const resolvedFocusId = items.some((item) => item.item_id === focusItemId)
     ? focusItemId
     : items.find((item) => item.item_type === "paper")?.item_id ?? items[0]?.item_id ?? ""
+  const suggestions = useKnowledgeRelationSuggestions(resolvedFocusId)
   const relationTypes = useMemo(() => localGraphRelationTypes(relations), [relations])
   const snapshot = useMemo(() => buildLocalKnowledgeGraph(items, relations, resolvedFocusId, depth, {
     itemTypes: visibleItemTypes,
@@ -102,18 +112,23 @@ export default function KnowledgeGraphPanel({
     return <section className="ait-surface min-h-[560px] p-8 text-center"><Network size={30} className="mx-auto mt-20 text-slate-300" /><h2 className="mt-4 text-lg font-semibold text-slate-900">No knowledge graph yet</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">Import a paper or create knowledge cards first. Existing Reader and Board relations will appear here automatically.</p></section>
   }
 
+  const pendingSuggestionCount = suggestions.suggestionsQuery.data?.total ?? 0
+
   return (
     <section className="ait-surface overflow-hidden">
       <header className="flex flex-col gap-4 border-b border-slate-200/70 px-5 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-6">
         <div>
           <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400"><Network size={12} />Local knowledge graph</p>
           <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-950">Explore relations around one knowledge object</h2>
-          <p className="mt-1.5 text-xs leading-5 text-slate-500">The graph reads the canonical relation store directly. Board placement is not required.</p>
+          <p className="mt-1.5 text-xs leading-5 text-slate-500">Canonical relations stay user-governed. AI proposals remain outside the graph until you accept them.</p>
         </div>
-        <label className="min-w-0 lg:w-80"><span className="sr-only">Graph focus</span><select value={resolvedFocusId} onChange={(event) => onFocusChange(event.target.value)} className="w-full rounded-[13px] border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-cyan-300">{items.slice().sort((a, b) => a.title.localeCompare(b.title)).map((item) => <option key={item.item_id} value={item.item_id}>{item.item_type} · {item.title}</option>)}</select></label>
+        <div className="flex min-w-0 flex-col gap-2 lg:w-80">
+          <label className="min-w-0"><span className="sr-only">Graph focus</span><select value={resolvedFocusId} onChange={(event) => onFocusChange(event.target.value)} className="w-full rounded-[13px] border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-cyan-300">{items.slice().sort((a, b) => a.title.localeCompare(b.title)).map((item) => <option key={item.item_id} value={item.item_id}>{item.item_type} · {item.title}</option>)}</select></label>
+          {pendingSuggestionCount > 0 && <p className="flex items-center justify-end gap-1.5 text-[10px] font-medium text-amber-700"><Sparkles size={11} />{pendingSuggestionCount} AI relation {pendingSuggestionCount === 1 ? "proposal" : "proposals"} awaiting review</p>}
+        </div>
       </header>
 
-      <div className="grid min-h-[680px] xl:h-[calc(100vh-220px)] xl:min-h-[680px] xl:grid-cols-[230px_minmax(0,1fr)_310px] xl:grid-rows-[minmax(0,1fr)]">
+      <div className="grid min-h-[680px] xl:h-[calc(100vh-220px)] xl:min-h-[680px] xl:grid-cols-[230px_minmax(0,1fr)_330px] xl:grid-rows-[minmax(0,1fr)]">
         <aside className="border-b border-slate-200/70 bg-slate-50/45 p-4 xl:border-b-0 xl:border-r">
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400"><Filter size={12} />Graph filters</div>
           <FilterSection label="Depth"><div className="grid grid-cols-3 gap-1 rounded-[10px] bg-slate-100 p-1">{([1, 2, 3] as const).map((value) => <button key={value} type="button" className={`rounded-[8px] py-1.5 text-[10px] font-semibold ${depth === value ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setDepth(value)}>{value}</button>)}</div></FilterSection>
@@ -145,21 +160,137 @@ export default function KnowledgeGraphPanel({
         </main>
 
         <aside className="ait-scroll-panel min-h-0 overflow-y-auto bg-white p-4">
-          <RelationInspector
+          <SuggestionInbox
             focusItemId={resolvedFocusId}
-            selectedItem={selectedItem ?? null}
-            selectedRelation={selectedRelation}
             items={items}
-            relations={snapshot.edges.map((edge) => edge.relation)}
-            board={board}
+            controller={suggestions}
             onSelectItem={(itemId) => { setSelectedItemId(itemId); setSelectedRelationId("") }}
-            onSelectRelation={(relationId) => { setSelectedRelationId(relationId); setSelectedItemId("") }}
-            onFocusChange={onFocusChange}
-            onOpenItem={onOpenItem}
           />
+          <div className="mt-5 border-t border-slate-100 pt-5">
+            <RelationInspector
+              focusItemId={resolvedFocusId}
+              selectedItem={selectedItem ?? null}
+              selectedRelation={selectedRelation}
+              items={items}
+              relations={snapshot.edges.map((edge) => edge.relation)}
+              board={board}
+              onSelectItem={(itemId) => { setSelectedItemId(itemId); setSelectedRelationId("") }}
+              onSelectRelation={(relationId) => { setSelectedRelationId(relationId); setSelectedItemId("") }}
+              onFocusChange={onFocusChange}
+              onOpenItem={onOpenItem}
+            />
+          </div>
         </aside>
       </div>
     </section>
+  )
+}
+
+function SuggestionInbox({
+  focusItemId,
+  items,
+  controller,
+  onSelectItem,
+}: {
+  focusItemId: string
+  items: KnowledgeItem[]
+  controller: KnowledgeRelationSuggestionController
+  onSelectItem: (itemId: string) => void
+}) {
+  const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
+  const suggestions = controller.suggestionsQuery.data?.suggestions ?? []
+  const actionError = controller.generateMutation.error ?? controller.acceptMutation.error ?? controller.rejectMutation.error
+  const busy = controller.generateMutation.isPending || controller.acceptMutation.isPending || controller.rejectMutation.isPending
+  const candidateItemIds = items.filter((item) => item.item_id !== focusItemId).map((item) => item.item_id).slice(0, 64)
+
+  return (
+    <section>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-600"><Sparkles size={12} />AI suggestion inbox</p>
+          <h3 className="mt-1 text-sm font-semibold text-slate-900">Review before graph mutation</h3>
+        </div>
+        <Button
+          size="xs"
+          variant="primary"
+          disabled={busy || candidateItemIds.length === 0}
+          onClick={() => controller.generateMutation.mutate({
+            focus_item_id: focusItemId,
+            candidate_item_ids: candidateItemIds,
+            max_suggestions: 4,
+          })}
+        >
+          {controller.generateMutation.isPending ? <LoaderCircle size={11} className="animate-spin" /> : <Sparkles size={11} />}
+          {controller.generateMutation.isPending ? "Analyzing…" : "Suggest"}
+        </Button>
+      </div>
+      <p className="mt-2 text-[10px] leading-5 text-slate-500">The Agent can only propose semantic edges. Accept promotes one proposal into the canonical relation store; Reject keeps the graph unchanged.</p>
+
+      {actionError && <p role="alert" className="mt-3 rounded-[10px] border border-rose-100 bg-rose-50 p-2.5 text-[10px] leading-5 text-rose-700">{errorMessage(actionError)}</p>}
+      {controller.suggestionsQuery.isPending ? (
+        <p className="mt-3 flex items-center gap-2 text-[10px] text-slate-400"><LoaderCircle size={11} className="animate-spin" />Loading proposals…</p>
+      ) : suggestions.length === 0 ? (
+        <p className="mt-3 rounded-[11px] border border-dashed border-slate-200 p-3 text-[10px] leading-5 text-slate-500">No pending proposals for this focus. Run Suggest when at least two knowledge objects have enough title/summary evidence.</p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {suggestions.map((suggestion) => (
+            <SuggestionCard
+              key={suggestion.suggestion_id}
+              suggestion={suggestion}
+              itemById={itemById}
+              accepting={controller.acceptMutation.isPending && controller.acceptMutation.variables === suggestion.suggestion_id}
+              rejecting={controller.rejectMutation.isPending && controller.rejectMutation.variables === suggestion.suggestion_id}
+              onAccept={() => controller.acceptMutation.mutate(suggestion.suggestion_id)}
+              onReject={() => controller.rejectMutation.mutate(suggestion.suggestion_id)}
+              onSelectItem={onSelectItem}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SuggestionCard({
+  suggestion,
+  itemById,
+  accepting,
+  rejecting,
+  onAccept,
+  onReject,
+  onSelectItem,
+}: {
+  suggestion: KnowledgeRelationSuggestion
+  itemById: Map<string, KnowledgeItem>
+  accepting: boolean
+  rejecting: boolean
+  onAccept: () => void
+  onReject: () => void
+  onSelectItem: (itemId: string) => void
+}) {
+  const source = itemById.get(suggestion.source_item_id)
+  const target = itemById.get(suggestion.target_item_id)
+  const evidence = suggestion.evidence_item_ids.map((itemId) => itemById.get(itemId)).filter((item): item is KnowledgeItem => Boolean(item))
+
+  return (
+    <article className="rounded-[14px] border border-amber-200/80 bg-amber-50/35 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <Badge tone="warning">{suggestion.relation_type.replaceAll("_", " ")}</Badge>
+        <span className="text-[9px] font-semibold text-amber-700">{Math.round(suggestion.confidence * 100)}% confidence</span>
+      </div>
+      <button type="button" className="mt-2 w-full text-left" onClick={() => source && onSelectItem(source.item_id)}><p className="text-[9px] uppercase tracking-[0.12em] text-slate-400">Source</p><p className="mt-0.5 line-clamp-2 text-[11px] font-semibold text-slate-800">{source?.title ?? suggestion.source_item_id}</p></button>
+      <div className="my-1.5 flex items-center gap-1.5 text-[9px] font-semibold text-amber-700"><ArrowDownLeft size={11} className="rotate-[-45deg]" />{suggestion.label || suggestion.relation_type.replaceAll("_", " ")}</div>
+      <button type="button" className="w-full text-left" onClick={() => target && onSelectItem(target.item_id)}><p className="text-[9px] uppercase tracking-[0.12em] text-slate-400">Target</p><p className="mt-0.5 line-clamp-2 text-[11px] font-semibold text-slate-800">{target?.title ?? suggestion.target_item_id}</p></button>
+      {suggestion.rationale && <p className="mt-2 text-[10px] leading-5 text-slate-600">{suggestion.rationale}</p>}
+      <div className="mt-2 rounded-[10px] border border-amber-100 bg-white/80 p-2">
+        <p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence objects</p>
+        <div className="mt-1.5 space-y-1.5">{evidence.map((item) => <button key={item.item_id} type="button" className="block w-full text-left" onClick={() => onSelectItem(item.item_id)}><p className="truncate text-[9px] font-semibold text-slate-700">{item.title}</p><p className="mt-0.5 line-clamp-2 text-[9px] leading-4 text-slate-400">{item.summary || "Title-only evidence; inspect the source before accepting."}</p></button>)}</div>
+      </div>
+      <div className="mt-3 flex gap-2">
+        <Button size="xs" variant="primary" disabled={accepting || rejecting} onClick={onAccept}>{accepting ? <LoaderCircle size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}{accepting ? "Accepting…" : "Accept"}</Button>
+        <Button size="xs" variant="ghost" disabled={accepting || rejecting} onClick={onReject}>{rejecting ? <LoaderCircle size={11} className="animate-spin" /> : <XCircle size={11} />}{rejecting ? "Rejecting…" : "Reject"}</Button>
+      </div>
+    </article>
   )
 }
 
@@ -200,7 +331,8 @@ function RelationInspector({
     const target = itemById.get(selectedRelation.target_item_id)
     const workflowRelation = Boolean(source && typeof source.metadata.provenance === "string" && source.metadata.provenance.startsWith("paper_reader"))
     const editable = selectedRelation.origin === "manual" && !workflowRelation
-    return <div><InspectorTitle icon={<Link2 size={14} />} eyebrow="Relation inspector" title={selectedRelation.label || selectedRelation.relation_type.replaceAll("_", " ")} /><div className="mt-4 space-y-3"><RelationEndpoint label="Source" item={source} onSelect={onSelectItem} /><div className="flex justify-center text-slate-300"><ArrowDownLeft size={15} className="rotate-[-45deg]" /></div><RelationEndpoint label="Target" item={target} onSelect={onSelectItem} /></div><div className="mt-5 grid grid-cols-2 gap-2"><MetaCard label="Origin" value={workflowRelation ? "Reader workflow" : originLabels[selectedRelation.origin]} /><MetaCard label="Confidence" value={selectedRelation.confidence == null ? "—" : `${Math.round(selectedRelation.confidence * 100)}%`} /></div>{editable ? <div className="mt-5 space-y-3 border-t border-slate-100 pt-4"><label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Relation type<input value={draftType} onChange={(event) => setDraftType(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label><label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Label<input value={draftLabel} onChange={(event) => setDraftLabel(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label><div className="flex gap-2"><Button size="xs" variant="primary" disabled={board.updateRelationMutation.isPending || !draftType.trim()} onClick={() => board.updateRelationMutation.mutate({ relationId: selectedRelation.relation_id, payload: { relation_type: draftType.trim(), label: draftLabel.trim() } })}><Save size={11} />Save</Button><Button size="xs" variant="ghost" disabled={board.deleteRelationMutation.isPending} onClick={() => board.deleteRelationMutation.mutate(selectedRelation.relation_id)}><Trash2 size={11} />Delete</Button></div></div> : <p className="mt-5 rounded-[12px] border border-slate-200 bg-slate-50 p-3 text-[10px] leading-5 text-slate-500">This relation is provenance or system evidence. It is read-only here so the graph cannot silently rewrite how a knowledge object was produced.</p>}</div>
+    const suggestionRationale = typeof selectedRelation.metadata.rationale === "string" ? selectedRelation.metadata.rationale : ""
+    return <div><InspectorTitle icon={<Link2 size={14} />} eyebrow="Relation inspector" title={selectedRelation.label || selectedRelation.relation_type.replaceAll("_", " ")} /><div className="mt-4 space-y-3"><RelationEndpoint label="Source" item={source} onSelect={onSelectItem} /><div className="flex justify-center text-slate-300"><ArrowDownLeft size={15} className="rotate-[-45deg]" /></div><RelationEndpoint label="Target" item={target} onSelect={onSelectItem} /></div><div className="mt-5 grid grid-cols-2 gap-2"><MetaCard label="Origin" value={workflowRelation ? "Reader workflow" : originLabels[selectedRelation.origin]} /><MetaCard label="Confidence" value={selectedRelation.confidence == null ? "—" : `${Math.round(selectedRelation.confidence * 100)}%`} /></div>{selectedRelation.origin === "ai" && suggestionRationale && <div className="mt-3 rounded-[11px] border border-amber-100 bg-amber-50/50 p-2.5"><p className="text-[8px] font-semibold uppercase tracking-[0.12em] text-amber-700">Accepted AI rationale</p><p className="mt-1 text-[10px] leading-5 text-slate-600">{suggestionRationale}</p></div>}{editable ? <div className="mt-5 space-y-3 border-t border-slate-100 pt-4"><label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Relation type<input value={draftType} onChange={(event) => setDraftType(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label><label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Label<input value={draftLabel} onChange={(event) => setDraftLabel(event.target.value)} className="mt-2 w-full rounded-[10px] border border-slate-200 px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-300" /></label><div className="flex gap-2"><Button size="xs" variant="primary" disabled={board.updateRelationMutation.isPending || !draftType.trim()} onClick={() => board.updateRelationMutation.mutate({ relationId: selectedRelation.relation_id, payload: { relation_type: draftType.trim(), label: draftLabel.trim() } })}><Save size={11} />Save</Button><Button size="xs" variant="ghost" disabled={board.deleteRelationMutation.isPending} onClick={() => board.deleteRelationMutation.mutate(selectedRelation.relation_id)}><Trash2 size={11} />Delete</Button></div></div> : <p className="mt-5 rounded-[12px] border border-slate-200 bg-slate-50 p-3 text-[10px] leading-5 text-slate-500">This relation is provenance or reviewed system evidence. It is read-only here so the graph cannot silently rewrite how a knowledge relation was produced.</p>}</div>
   }
 
   if (!selectedItem) return <div className="text-xs text-slate-500">Select a node or relation.</div>
@@ -261,4 +393,8 @@ function layoutGraph(nodes: Array<{ id: string; depth: number }>): Map<string, {
     })
   }
   return positions
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unable to process knowledge relation suggestions."
 }
