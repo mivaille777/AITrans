@@ -33,6 +33,10 @@ class MultiAgentRuntimeBridge:
     tool execution, confirmation, ReAct, synthesis, grounding, and the final
     response. This prevents a second independent Agent runtime from becoming a
     competing execution path.
+
+    Collaboration is advisory and best-effort. If this layer is unavailable,
+    the canonical Agent workflow continues unchanged rather than failing the
+    user's request.
     """
 
     def __init__(self, service: MultiAgentWorkspaceService | None = None) -> None:
@@ -124,12 +128,26 @@ class MultiAgentRuntimeBridge:
         if control is not None:
             control.checkpoint("multi_agent_collaboration")
 
-        run = self.service.run(
-            state.user_input,
-            user_id=state.session_id,
-            run_id=state.run_id,
-            trace_id=state.trace_id,
-        )
+        try:
+            run = self.service.run(
+                state.user_input,
+                user_id=state.session_id,
+                run_id=state.run_id,
+                trace_id=state.trace_id,
+            )
+        except Exception as exc:
+            emit(
+                AgentEventType.MULTI_AGENT_COMPLETED,
+                {
+                    "actor": "supervisor",
+                    "status": "warning",
+                    "multi_agent_event_type": "workflow_fallback",
+                    "fallback_reason": "collaboration_unavailable",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return state
+
         self._forward_events(run, emit)
 
         collaboration = self._context_payload(run)
