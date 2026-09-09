@@ -1,8 +1,10 @@
 import type { AgentRunRequest } from "../../../api/agent"
 import type { ReadingContextFields } from "../../../api/types"
+import type { AgentContextMode } from "./agent-context-mode"
 
 export interface BuildAgentRunRequestInput {
   context: ReadingContextFields
+  contextMode?: AgentContextMode
   sessionId: string
   traceId: string
   requestId: number
@@ -20,6 +22,7 @@ export interface BuildAgentRunRequestInput {
 
 export function buildAgentRunRequest({
   context,
+  contextMode = "general",
   sessionId,
   traceId,
   requestId,
@@ -39,6 +42,7 @@ export function buildAgentRunRequest({
     session_id: sessionId,
     client_id: sessionId,
     client_surface: "main",
+    context_mode: contextMode,
     trace_id: traceId,
     user_message: userMessage,
     source_text: sourceText,
