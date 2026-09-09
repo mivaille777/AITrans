@@ -1,15 +1,4 @@
-import {
-  BookOpenText,
-  FileText,
-  Highlighter,
-  Lightbulb,
-  Link2,
-  Maximize2,
-  Minus,
-  Plus,
-  StickyNote,
-  Trash2,
-} from "lucide-react"
+import { Link2, Maximize2, Minus, Plus, Trash2 } from "lucide-react"
 import {
   useEffect,
   useMemo,
@@ -30,7 +19,8 @@ import {
   screenToBoard,
   type BoardViewport,
 } from "./knowledge-board-layout"
-import type { KnowledgeBoardNode, KnowledgeItem, KnowledgeItemType, KnowledgeRelation } from "./knowledge-types"
+import KnowledgeCardRenderer from "./KnowledgeCardRenderer"
+import type { KnowledgeBoardNode, KnowledgeItem, KnowledgeRelation } from "./knowledge-types"
 
 const MIN_CARD_WIDTH = 180
 const MIN_CARD_HEIGHT = 100
@@ -48,15 +38,6 @@ interface NodeInteraction {
 interface LocalNodeState {
   sourceNodes: KnowledgeBoardNode[]
   nodes: KnowledgeBoardNode[]
-}
-
-function KnowledgeNodeIcon({ type }: { type: KnowledgeItemType }) {
-  const props = { size: 16, strokeWidth: 1.7 }
-  if (type === "paper") return <BookOpenText {...props} />
-  if (type === "note") return <StickyNote {...props} />
-  if (type === "concept") return <Lightbulb {...props} />
-  if (type === "highlight") return <Highlighter {...props} />
-  return <FileText {...props} />
 }
 
 export default function KnowledgeBoardCanvas({
@@ -83,12 +64,10 @@ export default function KnowledgeBoardCanvas({
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const interactionRef = useRef<NodeInteraction | null>(null)
   const panRef = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null)
-  const [localNodeState, setLocalNodeState] = useState<LocalNodeState>(() => ({
-    sourceNodes: nodes,
-    nodes,
-  }))
+  const [localNodeState, setLocalNodeState] = useState<LocalNodeState>(() => ({ sourceNodes: nodes, nodes }))
   const [viewport, setViewport] = useState<BoardViewport>(DEFAULT_BOARD_VIEWPORT)
   const [linkingSourceId, setLinkingSourceId] = useState<string | null>(null)
+
   const localNodes = localNodeState.sourceNodes === nodes ? localNodeState.nodes : nodes
   const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
   const nodeById = useMemo(() => new Map(localNodes.map((node) => [node.item_id, node] as const)), [localNodes])
@@ -189,9 +168,11 @@ export default function KnowledgeBoardCanvas({
       return
     }
     if (event.shiftKey || event.metaKey || event.ctrlKey) {
-      onSelectionChange(selectedSet.has(itemId)
-        ? selectedItemIds.filter((id) => id !== itemId)
-        : [...selectedItemIds, itemId])
+      onSelectionChange(
+        selectedSet.has(itemId)
+          ? selectedItemIds.filter((id) => id !== itemId)
+          : [...selectedItemIds, itemId],
+      )
       return
     }
     onSelectionChange([itemId])
@@ -263,7 +244,11 @@ export default function KnowledgeBoardCanvas({
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Fit board" onClick={fitView}><Maximize2 size={14} /></button>
       </div>
 
-      {linkingSourceId && <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[10px] font-semibold text-cyan-800 shadow-sm">Select a target card to create a relation · Esc/canvas to cancel</div>}
+      {linkingSourceId ? (
+        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[10px] font-semibold text-cyan-800 shadow-sm">
+          Select a target card to create a relation · Esc/canvas to cancel
+        </div>
+      ) : null}
 
       <div
         ref={canvasRef}
@@ -303,37 +288,88 @@ export default function KnowledgeBoardCanvas({
               <article
                 key={node.item_id}
                 data-knowledge-node
-                className={`absolute flex select-none flex-col overflow-hidden rounded-[18px] border bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow ${selected ? "border-cyan-400 ring-2 ring-cyan-100" : "border-slate-200 hover:border-slate-300"}`}
+                className={`absolute select-none overflow-hidden rounded-[18px] border bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow ${selected ? "border-cyan-400 ring-2 ring-cyan-100" : "border-slate-200 hover:border-slate-300"}`}
                 style={{ left: node.x, top: node.y, width: node.width, height: node.height, zIndex: selected ? Math.max(node.z_index, 1000) : node.z_index }}
                 onClick={(event) => selectNode(event, node.item_id)}
               >
-                <header className="flex cursor-move items-center gap-2 border-b border-slate-100 px-3 py-2.5" onPointerDown={(event) => beginNodeInteraction(event, node, "move")}>
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-slate-50 text-slate-600"><KnowledgeNodeIcon type={item.item_type} /></span>
-                  <div className="min-w-0 flex-1"><p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">{item.item_type}</p><h3 className="truncate text-xs font-semibold text-slate-900">{item.title}</h3></div>
-                  <button type="button" className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition ${linkingSourceId === item.item_id ? "bg-cyan-100 text-cyan-800" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`} title="Connect card" aria-label={`Connect ${item.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setLinkingSourceId((current) => current === item.item_id ? null : item.item_id) }}><Link2 size={13} /></button>
-                  <button type="button" className="flex h-7 w-7 items-center justify-center rounded-[8px] text-slate-400 transition hover:bg-rose-50 hover:text-rose-600" title="Remove from board" aria-label={`Remove ${item.title} from board`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemoveNode(item.item_id) }}><Trash2 size={13} /></button>
-                </header>
-                <div className="min-h-0 flex-1 overflow-hidden px-3 py-3"><p className="line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "No summary yet. Open this card from the Library to add more context."}</p></div>
-                <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2 text-[9px] text-slate-400"><span>{item.item_type === "paper" ? "Research source" : "Knowledge card"}</span><Maximize2 size={10} /></div>
-                <button type="button" className="absolute bottom-0 right-0 h-5 w-5 cursor-se-resize rounded-tl-[8px] text-transparent" aria-label={`Resize ${item.title}`} onPointerDown={(event) => beginNodeInteraction(event, node, "resize")}>Resize</button>
+                <div
+                  className="absolute left-0 right-20 top-0 z-10 h-12 cursor-move"
+                  aria-hidden="true"
+                  onPointerDown={(event) => beginNodeInteraction(event, node, "move")}
+                />
+                <KnowledgeCardRenderer item={item} />
+                <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
+                  <button
+                    type="button"
+                    className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition ${linkingSourceId === item.item_id ? "bg-cyan-100 text-cyan-800" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`}
+                    title="Connect card"
+                    aria-label={`Connect ${item.title}`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setLinkingSourceId((current) => current === item.item_id ? null : item.item_id)
+                    }}
+                  >
+                    <Link2 size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 items-center justify-center rounded-[8px] text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    title="Remove from canvas"
+                    aria-label={`Remove ${item.title} from canvas`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onRemoveNode(item.item_id)
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="absolute bottom-0 right-0 z-20 h-5 w-5 cursor-se-resize rounded-tl-[8px] text-transparent"
+                  aria-label={`Resize ${item.title}`}
+                  onPointerDown={(event) => beginNodeInteraction(event, node, "resize")}
+                >
+                  Resize
+                </button>
               </article>
             )
           })}
         </div>
       </div>
 
-      {localNodes.length === 0 && <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className="max-w-sm rounded-[18px] border border-dashed border-slate-300 bg-white/80 px-6 py-5 text-center shadow-sm backdrop-blur"><p className="text-sm font-semibold text-slate-800">Drop cards onto the board</p><p className="mt-2 text-xs leading-5 text-slate-500">Drag a paper, note, concept, or highlight from the left tray. Board placement is stored locally.</p></div></div>}
+      {localNodes.length === 0 ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="max-w-sm rounded-[18px] border border-dashed border-slate-300 bg-white/80 px-6 py-5 text-center shadow-sm backdrop-blur">
+            <p className="text-sm font-semibold text-slate-800">Build your knowledge canvas</p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">Drag a paper, note, concept, or highlight from the left tray. Arrange cards visually and connect related knowledge.</p>
+          </div>
+        </div>
+      ) : null}
 
       <div className="absolute bottom-3 right-3 z-30 h-28 w-40 overflow-hidden rounded-[12px] border border-slate-200 bg-white/90 shadow-sm backdrop-blur" aria-label="Board minimap">
         <div className="relative h-full w-full bg-slate-50">
-          {localNodes.length > 0 && (() => {
+          {localNodes.length > 0 ? (() => {
             const minX = Math.min(...localNodes.map((node) => node.x))
             const minY = Math.min(...localNodes.map((node) => node.y))
             const maxX = Math.max(...localNodes.map((node) => node.x + node.width))
             const maxY = Math.max(...localNodes.map((node) => node.y + node.height))
             const scale = Math.min(132 / Math.max(1, maxX - minX), 84 / Math.max(1, maxY - minY), 0.25)
-            return localNodes.map((node) => <span key={node.item_id} className={`absolute rounded-[2px] ${selectedSet.has(node.item_id) ? "bg-cyan-500" : "bg-slate-400"}`} style={{ left: 4 + (node.x - minX) * scale, top: 4 + (node.y - minY) * scale, width: Math.max(4, node.width * scale), height: Math.max(3, node.height * scale) }} />)
-          })()}
+            return localNodes.map((node) => (
+              <span
+                key={node.item_id}
+                className={`absolute rounded-[2px] ${selectedSet.has(node.item_id) ? "bg-cyan-500" : "bg-slate-400"}`}
+                style={{
+                  left: 4 + (node.x - minX) * scale,
+                  top: 4 + (node.y - minY) * scale,
+                  width: Math.max(4, node.width * scale),
+                  height: Math.max(3, node.height * scale),
+                }}
+              />
+            ))
+          })() : null}
         </div>
       </div>
     </div>
