@@ -55,23 +55,25 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
     submitPrompt,
   ])
 
+  const runtimeRunning = runtime.viewState.phase === "running" || runtime.viewState.phase === "cancelling"
+
   return (
     <section aria-label="Agent Workspace" className="space-y-4 pb-2">
       <div className="ait-surface overflow-hidden p-5 sm:p-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-2xl">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-              Stage 5.7 · Multi-Agent Knowledge Workspace
+              Stage 5.8 · Unified Agent Runtime
             </p>
             <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
-              One workspace for context, specialist Agents, and execution
+              One runtime for collaboration, tools, and final execution
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Supervisor, Research, Reading, Translation, Knowledge Retrieval, and Shared Context are visible as one coordinated execution surface.
+              Multi-Agent collaboration now runs inside the primary Agent lifecycle before the production Reading Agent workflow, sharing one run ID, trace ID, cancellation boundary, and observability stream.
             </p>
           </div>
           <p className="max-w-md text-xs leading-5 text-slate-400">
-            The existing runtime timeline remains the low-level execution view; Stage 5.7 adds a higher-level collaboration graph without hiding approvals, retries, fallbacks, or failures.
+            Supervisor and specialist context are advisory. Tool safety, ReAct, write confirmation, evidence, citations, and final grounding remain owned by the canonical runtime.
           </p>
         </div>
 
@@ -105,14 +107,14 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         />
         <AgentTimeline
           activities={runtime.viewState.activities}
-          running={runtime.viewState.phase === "running" || runtime.viewState.phase === "cancelling"}
+          running={runtimeRunning}
           runId={runtime.viewState.runId}
           traceId={runtime.viewState.traceId}
           totalDurationMs={runtime.viewState.totalDurationMs}
         />
       </div>
 
-      <MultiAgentTracePanel task={runtime.prompt} />
+      <MultiAgentTracePanel events={runtime.traceEvents} running={runtimeRunning} />
 
       <AgentDecisionPanel
         notice={runtime.decision}
