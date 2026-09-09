@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import {
   BookOpenText,
   Check,
@@ -7,20 +7,17 @@ import {
   Languages,
   LoaderCircle,
   Network,
-  Play,
   Search,
   Share2,
   TriangleAlert,
   X,
 } from "lucide-react"
 
-import {
-  runMultiAgentTrace,
-  type MultiAgentRunTrace,
-} from "../../../api/agent-multi-agent"
+import type { AgentTraceEvent } from "../../../api/agent"
 import { AITPanel } from "@/shared/components/AITPanel"
 import {
   deriveMultiAgentNodeStates,
+  isMultiAgentTraceEvent,
   multiAgentEventLabel,
   type MultiAgentNodeId,
   type MultiAgentNodeState,
@@ -85,52 +82,31 @@ function AgentNode({ node }: { node: MultiAgentNodeState }) {
   )
 }
 
-function compactId(value: string): string {
-  if (!value) return "—"
-  return value.length <= 22 ? value : `${value.slice(0, 10)}…${value.slice(-7)}`
+function numericPayload(event: AgentTraceEvent | undefined, key: string): number {
+  const value = Number(event?.payload[key] ?? 0)
+  return Number.isFinite(value) && value >= 0 ? value : 0
 }
 
-function citationLabel(citation: Record<string, unknown>, index: number): string {
-  const title = String(citation.title ?? "").trim()
-  if (title) return title
-  const id = String(citation.id ?? "").trim()
-  if (id) return id
-  return `Source ${index + 1}`
-}
-
-export function MultiAgentTracePanel({ task }: { task: string }) {
-  const [trace, setTrace] = useState<MultiAgentRunTrace | null>(null)
-  const [traceTask, setTraceTask] = useState("")
-  const [pending, setPending] = useState(false)
-  const [errorMessage, setErrorMessage] = useState("")
-  const nodes = useMemo(() => deriveMultiAgentNodeStates(trace), [trace])
+export function MultiAgentTracePanel({
+  events,
+  running,
+}: {
+  events: AgentTraceEvent[]
+  running: boolean
+}) {
+  const multiAgentEvents = useMemo(() => events.filter(isMultiAgentTraceEvent), [events])
+  const nodes = useMemo(() => deriveMultiAgentNodeStates(events), [events])
   const nodeMap = useMemo(
     () => Object.fromEntries(nodes.map((node) => [node.id, node])) as Record<MultiAgentNodeId, MultiAgentNodeState>,
     [nodes],
   )
-  const normalizedTask = task.trim()
-
-  useEffect(() => {
-    if (!trace || traceTask === normalizedTask) return
-    setTrace(null)
-    setTraceTask("")
-    setErrorMessage("")
-  }, [normalizedTask, trace, traceTask])
-
-  async function runTrace() {
-    if (!normalizedTask || pending) return
-    setPending(true)
-    setErrorMessage("")
-    try {
-      const nextTrace = await runMultiAgentTrace({ task: normalizedTask })
-      setTrace(nextTrace)
-      setTraceTask(normalizedTask)
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unable to run the multi-agent trace.")
-    } finally {
-      setPending(false)
-    }
-  }
+  const knowledgeReady = multiAgentEvents.findLast(
+    (event) => event.event_type === "multi_agent_knowledge_ready",
+  )
+  const completed = multiAgentEvents.findLast(
+    (event) => event.event_type === "multi_agent_completed",
+  )
+  const collaborationActive = multiAgentEvents.length > 0
 
   return (
     <AITPanel className="p-5">
@@ -138,29 +114,17 @@ export function MultiAgentTracePanel({ task }: { task: string }) {
         <div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <Network size={16} />
-            Multi-Agent Execution
+            Multi-Agent Collaboration
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
-            Supervisor planning, grounded knowledge retrieval, shared context propagation, and specialized Agent execution in one trace.
+            This graph is driven by the same primary Agent runtime and trace. Supervisor collaboration enriches context before the production Reading Agent executes.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={runTrace}
-          disabled={!normalizedTask || pending}
-          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-[12px] border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
-          title={normalizedTask ? "Run the current prompt through the Stage 5 multi-agent trace" : "Enter an Agent prompt first"}
-        >
-          {pending ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}
-          {pending ? "Running" : trace ? "Run again" : "Run collaboration"}
-        </button>
-      </div>
-
-      {errorMessage ? (
-        <div className="mt-4 rounded-[12px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-          {errorMessage}
+        <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+          {running && collaborationActive ? <LoaderCircle size={12} className="animate-spin" /> : <Network size={12} />}
+          {running && collaborationActive ? "Collaborating" : collaborationActive ? "Unified trace" : "Auto routing"}
         </div>
-      ) : null}
+      </div>
 
       <div className="mt-5" aria-label="Multi-agent execution graph">
         <div className="mx-auto max-w-md">
@@ -183,59 +147,42 @@ export function MultiAgentTracePanel({ task }: { task: string }) {
         </div>
       </div>
 
-      {trace ? (
+      {collaborationActive ? (
         <>
-          <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-[13px] border border-slate-100 bg-slate-50/70 px-3.5 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Duration</p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">{trace.total_duration_ms} ms</p>
-            </div>
+          <div className="mt-5 grid gap-2 sm:grid-cols-3">
             <div className="rounded-[13px] border border-slate-100 bg-slate-50/70 px-3.5 py-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Knowledge</p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">{trace.context.citation_count} citations</p>
+              <p className="mt-1 text-sm font-semibold text-slate-800">
+                {numericPayload(knowledgeReady, "citation_count")} citations
+              </p>
             </div>
             <div className="rounded-[13px] border border-slate-100 bg-slate-50/70 px-3.5 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Context</p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">{trace.context.knowledge_context_chars} chars</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Shared context</p>
+              <p className="mt-1 text-sm font-semibold text-slate-800">
+                {numericPayload(knowledgeReady, "context_chars")} chars
+              </p>
             </div>
             <div className="rounded-[13px] border border-slate-100 bg-slate-50/70 px-3.5 py-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Specialists</p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">{trace.results.length} executed</p>
+              <p className="mt-1 text-sm font-semibold text-slate-800">
+                {numericPayload(completed, "completed_agent_count")} completed
+              </p>
             </div>
           </div>
 
-          {trace.context.citations.length > 0 ? (
-            <div className="mt-4 rounded-[14px] border border-slate-100 bg-white p-3.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Retrieved evidence</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {trace.context.citations.slice(0, 8).map((citation, index) => (
-                  <span
-                    key={`${String(citation.id ?? "source")}-${index}`}
-                    className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600"
-                  >
-                    {citationLabel(citation, index)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
           <div className="mt-4 rounded-[14px] border border-slate-100 bg-slate-50/50 p-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Multi-Agent Trace</p>
-              <p className="font-mono text-[10px] text-slate-400" title={`${trace.run_id} · ${trace.trace_id}`}>
-                {compactId(trace.run_id)} · {compactId(trace.trace_id)}
-              </p>
-            </div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Unified runtime events</p>
             <ol className="mt-3 space-y-2" aria-label="Multi-agent trace events">
-              {trace.events.map((event) => (
+              {multiAgentEvents.map((event) => (
                 <li key={`${event.sequence}-${event.event_type}`} className="flex items-start gap-3 text-xs">
                   <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-[9px] font-semibold tabular-nums text-slate-400">
                     {event.sequence + 1}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-slate-700">{event.actor}</span>
+                      <span className="font-semibold text-slate-700">
+                        {String(event.payload.actor ?? "agent")}
+                      </span>
                       <span className="text-slate-500">{multiAgentEventLabel(event)}</span>
                       <span className="text-[10px] tabular-nums text-slate-400">{event.elapsed_ms} ms</span>
                     </div>
@@ -247,7 +194,7 @@ export function MultiAgentTracePanel({ task }: { task: string }) {
         </>
       ) : (
         <div className="mt-5 rounded-[14px] border border-dashed border-slate-200 bg-slate-50/60 px-4 py-4 text-xs leading-5 text-slate-500">
-          Enter an Agent prompt, then run the collaboration trace to see which specialist Agents are selected and how Knowledge Runtime feeds the shared context.
+          Multi-Agent collaboration is selected automatically when the request needs two or more specialist roles. Single-role requests stay on the primary Agent path without an extra collaboration pass.
         </div>
       )}
     </AITPanel>
