@@ -1,5 +1,6 @@
 import type { KnowledgeAction } from "./KnowledgeActionMenu"
 import type { KnowledgeItem } from "./knowledge-types"
+import type { KnowledgeWorkspaceEvent } from "./knowledge-workspace-events"
 
 export type KnowledgeActionContext = {
   item: KnowledgeItem
@@ -14,7 +15,7 @@ export type KnowledgeActionContext = {
 export function dispatchKnowledgeAction(
   action: KnowledgeAction,
   context: KnowledgeActionContext,
-) {
+): KnowledgeWorkspaceEvent | null {
   switch (action) {
     case "summarize":
       return {
