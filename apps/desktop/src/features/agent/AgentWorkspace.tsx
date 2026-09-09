@@ -24,13 +24,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
   const draftPrompt = navigationState?.agentDraftPrompt?.trim() ?? ""
   const autoSubmitDraft = Boolean(navigationState?.autoSubmitAgentPrompt)
   const runtime = useAgentRuntime(workspace)
-  const {
-    pending,
-    prompt,
-    setPrompt,
-    sourceText,
-    submitPrompt,
-  } = runtime
+  const { pending, prompt, setPrompt, sourceText, submitPrompt } = runtime
   const appliedDraftRef = useRef("")
   const submittedDraftRef = useRef("")
 
@@ -46,38 +40,31 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
     if (submittedDraftRef.current === draftPrompt) return
     submittedDraftRef.current = draftPrompt
     submitPrompt()
-  }, [
-    autoSubmitDraft,
-    draftPrompt,
-    pending,
-    prompt,
-    sourceText,
-    submitPrompt,
-  ])
+  }, [autoSubmitDraft, draftPrompt, pending, prompt, sourceText, submitPrompt])
 
   const runtimeRunning = runtime.viewState.phase === "running" || runtime.viewState.phase === "cancelling"
 
   return (
-    <section aria-label="Agent Workspace" className="space-y-4 pb-2">
+    <section aria-label="AI Agent Workspace" className="space-y-4 pb-2">
       <div className="ait-surface overflow-hidden p-5 sm:p-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-2xl">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-              Stage 5.8 · Unified Agent Runtime
+              AI Agent Workspace
             </p>
             <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
-              One runtime for collaboration, tools, and final execution
+              你的 AI Agent 正在理解任务、调用工具并完成工作
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Multi-Agent collaboration now runs inside the primary Agent lifecycle before the production Reading Agent workflow, sharing one run ID, trace ID, cancellation boundary, and observability stream.
+              多个专业 Agent 可以协同分析，由主 Agent 统一规划执行流程，并通过状态追踪、工具确认和结果验证完成任务。
             </p>
           </div>
           <p className="max-w-md text-xs leading-5 text-slate-400">
-            Supervisor and specialist context are advisory. Tool safety, ReAct, write confirmation, evidence, citations, and final grounding remain owned by the canonical runtime.
+            Agent 会根据任务选择合适能力。涉及关键操作时，会进行确认并保持结果可追踪。
           </p>
         </div>
 
-        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4" aria-label="Agent workspace areas">
+        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4" aria-label="Agent capabilities">
           {agentWorkspaceAreas.map((area, index) => (
             <div
               key={area.id}
