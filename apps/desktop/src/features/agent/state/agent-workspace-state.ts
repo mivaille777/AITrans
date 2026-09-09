@@ -55,6 +55,14 @@ function reactIteration(payload: Record<string, unknown>): string {
   return iteration > 0 ? ` #${iteration}` : ""
 }
 
+function titleCaseEvent(eventType: AgentTraceEventType): string {
+  return eventType
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+}
+
 function eventToActivity(event: AgentTraceEvent): AgentActivityItem {
   const payload = event.payload
   switch (event.event_type) {
@@ -299,6 +307,18 @@ function eventToActivity(event: AgentTraceEvent): AgentActivityItem {
           duration_ms: payload.total_duration_ms,
         }),
         tone: needsConfirmation || failed || cancelled ? "warning" : "success",
+      }
+    }
+    default: {
+      const actor = text(payload.actor)
+      const status = text(payload.status)
+      const warning = status === "warning" || status === "failed" || event.event_type.endsWith("_failed")
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: titleCaseEvent(event.event_type),
+        detail: actor ? `${actor}${status ? ` · ${status}` : ""}` : status || "Runtime lifecycle event.",
+        tone: warning ? "warning" : status === "complete" ? "success" : "neutral",
       }
     }
   }
