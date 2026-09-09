@@ -14,6 +14,8 @@ from backend.api.dependencies import (
     get_conversation_store_service,
     get_product_agent_service,
     get_reading_selection_resolver,
+    get_research_note_service,
+    get_translation_service,
 )
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.agent_trace_store_service import AgentTraceStoreService
@@ -22,8 +24,11 @@ from backend.services.companion_ownership_service import (
 )
 from backend.services.conversation_store_service import ConversationStoreService
 from backend.services.multi_agent_runtime_bridge import MultiAgentRuntimeBridge
+from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceService
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
+from backend.services.research_note_service import ResearchNoteService
+from backend.services.translation_service import TranslationService
 
 ProductAgentServiceDependency = Annotated[
     ProductAgentService,
@@ -32,6 +37,14 @@ ProductAgentServiceDependency = Annotated[
 ReadingSelectionResolverDependency = Annotated[
     ReadingSelectionResolver,
     Depends(get_reading_selection_resolver),
+]
+ResearchNoteServiceDependency = Annotated[
+    ResearchNoteService,
+    Depends(get_research_note_service),
+]
+TranslationServiceDependency = Annotated[
+    TranslationService,
+    Depends(get_translation_service),
 ]
 AgentTraceStoreDependency = Annotated[
     AgentTraceStoreService | None,
@@ -64,18 +77,17 @@ def get_agent_runtime(
     service: ProductAgentServiceDependency,
     resolver: ReadingSelectionResolverDependency,
     conversation_service: AgentConversationServiceDependency = None,
+    research_service: ResearchNoteServiceDependency = None,
+    translation_service: TranslationServiceDependency = None,
     trace_store: AgentTraceStoreDependency = None,
 ) -> AgentRuntime:
     """Build one request-scoped canonical Agent Runtime.
 
-    ``AgentRuntime`` remains the outer reliability/telemetry boundary.
-    Stage 5.8 runs advisory multi-agent collaboration inside that same boundary
-    before the production ReadingAgentGraph. LangGraph continues to own tool
-    execution, confirmation, ReAct, synthesis, and grounding.
-
-    ``conversation_service`` remains optional for direct unit-test construction.
-    FastAPI still resolves it from the dependency metadata carried by
-    ``AgentConversationServiceDependency``.
+    Multi-agent collaboration is an advisory pre-workflow stage inside the same
+    reliability/telemetry boundary. Stage 5.9 backs Research and Translation
+    specialists with the existing production services, while Reading consumes
+    the frozen document/knowledge context. ReadingAgentGraph remains authoritative
+    for tools, confirmation, ReAct, evidence, grounding, synthesis, and response.
     """
 
     adapter = ProductAgentRuntimeAdapter(
@@ -83,9 +95,13 @@ def get_agent_runtime(
         conversation_service=conversation_service,
     )
     graph = ReadingAgentGraph(adapter)
+    collaboration_service = MultiAgentWorkspaceService(
+        research_service=research_service,
+        translation_service=translation_service,
+    )
     return AgentRuntime(
         context_provider=ReadingContextProvider(resolver),
-        collaboration_adapter=MultiAgentRuntimeBridge(),
+        collaboration_adapter=MultiAgentRuntimeBridge(collaboration_service),
         workflow_adapter=graph,
         run_recorder=trace_store.record if trace_store is not None else None,
     )
