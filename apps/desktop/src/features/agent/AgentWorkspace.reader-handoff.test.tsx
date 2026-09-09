@@ -40,6 +40,7 @@ vi.mock("./hooks/useAgentRuntime", async () => {
           evidence: [],
           citations: [],
         },
+        traceEvents: [],
         decision: null,
         pending: false,
         cancelRequested: false,
@@ -59,6 +60,7 @@ vi.mock("../companion/components/AgentObservabilityPanel", () => ({ AgentObserva
 vi.mock("../companion/components/ContextCard", () => ({ ContextCard: () => null }))
 vi.mock("./components/AgentDecisionPanel", () => ({ AgentDecisionPanel: () => null }))
 vi.mock("./components/AgentTimeline", () => ({ AgentTimeline: () => null }))
+vi.mock("./components/MultiAgentTracePanel", () => ({ MultiAgentTracePanel: () => null }))
 
 describe("AgentWorkspace reader handoff", () => {
   it("loads and automatically submits a question handed off by the paper reader", async () => {
