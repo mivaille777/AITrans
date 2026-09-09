@@ -8,6 +8,7 @@ from backend.agent_core.state import AgentState
 from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceService
 
 CoreEventSink = Callable[[AgentEventType, dict[str, Any]], None]
+_MAX_COLLAB_CONTEXT_CHARS = 6000
 
 _EVENT_MAP: dict[str, AgentEventType] = {
     "supervisor_started": AgentEventType.MULTI_AGENT_STARTED,
@@ -93,6 +94,23 @@ class MultiAgentRuntimeBridge:
             "total_duration_ms": run.total_duration_ms,
         }
 
+    @staticmethod
+    def _advisory_prompt_context(payload: dict[str, Any]) -> str:
+        knowledge = str(payload.get("knowledge_context", "") or "").strip()
+        agents = [str(item) for item in payload.get("agents", []) if str(item).strip()]
+        if not knowledge and not agents:
+            return ""
+        lines = [
+            "[Multi-Agent collaboration context]",
+            "Treat this as advisory retrieved context; preserve normal grounding and safety checks.",
+        ]
+        if agents:
+            lines.append(f"Selected specialist roles: {', '.join(agents)}")
+        if knowledge:
+            lines.append("Retrieved knowledge:")
+            lines.append(knowledge)
+        return "\n".join(lines)[:_MAX_COLLAB_CONTEXT_CHARS]
+
     def run_with_events(
         self,
         state: AgentState,
@@ -114,9 +132,18 @@ class MultiAgentRuntimeBridge:
         )
         self._forward_events(run, emit)
 
+        collaboration = self._context_payload(run)
         context = dict(state.browser_context)
-        context["multi_agent_context"] = self._context_payload(run)
+        context["multi_agent_context"] = collaboration
         context["multi_agent_active"] = True
+
+        advisory = self._advisory_prompt_context(collaboration)
+        if advisory:
+            original_before = str(context.get("context_before", "") or "").strip()
+            context["context_before"] = (
+                f"{original_before}\n\n{advisory}" if original_before else advisory
+            )
+
         state.browser_context = context
         state.sync_contract()
 
