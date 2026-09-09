@@ -13,7 +13,7 @@ function CardIcon({ type }: { type: KnowledgeItem["item_type"] }) {
 export default function KnowledgeCardRenderer({ item }: { item: KnowledgeItem }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
-      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5 pr-20">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-600">
           <CardIcon type={item.item_type} />
         </span>
