@@ -10,6 +10,8 @@ export type AgentPlanMode = "none" | "single_step" | "multi_step"
 export type AgentStepStatus = "pending" | "running" | "completed" | "failed" | "skipped"
 export type AgentToolEffect = "read" | "compute" | "write"
 export type AgentClientSurface = "main" | "overlay" | "unknown"
+export type AgentContextMode = "general" | "reading" | "knowledge" | "research" | "translation"
+
 export type AgentTraceEventType =
   | "agent_start"
   | "context_ready"
@@ -86,6 +88,7 @@ export interface AgentRunRequest extends ReadingContextFields {
   trace_id?: string
   client_id?: string
   client_surface?: AgentClientSurface
+  context_mode?: AgentContextMode
   user_message: string
   source_text: string
   translated_text: string
