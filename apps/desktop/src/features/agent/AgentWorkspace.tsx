@@ -10,6 +10,7 @@ import { ContextCard } from "../companion/components/ContextCard"
 import { agentWorkspaceAreas } from "./agent-workspace-layout"
 import { AgentDecisionPanel } from "./components/AgentDecisionPanel"
 import { AgentTimeline } from "./components/AgentTimeline"
+import { MultiAgentTracePanel } from "./components/MultiAgentTracePanel"
 import { useAgentRuntime } from "./hooks/useAgentRuntime"
 
 interface AgentNavigationState {
@@ -60,17 +61,17 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-2xl">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-              Stage 9 · Agent-first workspace
+              Stage 5.7 · Multi-Agent Knowledge Workspace
             </p>
             <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
-              One workspace for context, tools, and execution
+              One workspace for context, specialist Agents, and execution
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Translation, reading, and research capabilities are presented as Agent resources instead of separate hidden execution paths.
+              Supervisor, Research, Reading, Translation, Knowledge Retrieval, and Shared Context are visible as one coordinated execution surface.
             </p>
           </div>
           <p className="max-w-md text-xs leading-5 text-slate-400">
-            Stage 9.4 separates Agent decisions from final answers so approval, retries, fallbacks, cancellation, and failures remain explicit.
+            The existing runtime timeline remains the low-level execution view; Stage 5.7 adds a higher-level collaboration graph without hiding approvals, retries, fallbacks, or failures.
           </p>
         </div>
 
@@ -110,6 +111,8 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
           totalDurationMs={runtime.viewState.totalDurationMs}
         />
       </div>
+
+      <MultiAgentTracePanel task={runtime.prompt} />
 
       <AgentDecisionPanel
         notice={runtime.decision}
