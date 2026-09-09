@@ -25,7 +25,7 @@ def test_stage5_7_trace_covers_supervisor_knowledge_context_and_specialists():
         knowledge_injector=KnowledgeInjector(_FakeKnowledgeRuntime()),
     )
 
-    run = service.run("paper read translate", user_id="test-user")
+    run = service.run("阅读这篇论文并翻译实验章节", user_id="test-user")
 
     assert [item["agent"] for item in run.plan] == [
         "research",
