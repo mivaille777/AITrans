@@ -90,6 +90,11 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
     [fallbackReason, viewState],
   )
 
+  const traceEvents = useMemo(
+    () => (pending || liveEvents.length > 0 ? liveEvents : trace?.events ?? []),
+    [liveEvents, pending, trace],
+  )
+
   function refreshObservability() {
     setObservabilityRefresh((current) => current + 1)
   }
@@ -254,6 +259,7 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
     sourceText,
     context,
     viewState,
+    traceEvents,
     decision,
     pending,
     cancelRequested,
