@@ -15,7 +15,7 @@ import {
   type KnowledgeWorkspaceEvent,
 } from "./knowledge-workspace-events"
 
-type WorkspaceContextValue = {
+export type KnowledgeWorkspaceContextValue = {
   selectedKnowledgeItem: KnowledgeItem | null
   selectedKnowledgeIds: string[]
   lastEvent: KnowledgeWorkspaceEvent | null
@@ -28,7 +28,7 @@ type WorkspaceContextValue = {
   ) => KnowledgeWorkspaceEvent | null
 }
 
-const KnowledgeWorkspaceContext = createContext<WorkspaceContextValue | null>(null)
+const KnowledgeWorkspaceContext = createContext<KnowledgeWorkspaceContextValue | null>(null)
 
 export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }) {
   const [selectedKnowledgeItem, setSelectedKnowledgeItem] = useState<KnowledgeItem | null>(null)
@@ -78,8 +78,12 @@ export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }
   )
 }
 
+export function useOptionalKnowledgeWorkspaceContext() {
+  return useContext(KnowledgeWorkspaceContext)
+}
+
 export function useKnowledgeWorkspaceContext() {
-  const context = useContext(KnowledgeWorkspaceContext)
+  const context = useOptionalKnowledgeWorkspaceContext()
   if (!context) {
     throw new Error("useKnowledgeWorkspaceContext must be used inside KnowledgeWorkspaceProvider")
   }
