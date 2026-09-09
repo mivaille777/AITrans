@@ -21,6 +21,7 @@ from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
 from backend.services.conversation_store_service import ConversationStoreService
+from backend.services.multi_agent_runtime_bridge import MultiAgentRuntimeBridge
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 
@@ -65,12 +66,12 @@ def get_agent_runtime(
     conversation_service: AgentConversationServiceDependency = None,
     trace_store: AgentTraceStoreDependency = None,
 ) -> AgentRuntime:
-    """Build one request-scoped Agent Runtime backed by ReadingAgentGraph.
+    """Build one request-scoped canonical Agent Runtime.
 
-    ``AgentRuntime`` remains the outer reliability/telemetry boundary. LangGraph
-    owns production workflow orchestration, while the compatibility adapter
-    projects existing ProductAgentService results onto ``AgentState`` and keeps
-    the shared Conversation lifecycle reusable during the staged migration.
+    ``AgentRuntime`` remains the outer reliability/telemetry boundary.
+    Stage 5.8 runs advisory multi-agent collaboration inside that same boundary
+    before the production ReadingAgentGraph. LangGraph continues to own tool
+    execution, confirmation, ReAct, synthesis, and grounding.
 
     ``conversation_service`` remains optional for direct unit-test construction.
     FastAPI still resolves it from the dependency metadata carried by
@@ -84,6 +85,7 @@ def get_agent_runtime(
     graph = ReadingAgentGraph(adapter)
     return AgentRuntime(
         context_provider=ReadingContextProvider(resolver),
+        collaboration_adapter=MultiAgentRuntimeBridge(),
         workflow_adapter=graph,
         run_recorder=trace_store.record if trace_store is not None else None,
     )
