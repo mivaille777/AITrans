@@ -14,7 +14,10 @@ class AgentContextBuilder:
     """
 
     def __init__(self, repository: Any | None = None):
-        self.retriever = AgentKnowledgeRetriever(repository) if repository else None
+        # AgentKnowledgeRetriever already supplies the default repository when
+        # ``repository`` is None. Always construct it so the default runtime
+        # performs real retrieval instead of silently returning empty context.
+        self.retriever = AgentKnowledgeRetriever(repository)
 
     def build(
         self,
@@ -23,10 +26,7 @@ class AgentContextBuilder:
         evidence: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if evidence is None:
-            if self.retriever is not None:
-                evidence = self.retriever.retrieve(query, top_k=top_k)
-            else:
-                evidence = []
+            evidence = self.retriever.retrieve(query, top_k=top_k)
 
         citations = [
             {
