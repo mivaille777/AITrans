@@ -39,19 +39,28 @@ class MultiAgentWorkspaceService:
         context_manager: SharedContextManager | None = None,
         knowledge_injector: KnowledgeInjector | None = None,
         memory_adapter: AgentMemoryAdapter | None = None,
+        research_service: Any | None = None,
+        translation_service: Any | None = None,
     ) -> None:
-        self.registry = registry or self._default_registry()
+        self.registry = registry or self._default_registry(
+            research_service=research_service,
+            translation_service=translation_service,
+        )
         self.planner = planner or AgentPlanner()
         self.context_manager = context_manager or SharedContextManager()
         self.knowledge_injector = knowledge_injector or KnowledgeInjector(AgentKnowledgeRuntime())
         self.memory_adapter = memory_adapter or AgentMemoryAdapter()
 
     @staticmethod
-    def _default_registry() -> AgentRegistry:
+    def _default_registry(
+        *,
+        research_service: Any | None = None,
+        translation_service: Any | None = None,
+    ) -> AgentRegistry:
         registry = AgentRegistry()
-        registry.register(ResearchAgent())
+        registry.register(ResearchAgent(research_service))
         registry.register(ReadingAgent())
-        registry.register(TranslationAgent())
+        registry.register(TranslationAgent(translation_service))
         return registry
 
     def run(
@@ -61,6 +70,7 @@ class MultiAgentWorkspaceService:
         user_id: str | None = None,
         run_id: str | None = None,
         trace_id: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> MultiAgentWorkspaceRun:
         normalized_task = str(task or "").strip()
         if not normalized_task:
@@ -75,6 +85,7 @@ class MultiAgentWorkspaceService:
         )
 
         context = self.context_manager.create(normalized_task)
+        context.runtime.update(dict(runtime_context or {}))
         plan = self.planner.create_plan(normalized_task, context)
         collector.emit(
             "supervisor_planned",
