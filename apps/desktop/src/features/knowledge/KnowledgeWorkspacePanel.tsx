@@ -10,7 +10,7 @@ import type { KnowledgeItem } from "./knowledge-types"
 import type { KnowledgeBoardController } from "./useKnowledgeBoard"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 
-type KnowledgeView = "board" | "graph" | "library" | "reader"
+type KnowledgeView = "canvas" | "graph" | "library" | "reader"
 
 export default function KnowledgeWorkspacePanel({
   library,
@@ -34,7 +34,7 @@ export default function KnowledgeWorkspacePanel({
       ? "graph"
       : searchParams.has("document") || searchParams.has("item") || requestedView === "library"
         ? "library"
-        : "board"
+        : "canvas"
 
   function setView(nextView: Exclude<KnowledgeView, "reader">) {
     const next = new URLSearchParams(searchParams)
@@ -42,7 +42,7 @@ export default function KnowledgeWorkspacePanel({
     next.delete("document")
     next.delete("item")
     if (nextView !== "graph") next.delete("focus")
-    if (nextView === "board") next.delete("view")
+    if (nextView === "canvas") next.delete("view")
     else next.set("view", nextView)
     setSearchParams(next, { replace: true })
   }
@@ -89,18 +89,25 @@ export default function KnowledgeWorkspacePanel({
   }
 
   return (
-    <div className="space-y-3">
-      <nav className="flex items-center gap-1 rounded-[14px] border border-slate-200 bg-white p-1 shadow-sm" aria-label="Knowledge workspace view">
-        <button type="button" className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === "board" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`} onClick={() => setView("board")}><LayoutDashboard size={14} />Board</button>
-        <button type="button" className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === "graph" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`} onClick={() => paperItemId ? openGraph(paperItemId) : setView("graph")}><Network size={14} />Graph</button>
-        <button type="button" className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === "library" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`} onClick={() => setView("library")}><LibraryBig size={14} />Library</button>
-        {view === "reader" && <button type="button" className="flex items-center gap-2 rounded-[10px] bg-slate-950 px-3 py-2 text-xs font-semibold text-white shadow-sm"><BookOpenText size={14} />Reader</button>}
-        <span className="ml-auto hidden pr-2 text-[10px] text-slate-400 sm:inline">{view === "board" ? "Arrange cards and create explicit knowledge relations." : view === "graph" ? "Explore a filtered local graph around one knowledge object." : view === "reader" ? "Read structured paper text, capture knowledge, and attach bounded AI context." : "Manage knowledge cards and local document resources."}</span>
-      </nav>
-      {view === "board" && <KnowledgeBoardPanel library={library} board={board} />}
-      {view === "graph" && <KnowledgeGraphPanel library={library} board={board} focusItemId={graphFocusId} onFocusChange={openGraph} onOpenItem={openGraphItem} />}
-      {view === "library" && <KnowledgeLibraryPanel library={library} onOpenPaper={openPaper} onOpenGraph={openGraph} />}
-      {view === "reader" && <KnowledgePaperReaderPanel paperItemId={paperItemId} library={library} workspace={workspace} onBack={closeReader} />}
-    </div>
+    <section className="space-y-3" aria-label="Knowledge workspace">
+      <header className="ait-surface flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Knowledge workspace</p>
+          <h1 className="mt-1 text-lg font-semibold text-slate-950">AI Knowledge Space</h1>
+          <p className="mt-1 text-xs text-slate-500">Organize papers, concepts, notes, relations, and agent-ready context in one place.</p>
+        </div>
+        <nav className="flex items-center gap-1 rounded-[14px] border border-slate-200 bg-white p-1 shadow-sm" aria-label="Knowledge workspace view">
+          <button type="button" className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === "canvas" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`} onClick={() => setView("canvas")}><LayoutDashboard size={14} />Canvas</button>
+          <button type="button" className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === "graph" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`} onClick={() => paperItemId ? openGraph(paperItemId) : setView("graph")}><Network size={14} />Graph</button>
+          <button type="button" className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === "library" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`} onClick={() => setView("library")}><LibraryBig size={14} />Library</button>
+          {view === "reader" ? <button type="button" className="flex items-center gap-2 rounded-[10px] bg-slate-950 px-3 py-2 text-xs font-semibold text-white shadow-sm"><BookOpenText size={14} />Reader</button> : null}
+        </nav>
+      </header>
+
+      {view === "canvas" ? <KnowledgeBoardPanel library={library} board={board} /> : null}
+      {view === "graph" ? <KnowledgeGraphPanel library={library} board={board} focusItemId={graphFocusId} onFocusChange={openGraph} onOpenItem={openGraphItem} /> : null}
+      {view === "library" ? <KnowledgeLibraryPanel library={library} onOpenPaper={openPaper} onOpenGraph={openGraph} /> : null}
+      {view === "reader" ? <KnowledgePaperReaderPanel paperItemId={paperItemId} library={library} workspace={workspace} onBack={closeReader} /> : null}
+    </section>
   )
 }
