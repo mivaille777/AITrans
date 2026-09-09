@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   BookOpenText,
   Check,
@@ -90,8 +90,17 @@ function compactId(value: string): string {
   return value.length <= 22 ? value : `${value.slice(0, 10)}…${value.slice(-7)}`
 }
 
+function citationLabel(citation: Record<string, unknown>, index: number): string {
+  const title = String(citation.title ?? "").trim()
+  if (title) return title
+  const id = String(citation.id ?? "").trim()
+  if (id) return id
+  return `Source ${index + 1}`
+}
+
 export function MultiAgentTracePanel({ task }: { task: string }) {
   const [trace, setTrace] = useState<MultiAgentRunTrace | null>(null)
+  const [traceTask, setTraceTask] = useState("")
   const [pending, setPending] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
   const nodes = useMemo(() => deriveMultiAgentNodeStates(trace), [trace])
@@ -101,12 +110,21 @@ export function MultiAgentTracePanel({ task }: { task: string }) {
   )
   const normalizedTask = task.trim()
 
+  useEffect(() => {
+    if (!trace || traceTask === normalizedTask) return
+    setTrace(null)
+    setTraceTask("")
+    setErrorMessage("")
+  }, [normalizedTask, trace, traceTask])
+
   async function runTrace() {
     if (!normalizedTask || pending) return
     setPending(true)
     setErrorMessage("")
     try {
-      setTrace(await runMultiAgentTrace({ task: normalizedTask }))
+      const nextTrace = await runMultiAgentTrace({ task: normalizedTask })
+      setTrace(nextTrace)
+      setTraceTask(normalizedTask)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to run the multi-agent trace.")
     } finally {
@@ -195,7 +213,7 @@ export function MultiAgentTracePanel({ task }: { task: string }) {
                     key={`${String(citation.id ?? "source")}-${index}`}
                     className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600"
                   >
-                    {String(citation.title || citation.id || `Source ${index + 1}`)}
+                    {citationLabel(citation, index)}
                   </span>
                 ))}
               </div>
