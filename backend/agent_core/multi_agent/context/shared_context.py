@@ -13,6 +13,7 @@ class SharedAgentContext:
     citations: list[dict[str, Any]] = field(default_factory=list)
     memory: dict[str, Any] = field(default_factory=dict)
     intermediate_results: dict[str, Any] = field(default_factory=dict)
+    runtime: dict[str, Any] = field(default_factory=dict)
 
     def add_result(self, agent_name: str, result: Any) -> None:
         self.intermediate_results[agent_name] = result
