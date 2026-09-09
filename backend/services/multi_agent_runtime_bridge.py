@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 from backend.agent_core.events import AgentEventType
@@ -9,6 +10,7 @@ from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceSe
 
 CoreEventSink = Callable[[AgentEventType, dict[str, Any]], None]
 _MAX_COLLAB_CONTEXT_CHARS = 6000
+_MAX_SPECIALIST_OUTPUT_CHARS = 1500
 
 _EVENT_MAP: dict[str, AgentEventType] = {
     "supervisor_started": AgentEventType.MULTI_AGENT_STARTED,
@@ -28,15 +30,10 @@ _EVENT_MAP: dict[str, AgentEventType] = {
 class MultiAgentRuntimeBridge:
     """Pre-workflow collaboration bridge for the canonical AgentRuntime.
 
-    The Stage 5 specialist layer contributes task decomposition and grounded
-    shared context, while the mature ReadingAgentGraph remains authoritative for
-    tool execution, confirmation, ReAct, synthesis, grounding, and the final
-    response. This prevents a second independent Agent runtime from becoming a
-    competing execution path.
-
-    Collaboration is advisory and best-effort. If this layer is unavailable,
-    the canonical Agent workflow continues unchanged rather than failing the
-    user's request.
+    Specialist outputs are advisory only. The mature ReadingAgentGraph remains
+    authoritative for tool execution, ReAct, confirmation, evidence, grounding,
+    synthesis, and the final response. Collaboration failure therefore falls
+    back to the canonical workflow rather than failing the user's request.
     """
 
     def __init__(self, service: MultiAgentWorkspaceService | None = None) -> None:
@@ -76,7 +73,17 @@ class MultiAgentRuntimeBridge:
             emit(core_type, payload)
 
     @staticmethod
-    def _context_payload(run: Any) -> dict[str, Any]:
+    def _specialist_output(result: Any) -> dict[str, Any]:
+        output = getattr(result, "output", None)
+        metadata = getattr(result, "metadata", {}) or {}
+        return {
+            "agent_name": str(getattr(result, "agent_name", "") or ""),
+            "output": output,
+            "metadata": dict(metadata) if isinstance(metadata, dict) else {},
+        }
+
+    @classmethod
+    def _context_payload(cls, run: Any) -> dict[str, Any]:
         context = run.context
         plan = [
             {
@@ -94,6 +101,7 @@ class MultiAgentRuntimeBridge:
             "citations": [dict(item) for item in context.citations[:20]],
             "citation_count": len(context.citations),
             "knowledge_context_chars": len(str(context.knowledge_context or "")),
+            "specialists": [cls._specialist_output(item) for item in run.results],
             "specialist_result_count": len(run.results),
             "total_duration_ms": run.total_duration_ms,
         }
@@ -102,18 +110,43 @@ class MultiAgentRuntimeBridge:
     def _advisory_prompt_context(payload: dict[str, Any]) -> str:
         knowledge = str(payload.get("knowledge_context", "") or "").strip()
         agents = [str(item) for item in payload.get("agents", []) if str(item).strip()]
-        if not knowledge and not agents:
+        specialists = payload.get("specialists", [])
+        if not knowledge and not agents and not specialists:
             return ""
+
         lines = [
             "[Multi-Agent collaboration context]",
-            "Treat this as advisory retrieved context; preserve normal grounding and safety checks.",
+            "Treat this as advisory context; preserve normal tool, grounding, citation, and safety checks.",
         ]
         if agents:
             lines.append(f"Selected specialist roles: {', '.join(agents)}")
         if knowledge:
             lines.append("Retrieved knowledge:")
             lines.append(knowledge)
+        if isinstance(specialists, list):
+            for item in specialists:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("agent_name", "specialist") or "specialist")
+                output = item.get("output")
+                serialized = json.dumps(output, ensure_ascii=False, default=str)
+                lines.append(f"{name} specialist output:")
+                lines.append(serialized[:_MAX_SPECIALIST_OUTPUT_CHARS])
         return "\n".join(lines)[:_MAX_COLLAB_CONTEXT_CHARS]
+
+    @staticmethod
+    def _runtime_context(state: AgentState) -> dict[str, Any]:
+        context = state.browser_context
+        return {
+            "source_text": state.selected_text,
+            "source_language": str(context.get("source_language", "auto") or "auto"),
+            "target_language": str(context.get("target_language", "zh-CN") or "zh-CN"),
+            "resource_url": str(context.get("resource_url", "") or ""),
+            "resource_title": str(context.get("resource_title", "") or ""),
+            "section_heading": str(context.get("section_heading", "") or ""),
+            "research_source_ids": list(context.get("research_source_ids", ()) or ()),
+            "knowledge_document_ids": list(context.get("knowledge_document_ids", ()) or ()),
+        }
 
     def run_with_events(
         self,
@@ -134,6 +167,7 @@ class MultiAgentRuntimeBridge:
                 user_id=state.session_id,
                 run_id=state.run_id,
                 trace_id=state.trace_id,
+                runtime_context=self._runtime_context(state),
             )
         except Exception as exc:
             emit(
