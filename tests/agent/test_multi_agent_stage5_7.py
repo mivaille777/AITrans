@@ -64,9 +64,10 @@ def test_stage5_7_trace_covers_supervisor_knowledge_context_and_specialists():
     assert event_types[-1] == "workflow_completed"
 
 
-def test_stage5_7_api_route_is_registered():
+def test_stage5_7_primary_agent_trace_route_remains_registered():
     from backend.main import create_app
 
     app = create_app()
     paths = {route.path for route in app.routes}
-    assert "/api/agent/multi-agent/run/trace" in paths
+    assert "/api/agent/run/trace" in paths
+    assert "/api/agent/multi-agent/run/trace" not in paths
