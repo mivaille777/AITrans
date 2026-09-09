@@ -2,7 +2,7 @@ import { ServerOff } from "lucide-react"
 
 import { EmptyState } from "../../shared/ui/EmptyState"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
-import KnowledgeCanvas from "./KnowledgeCanvas"
+import { KnowledgeWorkspaceProvider } from "./knowledge-workspace-provider"
 import KnowledgeWorkspacePanel from "./KnowledgeWorkspacePanel"
 import { useKnowledgeBoard } from "./useKnowledgeBoard"
 import { useKnowledgeLibrary } from "./useKnowledgeLibrary"
@@ -27,7 +27,7 @@ export default function KnowledgeRoute({
         className="ait-surface border-solid bg-white/90 py-16"
         icon={<ServerOff size={24} strokeWidth={1.6} />}
         title="Knowledge workspace is waiting for the backend"
-        description="Reconnect the local AITranslator service to open your board, cards, reader, and document index."
+        description="Reconnect the local AITranslator service to open your canvas, graph, reader, and document index."
       />
     )
   }
@@ -38,10 +38,10 @@ export default function KnowledgeRoute({
 function ConnectedKnowledgeWorkspace({ workspace }: { workspace: TranslationWorkspaceController }) {
   const library = useKnowledgeLibrary()
   const board = useKnowledgeBoard()
+
   return (
-    <div className="space-y-5">
-      <KnowledgeCanvas />
+    <KnowledgeWorkspaceProvider>
       <KnowledgeWorkspacePanel library={library} board={board} workspace={workspace} />
-    </div>
+    </KnowledgeWorkspaceProvider>
   )
 }
