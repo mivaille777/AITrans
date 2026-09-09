@@ -340,7 +340,7 @@ export default function KnowledgeBoardPanel({
             <KnowledgeInspector
               item={selectedItem}
               relationCount={selectedRelations.length}
-              lastEventType={lastEvent?.item.item_id === selectedItem?.item_id ? lastEvent.type : null}
+              lastEventType={lastEvent?.item.item_id === selectedItem?.item_id ? lastEvent?.type ?? null : null}
               onAction={handleKnowledgeAction}
               relations={selectedRelations.length > 0 ? selectedRelations.map((relation) => (
                 <RelationRow
