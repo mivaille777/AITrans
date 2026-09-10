@@ -43,9 +43,11 @@ class AgentConversationService:
 
     Conversation persistence remains owned by ``ConversationStoreService`` /
     ``ConversationLifecycleService``. This service only coordinates one Agent
-    run with that existing store: load history, begin an exchange, keep Reading
-    Context current, and commit one terminal assistant state.
+    run with that existing store: load history, begin an exchange, keep the
+    active context domain current, and commit one terminal assistant state.
     """
+
+    _AGENT_CONTEXT_MODES = {"general", "reading", "knowledge", "research", "translation"}
 
     def __init__(
         self,
@@ -80,6 +82,18 @@ class AgentConversationService:
     def _owner_surface(state: AgentState) -> str:
         value = str(state.browser_context.get("client_surface", "unknown") or "unknown")
         return value if value in {"main", "overlay", "unknown"} else "unknown"
+
+    @classmethod
+    def _agent_context_mode(cls, state: AgentState) -> str:
+        mode = str(state.browser_context.get("context_mode", "reading") or "reading").strip().lower()
+        return mode if mode in cls._AGENT_CONTEXT_MODES else "reading"
+
+    @classmethod
+    def _conversation_context_mode(cls, state: AgentState) -> str:
+        # The durable Companion store currently exposes General vs Reading.
+        # Knowledge/Research/Translation are Agent execution domains and must
+        # not masquerade as Reading-grounded conversations in AI Chat.
+        return "reading" if cls._agent_context_mode(state) == "reading" else "general"
 
     def _acquire(
         self,
@@ -116,6 +130,8 @@ class AgentConversationService:
         owner_id = self._owner_id(state)
         owner_surface = self._owner_surface(state)
         acquired_id = ""
+        conversation_context_mode = self._conversation_context_mode(state)
+        reading_attached = conversation_context_mode == "reading"
 
         if existing is not None:
             self._acquire(
@@ -131,23 +147,23 @@ class AgentConversationService:
             "session_id": state.session_id or "agent-session",
             "user_message": state.user_input,
             "request_id": request_id,
-            "source_text": state.selected_text,
-            "translated_text": str(context.get("translated_text", "") or ""),
+            "source_text": state.selected_text if reading_attached else "",
+            "translated_text": str(context.get("translated_text", "") or "") if reading_attached else "",
             "source_language": str(context.get("source_language", "auto") or "auto"),
             "target_language": str(context.get("target_language", "zh-CN") or "zh-CN"),
-            "resource_url": str(context.get("resource_url", "") or ""),
-            "resource_title": str(context.get("resource_title", "") or ""),
-            "section_heading": str(context.get("section_heading", "") or ""),
-            "context_before": str(context.get("context_before", "") or ""),
-            "context_after": str(context.get("context_after", "") or ""),
-            "source_kind": str(context.get("source_kind", "desktop") or "desktop"),
+            "resource_url": str(context.get("resource_url", "") or "") if reading_attached else "",
+            "resource_title": str(context.get("resource_title", "") or "") if reading_attached else "",
+            "section_heading": str(context.get("section_heading", "") or "") if reading_attached else "",
+            "context_before": str(context.get("context_before", "") or "") if reading_attached else "",
+            "context_after": str(context.get("context_after", "") or "") if reading_attached else "",
+            "source_kind": str(context.get("source_kind", "desktop") or "desktop") if reading_attached else "",
         }
 
         exchange = None
         try:
             context_aware = getattr(self._store, "begin_exchange_with_context_mode", None)
             if callable(context_aware):
-                exchange = context_aware(context_mode="reading", **kwargs)
+                exchange = context_aware(context_mode=conversation_context_mode, **kwargs)
             else:
                 exchange = self._store.begin_exchange(**kwargs)
 
@@ -164,17 +180,17 @@ class AgentConversationService:
             if callable(update_context):
                 update_context(
                     exchange.conversation_id,
-                    context_mode="reading",
-                    source_text=state.selected_text,
-                    translated_text=str(context.get("translated_text", "") or ""),
-                    source_language=str(context.get("source_language", "auto") or "auto"),
-                    target_language=str(context.get("target_language", "zh-CN") or "zh-CN"),
-                    resource_url=str(context.get("resource_url", "") or ""),
-                    resource_title=str(context.get("resource_title", "") or ""),
-                    section_heading=str(context.get("section_heading", "") or ""),
-                    context_before=str(context.get("context_before", "") or ""),
-                    context_after=str(context.get("context_after", "") or ""),
-                    source_kind=str(context.get("source_kind", "desktop") or "desktop"),
+                    context_mode=conversation_context_mode,
+                    source_text=kwargs["source_text"],
+                    translated_text=kwargs["translated_text"],
+                    source_language=kwargs["source_language"],
+                    target_language=kwargs["target_language"],
+                    resource_url=kwargs["resource_url"],
+                    resource_title=kwargs["resource_title"],
+                    section_heading=kwargs["section_heading"],
+                    context_before=kwargs["context_before"],
+                    context_after=kwargs["context_after"],
+                    source_kind=kwargs["source_kind"],
                 )
 
             return AgentConversationRun(
@@ -207,7 +223,7 @@ class AgentConversationService:
             history=run.history,
             user_message_id=run.user_message_id,
             assistant_message_id=run.assistant_message_id,
-            context_mode="reading",
+            context_mode=self._conversation_context_mode(state),
         )
 
     def complete(self, run: AgentConversationRun, state: AgentState) -> None:
