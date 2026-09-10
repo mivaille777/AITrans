@@ -179,6 +179,12 @@ class ProductAgentService:
         return tuple(history[-32:])
 
     @staticmethod
+    def _chat_context_mode(payload: dict[str, Any]) -> str:
+        """Map Agent execution domains onto the chat core's General/Reading modes."""
+        mode = str(payload.get("context_mode", "reading") or "reading").strip().lower()
+        return "reading" if mode in {"reading", "translation"} else "general"
+
+    @staticmethod
     def _emit(
         sink: AgentLifecycleSink | None,
         event_type: str,
@@ -519,7 +525,7 @@ class ProductAgentService:
             **reading,
             history=history,
             request_id=request_id,
-            context_mode="reading",
+            context_mode=self._chat_context_mode(payload),
             evidence=evidence,
             citations=citations,
         )
@@ -586,7 +592,7 @@ class ProductAgentService:
             **reading,
             history=history,
             request_id=request_id,
-            context_mode="reading",
+            context_mode=self._chat_context_mode(payload),
             **kwargs,
         )
         control.checkpoint("synthesis_result")
