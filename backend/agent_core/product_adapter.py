@@ -87,6 +87,7 @@ class ProductAgentRuntimeAdapter:
         return {
             "session_id": state.session_id or "agent-session",
             "user_message": state.user_input,
+            "context_mode": str(context.get("context_mode", "reading") or "reading"),
             "source_text": state.selected_text,
             "translated_text": str(context.get("translated_text", "") or ""),
             "source_language": str(context.get("source_language", "auto") or "auto"),
