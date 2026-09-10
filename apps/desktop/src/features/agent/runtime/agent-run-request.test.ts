@@ -31,6 +31,7 @@ describe("Agent run request", () => {
       session_id: "agent-session-1",
       client_id: "agent-session-1",
       client_surface: "main",
+      context_mode: "general",
       trace_id: "trace-1",
       request_id: 4,
       style: "academic",
@@ -40,12 +41,39 @@ describe("Agent run request", () => {
     })
   })
 
+  it("carries an explicit knowledge context mode without a reading source", () => {
+    const request = buildAgentRunRequest({
+      context: {
+        resource_url: "",
+        resource_title: "",
+        section_heading: "",
+        context_before: "",
+        context_after: "",
+        source_kind: "desktop",
+      },
+      contextMode: "knowledge",
+      sessionId: "agent-session-knowledge",
+      traceId: "trace-knowledge",
+      requestId: 5,
+      userMessage: "Analyze the knowledge base",
+      sourceText: "",
+      translatedText: "",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      conversationId: "",
+    })
+
+    expect(request.context_mode).toBe("knowledge")
+    expect(request.source_text).toBe("")
+    expect(request.resource_title).toBe("")
+  })
+
   it("carries only the explicitly confirmed write tool into a retry", () => {
     const request = buildAgentRunRequest({
       context,
       sessionId: "agent-session-1",
       traceId: "trace-2",
-      requestId: 5,
+      requestId: 6,
       userMessage: "Save this note",
       sourceText: "source",
       translatedText: "",
@@ -63,7 +91,7 @@ describe("Agent run request", () => {
       context,
       sessionId: "agent-session-1",
       traceId: "trace-stage16",
-      requestId: 6,
+      requestId: 7,
       userMessage: "Compare my project evidence",
       sourceText: "source",
       translatedText: "",
