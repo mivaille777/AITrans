@@ -48,8 +48,8 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
 
   const academic = workspace.academicReadingContext
   const reading = workspace.readingSelection
-  const sourceText = (academic?.text || reading?.text || workspace.sourceText).trim()
-  const context = useMemo<ReadingContextFields>(
+  const ambientSourceText = (academic?.text || reading?.text || workspace.sourceText).trim()
+  const ambientContext = useMemo<ReadingContextFields>(
     () => {
       if (academic) {
         return {
@@ -85,6 +85,28 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
         }
       : null,
     [workspace.browserPage],
+  )
+
+  const hasKnowledgeScope = workspace.researchRetrievalScope.knowledgeDocumentIds.length > 0
+  const hasResearchWorkspace = Boolean(workspace.activeResearchWorkspaceId.trim())
+  const previewMode = useMemo(
+    () => inferAgentContextMode({
+      userMessage: prompt,
+      hasReadingContext: Boolean(ambientSourceText),
+      hasKnowledgeScope,
+      hasResearchWorkspace,
+    }),
+    [ambientSourceText, hasKnowledgeScope, hasResearchWorkspace, prompt],
+  )
+  const previewContext = useMemo(
+    () => resolveAgentContext({
+      mode: previewMode,
+      readingText: ambientSourceText,
+      readingContext: ambientContext,
+      browserContext,
+      fallbackText: workspace.sourceText,
+    }),
+    [ambientContext, ambientSourceText, browserContext, previewMode, workspace.sourceText],
   )
 
   const viewState = useMemo(
@@ -228,14 +250,14 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
 
     const contextMode = inferAgentContextMode({
       userMessage,
-      hasReadingContext: Boolean(sourceText),
-      hasKnowledgeScope: workspace.researchRetrievalScope.knowledgeDocumentIds.length > 0,
-      hasResearchWorkspace: Boolean(workspace.activeResearchWorkspaceId.trim()),
+      hasReadingContext: Boolean(ambientSourceText),
+      hasKnowledgeScope,
+      hasResearchWorkspace,
     })
     const resolved = resolveAgentContext({
       mode: contextMode,
-      readingText: sourceText,
-      readingContext: context,
+      readingText: ambientSourceText,
+      readingContext: ambientContext,
       browserContext,
       fallbackText: workspace.sourceText,
     })
@@ -302,8 +324,9 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
   return {
     prompt,
     setPrompt,
-    sourceText,
-    context,
+    sourceText: previewContext.sourceText,
+    context: previewContext.context,
+    contextMode: previewContext.mode,
     viewState,
     traceEvents,
     decision,
