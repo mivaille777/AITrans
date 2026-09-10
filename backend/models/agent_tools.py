@@ -15,6 +15,7 @@ AgentToolEffect = Literal["read", "compute", "write"]
 AgentRunStatus = Literal["completed", "confirmation_required"]
 AgentPlanAction = Literal["answer", "tool"]
 AgentClientSurface = Literal["main", "overlay", "unknown"]
+AgentContextMode = Literal["general", "reading", "knowledge", "research", "translation"]
 AgentTraceEventType = Literal[
     "agent_start",
     "context_ready",
@@ -89,10 +90,15 @@ class AgentPlan(BaseModel):
 
 
 class AgentRunRequest(ReadingContextPayload):
+    # Agent runs may be context-free. ReadingContextPayload is reused for the
+    # bounded field set, but a General/Knowledge/Research request must not be
+    # forced to attach an ambient reading selection just to satisfy validation.
+    source_text: str = Field(default="", max_length=20_000)
     session_id: str = Field(default="agent-session", min_length=1, max_length=128)
     trace_id: str = Field(default="", max_length=128)
     client_id: str = Field(default="", max_length=128)
     client_surface: AgentClientSurface = "unknown"
+    context_mode: AgentContextMode = "reading"
     user_message: str = Field(min_length=1, max_length=20_000)
     style: str = Field(default="academic", min_length=1, max_length=64)
     conversation_id: str = Field(default="", max_length=128)
