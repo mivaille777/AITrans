@@ -265,12 +265,19 @@ class CompanionChatService:
         payload = dict(kwargs)
         if str(payload.get("context_mode", "reading")).strip().lower() != "reading":
             return payload
+
+        # Empty source text is an explicit context-free boundary for Agent
+        # General/Knowledge/Research requests. Never let the short-lived Reading
+        # selection cache repopulate that boundary.
+        source_text = str(payload.get("source_text", "") or "")
+        if not source_text.strip():
+            return payload
+
         resolver = self._reading_resolver
         resolve_for_text = getattr(resolver, "resolve_for_text", None)
         if not callable(resolve_for_text):
             return payload
 
-        source_text = str(payload.get("source_text", "") or "")
         try:
             selection = resolve_for_text(source_text)
         except Exception:
@@ -278,8 +285,6 @@ class CompanionChatService:
         if selection is None:
             return payload
 
-        if not source_text.strip():
-            payload["source_text"] = selection.text
         reading = to_reading_context(selection)
         for key, value in (
             ("resource_url", reading.resource_url),
@@ -328,7 +333,22 @@ class CompanionChatService:
                 )
             )
 
-        grounded = str(context_mode or "").strip().lower() == "reading"
+        has_reading_payload = any(
+            str(value or "").strip()
+            for value in (
+                source_text,
+                translated_text,
+                resource_url,
+                resource_title,
+                section_heading,
+                context_before,
+                context_after,
+            )
+        )
+        grounded = (
+            str(context_mode or "").strip().lower() == "reading"
+            and has_reading_payload
+        )
         context = ChatContext(
             source_text=source_text if grounded else "",
             translated_text=translated_text if grounded else "",
