@@ -13,6 +13,11 @@ import { attachResearchProjectMember } from "../../../api/research"
 import type { ReadingContextFields } from "../../../api/types"
 import type { TranslationWorkspaceController } from "../../translation/useTranslationWorkspace"
 import { deriveAgentDecision } from "../decision/agent-decision"
+import type { AgentContextMode } from "../runtime/agent-context-mode"
+import {
+  inferAgentContextMode,
+  resolveAgentContext,
+} from "../runtime/agent-context-resolver"
 import { buildAgentRunRequest } from "../runtime/agent-run-request"
 import { deriveAgentWorkspaceState } from "../state/agent-workspace-state"
 
@@ -29,6 +34,7 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
   const reactInstanceId = useId()
   const sessionId = `agent-workspace-${reactInstanceId.replace(/[^a-zA-Z0-9_-]/g, "")}`
   const conversationId = useRef("")
+  const conversationMode = useRef<AgentContextMode | null>(null)
   const requestId = useRef(0)
   const lastPayload = useRef<AgentRunRequest | null>(null)
   const streamHandle = useRef<AgentStreamHandle | null>(null)
@@ -65,6 +71,20 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
       }
     },
     [academic, reading, workspace.browserPage],
+  )
+
+  const browserContext = useMemo<ReadingContextFields | null>(
+    () => workspace.browserPage
+      ? {
+          resource_url: workspace.browserPage.url || "",
+          resource_title: workspace.browserPage.title || "",
+          section_heading: workspace.browserPage.heading || "",
+          context_before: "",
+          context_after: "",
+          source_kind: "browser_dom",
+        }
+      : null,
+    [workspace.browserPage],
   )
 
   const viewState = useMemo(
@@ -205,21 +225,47 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
   function submitPrompt() {
     const userMessage = prompt.trim()
     if (!userMessage || pending) return
-    if (!sourceText) {
+
+    const contextMode = inferAgentContextMode({
+      userMessage,
+      hasReadingContext: Boolean(sourceText),
+      hasKnowledgeScope: workspace.researchRetrievalScope.knowledgeDocumentIds.length > 0,
+      hasResearchWorkspace: Boolean(workspace.activeResearchWorkspaceId.trim()),
+    })
+    const resolved = resolveAgentContext({
+      mode: contextMode,
+      readingText: sourceText,
+      readingContext: context,
+      browserContext,
+      fallbackText: workspace.sourceText,
+    })
+
+    if ((contextMode === "reading" || contextMode === "translation") && !resolved.sourceText) {
       setFallbackReason("")
-      setErrorMessage("Capture a reading selection or choose an academic section before running the Agent.")
+      setErrorMessage("Capture a reading selection or choose an academic section before running this reading task.")
       return
     }
 
+    // A conversation may continue within one context domain, but crossing from
+    // Reading to Knowledge/Research/General starts a fresh durable conversation
+    // so stale document grounding cannot leak through history.
+    if (conversationMode.current && conversationMode.current !== contextMode) {
+      conversationId.current = ""
+      lastPayload.current = null
+    }
+    conversationMode.current = contextMode
+
     requestId.current += 1
+    const readingGrounded = contextMode === "reading" || contextMode === "translation"
     const payload = buildAgentRunRequest({
-      context,
+      context: resolved.context,
+      contextMode,
       sessionId,
       traceId: `trace-${sessionId}-${requestId.current}-${Date.now().toString(36)}`,
       requestId: requestId.current,
       userMessage,
-      sourceText,
-      translatedText: workspace.translation?.translated_text || "",
+      sourceText: resolved.sourceText,
+      translatedText: readingGrounded ? workspace.translation?.translated_text || "" : "",
       sourceLanguage: workspace.sourceLanguage,
       targetLanguage: workspace.targetLanguage,
       conversationId: conversationId.current,
