@@ -6,6 +6,7 @@ import {
 } from "react"
 
 import type { KnowledgeAction } from "./KnowledgeActionMenu"
+import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
 import {
   KnowledgeWorkspaceContext,
   type KnowledgeWorkspaceContextValue,
@@ -63,5 +64,3 @@ export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }
     </KnowledgeWorkspaceContext.Provider>
   )
 }
-
-import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
