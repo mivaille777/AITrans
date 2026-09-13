@@ -68,10 +68,6 @@ def test_stage5_7_primary_agent_trace_route_remains_registered():
     from backend.main import create_app
 
     app = create_app()
-    paths = {
-        path
-        for route in app.routes
-        if (path := getattr(route, "path", None)) is not None
-    }
+    paths = set(app.openapi().get("paths", {}))
     assert "/api/agent/run/trace" in paths
     assert "/api/agent/multi-agent/run/trace" not in paths
