@@ -58,13 +58,14 @@ def _registry(retrieval_service: StubRetrievalService) -> AgentToolRegistry:
     )
 
 
-def test_registry_lists_safe_read_only_knowledge_tool_last() -> None:
+def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
     registry = _registry(StubRetrievalService())
 
     names = [tool.name for tool in registry.list_tools()]
-    tool = registry.get_tool("search_knowledge_base")
+    search_tool = registry.get_tool("search_knowledge_base")
+    save_tool = registry.get_tool("save_knowledge_card")
 
-    assert names[-1] == "search_knowledge_base"
+    assert names[-2:] == ["search_knowledge_base", "save_knowledge_card"]
     assert names[:11] == [
         "inspect_reading_context",
         "translate_selection",
@@ -78,18 +79,26 @@ def test_registry_lists_safe_read_only_knowledge_tool_last() -> None:
         "get_research_note",
         "update_research_note",
     ]
-    assert names[11:-1] == [
+    assert names[11:-2] == [
         "define_terms",
         "analyze_equation",
         "summarize_current_section",
     ]
-    assert tool is not None
-    assert tool.category == "knowledge"
-    assert tool.effect == "read"
-    assert tool.requires_reading_context is False
-    assert tool.requires_confirmation is False
-    assert set(tool.input_schema) == {"query", "document_scope"}
-    assert registry.allows_safe_retry(tool.name) is True
+    assert search_tool is not None
+    assert search_tool.category == "knowledge"
+    assert search_tool.effect == "read"
+    assert search_tool.requires_reading_context is False
+    assert search_tool.requires_confirmation is False
+    assert set(search_tool.input_schema) == {"query", "document_scope"}
+    assert registry.allows_safe_retry(search_tool.name) is True
+
+    assert save_tool is not None
+    assert save_tool.category == "knowledge"
+    assert save_tool.effect == "write"
+    assert save_tool.requires_reading_context is False
+    assert save_tool.requires_confirmation is True
+    assert save_tool.input_schema == {}
+    assert registry.allows_safe_retry(save_tool.name) is False
 
 
 def test_search_maps_typed_results_without_embedding_vectors() -> None:
