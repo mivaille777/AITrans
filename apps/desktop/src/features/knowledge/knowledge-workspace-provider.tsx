@@ -1,34 +1,20 @@
 import {
-  createContext,
   type ReactNode,
   useCallback,
-  useContext,
   useMemo,
   useState,
 } from "react"
 
 import type { KnowledgeAction } from "./KnowledgeActionMenu"
-import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
+import {
+  KnowledgeWorkspaceContext,
+  type KnowledgeWorkspaceContextValue,
+} from "./knowledge-workspace-context"
 import type { KnowledgeItem } from "./knowledge-types"
 import {
   emitKnowledgeWorkspaceEvent,
   type KnowledgeWorkspaceEvent,
 } from "./knowledge-workspace-events"
-
-export type KnowledgeWorkspaceContextValue = {
-  selectedKnowledgeItem: KnowledgeItem | null
-  selectedKnowledgeIds: string[]
-  lastEvent: KnowledgeWorkspaceEvent | null
-  selectKnowledgeItem: (item: KnowledgeItem | null) => void
-  setSelectedKnowledgeIds: (ids: string[]) => void
-  clearSelection: () => void
-  runKnowledgeAction: (
-    action: KnowledgeAction,
-    item?: KnowledgeItem | null,
-  ) => KnowledgeWorkspaceEvent | null
-}
-
-const KnowledgeWorkspaceContext = createContext<KnowledgeWorkspaceContextValue | null>(null)
 
 export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }) {
   const [selectedKnowledgeItem, setSelectedKnowledgeItem] = useState<KnowledgeItem | null>(null)
@@ -55,7 +41,7 @@ export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }
     return event
   }, [selectedKnowledgeItem])
 
-  const value = useMemo(() => ({
+  const value = useMemo<KnowledgeWorkspaceContextValue>(() => ({
     selectedKnowledgeItem,
     selectedKnowledgeIds,
     lastEvent,
@@ -78,14 +64,4 @@ export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }
   )
 }
 
-export function useOptionalKnowledgeWorkspaceContext() {
-  return useContext(KnowledgeWorkspaceContext)
-}
-
-export function useKnowledgeWorkspaceContext() {
-  const context = useOptionalKnowledgeWorkspaceContext()
-  if (!context) {
-    throw new Error("useKnowledgeWorkspaceContext must be used inside KnowledgeWorkspaceProvider")
-  }
-  return context
-}
+import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
