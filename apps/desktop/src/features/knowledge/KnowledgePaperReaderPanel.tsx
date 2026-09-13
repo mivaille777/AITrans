@@ -58,6 +58,7 @@ function KnowledgePaperReaderContent({
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview")
   const [readerMode, setReaderMode] = useState<ReaderMode>("text")
   const [aiQuestion, setAiQuestion] = useState("")
+  const [agentSourceItem, setAgentSourceItem] = useState<KnowledgeItem | null>(null)
   const [openError, setOpenError] = useState("")
 
   const { paper, document, sectionQuery } = reader
@@ -94,7 +95,7 @@ function KnowledgePaperReaderContent({
     setSelection(null)
   }
 
-  function createSelectionCard(itemType: "highlight" | "note" | "concept") {
+  function createSelectionCard(itemType: "highlight" | "note" | "concept" | "evidence") {
     if (!selection) return
     reader.createDerivedMutation.mutate(
       { itemType, text: selection.text },
@@ -109,11 +110,20 @@ function KnowledgePaperReaderContent({
 
   function askAi() {
     if (!selection) return
-    if (reader.attachSelectionToAgent(selection.text)) {
-      setInspectorTab("ai")
-      setAiQuestion((current) => current || "Explain this passage in the context of the paper.")
-    }
-    clearSelection()
+    const selectedText = selection.text
+    reader.createDerivedMutation.mutate(
+      { itemType: "evidence", text: selectedText },
+      {
+        onSuccess: (evidence) => {
+          if (reader.attachSelectionToAgent(selectedText)) {
+            setAgentSourceItem(evidence)
+            setInspectorTab("ai")
+            setAiQuestion((current) => current || "Explain this evidence in the context of the paper.")
+          }
+          clearSelection()
+        },
+      },
+    )
   }
 
   function translateSelection() {
@@ -125,6 +135,7 @@ function KnowledgePaperReaderContent({
 
   function attachCurrentSection() {
     if (!reader.attachSectionToAgent()) return
+    setAgentSourceItem(paper)
     setInspectorTab("ai")
     setAiQuestion((current) => current || "Summarize this section and explain its main contribution.")
   }
@@ -132,10 +143,30 @@ function KnowledgePaperReaderContent({
   function openAgentWithQuestion(question: string) {
     const normalized = question.trim()
     if (!normalized) return
+    const attached = workspace.academicReadingContext
+    const sourceItem = agentSourceItem ?? paper
     navigate("/agent", {
       state: {
         agentDraftPrompt: normalized,
         autoSubmitAgentPrompt: true,
+        knowledgeAgentContext: sourceItem ? {
+          item: sourceItem,
+          writeback: {
+            itemType: "insight",
+            operation: "research",
+            relationType: "derived_from",
+          },
+          sourceText: attached?.text ?? sourceItem.summary,
+          readingContext: attached ? {
+            resource_url: attached.resource_url,
+            resource_title: attached.resource_title,
+            section_heading: attached.section_heading,
+            context_before: attached.context_before,
+            context_after: attached.context_after,
+            source_kind: attached.source_kind,
+          } : undefined,
+          documentIds: attached?.document_id ? [attached.document_id] : [],
+        } : undefined,
       },
     })
   }
@@ -216,7 +247,7 @@ function KnowledgePaperReaderContent({
             <>
               <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">
                 <span>Visual PDF preview · page {Math.max(1, pdfPage)}</span>
-                <span>Switch to Text mode for Highlight, Note, Translate, and Ask AI selection actions.</span>
+                <span>Switch to Text mode for Evidence, Highlight, Note, Translate, and Ask AI selection actions.</span>
               </div>
               <iframe
                 key={pdfPreviewUrl}
@@ -276,6 +307,7 @@ function KnowledgePaperReaderContent({
       {selection && readerMode === "text" && (
         <div className="fixed z-[70] -translate-x-1/2 -translate-y-full rounded-[13px] border border-slate-200 bg-white p-1.5 shadow-2xl" style={{ left: selection.left, top: selection.top }} role="toolbar" aria-label="Paper selection actions">
           <div className="flex items-center gap-1">
+            <SelectionAction icon={<BookOpenCheck size={13} />} label="Evidence" onClick={() => createSelectionCard("evidence")} />
             <SelectionAction icon={<Highlighter size={13} />} label="Highlight" onClick={() => createSelectionCard("highlight")} />
             <SelectionAction icon={<StickyNote size={13} />} label="Note" onClick={() => createSelectionCard("note")} />
             <SelectionAction icon={<Lightbulb size={13} />} label="Concept" onClick={() => createSelectionCard("concept")} />
@@ -299,7 +331,7 @@ function OverviewInspector({ paper, document, sectionCount }: { paper: Knowledge
 function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> }) {
   const derived = reader.linked.filter(({ relation, item }) => (
     relation.relation_type !== "reading_note"
-    && (item.item_type === "note" || item.item_type === "highlight" || item.item_type === "concept")
+    && ["note", "highlight", "concept", "evidence", "insight", "question"].includes(item.item_type)
   ))
   const createError = reader.createDerivedMutation.error
   const updateError = reader.updateReadingNoteMutation.error
@@ -328,7 +360,7 @@ function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> 
       <section>
         <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Derived knowledge</p><span className="text-[9px] text-slate-400">{derived.length}</span></div>
         <div className="mt-3 space-y-2">
-          {derived.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in Text mode to create highlights, notes, or concept cards.</p> : derived.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty note."}</p></div>)}
+          {derived.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in Text mode to create evidence, highlights, notes, or concept cards.</p> : derived.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty note."}</p></div>)}
         </div>
       </section>
     </div>
@@ -383,7 +415,7 @@ function AiInspector({
       </div>
       <label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Question<textarea value={question} onChange={(event) => onQuestionChange(event.target.value)} className="mt-2 min-h-24 w-full resize-y rounded-[12px] border border-slate-200 bg-white p-3 text-xs font-normal leading-5 text-slate-700 outline-none focus:border-cyan-300" placeholder="What do you want the Agent to explain, compare, critique, or extract?" /></label>
       <Button variant="primary" size="sm" disabled={!attached || !question.trim()} onClick={() => onAsk(question)}><Sparkles size={14} />Ask in Agent</Button>
-      <p className="text-[9px] leading-4 text-slate-400">The Agent opens with this question and the frozen paper context, then starts the run automatically.</p>
+      <p className="text-[9px] leading-4 text-slate-400">Selection-based Ask AI first stores a traceable Evidence card. The Agent can then save its result as a linked Insight after confirmation.</p>
     </div>
   )
 }
