@@ -135,6 +135,7 @@ def test_registry_uses_dedicated_writing_owner_and_preserves_catalog_order() -> 
         "analyze_equation",
         "summarize_current_section",
         "search_knowledge_base",
+        "save_knowledge_card",
     ]
 
     definition = registry.get_definition("polish_selection")
