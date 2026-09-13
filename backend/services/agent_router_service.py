@@ -140,6 +140,19 @@ _SAVE_NOTE_COMMANDS = frozenset(
         "save this note",
     }
 )
+_SAVE_KNOWLEDGE_COMMANDS = frozenset(
+    {
+        "保存到知识库",
+        "保存到知识卡片",
+        "保存为知识卡片",
+        "把结果保存到知识库",
+        "把这个结果保存到知识库",
+        "save to knowledge",
+        "save to knowledge library",
+        "save this result to knowledge",
+        "save this agent result to knowledge",
+    }
+)
 
 _COMPOUND_CONNECTORS = (
     "然后",
@@ -161,6 +174,7 @@ _COMPOUND_ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("polish", re.compile(r"(润色|\bpolish\b)", re.I)),
     ("section_role", re.compile(r"(分析.{0,12}(作用|角色)|section\s+role)", re.I)),
     ("save_note", re.compile(r"(保存.{0,8}笔记|记到笔记|记入笔记|save.{0,10}note)", re.I)),
+    ("save_knowledge", re.compile(r"(保存.{0,10}知识库|保存.{0,10}知识卡片|save.{0,16}knowledge)", re.I)),
 )
 
 
@@ -275,6 +289,12 @@ class AgentDeterministicRouterService:
                 tool_name="save_research_note",
                 available_tools=available,
                 reason="Save the current reading selection to Research Notes.",
+            )
+        if command in _SAVE_KNOWLEDGE_COMMANDS:
+            return self._tool_route(
+                tool_name="save_knowledge_card",
+                available_tools=available,
+                reason="Save the confirmed Agent result to the canonical Knowledge Library.",
             )
         return AgentRouteDecision()
 
