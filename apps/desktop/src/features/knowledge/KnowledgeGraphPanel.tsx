@@ -4,6 +4,7 @@ import {
   BookOpenText,
   CheckCircle2,
   CircleDot,
+  CircleHelp,
   Filter,
   Focus,
   Highlighter,
@@ -11,6 +12,7 @@ import {
   Link2,
   LoaderCircle,
   Network,
+  Quote,
   Save,
   Sparkles,
   StickyNote,
@@ -46,6 +48,9 @@ const itemTypeLabels: Record<KnowledgeItemType, string> = {
   note: "Notes",
   concept: "Concepts",
   highlight: "Highlights",
+  evidence: "Evidence",
+  insight: "Insights",
+  question: "Questions",
   document: "Documents",
   web: "Web",
 }
@@ -403,6 +408,9 @@ function itemIcon(type: KnowledgeItemType) {
   if (type === "note") return <StickyNote {...props} />
   if (type === "concept") return <Lightbulb {...props} />
   if (type === "highlight") return <Highlighter {...props} />
+  if (type === "evidence") return <Quote {...props} />
+  if (type === "insight") return <Sparkles {...props} />
+  if (type === "question") return <CircleHelp {...props} />
   return <Network {...props} />
 }
 
