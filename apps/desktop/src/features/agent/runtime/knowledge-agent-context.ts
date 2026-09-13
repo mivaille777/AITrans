@@ -13,6 +13,11 @@ export interface ResolvedKnowledgeAgentContext {
   documentIds: string[]
 }
 
+function metadataText(item: KnowledgeItem, key: string): string {
+  const value = item.metadata?.[key]
+  return typeof value === "string" ? value.trim() : ""
+}
+
 function buildKnowledgeResourceUrl(context: KnowledgeAgentContext): string {
   const params = new URLSearchParams()
   if (context.writeback) {
@@ -30,17 +35,23 @@ export function resolveKnowledgeAgentContext(
   if (!context) return null
 
   const item = context.item
-  const sourceText = item.summary.trim() || item.title.trim()
+  const selectionText = metadataText(item, "selection_text")
+  const sourceText = selectionText || item.summary.trim() || item.title.trim()
+  const metadataDocumentId = metadataText(item, "document_id")
+  const documentId = item.resource_document_id?.trim() || metadataDocumentId
+  const sectionHeading = metadataText(item, "section_heading")
+  const evidenceGrounded = item.item_type === "evidence" || Boolean(selectionText)
+
   return {
     sourceText,
     context: {
       resource_url: buildKnowledgeResourceUrl(context),
       resource_title: item.title,
-      section_heading: `Knowledge card · ${item.item_type}`,
-      context_before: "",
-      context_after: "",
-      source_kind: "knowledge_card",
+      section_heading: sectionHeading || `Knowledge card · ${item.item_type}`,
+      context_before: metadataText(item, "context_before"),
+      context_after: metadataText(item, "context_after"),
+      source_kind: evidenceGrounded ? "knowledge_evidence" : "knowledge_card",
     },
-    documentIds: item.resource_document_id ? [item.resource_document_id] : [],
+    documentIds: documentId ? [documentId] : [],
   }
 }
