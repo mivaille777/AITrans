@@ -23,7 +23,7 @@ export function dispatchKnowledgeAction(
         type: "KNOWLEDGE_SUMMARIZE_REQUEST",
         item: context.item,
         agentRequest: {
-          prompt: "summarize the selection",
+          prompt: "总结这段",
           autoSubmit: true,
           writeback: {
             itemType: "insight",
@@ -37,7 +37,7 @@ export function dispatchKnowledgeAction(
         type: "KNOWLEDGE_EXPLAIN_REQUEST",
         item: context.item,
         agentRequest: {
-          prompt: "explain the selection",
+          prompt: "解释这段",
           autoSubmit: true,
           writeback: {
             itemType: "insight",
@@ -51,7 +51,7 @@ export function dispatchKnowledgeAction(
         type: "KNOWLEDGE_TRANSLATE_REQUEST",
         item: context.item,
         agentRequest: {
-          prompt: "translate the selection",
+          prompt: "翻译这段",
           autoSubmit: true,
           writeback: {
             itemType: "note",
@@ -65,7 +65,7 @@ export function dispatchKnowledgeAction(
         type: "KNOWLEDGE_NOTE_GENERATION_REQUEST",
         item: context.item,
         agentRequest: {
-          prompt: "summarize the selection",
+          prompt: "总结这段",
           autoSubmit: true,
           writeback: {
             itemType: "note",
@@ -79,7 +79,7 @@ export function dispatchKnowledgeAction(
         type: "KNOWLEDGE_AGENT_QUERY_REQUEST",
         item: context.item,
         agentRequest: {
-          prompt: "",
+          prompt: "关于这段内容，我想问：",
           autoSubmit: false,
           writeback: {
             itemType: "insight",
