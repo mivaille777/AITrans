@@ -29,6 +29,13 @@ class AgentToolInvocationContext(AgentToolModel):
     ai_action: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
+    run_id: str = Field(default="", max_length=128)
+    trace_id: str = Field(default="", max_length=128)
+    ai_content: str = Field(default="", max_length=50_000)
+    knowledge_item_id: str = Field(default="", max_length=128)
+    knowledge_writeback_type: str = Field(default="", max_length=64)
+    knowledge_writeback_operation: str = Field(default="", max_length=128)
+    knowledge_relation_type: str = Field(default="", max_length=128)
 
     def reading_payload(self) -> dict[str, Any]:
         return {
