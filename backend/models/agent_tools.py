@@ -106,6 +106,10 @@ class AgentRunRequest(ReadingContextPayload):
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
     research_source_ids: list[str] = Field(default_factory=list, max_length=100)
+    knowledge_item_id: str = Field(default="", max_length=128)
+    knowledge_writeback_type: str = Field(default="", max_length=64)
+    knowledge_writeback_operation: str = Field(default="", max_length=128)
+    knowledge_relation_type: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
 
 
