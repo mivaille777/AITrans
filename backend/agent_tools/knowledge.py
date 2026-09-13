@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, cast
+from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, Field
 
@@ -84,6 +85,7 @@ _WRITABLE_KNOWLEDGE_TYPES = frozenset(
 _OPERATION_TITLE = {
     "summarize": "Summary",
     "explain": "Explanation",
+    "translate": "Translation",
     "generate_notes": "Notes",
     "research": "Research insight",
     "question": "Question",
@@ -135,6 +137,34 @@ def _source_refs(source: KnowledgeItem) -> list[dict[str, Any]]:
             }
         )
     return sources[:64]
+
+
+def _first_query_value(query: dict[str, list[str]], key: str) -> str:
+    values = query.get(key, [])
+    return str(values[0] if values else "").strip()
+
+
+def _writeback_intent(context: AgentToolInvocationContext) -> tuple[str, str, str, str]:
+    source_item_id = context.knowledge_item_id.strip()
+    item_type = context.knowledge_writeback_type.strip()
+    operation = context.knowledge_writeback_operation.strip()
+    relation_type = context.knowledge_relation_type.strip()
+
+    parsed = urlparse(context.resource_url)
+    if parsed.scheme == "knowledge-item":
+        if not source_item_id:
+            source_item_id = unquote(parsed.netloc or parsed.path.lstrip("/"))
+        query = parse_qs(parsed.query, keep_blank_values=False)
+        item_type = item_type or _first_query_value(query, "type")
+        operation = operation or _first_query_value(query, "operation")
+        relation_type = relation_type or _first_query_value(query, "relation")
+
+    return (
+        source_item_id,
+        item_type or KnowledgeItemType.NOTE.value,
+        operation or "agent_writeback",
+        relation_type or "derived_from",
+    )
 
 
 class KnowledgeAgentTools:
@@ -249,7 +279,7 @@ class KnowledgeAgentTools:
         if service is None:
             raise RuntimeError("Knowledge workspace service is unavailable.")
 
-        source_item_id = context.knowledge_item_id.strip()
+        source_item_id, raw_item_type, operation, relation_type = _writeback_intent(context)
         if not source_item_id:
             raise ValueError("Knowledge write-back requires a trusted source card id.")
         source = service.get_item(source_item_id)
@@ -257,18 +287,16 @@ class KnowledgeAgentTools:
             raise ValueError("Knowledge write-back source card no longer exists.")
 
         try:
-            item_type = KnowledgeItemType(context.knowledge_writeback_type.strip())
+            item_type = KnowledgeItemType(raw_item_type)
         except ValueError as exc:
             raise ValueError("Knowledge write-back has an invalid target card type.") from exc
         if item_type not in _WRITABLE_KNOWLEDGE_TYPES:
             raise ValueError("Agent write-back cannot create a resource-backed knowledge item.")
 
-        content = context.ai_content.strip() or context.source_text.strip()
+        content = context.ai_content.strip() or context.translated_text.strip() or context.source_text.strip()
         if not content:
             raise ValueError("Knowledge write-back has no Agent result to persist.")
         content = content[:50_000]
-        operation = context.knowledge_writeback_operation.strip() or "agent_writeback"
-        relation_type = context.knowledge_relation_type.strip() or "derived_from"
         title_prefix = _OPERATION_TITLE.get(operation, item_type.value.replace("_", " ").title())
         title = f"{title_prefix} · {source.title}"[:1000]
         provenance = {
