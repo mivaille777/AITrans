@@ -24,6 +24,7 @@ _UI_MODE_BY_TOOL = {
     "analyze_section_role": "research",
     "polish_selection": "assistant",
     "save_research_note": "note",
+    "save_knowledge_card": "note",
     "inspect_reading_context": "assistant",
     "search_research_notes": "research",
     "search_research_memory": "research",
@@ -62,6 +63,15 @@ def _scope_values(value: Any) -> list[str]:
     return normalized
 
 
+def _latest_tool_output(state: AgentState) -> str:
+    for result in reversed(state.tool_results):
+        output = str(result.get("output_text", "") or "").strip()
+        tool_name = str(result.get("tool_name", "") or "").strip()
+        if output and tool_name != "save_knowledge_card":
+            return output[:50_000]
+    return ""
+
+
 class ProductAgentRuntimeAdapter:
     """Compatibility/projection bridge between ProductAgentService and AgentState."""
 
@@ -86,6 +96,8 @@ class ProductAgentRuntimeAdapter:
         )
         return {
             "session_id": state.session_id or "agent-session",
+            "run_id": state.run_id,
+            "trace_id": state.trace_id,
             "user_message": state.user_input,
             "context_mode": str(context.get("context_mode", "reading") or "reading"),
             "source_text": state.selected_text,
@@ -105,6 +117,11 @@ class ProductAgentRuntimeAdapter:
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
             "research_source_ids": _scope_values(context.get("research_source_ids", ())),
+            "knowledge_item_id": str(context.get("knowledge_item_id", "") or "").strip(),
+            "knowledge_writeback_type": str(context.get("knowledge_writeback_type", "") or "").strip(),
+            "knowledge_writeback_operation": str(context.get("knowledge_writeback_operation", "") or "").strip(),
+            "knowledge_relation_type": str(context.get("knowledge_relation_type", "") or "").strip(),
+            "ai_content": _latest_tool_output(state),
             "request_id": max(0, int(context.get("request_id", 0) or 0)),
         }
 
