@@ -173,7 +173,11 @@ export function usePaperReader(
   const createDerivedMutation = useMutation({
     mutationFn: async ({ itemType, text, relationType }: DerivedCardRequest) => {
       if (!paper || !document) throw new Error("This paper is not attached to an indexed document.")
+      const section = sectionQuery.data
       const normalizedText = text.trim().slice(0, READER_CARD_TEXT_LIMIT)
+      const selectionContext = section
+        ? buildPaperSelectionContext(section, normalizedText)
+        : { text: normalizedText, contextBefore: "", contextAfter: "" }
       const resolvedRelationType = resolveDerivedPaperRelationType(itemType, relationType)
       const titleFallback = resolvedRelationType === "reading_note"
         ? `Reading note · ${paper.title}`
@@ -181,12 +185,20 @@ export function usePaperReader(
           ? "Paper highlight"
           : itemType === "concept"
             ? "Paper concept"
-            : "Paper note"
+            : itemType === "evidence"
+              ? "Paper evidence"
+              : "Paper note"
       return createLinkedCard({
         itemType,
         title: buildSelectionCardTitle(normalizedText, titleFallback),
         summary: normalizedText,
         relationType: resolvedRelationType,
+        metadata: {
+          selection_text: selectionContext.text,
+          context_before: selectionContext.contextBefore,
+          context_after: selectionContext.contextAfter,
+          evidence_kind: itemType === "evidence" ? "paper_selection" : undefined,
+        },
       })
     },
     onSuccess: () => void refreshKnowledge(),
