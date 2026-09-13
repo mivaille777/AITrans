@@ -102,7 +102,35 @@ export interface KnowledgeRuntime {
   max_file_bytes: number
 }
 
-export type KnowledgeItemType = "paper" | "note" | "concept" | "highlight" | "document" | "web"
+export type KnowledgeResourceItemType = "paper" | "document" | "web"
+export type KnowledgeUserItemType = "note" | "concept" | "highlight" | "evidence" | "insight" | "question"
+export type KnowledgeItemType = KnowledgeResourceItemType | KnowledgeUserItemType
+
+export type KnowledgeCardCreatedBy = "user" | "agent" | "imported" | "system"
+
+export interface KnowledgeEvidenceSource {
+  evidence_id?: string
+  document_id: string
+  chunk_id?: string
+  quote?: string
+  page?: number
+  section?: string
+  source_uri?: string
+}
+
+export interface KnowledgeCardProvenance {
+  created_by: KnowledgeCardCreatedBy
+  agent_name?: string
+  run_id?: string
+  operation?: string
+}
+
+export interface KnowledgeCardMetadata extends Record<string, unknown> {
+  confidence?: number
+  sources?: KnowledgeEvidenceSource[]
+  provenance?: KnowledgeCardProvenance
+  tags?: string[]
+}
 
 export interface KnowledgeItem {
   item_id: string
@@ -111,7 +139,7 @@ export interface KnowledgeItem {
   summary: string
   resource_document_id: string | null
   source_uri: string
-  metadata: Record<string, unknown>
+  metadata: KnowledgeCardMetadata
   created_at: string
   updated_at: string
 }
@@ -122,11 +150,11 @@ export interface KnowledgeItemListResponse {
 }
 
 export interface KnowledgeItemCreateInput {
-  item_type: Exclude<KnowledgeItemType, "document" | "web">
+  item_type: KnowledgeUserItemType | "paper"
   title: string
   summary?: string
   source_uri?: string
-  metadata?: Record<string, unknown>
+  metadata?: KnowledgeCardMetadata
 }
 
 export interface KnowledgeItemUpdateInput {
@@ -134,7 +162,7 @@ export interface KnowledgeItemUpdateInput {
   title?: string
   summary?: string
   source_uri?: string
-  metadata?: Record<string, unknown>
+  metadata?: KnowledgeCardMetadata
 }
 
 export interface KnowledgeItemDeleteResponse {
