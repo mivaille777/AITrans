@@ -30,6 +30,9 @@ export const ALL_KNOWLEDGE_ITEM_TYPES: KnowledgeItemType[] = [
   "note",
   "concept",
   "highlight",
+  "evidence",
+  "insight",
+  "question",
   "document",
   "web",
 ]
