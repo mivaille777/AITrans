@@ -20,6 +20,9 @@ class KnowledgeItemType(str, Enum):
     NOTE = "note"
     CONCEPT = "concept"
     HIGHLIGHT = "highlight"
+    EVIDENCE = "evidence"
+    INSIGHT = "insight"
+    QUESTION = "question"
     DOCUMENT = "document"
     WEB = "web"
 
