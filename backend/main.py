@@ -34,6 +34,7 @@ from backend.api.rag_models import router as rag_models_router
 from backend.api.reading import router as reading_router
 from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
+from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
 
@@ -76,6 +77,7 @@ def create_app():
     for router in [
         health_router,
         knowledge_router,
+        knowledge_v2_router,
         knowledge_canvas_router,
         agent_router,
         agent_knowledge_router,
