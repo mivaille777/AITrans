@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react"
-import { useLocation } from "react-router-dom"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useLocation, useNavigate } from "react-router-dom"
 
+import { runAgentTrace, type AgentRunRequest } from "../../api/agent"
+import { Button } from "../../shared/ui/Button"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import { AgentHeader } from "../companion/components/AgentHeader"
 import { AgentInputComposer } from "../companion/components/AgentInputComposer"
@@ -12,21 +14,64 @@ import { AgentDecisionPanel } from "./components/AgentDecisionPanel"
 import { AgentTimeline } from "./components/AgentTimeline"
 import { MultiAgentTracePanel } from "./components/MultiAgentTracePanel"
 import { useAgentRuntime } from "./hooks/useAgentRuntime"
+import {
+  resolveKnowledgeAgentContext,
+  type KnowledgeAgentContext,
+} from "./runtime/knowledge-agent-context"
 
 interface AgentNavigationState {
   agentDraftPrompt?: string
   autoSubmitAgentPrompt?: boolean
+  knowledgeAgentContext?: KnowledgeAgentContext
 }
 
 export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceController }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const navigationState = (location.state ?? null) as AgentNavigationState | null
   const draftPrompt = navigationState?.agentDraftPrompt?.trim() ?? ""
   const autoSubmitDraft = Boolean(navigationState?.autoSubmitAgentPrompt)
-  const runtime = useAgentRuntime(workspace)
+  const knowledgeAgentContext = navigationState?.knowledgeAgentContext ?? null
+  const resolvedKnowledgeContext = useMemo(
+    () => resolveKnowledgeAgentContext(knowledgeAgentContext),
+    [knowledgeAgentContext],
+  )
+  const runtimeWorkspace = useMemo<TranslationWorkspaceController>(() => {
+    if (!knowledgeAgentContext || !resolvedKnowledgeContext) return workspace
+
+    const item = knowledgeAgentContext.item
+    const documentIds = [
+      ...workspace.researchRetrievalScope.knowledgeDocumentIds,
+      ...resolvedKnowledgeContext.documentIds,
+    ]
+    return {
+      ...workspace,
+      translation: null,
+      academicReadingContext: {
+        context_id: `knowledge-card-${item.item_id}`,
+        document_id: item.resource_document_id ?? item.item_id,
+        text: resolvedKnowledgeContext.sourceText,
+        resource_url: resolvedKnowledgeContext.context.resource_url,
+        resource_title: item.title,
+        section_heading: resolvedKnowledgeContext.context.section_heading,
+        context_before: "",
+        context_after: "",
+        source_kind: "knowledge_document",
+      },
+      researchRetrievalScope: {
+        ...workspace.researchRetrievalScope,
+        knowledgeDocumentIds: [...new Set(documentIds.filter(Boolean))],
+      },
+    }
+  }, [knowledgeAgentContext, resolvedKnowledgeContext, workspace])
+  const runtime = useAgentRuntime(runtimeWorkspace)
   const { pending, prompt, setPrompt, sourceText, submitPrompt } = runtime
   const appliedDraftRef = useRef("")
   const submittedDraftRef = useRef("")
+  const lastRuntimeRunRef = useRef("")
+  const [savingKnowledge, setSavingKnowledge] = useState(false)
+  const [knowledgeSaveError, setKnowledgeSaveError] = useState("")
+  const [savedKnowledgeItemId, setSavedKnowledgeItemId] = useState("")
 
   useEffect(() => {
     if (!draftPrompt || appliedDraftRef.current === draftPrompt) return
@@ -42,7 +87,65 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
     submitPrompt()
   }, [autoSubmitDraft, draftPrompt, pending, prompt, sourceText, submitPrompt])
 
+  useEffect(() => {
+    const runId = runtime.viewState.runId
+    if (!runId || runId === lastRuntimeRunRef.current) return
+    lastRuntimeRunRef.current = runId
+    setKnowledgeSaveError("")
+    setSavedKnowledgeItemId("")
+  }, [runtime.viewState.runId])
+
+  async function saveKnowledgeResult() {
+    const writeback = knowledgeAgentContext?.writeback
+    const resolved = resolvedKnowledgeContext
+    const output = runtime.viewState.outputText.trim()
+    if (!writeback || !resolved || !output || savingKnowledge) return
+
+    setSavingKnowledge(true)
+    setKnowledgeSaveError("")
+    try {
+      const traceId = `trace-knowledge-writeback-${Date.now().toString(36)}`
+      const payload: AgentRunRequest = {
+        ...resolved.context,
+        session_id: `knowledge-writeback-${runtime.viewState.runId || Date.now().toString(36)}`,
+        trace_id: traceId,
+        client_id: "knowledge-agent-writeback",
+        client_surface: "main",
+        context_mode: "reading",
+        user_message: "save this agent result to knowledge",
+        source_text: resolved.sourceText,
+        translated_text: output,
+        source_language: workspace.sourceLanguage,
+        target_language: workspace.targetLanguage,
+        style: "academic",
+        conversation_id: "",
+        workspace_id: "",
+        confirmed_write_tools: ["save_knowledge_card"],
+        knowledge_document_ids: resolved.documentIds,
+        research_source_ids: [],
+        request_id: 1,
+      }
+      const result = await runAgentTrace(payload)
+      const toolResult = result.run.tool_result
+      if (result.run.status !== "completed" || toolResult?.tool_name !== "save_knowledge_card") {
+        throw new Error("Knowledge write-back did not complete.")
+      }
+      const itemId = String(toolResult.data.item_id ?? "").trim()
+      if (!itemId) throw new Error("Knowledge write-back completed without a card id.")
+      setSavedKnowledgeItemId(itemId)
+    } catch (error) {
+      setKnowledgeSaveError(error instanceof Error ? error.message : "Unable to save this Agent result to Knowledge.")
+    } finally {
+      setSavingKnowledge(false)
+    }
+  }
+
   const runtimeRunning = runtime.viewState.phase === "running" || runtime.viewState.phase === "cancelling"
+  const canOfferKnowledgeWriteback = Boolean(
+    knowledgeAgentContext?.writeback
+    && runtime.viewState.phase === "completed"
+    && runtime.viewState.outputText.trim(),
+  )
 
   return (
     <section aria-label="AI Agent Workspace" className="space-y-4 pb-2">
@@ -117,6 +220,41 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         evidence={runtime.viewState.evidence}
         citations={runtime.viewState.citations}
       />
+
+      {canOfferKnowledgeWriteback ? (
+        <div className="ait-surface flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-slate-900">
+              {savedKnowledgeItemId ? "Result saved to Knowledge" : "Save this Agent result to Knowledge?"}
+            </p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              {savedKnowledgeItemId
+                ? "The canonical card and its AI-derived relation are now stored in the Knowledge Library."
+                : `Nothing is written automatically. Confirm to create a ${knowledgeAgentContext?.writeback?.itemType ?? "note"} linked to ${knowledgeAgentContext?.item.title ?? "the source card"}.`}
+            </p>
+            {knowledgeSaveError ? (
+              <p className="mt-2 text-[11px] text-rose-600" role="alert">{knowledgeSaveError}</p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 gap-2">
+            {savedKnowledgeItemId ? (
+              <Button
+                onClick={() => navigate(`/knowledge?view=library&item=${encodeURIComponent(savedKnowledgeItemId)}`)}
+              >
+                Open saved card
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                disabled={savingKnowledge}
+                onClick={() => void saveKnowledgeResult()}
+              >
+                {savingKnowledge ? "Saving…" : "Save to Knowledge"}
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <AgentObservabilityPanel
         refreshToken={runtime.observabilityRefresh}
