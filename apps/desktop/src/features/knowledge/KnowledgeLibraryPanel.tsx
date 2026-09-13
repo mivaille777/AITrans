@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom"
 import { desktop } from "../../desktop"
 import { Button } from "../../shared/ui/Button"
 import { EmptyState } from "../../shared/ui/EmptyState"
+import { knowledgeCardLabel } from "./knowledge-card-model"
 import { KnowledgeCreateCardDialog } from "./KnowledgeCreateCardDialog"
 import { KnowledgeDeleteDialog } from "./KnowledgeDeleteDialog"
 import { KnowledgeDocumentDetail } from "./KnowledgeDocumentDetail"
@@ -15,9 +16,20 @@ import { KnowledgeRuntimeCard } from "./KnowledgeRuntimeCard"
 import type { KnowledgeDocument, KnowledgeItem, KnowledgeItemType } from "./knowledge-types"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 
-type CardFilter = "all" | Extract<KnowledgeItemType, "paper" | "note" | "concept" | "highlight" | "document">
+type CardFilter = "all" | KnowledgeItemType
 
-const filters: CardFilter[] = ["all", "paper", "note", "concept", "highlight", "document"]
+const filters: CardFilter[] = [
+  "all",
+  "paper",
+  "note",
+  "concept",
+  "evidence",
+  "insight",
+  "question",
+  "highlight",
+  "document",
+  "web",
+]
 const EMPTY_DOCUMENTS: KnowledgeDocument[] = []
 const EMPTY_ITEMS: KnowledgeItem[] = []
 
@@ -121,7 +133,7 @@ export default function KnowledgeLibraryPanel({
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Knowledge workspace</p>
             <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-slate-950">Knowledge Library</h2>
-            <p className="mt-1.5 max-w-2xl text-sm leading-6 text-slate-500">Keep papers, notes, concepts and highlights in one local library while document resources remain available to RAG.</p>
+            <p className="mt-1.5 max-w-2xl text-sm leading-6 text-slate-500">Keep papers, notes, concepts, evidence, insights, questions, and highlights in one card model while document resources remain available to RAG.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="md" disabled={createItemMutation.isPending} onClick={() => setCreateOpen(true)}><Plus size={16} />New card</Button>
@@ -143,14 +155,14 @@ export default function KnowledgeLibraryPanel({
           <div className="border-b border-slate-100 px-5 py-3 lg:px-7">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <label className="flex min-w-0 flex-1 items-center gap-2 rounded-[13px] border border-slate-200 bg-white px-3 py-2 lg:max-w-md"><Search size={14} className="text-slate-400" /><input className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search cards, summaries and sources…" /></label>
-              <div className="ait-scroll-panel flex max-w-full gap-1 overflow-x-auto rounded-[12px] bg-slate-100 p-1" aria-label="Knowledge card type filter">{filters.map((value) => <button key={value} type="button" className={`shrink-0 rounded-[9px] px-2.5 py-1.5 text-[10px] font-medium capitalize ${filter === value ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setFilter(value)}>{value}</button>)}</div>
+              <div className="ait-scroll-panel flex max-w-full gap-1 overflow-x-auto rounded-[12px] bg-slate-100 p-1" aria-label="Knowledge card type filter">{filters.map((value) => <button key={value} type="button" className={`shrink-0 rounded-[9px] px-2.5 py-1.5 text-[10px] font-medium ${filter === value ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setFilter(value)}>{value === "all" ? "All" : knowledgeCardLabel(value)}</button>)}</div>
             </div>
             <p className="mt-2 text-[10px] text-slate-400">{visibleItems.length} of {items.length} cards · {documents.length} indexed resources</p>
           </div>
         )}
 
         {items.length === 0 && !loadError ? (
-          <div className="p-5 lg:p-7"><EmptyState icon={<LibraryBig size={25} strokeWidth={1.6} />} title="Build your knowledge workspace" description="Import a paper or document, or create a note, concept, highlight, or manual paper card." actions={<div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setCreateOpen(true)}><Plus size={15} />Create first card</Button><Button variant="primary" disabled={addMutation.isPending} onClick={() => setImportOpen(true)}><FilePlus2 size={15} />Import first document</Button></div>} /></div>
+          <div className="p-5 lg:p-7"><EmptyState icon={<LibraryBig size={25} strokeWidth={1.6} />} title="Build your knowledge workspace" description="Import a paper or document, or create a note, concept, evidence, insight, question, highlight, or manual paper card." actions={<div className="flex flex-wrap justify-center gap-2"><Button onClick={() => setCreateOpen(true)}><Plus size={15} />Create first card</Button><Button variant="primary" disabled={addMutation.isPending} onClick={() => setImportOpen(true)}><FilePlus2 size={15} />Import first document</Button></div>} /></div>
         ) : visibleItems.length === 0 ? (
           <div className="p-7"><EmptyState title="No cards match this view" description="Try a different search term or card type." /></div>
         ) : (
