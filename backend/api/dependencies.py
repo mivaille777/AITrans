@@ -3,6 +3,7 @@ from __future__ import annotations
 from threading import Lock
 
 from backend.api.knowledge_dependencies import get_retrieval_service
+from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
 from backend.api.llm_dependencies import (
     build_rag_query_planner,
     build_routed_product_agent_service,
@@ -269,6 +270,7 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 evidence_ledger_service=get_evidence_ledger_service(),
                 retrieval_service=get_retrieval_service(),
                 query_planner=build_rag_query_planner(),
+                knowledge_workspace_service=get_knowledge_workspace_service(),
             )
         return _agent_tool_registry
 
