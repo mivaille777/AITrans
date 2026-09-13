@@ -65,10 +65,11 @@ describe("paper reader state", () => {
     })
   })
 
-  it("keeps selection notes distinct from the single paper reading note", () => {
+  it("keeps selection-derived cards distinct from the single paper reading note", () => {
     expect(resolveDerivedPaperRelationType("note")).toBe("derived_from")
     expect(resolveDerivedPaperRelationType("highlight")).toBe("derived_from")
     expect(resolveDerivedPaperRelationType("concept")).toBe("derived_from")
+    expect(resolveDerivedPaperRelationType("evidence")).toBe("derived_from")
     expect(resolveDerivedPaperRelationType("note", "reading_note")).toBe("reading_note")
   })
 
