@@ -10,7 +10,10 @@ export interface PaperSelectionContext {
   contextAfter: string
 }
 
-export type DerivedPaperCardType = Extract<KnowledgeItemType, "note" | "concept" | "highlight">
+export type DerivedPaperCardType = Extract<
+  KnowledgeItemType,
+  "note" | "concept" | "highlight" | "evidence"
+>
 export type DerivedPaperRelationType = "derived_from" | "reading_note"
 
 export function resolvePaperReaderSectionId(
