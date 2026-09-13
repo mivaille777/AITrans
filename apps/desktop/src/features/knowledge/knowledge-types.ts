@@ -128,7 +128,7 @@ export interface KnowledgeCardProvenance {
 export interface KnowledgeCardMetadata extends Record<string, unknown> {
   confidence?: number
   sources?: KnowledgeEvidenceSource[]
-  provenance?: KnowledgeCardProvenance
+  provenance?: KnowledgeCardProvenance | string
   tags?: string[]
 }
 
