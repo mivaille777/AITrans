@@ -4,6 +4,7 @@ import {
   useMemo,
   useState,
 } from "react"
+import { useNavigate } from "react-router-dom"
 
 import type { KnowledgeAction } from "./KnowledgeActionMenu"
 import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
@@ -18,6 +19,7 @@ import {
 } from "./knowledge-workspace-events"
 
 export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }) {
+  const navigate = useNavigate()
   const [selectedKnowledgeItem, setSelectedKnowledgeItem] = useState<KnowledgeItem | null>(null)
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([])
   const [lastEvent, setLastEvent] = useState<KnowledgeWorkspaceEvent | null>(null)
@@ -39,8 +41,18 @@ export function KnowledgeWorkspaceProvider({ children }: { children: ReactNode }
 
     const event = emitKnowledgeWorkspaceEvent(request)
     setLastEvent(event)
+    navigate("/agent", {
+      state: {
+        agentDraftPrompt: event.agentRequest.prompt,
+        autoSubmitAgentPrompt: event.agentRequest.autoSubmit,
+        knowledgeAgentContext: {
+          item: event.item,
+          writeback: event.agentRequest.writeback,
+        },
+      },
+    })
     return event
-  }, [selectedKnowledgeItem])
+  }, [navigate, selectedKnowledgeItem])
 
   const value = useMemo<KnowledgeWorkspaceContextValue>(() => ({
     selectedKnowledgeItem,
