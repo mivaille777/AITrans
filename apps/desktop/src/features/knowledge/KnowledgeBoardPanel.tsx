@@ -28,9 +28,9 @@ import type {
   KnowledgeRelation,
 } from "./knowledge-types"
 import { emitKnowledgeWorkspaceEvent, type KnowledgeWorkspaceEvent } from "./knowledge-workspace-events"
-import { useOptionalKnowledgeWorkspaceContext } from "./knowledge-workspace-provider"
 import type { KnowledgeBoardController } from "./useKnowledgeBoard"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
+import { useOptionalKnowledgeWorkspaceContext } from "./useKnowledgeWorkspaceContext"
 
 const EMPTY_ITEMS: KnowledgeItem[] = []
 
