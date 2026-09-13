@@ -8,9 +8,12 @@ from backend.agent_tools.base import (
     AgentToolExecutionResult,
     AgentToolInvocationContext,
     AgentToolModel,
+    EmptyToolArgs,
     TypedAgentToolDefinition,
     typed_tool_definition,
 )
+from backend.knowledge.domain import KnowledgeItem, KnowledgeItemType, KnowledgeRelationOrigin
+from backend.knowledge.service import KnowledgeWorkspaceService
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.rag.citation_service import build_evidence_citations
 from backend.rag.evidence_builder import build_agent_evidence
@@ -60,6 +63,33 @@ class KnowledgeSearchResultData(AgentToolModel):
     observability: list[RagTraceEventData] = Field(default_factory=list)
 
 
+class KnowledgeSaveResultData(AgentToolModel):
+    item_id: str
+    relation_id: str
+    item_type: str
+    source_item_id: str
+    operation: str
+
+
+_WRITABLE_KNOWLEDGE_TYPES = frozenset(
+    {
+        KnowledgeItemType.NOTE,
+        KnowledgeItemType.CONCEPT,
+        KnowledgeItemType.HIGHLIGHT,
+        KnowledgeItemType.EVIDENCE,
+        KnowledgeItemType.INSIGHT,
+        KnowledgeItemType.QUESTION,
+    }
+)
+_OPERATION_TITLE = {
+    "summarize": "Summary",
+    "explain": "Explanation",
+    "generate_notes": "Notes",
+    "research": "Research insight",
+    "question": "Question",
+}
+
+
 def _document_ids(args: KnowledgeSearchArgs) -> list[str]:
     scoped = args.document_scope.replace("\n", ",").split(",")
     candidates = [*args.document_ids, *scoped]
@@ -92,17 +122,34 @@ def _result_item(candidate: RetrievalCandidate) -> dict[str, Any]:
     }
 
 
+def _source_refs(source: KnowledgeItem) -> list[dict[str, Any]]:
+    metadata = source.metadata if isinstance(source.metadata, dict) else {}
+    raw_sources = metadata.get("sources")
+    sources = [dict(item) for item in raw_sources if isinstance(item, dict)] if isinstance(raw_sources, list) else []
+    document_id = (source.resource_document_id or "").strip()
+    if document_id and not any(str(item.get("document_id", "")) == document_id for item in sources):
+        sources.append(
+            {
+                "document_id": document_id,
+                "source_uri": source.source_uri,
+            }
+        )
+    return sources[:64]
+
+
 class KnowledgeAgentTools:
-    """Agent-facing boundary over local hybrid knowledge retrieval."""
+    """Agent-facing boundary over retrieval and confirmed canonical write-back."""
 
     def __init__(
         self,
         *,
         retrieval_service: Any | None,
         query_planner: Any | None = None,
+        workspace_service: KnowledgeWorkspaceService | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._query_planner = query_planner
+        self._workspace_service = workspace_service
 
     def search_knowledge_base(
         self,
@@ -193,6 +240,86 @@ class KnowledgeAgentTools:
             },
         )
 
+    def save_knowledge_card(
+        self,
+        context: AgentToolInvocationContext,
+        _: BaseModel,
+    ) -> AgentToolExecutionResult:
+        service = self._workspace_service
+        if service is None:
+            raise RuntimeError("Knowledge workspace service is unavailable.")
+
+        source_item_id = context.knowledge_item_id.strip()
+        if not source_item_id:
+            raise ValueError("Knowledge write-back requires a trusted source card id.")
+        source = service.get_item(source_item_id)
+        if source is None:
+            raise ValueError("Knowledge write-back source card no longer exists.")
+
+        try:
+            item_type = KnowledgeItemType(context.knowledge_writeback_type.strip())
+        except ValueError as exc:
+            raise ValueError("Knowledge write-back has an invalid target card type.") from exc
+        if item_type not in _WRITABLE_KNOWLEDGE_TYPES:
+            raise ValueError("Agent write-back cannot create a resource-backed knowledge item.")
+
+        content = context.ai_content.strip() or context.source_text.strip()
+        if not content:
+            raise ValueError("Knowledge write-back has no Agent result to persist.")
+        content = content[:50_000]
+        operation = context.knowledge_writeback_operation.strip() or "agent_writeback"
+        relation_type = context.knowledge_relation_type.strip() or "derived_from"
+        title_prefix = _OPERATION_TITLE.get(operation, item_type.value.replace("_", " ").title())
+        title = f"{title_prefix} · {source.title}"[:1000]
+        provenance = {
+            "created_by": "agent",
+            "agent_name": "knowledge_agent",
+            "run_id": context.run_id,
+            "operation": operation,
+        }
+        metadata: dict[str, Any] = {
+            "provenance": provenance,
+            "source_item_id": source.item_id,
+            "source_item_type": source.item_type.value,
+        }
+        sources = _source_refs(source)
+        if sources:
+            metadata["sources"] = sources
+
+        card = service.create_item(
+            item_type=item_type,
+            title=title,
+            summary=content,
+            source_uri=source.source_uri,
+            metadata=metadata,
+        )
+        try:
+            relation = service.create_relation(
+                source_item_id=card.item_id,
+                target_item_id=source.item_id,
+                relation_type=relation_type,
+                label=f"Agent {operation.replace('_', ' ')}",
+                origin=KnowledgeRelationOrigin.AI,
+                metadata={"provenance": provenance},
+            )
+        except Exception:
+            service.delete_item(card.item_id)
+            raise
+
+        return AgentToolExecutionResult(
+            tool_name="save_knowledge_card",
+            output_text=f"Saved {item_type.value} to Knowledge: {title}",
+            effect="write",
+            request_id=context.request_id,
+            data={
+                "item_id": card.item_id,
+                "relation_id": relation.relation_id,
+                "item_type": item_type.value,
+                "source_item_id": source.item_id,
+                "operation": operation,
+            },
+        )
+
 
 def build_knowledge_tool_definitions(
     tools: KnowledgeAgentTools,
@@ -212,11 +339,30 @@ def build_knowledge_tool_definitions(
             planner_args_model=KnowledgeSearchPlannerArgs,
             retry_policy="safe",
         ),
+        typed_tool_definition(
+            name="save_knowledge_card",
+            title="Save result to Knowledge",
+            description=(
+                "Persist the already-produced Agent result as a derived canonical Knowledge card. "
+                "Use only when the user explicitly asks to save a result to the Knowledge Library; "
+                "the runtime supplies the source card, target card type, operation, and relation."
+            ),
+            category="knowledge",
+            effect="write",
+            requires_reading_context=False,
+            requires_confirmation=True,
+            args_model=EmptyToolArgs,
+            result_model=KnowledgeSaveResultData,
+            executor=tools.save_knowledge_card,
+            planner_args_model=EmptyToolArgs,
+            retry_policy="never",
+        ),
     )
 
 
 __all__ = [
     "KnowledgeAgentTools",
+    "KnowledgeSaveResultData",
     "KnowledgeSearchArgs",
     "KnowledgeSearchPlannerArgs",
     "KnowledgeSearchResultData",
