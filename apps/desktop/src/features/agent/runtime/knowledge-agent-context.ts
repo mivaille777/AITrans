@@ -5,6 +5,9 @@ import type { KnowledgeWritebackIntent } from "../../knowledge/knowledge-workspa
 export interface KnowledgeAgentContext {
   item: KnowledgeItem
   writeback: KnowledgeWritebackIntent | null
+  sourceText?: string
+  readingContext?: ReadingContextFields
+  documentIds?: string[]
 }
 
 export interface ResolvedKnowledgeAgentContext {
@@ -35,23 +38,33 @@ export function resolveKnowledgeAgentContext(
   if (!context) return null
 
   const item = context.item
+  const readingContext = context.readingContext
   const selectionText = metadataText(item, "selection_text")
-  const sourceText = selectionText || item.summary.trim() || item.title.trim()
+  const sourceText = context.sourceText?.trim()
+    || selectionText
+    || item.summary.trim()
+    || item.title.trim()
   const metadataDocumentId = metadataText(item, "document_id")
-  const documentId = item.resource_document_id?.trim() || metadataDocumentId
-  const sectionHeading = metadataText(item, "section_heading")
+  const documentIds = [
+    ...(context.documentIds ?? []),
+    item.resource_document_id?.trim() ?? "",
+    metadataDocumentId,
+  ].filter(Boolean)
+  const sectionHeading = readingContext?.section_heading?.trim()
+    || metadataText(item, "section_heading")
   const evidenceGrounded = item.item_type === "evidence" || Boolean(selectionText)
 
   return {
     sourceText,
     context: {
       resource_url: buildKnowledgeResourceUrl(context),
-      resource_title: item.title,
+      resource_title: readingContext?.resource_title?.trim() || item.title,
       section_heading: sectionHeading || `Knowledge card · ${item.item_type}`,
-      context_before: metadataText(item, "context_before"),
-      context_after: metadataText(item, "context_after"),
-      source_kind: evidenceGrounded ? "knowledge_evidence" : "knowledge_card",
+      context_before: readingContext?.context_before?.trim() || metadataText(item, "context_before"),
+      context_after: readingContext?.context_after?.trim() || metadataText(item, "context_after"),
+      source_kind: readingContext?.source_kind?.trim()
+        || (evidenceGrounded ? "knowledge_evidence" : "knowledge_card"),
     },
-    documentIds: documentId ? [documentId] : [],
+    documentIds: [...new Set(documentIds)],
   }
 }
