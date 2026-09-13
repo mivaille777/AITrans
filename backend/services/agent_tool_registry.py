@@ -40,6 +40,7 @@ from backend.agent_tools.writing import (
     WritingAgentTool,
     build_writing_tool_definition,
 )
+from backend.knowledge.service import KnowledgeWorkspaceService
 from backend.services.quick_action_service import QuickActionService
 from backend.services.research_note_service import ResearchNoteService
 from backend.services.translation_fallback_service import TranslationFallbackService
@@ -60,6 +61,13 @@ _CONTEXT_FIELDS = (
     "ai_action",
     "workspace_id",
     "request_id",
+    "run_id",
+    "trace_id",
+    "ai_content",
+    "knowledge_item_id",
+    "knowledge_writeback_type",
+    "knowledge_writeback_operation",
+    "knowledge_relation_type",
 )
 
 
@@ -84,6 +92,7 @@ class AgentToolRegistry:
         evidence_ledger_service: Any | None = None,
         retrieval_service: Any | None = None,
         query_planner: Any | None = None,
+        knowledge_workspace_service: KnowledgeWorkspaceService | None = None,
     ) -> None:
         if translation_fallback_service is not None:
             fallback_service = translation_fallback_service
@@ -156,6 +165,7 @@ class AgentToolRegistry:
         knowledge_tools = KnowledgeAgentTools(
             retrieval_service=retrieval_service,
             query_planner=query_planner,
+            workspace_service=knowledge_workspace_service,
         )
         knowledge_definitions = build_knowledge_tool_definitions(knowledge_tools)
 
