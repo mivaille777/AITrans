@@ -38,10 +38,10 @@ describe("knowledge action dispatcher", () => {
     },
   )
 
-  it("keeps Ask Agent interactive instead of auto-submitting a placeholder question", () => {
+  it("keeps Ask Agent interactive while preserving a reading-grounded draft", () => {
     const event = dispatchKnowledgeAction("ask_agent", { item })
 
-    expect(event?.agentRequest.prompt).toBe("")
+    expect(event?.agentRequest.prompt).toContain("这段")
     expect(event?.agentRequest.autoSubmit).toBe(false)
   })
 })
