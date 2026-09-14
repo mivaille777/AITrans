@@ -61,6 +61,8 @@ def _handoff_response(state: CompanionHandoffState) -> CompanionHandoffResponse:
         ai_content=state.ai_content,
         ai_action=state.ai_action,
         suggested_prompt=state.suggested_prompt,
+        knowledge_enabled=state.knowledge_enabled,
+        knowledge_document_ids=list(state.knowledge_document_ids),
     )
 
 
