@@ -13,6 +13,9 @@ from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.services.companion_chat_service import CompanionKnowledgeGrounding
 from backend.services.conversation_grounding_service import load_message_grounding
 from backend.services.conversation_store_service import ConversationStoreService
+from backend.services.grounded_synthesis_service import (
+    GROUNDING_VERIFICATION_FALLBACK_PREFIX,
+)
 
 
 def _payload(*, request_id: int = 11, conversation_id: str = "") -> dict[str, object]:
@@ -57,7 +60,7 @@ class GroundedStreamingCompanionChatService(StubStreamingCompanionChatService):
             title="Control Paper",
             resource_url="file:///paper.pdf",
             location="Page 8 · Section Stability",
-            excerpt="GP anchors localize the search.",
+            excerpt="GP anchors localize the search around prior evidence.",
         )
         citation = AgentCitationRef(
             citation_id="citation-1",
@@ -67,11 +70,29 @@ class GroundedStreamingCompanionChatService(StubStreamingCompanionChatService):
         return CompanionKnowledgeGrounding(
             evidence=(evidence,),
             citations=(citation,),
-            tool_context="[1] GP anchors localize the search.",
+            tool_context="[1] GP anchors localize the search around prior evidence.",
         )
 
     def stream(self, **_kwargs):
-        yield "GP anchors localize the search [1]."
+        yield "GP anchors localize the search around prior evidence [1]."
+
+
+class ParagraphGroundedStreamingCompanionChatService(
+    GroundedStreamingCompanionChatService
+):
+    def stream(self, **_kwargs):
+        yield (
+            "GP anchors localize the search around prior evidence. "
+            "This keeps later refinement focused near the statistically relevant region. "
+            "GP anchors localize the search around prior evidence [1]."
+        )
+
+
+class InvalidCitationStreamingCompanionChatService(
+    GroundedStreamingCompanionChatService
+):
+    def stream(self, **_kwargs):
+        yield "GP anchors localize the search around prior evidence [9]."
 
 
 class SlowStreamingCompanionChatService:
@@ -82,6 +103,13 @@ class SlowStreamingCompanionChatService:
         for part in ("one", "two", "three"):
             sleep(0.05)
             yield part
+
+
+def _grounded_payload(request_id: int) -> dict[str, object]:
+    payload = _payload(request_id=request_id)
+    payload["knowledge_enabled"] = True
+    payload["knowledge_document_ids"] = ["doc-1"]
+    return payload
 
 
 def test_companion_websocket_streams_and_commits_completed_exchange(tmp_path) -> None:
@@ -135,18 +163,10 @@ def test_companion_websocket_persists_completed_knowledge_grounding(tmp_path) ->
     service = GroundedStreamingCompanionChatService()
     app.dependency_overrides[get_companion_chat_service] = lambda: service
     app.dependency_overrides[get_conversation_store_service] = lambda: store
-    payload = _payload(request_id=15)
-    payload["knowledge_enabled"] = True
-    payload["knowledge_document_ids"] = ["doc-1"]
+    payload = _grounded_payload(15)
     payload["history"] = [
-        {
-            "role": "user",
-            "content": "We are discussing the water tank paper.",
-        },
-        {
-            "role": "assistant",
-            "content": "It uses MATLAB/Simulink.",
-        },
+        {"role": "user", "content": "We are discussing the water tank paper."},
+        {"role": "assistant", "content": "It uses MATLAB/Simulink."},
     ]
 
     with TestClient(app) as client:
@@ -157,7 +177,9 @@ def test_companion_websocket_persists_completed_knowledge_grounding(tmp_path) ->
             done = websocket.receive_json()
 
     assert delta["type"] == "delta"
-    assert delta["accumulated_text"] == "GP anchors localize the search [1]."
+    assert delta["accumulated_text"] == (
+        "GP anchors localize the search around prior evidence [1]."
+    )
     assert done["type"] == "done"
     assert done["knowledge_enabled"] is True
     assert done["citations"][0]["label"] == "[1]"
@@ -168,6 +190,60 @@ def test_companion_websocket_persists_completed_knowledge_grounding(tmp_path) ->
     assert grounding.evidence[0].evidence_id == "evidence-1"
     assert grounding.citations[0].label == "[1]"
     assert done["grounding_verification"]["passed"] is True
+
+
+def test_companion_websocket_preserves_paragraph_grounded_synthesis(tmp_path) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    service = ParagraphGroundedStreamingCompanionChatService()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _grounded_payload(31)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            accepted = websocket.receive_json()
+            delta = websocket.receive_json()
+            done = websocket.receive_json()
+
+    expected = (
+        "GP anchors localize the search around prior evidence. "
+        "This keeps later refinement focused near the statistically relevant region. "
+        "GP anchors localize the search around prior evidence [1]."
+    )
+    assert delta["type"] == "delta"
+    assert delta["accumulated_text"] == expected
+    assert done["output_text"] == expected
+    assert not done["output_text"].startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
+    assert done["grounding_verification"]["passed"] is True
+    assert "grounding_verification_failed" not in done["knowledge_fallback_reason"]
+    stored = store.get(accepted["conversation_id"])
+    assert stored is not None
+    assert stored.messages[-1].content == expected
+
+
+def test_companion_websocket_keeps_invalid_citation_as_hard_fallback(tmp_path) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    service = InvalidCitationStreamingCompanionChatService()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _grounded_payload(32)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            _accepted = websocket.receive_json()
+            delta = websocket.receive_json()
+            done = websocket.receive_json()
+
+    assert delta["type"] == "delta"
+    assert delta["accumulated_text"].startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
+    assert done["output_text"].startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
+    assert done["grounding_verification"]["passed"] is False
+    assert done["grounding_verification"]["invalid_citation_count"] == 1
+    assert "grounding_verification_failed" in done["knowledge_fallback_reason"]
 
 
 def test_companion_websocket_cancel_commits_terminal_cancelled_message(tmp_path) -> None:
