@@ -19,8 +19,8 @@ PARTIAL_GROUNDING_NOTICE = (
     "注：部分解释性陈述未能逐句通过引用一致性校验；已保留综合回答，"
     "并仅将现有引用视为可直接核验的证据。"
 )
-_PARTIAL_MIN_CITATION_COVERAGE = 0.5
-_PARTIAL_MIN_SUPPORT_RATE = 0.5
+_PARTIAL_MIN_CITATION_COVERAGE = 1.0 / 3.0
+_PARTIAL_MIN_CITED_SUPPORT_RATE = 0.75
 
 
 def evidence_only_grounding_fallback(
@@ -60,10 +60,11 @@ class GroundedSynthesisService:
     """Grounded synthesis plus deterministic post-generation verification.
 
     Full verification remains deliberately strict. A partially verified answer
-    may still be preserved when its citations are structurally valid and at
-    least half of the verifiable claims are both cited and lexically supported.
-    Invalid citation references, zero supported claims, or weak overall
-    grounding still trigger the evidence-only policy fallback.
+    may still be preserved when its citations are structurally valid, at least
+    roughly one in three verifiable claims carries an explicit citation, and
+    most cited claims are supported by their referenced evidence. Invalid
+    citation references, zero supported claims, or weak overall grounding still
+    trigger the evidence-only policy fallback.
     """
 
     def __init__(
@@ -142,21 +143,26 @@ class GroundedSynthesisService:
     ) -> bool:
         """Accept useful synthesis without weakening citation integrity.
 
-        Partial preservation is intentionally impossible when a citation label
-        is unknown or points at missing evidence. It also requires at least one
-        supported claim plus bounded coverage/support ratios, so a mostly
-        unsupported answer cannot escape into the UI merely because one claim
-        happened to overlap with retrieved evidence.
+        Partial preservation is impossible when a citation label is unknown or
+        points at missing evidence. Coverage tolerates paragraph-level citation
+        placement, while support is measured only across claims that actually
+        cite evidence. This avoids penalizing short explanatory transitions as
+        harshly as factual claims while still rejecting mostly unsupported text.
         """
 
-        return (
-            verification.invalid_citation_count == 0
-            and verification.claim_count > 0
-            and verification.cited_claim_count > 0
-            and verification.supported_claim_count > 0
-            and verification.citation_coverage >= _PARTIAL_MIN_CITATION_COVERAGE
-            and verification.support_rate >= _PARTIAL_MIN_SUPPORT_RATE
+        if (
+            verification.invalid_citation_count != 0
+            or verification.claim_count <= 0
+            or verification.cited_claim_count <= 0
+            or verification.supported_claim_count <= 0
+            or verification.citation_coverage < _PARTIAL_MIN_CITATION_COVERAGE
+        ):
+            return False
+
+        cited_support_rate = (
+            verification.supported_claim_count / verification.cited_claim_count
         )
+        return cited_support_rate >= _PARTIAL_MIN_CITED_SUPPORT_RATE
 
     def send_verified(
         self,
