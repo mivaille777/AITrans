@@ -13,6 +13,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalized_document_ids(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        document_id = str(value or "").strip()
+        if document_id and document_id not in seen:
+            normalized.append(document_id)
+            seen.add(document_id)
+        if len(normalized) >= 100:
+            break
+    return tuple(normalized)
+
+
 @dataclass(frozen=True, slots=True)
 class CompanionHandoffState:
     revision: int
@@ -32,6 +45,8 @@ class CompanionHandoffState:
     ai_content: str = ""
     ai_action: str = ""
     suggested_prompt: str = ""
+    knowledge_enabled: bool = False
+    knowledge_document_ids: tuple[str, ...] = ()
 
 
 class CompanionHandoffService:
@@ -122,6 +137,8 @@ class CompanionHandoffService:
         ai_content: str = "",
         ai_action: str = "",
         suggested_prompt: str = "",
+        knowledge_enabled: bool = False,
+        knowledge_document_ids: list[str] | tuple[str, ...] = (),
     ) -> CompanionHandoffState:
         text = str(source_text).strip()
         if not text:
@@ -143,6 +160,7 @@ class CompanionHandoffService:
             context_after=context_after,
             source_kind=source_kind,
         )
+        document_ids = _normalized_document_ids(knowledge_document_ids)
 
         with self._lock:
             self._revision += 1
@@ -165,6 +183,8 @@ class CompanionHandoffService:
                 ai_content=str(ai_content or "").strip(),
                 ai_action=str(ai_action or "").strip(),
                 suggested_prompt=str(suggested_prompt or "").strip(),
+                knowledge_enabled=bool(knowledge_enabled and document_ids),
+                knowledge_document_ids=document_ids,
             )
             return self._handoff
 
