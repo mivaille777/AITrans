@@ -189,7 +189,8 @@ export default function CompanionWorkspaceV2() {
     if (
       !runtime.conversationId ||
       runtime.contextMode !== "reading" ||
-      !runtime.context.source_text
+      !runtime.context.source_text ||
+      runtime.context.source_kind.startsWith("knowledge_")
     ) {
       return
     }
@@ -220,6 +221,8 @@ export default function CompanionWorkspaceV2() {
     runtime.sendMessage()
   }
 
+  const isKnowledgeContext = runtime.contextMode === "reading"
+    && runtime.context.source_kind.startsWith("knowledge_")
   const contextTitle = runtime.contextMode === "general"
     ? "General Chat"
     : runtime.context.resource_title || runtime.context.section_heading || "Reading context"
@@ -258,7 +261,9 @@ export default function CompanionWorkspaceV2() {
             </h2>
           </div>
           <Badge tone={runtime.contextMode === "reading" ? "info" : "neutral"}>
-            {runtime.contextMode === "reading" ? "Reading-grounded" : "General"}
+            {runtime.contextMode === "reading"
+              ? isKnowledgeContext ? "Knowledge-grounded" : "Reading-grounded"
+              : "General"}
           </Badge>
         </div>
 
@@ -295,7 +300,7 @@ export default function CompanionWorkspaceV2() {
                 : attachCurrentReading()
             )}
           >
-            Reading
+            {isKnowledgeContext ? "Knowledge" : "Reading"}
           </button>
         </div>
 
@@ -333,7 +338,7 @@ export default function CompanionWorkspaceV2() {
               {runtime.context.ai_content && (
                 <div className="mt-3 rounded-[16px] border border-cyan-100 bg-cyan-50/70 p-3.5">
                   <div className="flex items-center gap-2">
-                    <Badge tone="info">Quick Action</Badge>
+                    <Badge tone="info">{isKnowledgeContext ? "Knowledge Insight" : "Quick Action"}</Badge>
                     {runtime.context.ai_action && (
                       <span className="text-[10px] text-cyan-700/70">
                         {runtime.context.ai_action}
@@ -346,20 +351,26 @@ export default function CompanionWorkspaceV2() {
                 </div>
               )}
               {runtime.conversationId && (
-                <div className="mt-4">
-                  <Button
-                    size="xs"
-                    disabled={saveNoteMutation.isPending}
-                    onClick={saveLinkedNote}
-                  >
-                    {saveNoteMutation.isPending ? "Saving…" : "Save linked note"}
-                  </Button>
-                  {saveNoteMutation.isSuccess && (
-                    <p className="mt-2 text-[10px] text-emerald-600">
-                      Research Note linked to this conversation.
-                    </p>
-                  )}
-                </div>
+                isKnowledgeContext ? (
+                  <div className="mt-4 rounded-[13px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[10px] leading-5 text-slate-500">
+                    This context already lives in canonical Knowledge. Continue the conversation here; use Agent Workspace when you want to save another linked Insight.
+                  </div>
+                ) : (
+                  <div className="mt-4">
+                    <Button
+                      size="xs"
+                      disabled={saveNoteMutation.isPending}
+                      onClick={saveLinkedNote}
+                    >
+                      {saveNoteMutation.isPending ? "Saving…" : "Save linked note"}
+                    </Button>
+                    {saveNoteMutation.isSuccess && (
+                      <p className="mt-2 text-[10px] text-emerald-600">
+                        Research Note linked to this conversation.
+                      </p>
+                    )}
+                  </div>
+                )
               )}
             </>
           ) : (
@@ -395,10 +406,12 @@ export default function CompanionWorkspaceV2() {
             <EmptyState
               title={runtime.contextMode === "general"
                 ? "Start a General Chat"
-                : "Ask about this reading context"}
+                : isKnowledgeContext ? "Continue from this Knowledge card" : "Ask about this reading context"}
               description={runtime.contextMode === "general"
                 ? "This conversation has no active reading evidence."
-                : "The selected passage and bounded nearby context are supplied as reference evidence."}
+                : isKnowledgeContext
+                  ? "The canonical card and its bounded source-paper context are supplied as grounded evidence."
+                  : "The selected passage and bounded nearby context are supplied as reference evidence."}
               actions={!runtime.context.source_text && runtime.contextMode === "reading" ? (
                 <>
                   <Link to="/reading" className={buttonClassName()}>Reading Context</Link>
@@ -551,7 +564,7 @@ export default function CompanionWorkspaceV2() {
           )}
           <div className="mb-2 flex flex-wrap gap-1.5">
             <Badge tone={runtime.contextMode === "reading" ? "info" : "neutral"}>
-              {runtime.contextMode === "reading" ? "Reading" : "General"}
+              {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge Card" : "Reading" : "General"}
             </Badge>
             {runtime.knowledgeEnabled && (
               <Badge tone="info">
@@ -598,7 +611,7 @@ export default function CompanionWorkspaceV2() {
             )}
           </div>
           <p className="mt-2 text-[10px] text-slate-400">
-            Enter 发送 · Shift+Enter 换行 · {runtime.contextMode === "reading" ? "Reading context" : "General"}{runtime.knowledgeEnabled ? " · Knowledge ON" : ""} · Shared Companion Runtime
+            Enter 发送 · Shift+Enter 换行 · {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge context" : "Reading context" : "General"}{runtime.knowledgeEnabled ? " · Knowledge ON" : ""} · Shared Companion Runtime
           </p>
         </form>
       </div>
@@ -607,11 +620,12 @@ export default function CompanionWorkspaceV2() {
 }
 
 function ContextPreview({ context }: { context: CompanionContextSnapshot }) {
+  const knowledgeContext = context.source_kind.startsWith("knowledge_")
   return (
     <div className="mt-4 space-y-3">
       <div className="rounded-[16px] border border-slate-200/70 bg-white/85 p-3.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-          Selection
+          {knowledgeContext ? "Knowledge card" : "Selection"}
         </p>
         <p className="mt-2 line-clamp-8 text-xs leading-5 text-slate-700">
           {context.source_text}
