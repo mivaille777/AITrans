@@ -77,7 +77,9 @@ def test_agent_insight_inherits_reader_document_and_section_grounding() -> None:
     assert result.data is not None
     assert result.data["source_item_id"] == "evidence-1"
     created = workspace.created[0]
-    assert created["resource_document_id"] == "doc-1"
+    # Derived semantic cards must not claim ownership of the indexed document;
+    # that unique resource id remains on the canonical Paper/Document card.
+    assert created["resource_document_id"] is None
     metadata = created["metadata"]
     assert isinstance(metadata, dict)
     assert metadata["document_id"] == "doc-1"
