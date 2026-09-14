@@ -51,26 +51,22 @@ export function useKnowledgeBoardHistory(limit = 60) {
     setRedoStack([])
   }, [limit])
 
-  const takeUndo = useCallback(() => {
-    let selected: KnowledgeBoardHistoryEntry | null = null
+  const commitUndo = useCallback(() => {
     setUndoStack((current) => {
-      if (current.length === 0) return current
-      selected = current[current.length - 1]
+      const entry = current.at(-1)
+      if (!entry) return current
+      setRedoStack((redo) => [...redo, entry])
       return current.slice(0, -1)
     })
-    if (selected) setRedoStack((current) => [...current, selected as KnowledgeBoardHistoryEntry])
-    return selected
   }, [])
 
-  const takeRedo = useCallback(() => {
-    let selected: KnowledgeBoardHistoryEntry | null = null
+  const commitRedo = useCallback(() => {
     setRedoStack((current) => {
-      if (current.length === 0) return current
-      selected = current[current.length - 1]
+      const entry = current.at(-1)
+      if (!entry) return current
+      setUndoStack((undo) => [...undo, entry])
       return current.slice(0, -1)
     })
-    if (selected) setUndoStack((current) => [...current, selected as KnowledgeBoardHistoryEntry])
-    return selected
   }, [])
 
   const clear = useCallback(() => {
@@ -81,11 +77,13 @@ export function useKnowledgeBoardHistory(limit = 60) {
   return useMemo(() => ({
     canUndo: undoStack.length > 0,
     canRedo: redoStack.length > 0,
+    undoEntry: undoStack.at(-1) ?? null,
+    redoEntry: redoStack.at(-1) ?? null,
     undoLabel: undoStack.at(-1)?.label ?? "",
     redoLabel: redoStack.at(-1)?.label ?? "",
     record,
-    takeUndo,
-    takeRedo,
+    commitUndo,
+    commitRedo,
     clear,
-  }), [clear, record, redoStack, takeRedo, takeUndo, undoStack])
+  }), [clear, commitRedo, commitUndo, record, redoStack, undoStack])
 }
