@@ -338,10 +338,22 @@ async def stream_companion_chat(
                     )
                     accumulated.append(delta)
                     text = "".join(accumulated)
-                    # Knowledge answers are held until citations and evidence
-                    # support have been checked; emitting first would make an
-                    # unsupported statement impossible to retract from the UI.
                     if payload.knowledge_enabled:
+                        # Knowledge output is provisional until deterministic
+                        # grounding verification completes. The desktop runtime
+                        # renders accumulated_text as a replaceable streaming
+                        # draft, while persistence remains untouched until the
+                        # authoritative verified/fallback result is available.
+                        emit(
+                            {
+                                "type": "delta",
+                                "request_id": request_id,
+                                "conversation_id": conversation_id,
+                                "message_id": assistant_message_id,
+                                "delta": delta,
+                                "accumulated_text": text,
+                            }
+                        )
                         continue
                     update_latest(text)
                     now = monotonic()
@@ -365,7 +377,8 @@ async def stream_companion_chat(
 
                 if cancel_event.is_set():
                     return
-                text = "".join(accumulated)
+                generated_text = "".join(accumulated)
+                text = generated_text
                 update_latest(text)
                 grounding_fallback = (
                     str(getattr(grounding, "fallback_reason", "") or "")
@@ -383,6 +396,8 @@ async def stream_companion_chat(
                     )
                     verification_payload = {
                         "passed": verification.passed,
+                        "strict_passed": verification.strict_passed,
+                        "partial_grounding": verification.partial_grounding,
                         "claim_count": verification.claim_count,
                         "cited_claim_count": verification.cited_claim_count,
                         "supported_claim_count": verification.supported_claim_count,
@@ -390,6 +405,11 @@ async def stream_companion_chat(
                         "invalid_citation_count": verification.invalid_citation_count,
                         "citation_coverage": verification.citation_coverage,
                         "support_rate": verification.support_rate,
+                        "paragraph_count": verification.paragraph_count,
+                        "cited_paragraph_count": verification.cited_paragraph_count,
+                        "supported_paragraph_count": verification.supported_paragraph_count,
+                        "paragraph_citation_coverage": verification.paragraph_citation_coverage,
+                        "paragraph_support_rate": verification.paragraph_support_rate,
                         "reason_codes": list(verification.reason_codes),
                     }
                     if not verification.passed:
@@ -408,14 +428,17 @@ async def stream_companion_chat(
                         )
                     update_latest(text)
                     store.update_stream(assistant_message_id, text)
-                    if text:
+                    if text != generated_text:
+                        # accumulated_text is authoritative for delta rendering,
+                        # so a hard fallback atomically replaces the provisional
+                        # draft instead of appending to it.
                         emit(
                             {
                                 "type": "delta",
                                 "request_id": request_id,
                                 "conversation_id": conversation_id,
                                 "message_id": assistant_message_id,
-                                "delta": text,
+                                "delta": "",
                                 "accumulated_text": text,
                             }
                         )
