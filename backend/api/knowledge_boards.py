@@ -14,6 +14,7 @@ from backend.models.knowledge_board_api import (
     KnowledgeBoardNodeDeleteResponse,
     KnowledgeBoardNodeUpsertRequest,
     KnowledgeBoardSnapshotResponse,
+    KnowledgeBoardUpdateRequest,
 )
 
 router = APIRouter(prefix="/api/knowledge/boards", tags=["knowledge"])
@@ -54,6 +55,23 @@ def get_knowledge_board(
         board=board,
         nodes=service.list_nodes(board_id),
     )
+
+
+@router.patch("/{board_id}", response_model=KnowledgeBoard)
+def update_knowledge_board(
+    board_id: str,
+    payload: KnowledgeBoardUpdateRequest,
+    service: BoardDependency,
+) -> KnowledgeBoard:
+    _board_or_404(board_id, service)
+    try:
+        return service.update_board(
+            board_id,
+            name=payload.name,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/{board_id}/nodes/{item_id}", response_model=KnowledgeBoardNode)
