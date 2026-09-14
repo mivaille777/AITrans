@@ -46,6 +46,33 @@ def test_board_api_persists_card_position_and_size(tmp_path) -> None:
     assert snapshot["nodes"][0]["width"] == 300
 
 
+def test_board_api_supports_rename_description_and_delete_lifecycle(tmp_path) -> None:
+    client, _ = _client(tmp_path)
+    created = client.post(
+        "/api/knowledge/boards",
+        json={"name": "Draft Canvas", "description": "Initial scope"},
+    )
+    assert created.status_code == 201
+    board_id = created.json()["board_id"]
+
+    updated = client.patch(
+        f"/api/knowledge/boards/{board_id}",
+        json={"name": "PID Evidence Map", "description": "Mechanism evidence"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "PID Evidence Map"
+    assert updated.json()["description"] == "Mechanism evidence"
+
+    snapshot = client.get(f"/api/knowledge/boards/{board_id}")
+    assert snapshot.status_code == 200
+    assert snapshot.json()["board"]["name"] == "PID Evidence Map"
+
+    deleted = client.delete(f"/api/knowledge/boards/{board_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert client.get(f"/api/knowledge/boards/{board_id}").status_code == 404
+
+
 def test_relation_api_supports_create_read_update_list_and_delete(tmp_path) -> None:
     client, workspace = _client(tmp_path)
     paper = workspace.create_item(item_type=KnowledgeItemType.PAPER, title="Paper")
