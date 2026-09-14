@@ -102,6 +102,29 @@ def test_partially_verified_answer_is_preserved_with_notice():
     assert result.answer.model == "test-model"
 
 
+def test_trailing_citation_preserves_multi_sentence_academic_paragraph():
+    original = (
+        "The optimization process is designed for costly evaluations and therefore "
+        "benefits from a sample-efficient search strategy. "
+        "Bayesian optimization improves sample efficiency under costly evaluations "
+        "by using a surrogate model [1]."
+    )
+    _, result = _send(original)
+
+    assert result.verification is not None
+    assert result.verification.passed is False
+    assert result.verification.citation_coverage == 0.5
+    assert result.verification.paragraph_count == 1
+    assert result.verification.cited_paragraph_count == 1
+    assert result.verification.supported_paragraph_count == 1
+    assert result.verification.paragraph_citation_coverage == 1.0
+    assert result.verification.paragraph_support_rate == 1.0
+    assert result.fallback_applied is False
+    assert result.partial_grounding is True
+    assert result.answer.output_text.startswith(original)
+    assert result.answer.output_text.endswith(PARTIAL_GROUNDING_NOTICE)
+
+
 def test_paragraph_level_one_in_three_citation_coverage_is_preserved():
     original = (
         "The method first narrows the candidate region using prior observations.\n"
@@ -117,6 +140,7 @@ def test_paragraph_level_one_in_three_citation_coverage_is_preserved():
     assert result.verification.cited_claim_count == 1
     assert result.verification.claim_count == 3
     assert result.verification.supported_claim_count == 1
+    assert result.verification.paragraph_citation_coverage == 0.3333
     assert result.fallback_applied is False
     assert result.partial_grounding is True
     assert result.answer.output_text.startswith(original)
@@ -136,6 +160,7 @@ def test_answer_with_too_little_citation_coverage_still_falls_back():
     assert result.verification.cited_claim_count == 1
     assert result.verification.claim_count == 4
     assert result.verification.citation_coverage == 0.25
+    assert result.verification.paragraph_citation_coverage == 0.25
     assert result.partial_grounding is False
     assert result.fallback_applied is True
     assert result.answer.model == "grounding-verification-fallback"
