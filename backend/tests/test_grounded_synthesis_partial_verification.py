@@ -193,3 +193,68 @@ def test_unknown_citation_still_triggers_evidence_only_fallback():
     assert result.answer.model == "grounding-verification-fallback"
     assert result.answer.output_text.startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
     assert original not in result.answer.output_text
+
+
+def test_markdown_structure_does_not_inflate_partial_grounding_denominator():
+    original = """# GP anchor and LLM refinement
+
+Bayesian optimization improves sample efficiency under costly evaluations by using a surrogate model [1].
+
+## Mechanism analysis
+
+**Key conclusion**
+
+- Bayesian optimization uses a surrogate model for sample-efficient search [1].
+- The local stage interprets the bounded context around the selected anchor.
+- The two stages play complementary roles.
+
+1. The statistical stage narrows the search region.
+2. The reasoning stage refines a candidate locally.
+
+> The design separates statistical localization from bounded reasoning.
+
+Use `GP anchor` and `LLM refinement` as the two conceptual roles.
+
+| Component | Role | Output |
+| --- | --- | --- |
+| GP | Wide search | Anchor |
+| LLM | Local refinement | Candidate |
+
+```text
+GP anchor -> LLM refinement
+```
+"""
+    _, result = _send(original)
+
+    assert result.verification is not None
+    assert result.verification.passed is True
+    assert result.verification.strict_passed is False
+    assert result.verification.partial_grounding is True
+    assert result.verification.invalid_citation_count == 0
+    assert result.verification.paragraph_count == 2
+    assert result.verification.cited_paragraph_count == 2
+    assert result.verification.paragraph_citation_coverage == 1.0
+    assert result.fallback_applied is False
+    assert result.answer.output_text.startswith(original)
+
+
+def test_unknown_citation_inside_markdown_section_still_hard_fails():
+    original = """# Grounded answer
+
+## Evidence
+
+- Bayesian optimization improves sample efficiency under costly evaluations [1].
+- A fabricated statement cites an unavailable source [9].
+
+| Component | Evidence |
+| --- | --- |
+| GP | Surrogate-model evidence [1] |
+"""
+    _, result = _send(original)
+
+    assert result.verification is not None
+    assert result.verification.passed is False
+    assert result.verification.invalid_citation_count >= 1
+    assert result.verification.partial_grounding is False
+    assert result.fallback_applied is True
+    assert result.answer.output_text.startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
