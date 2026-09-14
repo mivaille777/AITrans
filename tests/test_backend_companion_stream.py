@@ -77,6 +77,15 @@ class GroundedStreamingCompanionChatService(StubStreamingCompanionChatService):
         yield "GP anchors localize the search around prior evidence [1]."
 
 
+class MultiChunkGroundedStreamingCompanionChatService(
+    GroundedStreamingCompanionChatService
+):
+    def stream(self, **_kwargs):
+        yield "GP anchors "
+        yield "localize the search "
+        yield "around prior evidence [1]."
+
+
 class ParagraphGroundedStreamingCompanionChatService(
     GroundedStreamingCompanionChatService
 ):
@@ -190,6 +199,44 @@ def test_companion_websocket_persists_completed_knowledge_grounding(tmp_path) ->
     assert grounding.evidence[0].evidence_id == "evidence-1"
     assert grounding.citations[0].label == "[1]"
     assert done["grounding_verification"]["passed"] is True
+    assert done["grounding_verification"]["strict_passed"] is True
+    assert done["grounding_verification"]["partial_grounding"] is False
+
+
+def test_companion_websocket_streams_knowledge_before_final_verification(tmp_path) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    service = MultiChunkGroundedStreamingCompanionChatService()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _grounded_payload(16)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            accepted = websocket.receive_json()
+            first = websocket.receive_json()
+            second = websocket.receive_json()
+            third = websocket.receive_json()
+            done = websocket.receive_json()
+
+    assert accepted["type"] == "accepted"
+    assert first["type"] == "delta"
+    assert first["delta"] == "GP anchors "
+    assert first["accumulated_text"] == "GP anchors "
+    assert second["type"] == "delta"
+    assert second["accumulated_text"] == "GP anchors localize the search "
+    assert third["type"] == "delta"
+    assert third["accumulated_text"] == (
+        "GP anchors localize the search around prior evidence [1]."
+    )
+    assert done["type"] == "done"
+    assert done["output_text"] == third["accumulated_text"]
+
+    stored = store.get(accepted["conversation_id"])
+    assert stored is not None
+    assert stored.messages[-1].content == done["output_text"]
+    assert stored.messages[-1].status == "complete"
 
 
 def test_companion_websocket_preserves_paragraph_grounded_synthesis(tmp_path) -> None:
@@ -217,6 +264,8 @@ def test_companion_websocket_preserves_paragraph_grounded_synthesis(tmp_path) ->
     assert done["output_text"] == expected
     assert not done["output_text"].startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
     assert done["grounding_verification"]["passed"] is True
+    assert done["grounding_verification"]["strict_passed"] is False
+    assert done["grounding_verification"]["partial_grounding"] is True
     assert "grounding_verification_failed" not in done["knowledge_fallback_reason"]
     stored = store.get(accepted["conversation_id"])
     assert stored is not None
@@ -234,16 +283,31 @@ def test_companion_websocket_keeps_invalid_citation_as_hard_fallback(tmp_path) -
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            _accepted = websocket.receive_json()
-            delta = websocket.receive_json()
+            accepted = websocket.receive_json()
+            provisional = websocket.receive_json()
+            replacement = websocket.receive_json()
             done = websocket.receive_json()
 
-    assert delta["type"] == "delta"
-    assert delta["accumulated_text"].startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
-    assert done["output_text"].startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
+    assert provisional["type"] == "delta"
+    assert provisional["accumulated_text"] == (
+        "GP anchors localize the search around prior evidence [9]."
+    )
+    assert replacement["type"] == "delta"
+    assert replacement["delta"] == ""
+    assert replacement["accumulated_text"].startswith(
+        GROUNDING_VERIFICATION_FALLBACK_PREFIX
+    )
+    assert done["output_text"] == replacement["accumulated_text"]
     assert done["grounding_verification"]["passed"] is False
+    assert done["grounding_verification"]["strict_passed"] is False
+    assert done["grounding_verification"]["partial_grounding"] is False
     assert done["grounding_verification"]["invalid_citation_count"] == 1
     assert "grounding_verification_failed" in done["knowledge_fallback_reason"]
+
+    stored = store.get(accepted["conversation_id"])
+    assert stored is not None
+    assert stored.messages[-1].content == done["output_text"]
+    assert "[9]" not in stored.messages[-1].content
 
 
 def test_companion_websocket_cancel_commits_terminal_cancelled_message(tmp_path) -> None:
