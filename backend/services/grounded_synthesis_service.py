@@ -19,6 +19,8 @@ PARTIAL_GROUNDING_NOTICE = (
     "注：部分解释性陈述未能逐句通过引用一致性校验；已保留综合回答，"
     "并仅将现有引用视为可直接核验的证据。"
 )
+_PARTIAL_MIN_PARAGRAPH_CITATION_COVERAGE = 1.0 / 3.0
+_PARTIAL_MIN_PARAGRAPH_SUPPORT_RATE = 0.60
 _PARTIAL_MIN_CITATION_COVERAGE = 1.0 / 3.0
 _PARTIAL_MIN_CITED_SUPPORT_RATE = 0.75
 
@@ -59,12 +61,11 @@ class VerifiedGroundedSynthesisResult:
 class GroundedSynthesisService:
     """Grounded synthesis plus deterministic post-generation verification.
 
-    Full verification remains deliberately strict. A partially verified answer
-    may still be preserved when its citations are structurally valid, at least
-    roughly one in three verifiable claims carries an explicit citation, and
-    most cited claims are supported by their referenced evidence. Invalid
-    citation references, zero supported claims, or weak overall grounding still
-    trigger the evidence-only policy fallback.
+    Full verification remains deliberately sentence-strict. Partial grounding
+    is evaluated at paragraph granularity because academic prose commonly puts
+    one citation at the end of a paragraph that contains several related
+    sentences. Unknown citations and citations pointing to missing evidence are
+    still hard failures; paragraph tolerance never overrides citation integrity.
     """
 
     def __init__(
@@ -108,12 +109,7 @@ class GroundedSynthesisService:
         provider: str | None = None,
         model: str | None = None,
     ) -> CompanionChatResult:
-        """Copy the stable chat-result surface without assuming a dataclass.
-
-        Unit-test doubles and compatible adapters may expose the same public
-        attributes through ``SimpleNamespace`` or another lightweight object.
-        Grounding policy must not depend on their concrete implementation type.
-        """
+        """Copy the stable chat-result surface without assuming a dataclass."""
 
         raw_request_id = getattr(answer, "request_id", 0)
         try:
@@ -187,24 +183,43 @@ class GroundedSynthesisService:
     def _preserve_partial_grounding(
         verification: ClaimEvidenceVerification,
     ) -> bool:
-        """Accept useful synthesis without weakening citation integrity.
+        """Accept useful academic synthesis without weakening citation safety."""
 
-        Partial preservation is impossible when a citation label is unknown or
-        points at missing evidence. Coverage tolerates paragraph-level citation
-        placement, while support is measured only across claims that actually
-        cite evidence. This avoids penalizing short explanatory transitions as
-        harshly as factual claims while still rejecting mostly unsupported text.
-        """
+        if verification.invalid_citation_count != 0:
+            return False
 
+        paragraph_count = int(getattr(verification, "paragraph_count", 0) or 0)
+        cited_paragraph_count = int(
+            getattr(verification, "cited_paragraph_count", 0) or 0
+        )
+        supported_paragraph_count = int(
+            getattr(verification, "supported_paragraph_count", 0) or 0
+        )
+        paragraph_citation_coverage = float(
+            getattr(verification, "paragraph_citation_coverage", 0.0) or 0.0
+        )
+        paragraph_support_rate = float(
+            getattr(verification, "paragraph_support_rate", 0.0) or 0.0
+        )
+
+        if paragraph_count > 0:
+            return (
+                cited_paragraph_count > 0
+                and supported_paragraph_count > 0
+                and paragraph_citation_coverage
+                >= _PARTIAL_MIN_PARAGRAPH_CITATION_COVERAGE
+                and paragraph_support_rate >= _PARTIAL_MIN_PARAGRAPH_SUPPORT_RATE
+            )
+
+        # Compatibility path for custom verifier adapters that only expose the
+        # older sentence-level result surface.
         if (
-            verification.invalid_citation_count != 0
-            or verification.claim_count <= 0
+            verification.claim_count <= 0
             or verification.cited_claim_count <= 0
             or verification.supported_claim_count <= 0
             or verification.citation_coverage < _PARTIAL_MIN_CITATION_COVERAGE
         ):
             return False
-
         cited_support_rate = (
             verification.supported_claim_count / verification.cited_claim_count
         )
