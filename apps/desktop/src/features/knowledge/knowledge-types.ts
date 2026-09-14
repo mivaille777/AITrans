@@ -281,6 +281,11 @@ export interface KnowledgeBoardCreateInput {
   description?: string
 }
 
+export interface KnowledgeBoardUpdateInput {
+  name?: string
+  description?: string
+}
+
 export interface KnowledgeBoardNodeInput {
   x: number
   y: number
