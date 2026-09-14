@@ -10,6 +10,13 @@ _CITATION_RE = re.compile(r"\[(\d+)\]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？；;])\s+|\n+")
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n+")
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+_MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
+_MARKDOWN_LIST_RE = re.compile(r"^\s*(?:[-+*]|\d+[.)])\s+")
+_MARKDOWN_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+_MARKDOWN_TABLE_DELIMITER_RE = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
+)
+_MARKDOWN_RULE_RE = re.compile(r"^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$")
 
 _STOPWORDS = {
     "the", "and", "for", "from", "with", "that", "this", "are", "was",
@@ -77,10 +84,11 @@ class AgentClaimEvidenceVerifier:
     """Verify citations once for every Agent and Companion production path.
 
     Sentence metrics remain the strict verification signal. Academic synthesis
-    may additionally be released through a conservative paragraph-level rule,
-    because citations are often placed once at the end of a multi-sentence
-    paragraph. Unknown citations or citations whose evidence is missing can
-    never pass either path.
+    may additionally be released through a conservative semantic-block rule.
+    Plain text keeps the historical line/paragraph behaviour, while Markdown
+    answers are evaluated by sections so headings, lists, tables, blockquotes,
+    and code formatting do not artificially inflate the grounding denominator.
+    Unknown citations or citations whose evidence is missing can never pass.
     """
 
     def __init__(self, policy: ClaimEvidenceVerifierPolicy | None = None) -> None:
@@ -88,7 +96,7 @@ class AgentClaimEvidenceVerifier:
 
     @staticmethod
     def _strip_citations(text: str) -> str:
-        return _CITATION_RE.sub("", text).strip(" \t-*•#:")
+        return _CITATION_RE.sub("", text).strip(" \t-*•#:`>|_")
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
@@ -124,7 +132,92 @@ class AgentClaimEvidenceVerifier:
             if (candidate := raw.strip()) and self._is_verifiable_unit(candidate)
         )
 
+    @staticmethod
+    def _looks_like_markdown(output_text: str) -> bool:
+        lines = str(output_text or "").splitlines()
+        pipe_lines = 0
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if (
+                _MARKDOWN_HEADING_RE.match(line)
+                or _MARKDOWN_LIST_RE.match(line)
+                or _MARKDOWN_FENCE_RE.match(line)
+                or stripped.startswith("> ")
+                or _MARKDOWN_TABLE_DELIMITER_RE.match(line)
+            ):
+                return True
+            if stripped.startswith("|") and stripped.endswith("|"):
+                pipe_lines += 1
+                if pipe_lines >= 2:
+                    return True
+        return False
+
+    @staticmethod
+    def _clean_markdown_line(line: str) -> str:
+        cleaned = line.strip()
+        cleaned = re.sub(r"^>\s?", "", cleaned)
+        cleaned = _MARKDOWN_LIST_RE.sub("", cleaned)
+        return cleaned.strip()
+
+    def _markdown_sections(self, output_text: str) -> tuple[str, ...]:
+        """Return semantic Markdown sections for partial grounding.
+
+        A heading starts a new semantic section. Content below it—including
+        prose, list items, blockquotes, and table rows—is verified together.
+        Fenced code is presentation/tooling content and is excluded from claim
+        coverage. Table delimiter rows and horizontal rules are syntax only.
+        """
+
+        sections: list[str] = []
+        current: list[str] = []
+        in_fence = False
+        fence_character = ""
+
+        def flush() -> None:
+            if not current:
+                return
+            candidate = " ".join(part for part in current if part).strip()
+            current.clear()
+            if candidate and self._is_verifiable_unit(candidate):
+                sections.append(candidate)
+
+        for raw in str(output_text or "").splitlines():
+            fence = _MARKDOWN_FENCE_RE.match(raw)
+            if fence:
+                marker = fence.group(1)[0]
+                if not in_fence:
+                    flush()
+                    in_fence = True
+                    fence_character = marker
+                elif marker == fence_character:
+                    in_fence = False
+                    fence_character = ""
+                continue
+            if in_fence:
+                continue
+
+            if _MARKDOWN_HEADING_RE.match(raw):
+                flush()
+                continue
+            if _MARKDOWN_RULE_RE.match(raw) or _MARKDOWN_TABLE_DELIMITER_RE.match(raw):
+                continue
+
+            cleaned = self._clean_markdown_line(raw)
+            if not cleaned:
+                # Blank lines are presentation spacing inside a Markdown
+                # section, not evidence boundaries.
+                continue
+            current.append(cleaned)
+
+        flush()
+        return tuple(sections)
+
     def _paragraphs(self, output_text: str) -> tuple[str, ...]:
+        if self._looks_like_markdown(output_text):
+            return self._markdown_sections(output_text)
+
         paragraphs: list[str] = []
         for raw in _PARAGRAPH_SPLIT_RE.split(str(output_text or "")):
             candidate = raw.strip()
