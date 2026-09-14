@@ -39,7 +39,7 @@ const insight: KnowledgeItem = {
 }
 
 describe("knowledge companion handoff", () => {
-  it("uses selection evidence and keeps all grounded document ids", () => {
+  it("uses selection evidence and enables retrieval over all grounded documents", () => {
     const handoff = buildKnowledgeCompanionHandoff(evidence, {
       targetLanguage: "zh-CN",
     })
@@ -49,8 +49,8 @@ describe("knowledge companion handoff", () => {
     expect(handoff.section_heading).toBe("Methods")
     expect(handoff.context_before).toBe("Before evidence.")
     expect(handoff.context_after).toBe("After evidence.")
+    expect(handoff.knowledge_enabled).toBe(true)
     expect(handoff.knowledge_document_ids).toEqual(["doc-1", "doc-2"])
-    expect(handoff.context_id).toBe("knowledge:evidence-1")
     expect(handoff.resource_url).toBe("knowledge-item://evidence-1")
   })
 
