@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { desktop } from "../../desktop"
+import { AnswerMarkdown } from "./AnswerMarkdown"
 import { CitedAnswer } from "./CitedAnswer"
 import { citationSegments, isSafeEvidenceResource } from "./citation-model"
 import type { AgentCitationRef, AgentEvidenceItem } from "./evidence-types"
@@ -33,6 +34,52 @@ afterEach(() => {
 })
 
 describe("RAG citation interaction", () => {
+  it("renders headings, emphasis, lists, code and citations as markdown", () => {
+    const content = [
+      "# Main finding",
+      "",
+      "The **bounded reasoning component** stays local [1].",
+      "",
+      "- GP selects the anchor",
+      "- LLM refines locally",
+      "",
+      "`Theta_useful` remains bounded.",
+    ].join("\n")
+
+    render(<CitedAnswer content={content} evidence={[evidence]} citations={[citation]} />)
+
+    expect(screen.getByRole("heading", { level: 1, name: "Main finding" })).not.toBeNull()
+    expect(screen.getByText("bounded reasoning component").tagName).toBe("STRONG")
+    expect(screen.getByText("GP selects the anchor").closest("li")).not.toBeNull()
+    expect(screen.getByText("Theta_useful").tagName).toBe("CODE")
+    expect(screen.getByRole("button", { name: "Open citation [1]" })).not.toBeNull()
+  })
+
+  it("renders pipe tables without an extra markdown dependency", () => {
+    render(
+      <AnswerMarkdown
+        content={[
+          "| Component | Role |",
+          "| :--- | ---: |",
+          "| GP | Wide search |",
+          "| LLM | Local refinement |",
+        ].join("\n")}
+      />,
+    )
+
+    expect(screen.getByRole("table")).not.toBeNull()
+    expect(screen.getByText("Component").closest("th")).not.toBeNull()
+    expect(screen.getByText("Local refinement").closest("td")).not.toBeNull()
+  })
+
+  it("updates incomplete streaming markdown when later content arrives", () => {
+    const { rerender } = render(<AnswerMarkdown content="# Streaming" />)
+    expect(screen.getByRole("heading", { level: 1, name: "Streaming" })).not.toBeNull()
+
+    rerender(<AnswerMarkdown content="# Streaming\n\n**Complete** paragraph." />)
+    expect(screen.getByText("Complete").tagName).toBe("STRONG")
+  })
+
   it("renders verified citation labels as interactive chips", () => {
     render(<CitedAnswer content="The response is bounded [1]." evidence={[evidence]} citations={[citation]} />)
 
