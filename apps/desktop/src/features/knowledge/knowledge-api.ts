@@ -25,6 +25,7 @@ export {
   reindexKnowledgeDocument,
   rejectKnowledgeRelationSuggestion,
   removeKnowledgeBoardNode,
+  updateKnowledgeBoard,
   updateKnowledgeItem,
   updateKnowledgeRelation,
   upsertKnowledgeBoardNode,
