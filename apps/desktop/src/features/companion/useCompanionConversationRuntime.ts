@@ -60,6 +60,8 @@ export interface CompanionRuntimeResetOptions {
   draft?: string
   sessionId?: string
   scopeId?: string
+  knowledgeEnabled?: boolean
+  knowledgeDocumentIds?: string[]
 }
 
 export interface UseCompanionConversationRuntimeOptions {
@@ -108,6 +110,10 @@ export interface CompanionConversationRuntime {
     userMessage: CompanionRuntimeMessage,
     replacementText: string,
   ) => Promise<boolean>
+}
+
+function normalizedDocumentIds(values: string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 100)
 }
 
 export function useCompanionConversationRuntime(
@@ -227,6 +233,9 @@ export function useCompanionConversationRuntime(
     setMessages([])
     setDraft(next.draft ?? "")
     setErrorMessage("")
+    const nextKnowledgeDocumentIds = normalizedDocumentIds(next.knowledgeDocumentIds)
+    setKnowledgeDocumentIds(nextKnowledgeDocumentIds)
+    setKnowledgeEnabled(Boolean(next.knowledgeEnabled && nextKnowledgeDocumentIds.length > 0))
   }, [
     applyContext,
     applyContextMode,
