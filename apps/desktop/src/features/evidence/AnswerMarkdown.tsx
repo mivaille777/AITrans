@@ -1,4 +1,3 @@
-import type { ReactNode } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 
 import { CitationChip } from "./CitationChip"
