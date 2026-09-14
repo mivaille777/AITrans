@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
@@ -98,6 +98,52 @@ class GroundedSynthesisService:
             provider="policy",
             model=model,
             request_id=max(0, int(kwargs.get("request_id", 0) or 0)),
+        )
+
+    @staticmethod
+    def _copy_answer(
+        answer: Any,
+        *,
+        output_text: str,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> CompanionChatResult:
+        """Copy the stable chat-result surface without assuming a dataclass.
+
+        Unit-test doubles and compatible adapters may expose the same public
+        attributes through ``SimpleNamespace`` or another lightweight object.
+        Grounding policy must not depend on their concrete implementation type.
+        """
+
+        raw_request_id = getattr(answer, "request_id", 0)
+        try:
+            request_id = max(0, int(raw_request_id or 0))
+        except (TypeError, ValueError):
+            request_id = 0
+
+        raw_evidence = getattr(answer, "evidence", ()) or ()
+        raw_citations = getattr(answer, "citations", ()) or ()
+        return CompanionChatResult(
+            session_id=str(getattr(answer, "session_id", "") or ""),
+            user_message=str(getattr(answer, "user_message", "") or ""),
+            output_text=output_text,
+            provider=(
+                str(provider)
+                if provider is not None
+                else str(getattr(answer, "provider", "") or "")
+            ),
+            model=(
+                str(model)
+                if model is not None
+                else str(getattr(answer, "model", "") or "")
+            ),
+            request_id=request_id,
+            knowledge_enabled=bool(getattr(answer, "knowledge_enabled", False)),
+            knowledge_fallback_reason=str(
+                getattr(answer, "knowledge_fallback_reason", "") or ""
+            ),
+            evidence=tuple(raw_evidence),
+            citations=tuple(raw_citations),
         )
 
     @staticmethod
@@ -213,7 +259,7 @@ class GroundedSynthesisService:
             )
 
         if self._preserve_partial_grounding(verification):
-            partial_answer = replace(
+            partial_answer = self._copy_answer(
                 answer,
                 output_text=(
                     f"{answer.output_text.rstrip()}\n\n{PARTIAL_GROUNDING_NOTICE}"
@@ -225,7 +271,7 @@ class GroundedSynthesisService:
                 partial_grounding=True,
             )
 
-        fallback = replace(
+        fallback = self._copy_answer(
             answer,
             output_text=self._evidence_only_fallback(
                 evidence=included_evidence,
