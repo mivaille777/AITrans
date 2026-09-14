@@ -48,6 +48,30 @@ class KnowledgeBoardService:
             )
         )
 
+    def update_board(
+        self,
+        board_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> KnowledgeBoard:
+        existing = self.get_board(board_id)
+        if existing is None:
+            raise ValueError("knowledge board does not exist")
+        normalized_name = existing.name if name is None else name.strip()
+        if not normalized_name:
+            raise ValueError("board name must not be empty")
+        normalized_description = existing.description if description is None else description.strip()
+        return self._repository.save_board(
+            KnowledgeBoard(
+                board_id=existing.board_id,
+                name=normalized_name,
+                description=normalized_description,
+                created_at=existing.created_at,
+                updated_at=utc_now(),
+            )
+        )
+
     def get_board(self, board_id: str) -> KnowledgeBoard | None:
         return self._repository.get_board(board_id)
 
