@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Callable
-from collections.abc import Mapping
+from typing import Any
 
-from app.ai.client import DEFAULT_DEEPSEEK_MODEL, DeepSeekClient, SUPPORTED_DEEPSEEK_MODELS
+from app.ai.client import (
+    DEFAULT_DEEPSEEK_MODEL,
+    SUPPORTED_DEEPSEEK_MODELS,
+    DeepSeekClient,
+)
 from app.ai.errors import AIConfigurationError
 from app.ai.factory import (
     DEFAULT_AI_PROVIDER,
@@ -17,8 +21,12 @@ from app.ai.factory import (
     provider_defaults,
 )
 from app.ai.models import AITextRequest, AITextResult
-from app.ai.openai_compatible import OpenAICompatibleClient, OpenAICompatibleTextProvider
+from app.ai.openai_compatible import (
+    OpenAICompatibleClient,
+    OpenAICompatibleTextProvider,
+)
 from app.ai.provider import DeepSeekTextProvider
+from app.ai.runtime_status import llm_runtime_status
 from app.ai.service import AITextService
 from app.infrastructure.settings import SettingsManager
 
@@ -61,23 +69,39 @@ class RoutedAITextService:
             return self._service
         with self._lock:
             if self._service is None:
-                if self.route.provider == DEFAULT_AI_PROVIDER:
-                    client = DeepSeekClient(
+                route_key = "|".join(
+                    (
+                        self.route.provider,
+                        self.route.model,
+                        self.route.base_url.rstrip("/"),
+                    )
+                )
+                try:
+                    if self.route.provider == DEFAULT_AI_PROVIDER:
+                        client = DeepSeekClient(
+                            model=self.route.model,
+                            thinking_enabled=self.route.thinking_enabled,
+                        )
+                        provider = DeepSeekTextProvider(client=client)
+                    elif self.route.provider == OPENAI_COMPATIBLE_PROVIDER:
+                        client = OpenAICompatibleClient(
+                            model=self.route.model,
+                            base_url=self.route.base_url,
+                        )
+                        provider = OpenAICompatibleTextProvider(client=client)
+                    else:  # Defensive: routes are validated by LLMGateway.
+                        raise AIConfigurationError(
+                            f"Unsupported saved AI provider: {self.route.provider}."
+                        )
+                    self._service = AITextService(provider)
+                except AIConfigurationError as exc:
+                    llm_runtime_status.mark_unavailable(
+                        provider=self.route.provider,
                         model=self.route.model,
-                        thinking_enabled=self.route.thinking_enabled,
+                        route_key=route_key,
+                        detail=str(exc),
                     )
-                    provider = DeepSeekTextProvider(client=client)
-                elif self.route.provider == OPENAI_COMPATIBLE_PROVIDER:
-                    client = OpenAICompatibleClient(
-                        model=self.route.model,
-                        base_url=self.route.base_url,
-                    )
-                    provider = OpenAICompatibleTextProvider(client=client)
-                else:  # Defensive: routes are validated by LLMGateway.
-                    raise AIConfigurationError(
-                        f"Unsupported saved AI provider: {self.route.provider}."
-                    )
-                self._service = AITextService(provider)
+                    raise
             return self._service
 
     @property

@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ai.gateway import LLMRoute
+from app.ai.errors import AIConfigurationError
+from app.ai.gateway import LLMRoute, RoutedAITextService
 from app.ai.runtime_status import (
     LLMRuntimeStatus,
     llm_runtime_status,
@@ -15,31 +16,7 @@ from backend.main import create_app
 from backend.services.llm_status_service import LLMStatusService
 
 
-class _ProbeClient:
-    def __init__(self, error: Exception | None = None) -> None:
-        self.error = error
-        self.calls = 0
-
-    def probe(self) -> None:
-        self.calls += 1
-        if self.error is not None:
-            raise self.error
-
-
-class _TextService:
-    def __init__(self, client: _ProbeClient) -> None:
-        self.provider = SimpleNamespace(client=client)
-        self.closed = False
-
-    def close(self) -> None:
-        self.closed = True
-
-
 class _Gateway:
-    def __init__(self, client: _ProbeClient) -> None:
-        self.client = client
-        self.services: list[_TextService] = []
-
     def route(self, role: str) -> LLMRoute:
         assert role == "reading"
         return LLMRoute(
@@ -48,13 +25,6 @@ class _Gateway:
             model="test-model",
             base_url="http://localhost:11434/v1",
         )
-
-    def create_text_service(self, role: str) -> _TextService:
-        assert role == "reading"
-        service = _TextService(self.client)
-        self.services.append(service)
-        return service
-
 
 @pytest.fixture(autouse=True)
 def _reset_global_status():
@@ -93,18 +63,53 @@ def test_request_failure_marks_runtime_unavailable_without_leaking_details() -> 
     assert snapshot.detail == "LLM API request failed."
 
 
-def test_status_service_probes_once_and_caches_success() -> None:
-    client = _ProbeClient()
-    gateway = _Gateway(client)
+def test_status_service_accepts_valid_config_without_a_separate_api_probe() -> None:
+    gateway = _Gateway()
     service = LLMStatusService(gateway=gateway)  # type: ignore[arg-type]
 
-    first = service.status()
-    second = service.status()
+    current = service.status()
 
-    assert first.state == "available"
-    assert second.state == "available"
-    assert client.calls == 1
-    assert gateway.services[0].closed is True
+    assert current.state == "available"
+    assert current.provider == "openai_compatible"
+    assert current.model == "test-model"
+
+
+def test_status_service_preserves_a_real_request_failure() -> None:
+    service = LLMStatusService(gateway=_Gateway())  # type: ignore[arg-type]
+    assert service.status().state == "available"
+
+    with pytest.raises(RuntimeError), track_llm_request(
+        provider="openai_compatible",
+        model="test-model",
+        route_key="openai_compatible|test-model|http://localhost:11434/v1",
+    ):
+        raise RuntimeError("network failed")
+
+    assert service.status().state == "unavailable"
+
+
+def test_client_initialization_failure_marks_status_unavailable(monkeypatch) -> None:
+    from app.ai import gateway as gateway_module
+
+    def fail_client(**_kwargs):
+        raise AIConfigurationError("API key is unavailable.")
+
+    monkeypatch.setattr(gateway_module, "DeepSeekClient", fail_client)
+    service = RoutedAITextService(
+        LLMRoute(
+            role="reading",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+        )
+    )
+
+    with pytest.raises(AIConfigurationError, match="API key"):
+        _ = service.provider
+
+    snapshot = llm_runtime_status.snapshot()
+    assert snapshot.state == "unavailable"
+    assert snapshot.detail == "API key is unavailable."
 
 
 def test_status_api_returns_runtime_contract(monkeypatch) -> None:

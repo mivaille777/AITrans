@@ -205,36 +205,6 @@ class OpenAICompatibleClient:
             )
         return content.strip()
 
-    def probe(self) -> None:
-        try:
-            self._client.models.list()
-        except AuthenticationError as exc:
-            raise AIAuthenticationError(
-                "OpenAI-compatible API authentication failed."
-            ) from exc
-        except RateLimitError as exc:
-            raise AIRateLimitError(
-                "OpenAI-compatible API rate limit exceeded."
-            ) from exc
-        except APITimeoutError as exc:
-            raise AITimeoutError(
-                "OpenAI-compatible API request timed out."
-            ) from exc
-        except APIConnectionError as exc:
-            raise AIConnectionError(
-                "Unable to connect to the OpenAI-compatible API."
-            ) from exc
-        except APIStatusError as exc:
-            status_code = getattr(exc, "status_code", None)
-            detail = f" with HTTP status {status_code}" if status_code is not None else ""
-            raise AIResponseError(
-                f"OpenAI-compatible API health check failed{detail}."
-            ) from exc
-        except Exception as exc:
-            raise AIResponseError(
-                "OpenAI-compatible API health check failed."
-            ) from exc
-
     def complete_messages(
         self,
         *,
