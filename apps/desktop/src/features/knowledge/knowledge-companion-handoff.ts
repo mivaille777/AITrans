@@ -7,6 +7,11 @@ interface KnowledgeChatHandoffOptions {
   suggestedPrompt?: string
 }
 
+export interface KnowledgeCompanionHandoffRequest extends CompanionHandoffRequest {
+  knowledge_enabled: boolean
+  knowledge_document_ids: string[]
+}
+
 function metadataText(item: KnowledgeItem, key: string): string {
   const value = item.metadata?.[key]
   return typeof value === "string" ? value.trim() : ""
@@ -57,7 +62,7 @@ function sourceKind(item: KnowledgeItem): string {
 export function buildKnowledgeCompanionHandoff(
   item: KnowledgeItem,
   options: KnowledgeChatHandoffOptions = {},
-): CompanionHandoffRequest {
+): KnowledgeCompanionHandoffRequest {
   const selectionText = metadataText(item, "selection_text")
   const sourceText = item.item_type === "insight"
     ? item.summary.trim() || item.title.trim()
@@ -75,13 +80,11 @@ export function buildKnowledgeCompanionHandoff(
     context_before: metadataText(item, "context_before"),
     context_after: metadataText(item, "context_after"),
     source_kind: sourceKind(item),
-    source_event_id: item.item_id,
     ai_content: item.item_type === "insight" ? item.summary : "",
     ai_action: "knowledge_context",
     suggested_prompt: options.suggestedPrompt?.trim() || defaultPrompt(item),
-    context_id: `knowledge:${item.item_id}`,
+    knowledge_enabled: documentIds.length > 0,
     knowledge_document_ids: documentIds,
-    research_source_ids: [],
   }
 }
 
