@@ -75,23 +75,38 @@ export function companionContextSnapshot(
   }
 }
 
+type ScopedCompanionHandoff = CompanionHandoff & {
+  knowledge_enabled?: boolean
+  knowledge_document_ids?: string[]
+}
+
+function normalizedDocumentIds(values: string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 100)
+}
+
 export interface CompanionHandoffRuntimeSeed {
   context: CompanionContextSnapshot
   contextMode: "reading"
   draft: string
   sessionId: string
   scopeId: string
+  knowledgeEnabled: boolean
+  knowledgeDocumentIds: string[]
 }
 
 export function companionHandoffRuntimeSeed(
   handoff: CompanionHandoff,
 ): CompanionHandoffRuntimeSeed {
+  const scoped = handoff as ScopedCompanionHandoff
+  const knowledgeDocumentIds = normalizedDocumentIds(scoped.knowledge_document_ids)
   return {
     context: companionContextSnapshot(handoff),
     contextMode: "reading",
     draft: handoff.suggested_prompt ?? "",
     sessionId: `companion-${handoff.handoff_id}`,
     scopeId: `handoff:${handoff.handoff_id}`,
+    knowledgeEnabled: Boolean(scoped.knowledge_enabled && knowledgeDocumentIds.length > 0),
+    knowledgeDocumentIds,
   }
 }
 
