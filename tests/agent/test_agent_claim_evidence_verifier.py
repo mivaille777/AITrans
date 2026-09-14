@@ -35,6 +35,8 @@ def test_supported_claim_with_allowed_citation_passes() -> None:
     )
 
     assert result.passed is True
+    assert result.strict_passed is True
+    assert result.partial_grounding is False
     assert result.claim_count == 1
     assert result.cited_claim_count == 1
     assert result.supported_claim_count == 1
@@ -52,6 +54,7 @@ def test_factual_claim_without_citation_fails() -> None:
     )
 
     assert result.passed is False
+    assert result.strict_passed is False
     assert "missing_claim_citation" in result.reason_codes
     assert "citation_coverage_below_policy" in result.reason_codes
 
@@ -66,6 +69,7 @@ def test_unknown_citation_is_rejected() -> None:
     )
 
     assert result.passed is False
+    assert result.strict_passed is False
     assert result.invalid_citation_count == 1
     assert "unknown_citation" in result.reason_codes
 
@@ -80,6 +84,7 @@ def test_citation_to_unrelated_evidence_fails_support_check() -> None:
     )
 
     assert result.passed is False
+    assert result.strict_passed is False
     assert result.supported_claim_count == 0
     assert "weak_claim_evidence_overlap" in result.reason_codes
 
@@ -92,6 +97,7 @@ def test_short_non_factual_placeholder_does_not_trigger_false_failure() -> None:
     )
 
     assert result.passed is True
+    assert result.strict_passed is True
     assert result.claim_count == 0
     assert result.reason_codes == ("no_verifiable_claims",)
 
@@ -114,16 +120,18 @@ def test_paragraph_end_citation_produces_supported_paragraph_signal() -> None:
         citations=[_citation("[1]", "e1")],
     )
 
-    # Sentence-strict verification remains intentionally conservative.
-    assert result.passed is False
+    # Sentence-strict verification remains intentionally conservative, while
+    # the shared production release decision accepts paragraph-grounded prose.
+    assert result.passed is True
+    assert result.strict_passed is False
+    assert result.partial_grounding is True
     assert result.citation_coverage == 0.5
-    # Paragraph-level signals recognize the common academic convention where
-    # the citation at the paragraph end supports the paragraph as a unit.
     assert result.paragraph_count == 1
     assert result.cited_paragraph_count == 1
     assert result.supported_paragraph_count == 1
     assert result.paragraph_citation_coverage == 1.0
     assert result.paragraph_support_rate == 1.0
+    assert "paragraph_grounding_release" in result.reason_codes
 
 
 def test_unrelated_paragraph_citation_is_not_marked_supported() -> None:
@@ -139,6 +147,8 @@ def test_unrelated_paragraph_citation_is_not_marked_supported() -> None:
     )
 
     assert result.passed is False
+    assert result.strict_passed is False
+    assert result.partial_grounding is False
     assert result.paragraph_count == 1
     assert result.cited_paragraph_count == 1
     assert result.supported_paragraph_count == 0
