@@ -74,6 +74,8 @@ def test_fully_verified_grounded_answer_is_returned_without_notice():
 
     assert result.verification is not None
     assert result.verification.passed is True
+    assert result.verification.strict_passed is True
+    assert result.verification.partial_grounding is False
     assert result.fallback_applied is False
     assert result.partial_grounding is False
     assert result.answer.output_text == original
@@ -90,7 +92,9 @@ def test_partially_verified_answer_is_preserved_with_notice():
     _, result = _send(original)
 
     assert result.verification is not None
-    assert result.verification.passed is False
+    assert result.verification.passed is True
+    assert result.verification.strict_passed is False
+    assert result.verification.partial_grounding is True
     assert result.verification.invalid_citation_count == 0
     assert result.verification.citation_coverage == 0.5
     assert result.verification.support_rate == 0.5
@@ -112,7 +116,9 @@ def test_trailing_citation_preserves_multi_sentence_academic_paragraph():
     _, result = _send(original)
 
     assert result.verification is not None
-    assert result.verification.passed is False
+    assert result.verification.passed is True
+    assert result.verification.strict_passed is False
+    assert result.verification.partial_grounding is True
     assert result.verification.citation_coverage == 0.5
     assert result.verification.paragraph_count == 1
     assert result.verification.cited_paragraph_count == 1
@@ -135,7 +141,9 @@ def test_paragraph_level_one_in_three_citation_coverage_is_preserved():
     _, result = _send(original)
 
     assert result.verification is not None
-    assert result.verification.passed is False
+    assert result.verification.passed is True
+    assert result.verification.strict_passed is False
+    assert result.verification.partial_grounding is True
     assert result.verification.invalid_citation_count == 0
     assert result.verification.cited_claim_count == 1
     assert result.verification.claim_count == 3
@@ -157,6 +165,8 @@ def test_answer_with_too_little_citation_coverage_still_falls_back():
     _, result = _send(original)
 
     assert result.verification is not None
+    assert result.verification.passed is False
+    assert result.verification.strict_passed is False
     assert result.verification.cited_claim_count == 1
     assert result.verification.claim_count == 4
     assert result.verification.citation_coverage == 0.25
@@ -175,6 +185,7 @@ def test_unknown_citation_still_triggers_evidence_only_fallback():
 
     assert result.verification is not None
     assert result.verification.passed is False
+    assert result.verification.strict_passed is False
     assert result.verification.invalid_citation_count == 1
     assert result.partial_grounding is False
     assert result.fallback_applied is True
