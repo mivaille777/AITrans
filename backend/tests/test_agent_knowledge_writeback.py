@@ -51,10 +51,13 @@ def test_save_knowledge_card_writes_canonical_item_relation_and_provenance(tmp_p
     assert created.item_type is KnowledgeItemType.INSIGHT
     assert created.summary == "Agent generated summary with the key planning insight."
     assert created.source_uri == source.source_uri
+    assert created.resource_document_id is None
+    assert created.metadata["document_id"] == "doc-agent-planning"
     assert created.metadata["source_item_id"] == source.item_id
     assert created.metadata["provenance"]["created_by"] == "agent"
     assert created.metadata["provenance"]["operation"] == "summarize"
     assert created.metadata["sources"][0]["document_id"] == "doc-agent-planning"
+    assert workspace._repository.find_item_by_resource_document_id("doc-agent-planning") == source
 
     relation = workspace.get_relation(str(result.data["relation_id"]))
     assert relation is not None
