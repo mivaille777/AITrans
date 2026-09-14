@@ -94,3 +94,52 @@ def test_short_non_factual_placeholder_does_not_trigger_false_failure() -> None:
     assert result.passed is True
     assert result.claim_count == 0
     assert result.reason_codes == ("no_verifiable_claims",)
+
+
+def test_paragraph_end_citation_produces_supported_paragraph_signal() -> None:
+    evidence = [
+        _evidence(
+            "e1",
+            "The GP constrains the broad search region and repeated evidence-based correction reduces sensitivity to the initial controller anchor.",
+        )
+    ]
+    output = (
+        "The statistical search first limits the broad parameter region. "
+        "Repeated evidence-based correction then reduces sensitivity to the initial controller anchor [1]."
+    )
+
+    result = AgentClaimEvidenceVerifier().verify(
+        output_text=output,
+        evidence=evidence,
+        citations=[_citation("[1]", "e1")],
+    )
+
+    # Sentence-strict verification remains intentionally conservative.
+    assert result.passed is False
+    assert result.citation_coverage == 0.5
+    # Paragraph-level signals recognize the common academic convention where
+    # the citation at the paragraph end supports the paragraph as a unit.
+    assert result.paragraph_count == 1
+    assert result.cited_paragraph_count == 1
+    assert result.supported_paragraph_count == 1
+    assert result.paragraph_citation_coverage == 1.0
+    assert result.paragraph_support_rate == 1.0
+
+
+def test_unrelated_paragraph_citation_is_not_marked_supported() -> None:
+    evidence = [_evidence("e1", "The actuator voltage is bounded by the safety gate.")]
+
+    result = AgentClaimEvidenceVerifier().verify(
+        output_text=(
+            "The GP guarantees global optimality under every operating condition. "
+            "It therefore eliminates all controller uncertainty [1]."
+        ),
+        evidence=evidence,
+        citations=[_citation("[1]", "e1")],
+    )
+
+    assert result.passed is False
+    assert result.paragraph_count == 1
+    assert result.cited_paragraph_count == 1
+    assert result.supported_paragraph_count == 0
+    assert result.paragraph_support_rate == 0.0
