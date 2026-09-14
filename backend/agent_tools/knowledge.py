@@ -353,7 +353,10 @@ class KnowledgeAgentTools:
             item_type=item_type,
             title=title,
             summary=content,
-            resource_document_id=str(grounding.get("document_id", "")).strip() or None,
+            # Derived cards keep document grounding in metadata/sources. The
+            # canonical resource_document_id remains reserved for the single
+            # resource-backed paper/document card.
+            resource_document_id=None,
             source_uri=source.source_uri,
             metadata=metadata,
         )
