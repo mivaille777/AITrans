@@ -38,6 +38,15 @@ describe("Agent context resolver", () => {
     })).toBe("reading")
   })
 
+  it("keeps a Paper Reader evidence question reading-grounded even when the paper is in Knowledge scope", () => {
+    expect(inferAgentContextMode({
+      userMessage: "Explain why this evidence is important to the paper's main argument.",
+      hasReadingContext: true,
+      hasKnowledgeScope: true,
+      hasResearchWorkspace: true,
+    })).toBe("reading")
+  })
+
   it("detaches knowledge requests from ambient reading content", () => {
     const resolved = resolveAgentContext({
       mode: "knowledge",
