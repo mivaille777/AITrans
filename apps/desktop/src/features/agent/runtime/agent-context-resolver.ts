@@ -48,12 +48,12 @@ const RESEARCH_PATTERNS = [
 ]
 
 const READING_PATTERNS = [
-  /当前(?:选中|选区|段落|章节|文章|论文|文档)/u,
-  /选中(?:内容|文本|段落|章节)/u,
-  /这(?:一?段|一?节|一?章|篇论文|篇文章|个文档)/u,
-  /\bcurrent\s+(?:selection|passage|section|paper|document)\b/i,
-  /\bselected\s+(?:text|passage|section)\b/i,
-  /\bthis\s+(?:passage|section|paper|document)\b/i,
+  /当前(?:选中|选区|段落|章节|文章|论文|文档|证据)/u,
+  /选中(?:内容|文本|段落|章节|证据)/u,
+  /这(?:一?段|一?节|一?章|篇论文|篇文章|个文档|条证据|个证据)/u,
+  /\bcurrent\s+(?:selection|passage|section|paper|document|evidence)\b/i,
+  /\bselected\s+(?:text|passage|section|evidence)\b/i,
+  /\bthis\s+(?:passage|section|paper|document|evidence)\b/i,
 ]
 
 const TRANSLATION_PATTERNS = [
@@ -82,6 +82,10 @@ export function inferAgentContextMode({
   if (matchesAny(message, KNOWLEDGE_PATTERNS)) return "knowledge"
   if (matchesAny(message, RESEARCH_PATTERNS)) return "research"
 
+  // Deictic references such as "this evidence" are reading-grounded when a
+  // trusted selection is attached. This must run before the broader
+  // Knowledge/Research fallbacks below; otherwise mentioning "paper" or
+  // "evidence" can detach the exact Paper Reader selection that the tool needs.
   if (matchesAny(message, READING_PATTERNS) && hasReadingContext) {
     return matchesAny(message, TRANSLATION_PATTERNS) ? "translation" : "reading"
   }
