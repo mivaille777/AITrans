@@ -11,12 +11,14 @@ import {
   listKnowledgeBoards,
   listKnowledgeRelations,
   removeKnowledgeBoardNode,
+  updateKnowledgeBoard,
   updateKnowledgeRelation,
   upsertKnowledgeBoardNode,
 } from "./knowledge-api"
 import type {
   KnowledgeBoardCreateInput,
   KnowledgeBoardNodeInput,
+  KnowledgeBoardUpdateInput,
   KnowledgeRelationCreateInput,
   KnowledgeRelationUpdateInput,
 } from "./knowledge-types"
@@ -62,6 +64,12 @@ export function useKnowledgeBoard() {
       setPreferredBoardId(board.board_id)
       void refreshBoard(board.board_id)
     },
+  })
+
+  const updateBoardMutation = useMutation({
+    mutationFn: ({ boardId, payload }: { boardId: string; payload: KnowledgeBoardUpdateInput }) =>
+      updateKnowledgeBoard(boardId, payload),
+    onSuccess: (updated) => void refreshBoard(updated.board_id),
   })
 
   const deleteBoardMutation = useMutation({
@@ -111,6 +119,7 @@ export function useKnowledgeBoard() {
     boardQuery,
     relationsQuery,
     createBoardMutation,
+    updateBoardMutation,
     deleteBoardMutation,
     upsertNodeMutation,
     removeNodeMutation,
