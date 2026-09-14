@@ -14,6 +14,11 @@ class KnowledgeBoardCreateRequest(KnowledgeBoardApiModel):
     description: str = Field(default="", max_length=10_000)
 
 
+class KnowledgeBoardUpdateRequest(KnowledgeBoardApiModel):
+    name: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=10_000)
+
+
 class KnowledgeBoardListResponse(KnowledgeBoardApiModel):
     total: int = Field(ge=0)
     boards: list[KnowledgeBoard] = Field(default_factory=list)
@@ -46,6 +51,7 @@ class KnowledgeBoardNodeDeleteResponse(KnowledgeBoardApiModel):
 
 __all__ = [
     "KnowledgeBoardCreateRequest",
+    "KnowledgeBoardUpdateRequest",
     "KnowledgeBoardDeleteResponse",
     "KnowledgeBoardListResponse",
     "KnowledgeBoardNodeDeleteResponse",
