@@ -8,6 +8,7 @@ import type {
   KnowledgeBoardNodeDeleteResponse,
   KnowledgeBoardNodeInput,
   KnowledgeBoardSnapshot,
+  KnowledgeBoardUpdateInput,
   KnowledgeDocument,
   KnowledgeDocumentDeleteResponse,
   KnowledgeDocumentImportResponse,
@@ -117,6 +118,16 @@ export function listKnowledgeBoards(): Promise<KnowledgeBoardListResponse> {
 
 export function createKnowledgeBoard(payload: KnowledgeBoardCreateInput): Promise<KnowledgeBoard> {
   return apiPost<KnowledgeBoard, KnowledgeBoardCreateInput>(KNOWLEDGE_BOARDS_PATH, payload)
+}
+
+export function updateKnowledgeBoard(
+  boardId: string,
+  payload: KnowledgeBoardUpdateInput,
+): Promise<KnowledgeBoard> {
+  return apiPatch<KnowledgeBoard, KnowledgeBoardUpdateInput>(
+    `${KNOWLEDGE_BOARDS_PATH}/${encodeURIComponent(boardId)}`,
+    payload,
+  )
 }
 
 export function getKnowledgeBoard(boardId: string): Promise<KnowledgeBoardSnapshot> {
