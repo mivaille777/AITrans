@@ -1,4 +1,4 @@
-import { Link2, Maximize2, Minus, Plus, Trash2 } from "lucide-react"
+import { Bot, ExternalLink, Link2, Maximize2, Minus, Plus, Redo2, Trash2, Undo2 } from "lucide-react"
 import {
   useEffect,
   useMemo,
@@ -50,6 +50,14 @@ export default function KnowledgeBoardCanvas({
   onPersistNode,
   onRemoveNode,
   onLinkRequest,
+  canUndo = false,
+  canRedo = false,
+  undoLabel = "",
+  redoLabel = "",
+  onUndo,
+  onRedo,
+  onAskSelection,
+  onOpenSelection,
 }: {
   items: KnowledgeItem[]
   nodes: KnowledgeBoardNode[]
@@ -60,6 +68,14 @@ export default function KnowledgeBoardCanvas({
   onPersistNode: (node: KnowledgeBoardNode) => void
   onRemoveNode: (itemId: string) => void
   onLinkRequest: (sourceItemId: string, targetItemId: string) => void
+  canUndo?: boolean
+  canRedo?: boolean
+  undoLabel?: string
+  redoLabel?: string
+  onUndo?: () => void
+  onRedo?: () => void
+  onAskSelection?: () => void
+  onOpenSelection?: () => void
 }) {
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const interactionRef = useRef<NodeInteraction | null>(null)
@@ -128,14 +144,25 @@ export default function KnowledgeBoardCanvas({
 
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      const editing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"))
+      if (!editing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault()
+        if (event.shiftKey) onRedo?.()
+        else onUndo?.()
+        return
+      }
+      if (!editing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+        event.preventDefault()
+        onRedo?.()
+        return
+      }
       if (event.key === "Escape") {
         setLinkingSourceId(null)
         return
       }
       if (event.key !== "Delete" && event.key !== "Backspace") return
-      const target = event.target as HTMLElement | null
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return
-      if (selectedItemIds.length === 0) return
+      if (editing || selectedItemIds.length === 0) return
       event.preventDefault()
       selectedItemIds.forEach(onRemoveNode)
       onSelectionChange([])
@@ -143,7 +170,7 @@ export default function KnowledgeBoardCanvas({
 
     window.addEventListener("keydown", keydown)
     return () => window.removeEventListener("keydown", keydown)
-  }, [onRemoveNode, onSelectionChange, selectedItemIds])
+  }, [onRedo, onRemoveNode, onSelectionChange, onUndo, selectedItemIds])
 
   function beginNodeInteraction(
     event: ReactPointerEvent,
@@ -238,6 +265,9 @@ export default function KnowledgeBoardCanvas({
   return (
     <div className="relative h-full min-h-[620px] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-50" data-testid="knowledge-board-canvas">
       <div className="absolute left-3 top-3 z-30 flex items-center gap-1 rounded-[12px] border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur">
+        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100 disabled:opacity-30" aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"} disabled={!canUndo} onClick={onUndo}><Undo2 size={14} /></button>
+        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100 disabled:opacity-30" aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"} disabled={!canRedo} onClick={onRedo}><Redo2 size={14} /></button>
+        <span className="mx-1 h-5 w-px bg-slate-200" />
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Zoom out" onClick={() => setViewport((current) => ({ ...current, zoom: clampBoardZoom(current.zoom / 1.15) }))}><Minus size={14} /></button>
         <span className="min-w-12 text-center text-[10px] font-semibold text-slate-500">{Math.round(viewport.zoom * 100)}%</span>
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Zoom in" onClick={() => setViewport((current) => ({ ...current, zoom: clampBoardZoom(current.zoom * 1.15) }))}><Plus size={14} /></button>
@@ -247,6 +277,12 @@ export default function KnowledgeBoardCanvas({
       {linkingSourceId ? (
         <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[10px] font-semibold text-cyan-800 shadow-sm">
           Select a target card to create a relation · Esc/canvas to cancel
+        </div>
+      ) : selectedItemIds.length > 0 ? (
+        <div className="absolute left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-1 rounded-[12px] border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur">
+          <span className="px-2 text-[10px] font-semibold text-slate-500">{selectedItemIds.length} selected</span>
+          <button type="button" className="flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100" onClick={onAskSelection}><Bot size={13} />Ask Agent</button>
+          {selectedItemIds.length === 1 ? <button type="button" className="flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100" onClick={onOpenSelection}><ExternalLink size={13} />Open</button> : null}
         </div>
       ) : null}
 
@@ -292,48 +328,13 @@ export default function KnowledgeBoardCanvas({
                 style={{ left: node.x, top: node.y, width: node.width, height: node.height, zIndex: selected ? Math.max(node.z_index, 1000) : node.z_index }}
                 onClick={(event) => selectNode(event, node.item_id)}
               >
-                <div
-                  className="absolute left-0 right-20 top-0 z-10 h-12 cursor-move"
-                  aria-hidden="true"
-                  onPointerDown={(event) => beginNodeInteraction(event, node, "move")}
-                />
+                <div className="absolute left-0 right-20 top-0 z-10 h-12 cursor-move" aria-hidden="true" onPointerDown={(event) => beginNodeInteraction(event, node, "move")} />
                 <KnowledgeCardRenderer item={item} />
                 <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
-                  <button
-                    type="button"
-                    className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition ${linkingSourceId === item.item_id ? "bg-cyan-100 text-cyan-800" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`}
-                    title="Connect card"
-                    aria-label={`Connect ${item.title}`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setLinkingSourceId((current) => current === item.item_id ? null : item.item_id)
-                    }}
-                  >
-                    <Link2 size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="flex h-7 w-7 items-center justify-center rounded-[8px] text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                    title="Remove from canvas"
-                    aria-label={`Remove ${item.title} from canvas`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onRemoveNode(item.item_id)
-                    }}
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  <button type="button" className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition ${linkingSourceId === item.item_id ? "bg-cyan-100 text-cyan-800" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`} title="Connect card" aria-label={`Connect ${item.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setLinkingSourceId((current) => current === item.item_id ? null : item.item_id) }}><Link2 size={13} /></button>
+                  <button type="button" className="flex h-7 w-7 items-center justify-center rounded-[8px] text-slate-400 transition hover:bg-rose-50 hover:text-rose-600" title="Remove from canvas" aria-label={`Remove ${item.title} from canvas`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemoveNode(item.item_id) }}><Trash2 size={13} /></button>
                 </div>
-                <button
-                  type="button"
-                  className="absolute bottom-0 right-0 z-20 h-5 w-5 cursor-se-resize rounded-tl-[8px] text-transparent"
-                  aria-label={`Resize ${item.title}`}
-                  onPointerDown={(event) => beginNodeInteraction(event, node, "resize")}
-                >
-                  Resize
-                </button>
+                <button type="button" className="absolute bottom-0 right-0 z-20 h-5 w-5 cursor-se-resize rounded-tl-[8px] text-transparent" aria-label={`Resize ${item.title}`} onPointerDown={(event) => beginNodeInteraction(event, node, "resize")}>Resize</button>
               </article>
             )
           })}
@@ -344,7 +345,7 @@ export default function KnowledgeBoardCanvas({
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="max-w-sm rounded-[18px] border border-dashed border-slate-300 bg-white/80 px-6 py-5 text-center shadow-sm backdrop-blur">
             <p className="text-sm font-semibold text-slate-800">Build your knowledge canvas</p>
-            <p className="mt-2 text-xs leading-5 text-slate-500">Drag a paper, note, concept, or highlight from the left tray. Arrange cards visually and connect related knowledge.</p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">Drag a card from the tray or use its Add action. Arrange cards visually, select several cards, and ask the Agent to reason across the selection.</p>
           </div>
         </div>
       ) : null}
@@ -358,16 +359,7 @@ export default function KnowledgeBoardCanvas({
             const maxY = Math.max(...localNodes.map((node) => node.y + node.height))
             const scale = Math.min(132 / Math.max(1, maxX - minX), 84 / Math.max(1, maxY - minY), 0.25)
             return localNodes.map((node) => (
-              <span
-                key={node.item_id}
-                className={`absolute rounded-[2px] ${selectedSet.has(node.item_id) ? "bg-cyan-500" : "bg-slate-400"}`}
-                style={{
-                  left: 4 + (node.x - minX) * scale,
-                  top: 4 + (node.y - minY) * scale,
-                  width: Math.max(4, node.width * scale),
-                  height: Math.max(3, node.height * scale),
-                }}
-              />
+              <span key={node.item_id} className={`absolute rounded-[2px] ${selectedSet.has(node.item_id) ? "bg-cyan-500" : "bg-slate-400"}`} style={{ left: 4 + (node.x - minX) * scale, top: 4 + (node.y - minY) * scale, width: Math.max(4, node.width * scale), height: Math.max(3, node.height * scale) }} />
             ))
           })() : null}
         </div>
