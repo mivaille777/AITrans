@@ -12,42 +12,18 @@ _PARAGRAPH_SPLIT_RE = re.compile(r"\n+")
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 
 _STOPWORDS = {
-    "the",
-    "and",
-    "for",
-    "from",
-    "with",
-    "that",
-    "this",
-    "are",
-    "was",
-    "were",
-    "into",
-    "than",
-    "then",
-    "have",
-    "has",
-    "had",
-    "can",
-    "could",
-    "would",
-    "should",
-    "about",
-    "based",
-    "using",
-    "use",
-    "根据",
-    "可以",
-    "以及",
-    "一个",
-    "这种",
-    "这些",
-    "其中",
+    "the", "and", "for", "from", "with", "that", "this", "are", "was",
+    "were", "into", "than", "then", "have", "has", "had", "can", "could",
+    "would", "should", "about", "based", "using", "use", "根据", "可以",
+    "以及", "一个", "这种", "这些", "其中",
 }
 
 
 @dataclass(frozen=True, slots=True)
 class ClaimEvidenceVerification:
+    # ``passed`` is the single release decision consumed by every production
+    # path, including the Companion WebSocket streamer. ``strict_passed`` keeps
+    # the old sentence-level result available for observability/UI notices.
     passed: bool
     claim_count: int
     cited_claim_count: int
@@ -62,6 +38,8 @@ class ClaimEvidenceVerification:
     supported_paragraph_count: int = 0
     paragraph_citation_coverage: float = 0.0
     paragraph_support_rate: float = 0.0
+    strict_passed: bool = False
+    partial_grounding: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +49,8 @@ class ClaimEvidenceVerifierPolicy:
     minimum_citation_coverage: float = 1.0
     minimum_support_rate: float = 1.0
     minimum_paragraph_support_score: float = 0.16
+    minimum_partial_paragraph_citation_coverage: float = 1.0 / 3.0
+    minimum_partial_paragraph_support_rate: float = 0.60
 
     def __post_init__(self) -> None:
         if self.minimum_claim_chars < 1:
@@ -80,20 +60,27 @@ class ClaimEvidenceVerifierPolicy:
             ("minimum_citation_coverage", self.minimum_citation_coverage),
             ("minimum_support_rate", self.minimum_support_rate),
             ("minimum_paragraph_support_score", self.minimum_paragraph_support_score),
+            (
+                "minimum_partial_paragraph_citation_coverage",
+                self.minimum_partial_paragraph_citation_coverage,
+            ),
+            (
+                "minimum_partial_paragraph_support_rate",
+                self.minimum_partial_paragraph_support_rate,
+            ),
         ):
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be within [0, 1]")
 
 
 class AgentClaimEvidenceVerifier:
-    """Deterministically verify citation coverage and lexical evidence support.
+    """Verify citations once for every Agent and Companion production path.
 
-    Strict pass/fail remains sentence based. Paragraph-level signals are also
-    collected for the synthesis layer because academic prose commonly places a
-    citation at the end of a paragraph rather than after every sentence. Those
-    paragraph signals never make an invalid/unknown citation valid; they only
-    let the caller distinguish useful partially grounded synthesis from a true
-    grounding failure.
+    Sentence metrics remain the strict verification signal. Academic synthesis
+    may additionally be released through a conservative paragraph-level rule,
+    because citations are often placed once at the end of a multi-sentence
+    paragraph. Unknown citations or citations whose evidence is missing can
+    never pass either path.
     """
 
     def __init__(self, policy: ClaimEvidenceVerifierPolicy | None = None) -> None:
@@ -143,7 +130,6 @@ class AgentClaimEvidenceVerifier:
             candidate = raw.strip()
             if not candidate or not self._is_verifiable_unit(candidate):
                 continue
-            # Markdown headings are organizational labels, not evidence claims.
             if candidate.lstrip().startswith("#"):
                 continue
             paragraphs.append(candidate)
@@ -163,11 +149,7 @@ class AgentClaimEvidenceVerifier:
     def _evidence_map(
         evidence: Sequence[AgentEvidenceItem],
     ) -> dict[str, AgentEvidenceItem]:
-        return {
-            item.evidence_id: item
-            for item in evidence
-            if item.evidence_id
-        }
+        return {item.evidence_id: item for item in evidence if item.evidence_id}
 
     def _support_score(self, claim: str, item: AgentEvidenceItem) -> float:
         claim_tokens = self._tokens(self._strip_citations(claim))
@@ -176,10 +158,13 @@ class AgentClaimEvidenceVerifier:
         )
         if not claim_tokens or not evidence_tokens:
             return 0.0
-        overlap = len(claim_tokens & evidence_tokens)
-        return overlap / max(1, len(claim_tokens))
+        return len(claim_tokens & evidence_tokens) / max(1, len(claim_tokens))
 
-    def _paragraph_support_score(self, paragraph: str, item: AgentEvidenceItem) -> float:
+    def _paragraph_support_score(
+        self,
+        paragraph: str,
+        item: AgentEvidenceItem,
+    ) -> float:
         paragraph_tokens = self._tokens(self._strip_citations(paragraph))
         evidence_tokens = self._tokens(
             " ".join((item.title, item.location, item.excerpt))
@@ -187,10 +172,6 @@ class AgentClaimEvidenceVerifier:
         if not paragraph_tokens or not evidence_tokens:
             return 0.0
         overlap = len(paragraph_tokens & evidence_tokens)
-        # Long synthesis paragraphs should not be penalized merely for adding
-        # explanation around a shorter evidence excerpt. Normalizing by the
-        # smaller vocabulary retains a conservative lexical-overlap check while
-        # making paragraph-end citations usable in real academic prose.
         return overlap / max(1, min(len(paragraph_tokens), len(evidence_tokens)))
 
     @staticmethod
@@ -269,8 +250,11 @@ class AgentClaimEvidenceVerifier:
         )
 
         if not claims:
+            release_passed = paragraph_invalid_citations == 0
             return ClaimEvidenceVerification(
-                passed=True,
+                passed=release_passed,
+                strict_passed=release_passed,
+                partial_grounding=False,
                 claim_count=0,
                 cited_claim_count=0,
                 supported_claim_count=0,
@@ -290,14 +274,12 @@ class AgentClaimEvidenceVerifier:
         supported_claims = 0
         invalid_citations = 0
         reasons: set[str] = set(paragraph_reasons)
-
         for claim in claims:
             labels = self._labels(claim)
             if not labels:
                 reasons.add("missing_claim_citation")
                 continue
             cited_claims += 1
-
             referenced, invalid, reference_reasons = self._referenced_evidence(
                 labels=labels,
                 citation_map=citation_map,
@@ -307,17 +289,14 @@ class AgentClaimEvidenceVerifier:
             reasons.update(reference_reasons)
             if invalid or not referenced:
                 continue
-            if max(self._support_score(claim, item) for item in referenced) >= self.policy.minimum_support_score:
+            if max(
+                self._support_score(claim, item) for item in referenced
+            ) >= self.policy.minimum_support_score:
                 supported_claims += 1
             else:
                 reasons.add("weak_claim_evidence_overlap")
 
-        # Paragraph parsing can encounter the same invalid label that sentence
-        # parsing already counted. The safety question is whether any invalid
-        # citation exists, so keep the stricter non-zero signal without double
-        # counting identical textual references.
         invalid_citations = max(invalid_citations, paragraph_invalid_citations)
-
         claim_count = len(claims)
         citation_coverage = cited_claims / claim_count
         support_rate = supported_claims / claim_count
@@ -326,13 +305,30 @@ class AgentClaimEvidenceVerifier:
         if support_rate < self.policy.minimum_support_rate:
             reasons.add("claim_support_below_policy")
 
-        passed = (
+        strict_passed = (
             invalid_citations == 0
             and citation_coverage >= self.policy.minimum_citation_coverage
             and support_rate >= self.policy.minimum_support_rate
         )
+        partial_grounding = (
+            not strict_passed
+            and invalid_citations == 0
+            and paragraph_count > 0
+            and cited_paragraphs > 0
+            and supported_paragraphs > 0
+            and paragraph_citation_coverage
+            >= self.policy.minimum_partial_paragraph_citation_coverage
+            and paragraph_support_rate
+            >= self.policy.minimum_partial_paragraph_support_rate
+        )
+        passed = strict_passed or partial_grounding
+        if partial_grounding:
+            reasons.add("paragraph_grounding_release")
+
         return ClaimEvidenceVerification(
             passed=passed,
+            strict_passed=strict_passed,
+            partial_grounding=partial_grounding,
             claim_count=claim_count,
             cited_claim_count=cited_claims,
             supported_claim_count=supported_claims,
