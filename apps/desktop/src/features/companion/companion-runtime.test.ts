@@ -112,8 +112,8 @@ describe("companion runtime", () => {
     ])
   })
 
-  it("creates a stable reading runtime seed from a non-null handoff", () => {
-    const handoff: CompanionHandoff = {
+  it("creates a stable reading runtime seed and restores bounded knowledge scope", () => {
+    const handoff = {
       revision: 3,
       handoff_id: "handoff-3",
       created_at: "2026-08-21T12:00:00Z",
@@ -121,16 +121,21 @@ describe("companion runtime", () => {
       translated_text: "selected translation",
       source_language: "en",
       target_language: "zh-CN",
-      resource_url: "file:///paper.pdf",
-      resource_title: "Paper",
+      resource_url: "knowledge-item://evidence-1",
+      resource_title: "Paper evidence",
       section_heading: "4.1",
       context_before: "before",
       context_after: "after",
-      source_kind: "pdf_uia",
+      source_kind: "knowledge_evidence",
       conversation_id: "",
       ai_content: "existing explanation",
-      ai_action: "reading_explain",
+      ai_action: "knowledge_context",
       suggested_prompt: "continue from this context",
+      knowledge_enabled: true,
+      knowledge_document_ids: ["doc-1", "doc-1", " doc-2 "],
+    } as CompanionHandoff & {
+      knowledge_enabled: boolean
+      knowledge_document_ids: string[]
     }
 
     const seed = companionHandoffRuntimeSeed(handoff)
@@ -140,12 +145,14 @@ describe("companion runtime", () => {
       draft: "continue from this context",
       sessionId: "companion-handoff-3",
       scopeId: "handoff:handoff-3",
+      knowledgeEnabled: true,
+      knowledgeDocumentIds: ["doc-1", "doc-2"],
     })
     expect(seed.context).toMatchObject({
       source_text: "selected source",
       translated_text: "selected translation",
       ai_content: "existing explanation",
-      ai_action: "reading_explain",
+      ai_action: "knowledge_context",
     })
   })
 })
