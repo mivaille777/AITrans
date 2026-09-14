@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
@@ -15,6 +15,12 @@ NO_KNOWLEDGE_EVIDENCE_MESSAGE = "知识库未找到足够相关证据。"
 GROUNDING_VERIFICATION_FALLBACK_PREFIX = (
     "原始回答未通过引用与证据一致性校验。以下仅保留可直接核验的证据："
 )
+PARTIAL_GROUNDING_NOTICE = (
+    "注：部分解释性陈述未能逐句通过引用一致性校验；已保留综合回答，"
+    "并仅将现有引用视为可直接核验的证据。"
+)
+_PARTIAL_MIN_CITATION_COVERAGE = 0.5
+_PARTIAL_MIN_SUPPORT_RATE = 0.5
 
 
 def evidence_only_grounding_fallback(
@@ -47,10 +53,18 @@ class VerifiedGroundedSynthesisResult:
     answer: CompanionChatResult
     verification: ClaimEvidenceVerification | None = None
     fallback_applied: bool = False
+    partial_grounding: bool = False
 
 
 class GroundedSynthesisService:
-    """Grounded synthesis plus deterministic post-generation verification."""
+    """Grounded synthesis plus deterministic post-generation verification.
+
+    Full verification remains deliberately strict. A partially verified answer
+    may still be preserved when its citations are structurally valid and at
+    least half of the verifiable claims are both cited and lexically supported.
+    Invalid citation references, zero supported claims, or weak overall
+    grounding still trigger the evidence-only policy fallback.
+    """
 
     def __init__(
         self,
@@ -122,6 +136,28 @@ class GroundedSynthesisService:
             citations=citations,
         )
 
+    @staticmethod
+    def _preserve_partial_grounding(
+        verification: ClaimEvidenceVerification,
+    ) -> bool:
+        """Accept useful synthesis without weakening citation integrity.
+
+        Partial preservation is intentionally impossible when a citation label
+        is unknown or points at missing evidence. It also requires at least one
+        supported claim plus bounded coverage/support ratios, so a mostly
+        unsupported answer cannot escape into the UI merely because one claim
+        happened to overlap with retrieved evidence.
+        """
+
+        return (
+            verification.invalid_citation_count == 0
+            and verification.claim_count > 0
+            and verification.cited_claim_count > 0
+            and verification.supported_claim_count > 0
+            and verification.citation_coverage >= _PARTIAL_MIN_CITATION_COVERAGE
+            and verification.support_rate >= _PARTIAL_MIN_SUPPORT_RATE
+        )
+
     def send_verified(
         self,
         *,
@@ -170,16 +206,27 @@ class GroundedSynthesisService:
                 verification=verification,
             )
 
-        fallback = CompanionChatResult(
-            session_id=answer.session_id,
-            user_message=answer.user_message,
+        if self._preserve_partial_grounding(verification):
+            partial_answer = replace(
+                answer,
+                output_text=(
+                    f"{answer.output_text.rstrip()}\n\n{PARTIAL_GROUNDING_NOTICE}"
+                ),
+            )
+            return VerifiedGroundedSynthesisResult(
+                answer=partial_answer,
+                verification=verification,
+                partial_grounding=True,
+            )
+
+        fallback = replace(
+            answer,
             output_text=self._evidence_only_fallback(
                 evidence=included_evidence,
                 citations=included_citations,
             ),
             provider="policy",
             model="grounding-verification-fallback",
-            request_id=answer.request_id,
         )
         return VerifiedGroundedSynthesisResult(
             answer=fallback,
@@ -211,6 +258,7 @@ class GroundedSynthesisService:
 __all__ = [
     "GROUNDING_VERIFICATION_FALLBACK_PREFIX",
     "NO_KNOWLEDGE_EVIDENCE_MESSAGE",
+    "PARTIAL_GROUNDING_NOTICE",
     "evidence_only_grounding_fallback",
     "GroundedSynthesisService",
     "VerifiedGroundedSynthesisResult",
