@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import ReactMarkdown from "react-markdown"
 import { Link, useSearchParams } from "react-router-dom"
 
 import {
@@ -14,6 +13,7 @@ import { Badge } from "../../shared/ui/Badge"
 import { Button } from "../../shared/ui/Button"
 import { buttonClassName } from "../../shared/ui/button-styles"
 import { EmptyState } from "../../shared/ui/EmptyState"
+import { AnswerMarkdown } from "../evidence/AnswerMarkdown"
 import { CitedAnswer } from "../evidence/CitedAnswer"
 import {
   companionContextSnapshot,
@@ -79,9 +79,6 @@ export default function CompanionWorkspaceV2() {
 
     const nextId = activeHandoff.handoff_id
     if ((activeHandoff.conversation_id ?? "").trim()) {
-      // Existing-conversation handoffs are navigation signals owned by
-      // CompanionHandoffNavigator. Never reinterpret them as a fresh Reading
-      // seed here or an older /chat render could erase the routed conversation.
       handoffIdRef.current = nextId
       return
     }
@@ -451,7 +448,7 @@ export default function CompanionWorkspaceV2() {
                               citations={message.citations ?? []}
                             />
                           ) : (
-                            <ReactMarkdown>{message.content}</ReactMarkdown>
+                            <AnswerMarkdown content={message.content} />
                           )}
                         </div>
                       ) : message.status === "streaming" ? (
