@@ -13,6 +13,8 @@ class CompanionHandoffRequest(ReadingContextPayload):
     ai_content: str = Field(default="", max_length=30_000)
     ai_action: str = Field(default="", max_length=128)
     suggested_prompt: str = Field(default="", max_length=2_000)
+    knowledge_enabled: bool = False
+    knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class CompanionHandoffResponse(ReadingContextPayload):
@@ -23,6 +25,8 @@ class CompanionHandoffResponse(ReadingContextPayload):
     ai_content: str = ""
     ai_action: str = ""
     suggested_prompt: str = ""
+    knowledge_enabled: bool = False
+    knowledge_document_ids: list[str] = Field(default_factory=list)
 
 
 class CompanionHandoffEnvelope(BaseModel):
