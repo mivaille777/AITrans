@@ -59,29 +59,6 @@
 
 .window-drag-space { flex:1; }
 
-.window-status {
-  display:flex;
-  align-items:center;
-  gap:6px;
-  font-size:11px;
-  color:#64748b;
-}
-
-.window-status span {
-  width:6px;
-  height:6px;
-  border-radius:999px;
-  background:#22c55e;
-}
-
-.window-status.is-error {
-  color:#b91c1c;
-}
-
-.window-status.is-error span {
-  background:#ef4444;
-}
-
 .window-controls {
   display:flex;
   align-items:center;

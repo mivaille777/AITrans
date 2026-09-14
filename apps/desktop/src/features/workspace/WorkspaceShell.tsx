@@ -7,12 +7,10 @@ import {
   NotebookText,
   LibraryBig,
   Settings2,
-  Sparkles,
 } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 
-import type { BrowserBridgeStatusResponse } from "../../api/types"
-import { desktop } from "../../desktop"
+import type { LlmRuntimeStatus } from "../../api/llm-settings"
 import WindowFrame from "../../components/WindowFrame"
 import WorkspaceHeader from "../system/WorkspaceHeader"
 import {
@@ -31,13 +29,9 @@ const icons = {
   "/settings": Settings2,
 } as const
 
-export default function WorkspaceShell({ children, backendState, backendService, providerName, browserStatus, browserStatusChecking }: {
+export default function WorkspaceShell({ children, llmStatus }: {
   children: ReactNode
-  backendState: "checking" | "connected" | "offline"
-  backendService: string
-  providerName: string
-  browserStatus: BrowserBridgeStatusResponse | undefined
-  browserStatusChecking: boolean
+  llmStatus: LlmRuntimeStatus
 }) {
   const location = useLocation()
   const routeMeta = getWorkspaceRouteMeta(location.pathname)
@@ -81,20 +75,6 @@ export default function WorkspaceShell({ children, backendState, backendService,
                 })}
               </div>
             </nav>
-
-            <div className="shrink-0 px-3 pb-3 pt-1">
-              <div className="rounded-[16px] border border-white/[0.08] bg-white/[0.035] px-3 py-3 text-[11px]">
-                <div className="flex items-center gap-2 text-slate-200">
-                  <Sparkles size={13} />
-                  <span className="font-medium">AI Agent</span>
-                </div>
-                <div className="mt-2 flex items-center gap-2 text-emerald-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Online
-                </div>
-                <p className="mt-2 truncate text-slate-500">{providerName || desktop.runtime}</p>
-              </div>
-            </div>
           </div>
         </aside>
 
@@ -103,11 +83,7 @@ export default function WorkspaceShell({ children, backendState, backendService,
             <WorkspaceHeader
               title={routeMeta.label}
               description={routeMeta.description}
-              backendState={backendState}
-              backendService={backendService}
-              providerName={providerName}
-              browserStatus={browserStatus}
-              browserStatusChecking={browserStatusChecking}
+              llmStatus={llmStatus}
             />
             <main
               className={`min-h-0 flex-1 workspace-route-enter ${

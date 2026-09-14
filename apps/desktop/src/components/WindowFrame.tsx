@@ -10,7 +10,6 @@ type WindowAction = "minimize" | "maximize" | "close"
 export default function WindowFrame({ children }: { children: ReactNode }) {
   const [isMaximized, setIsMaximized] = useState(false)
   const [activeAction, setActiveAction] = useState<WindowAction | null>(null)
-  const [controlError, setControlError] = useState("")
 
   useEffect(() => {
     let mounted = true
@@ -36,12 +35,10 @@ export default function WindowFrame({ children }: { children: ReactNode }) {
     if (activeAction) return
 
     setActiveAction(action)
-    setControlError("")
     try {
       await operation()
     } catch (error) {
       console.error(`AITranslator window action failed: ${action}`, error)
-      setControlError("Window control unavailable")
     } finally {
       setActiveAction(null)
     }
@@ -77,10 +74,6 @@ export default function WindowFrame({ children }: { children: ReactNode }) {
         </div>
 
         <div className="window-drag-space" data-tauri-drag-region />
-
-        <div className={`window-status ${controlError ? "is-error" : ""}`} data-tauri-drag-region role="status" aria-live="polite">
-          <span /> {controlError || "Ready"}
-        </div>
 
         <div className="window-controls">
           <button

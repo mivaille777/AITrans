@@ -23,10 +23,24 @@ export interface LlmSettingsUpdate {
   base_url: string
 }
 
+export type LlmRuntimeState = "available" | "calling" | "unavailable"
+
+export interface LlmRuntimeStatus {
+  state: LlmRuntimeState
+  provider: string
+  model: string
+  detail: string
+  active_requests: number
+}
+
 const LLM_SETTINGS_PATH = "/api/settings/llm"
 
 export function getLlmSettings(): Promise<LlmSettings> {
   return apiGet<LlmSettings>(LLM_SETTINGS_PATH)
+}
+
+export function getLlmRuntimeStatus(): Promise<LlmRuntimeStatus> {
+  return apiGet<LlmRuntimeStatus>(`${LLM_SETTINGS_PATH}/status`)
 }
 
 export function updateLlmSettings(payload: LlmSettingsUpdate): Promise<LlmSettings> {

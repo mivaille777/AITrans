@@ -1,5 +1,8 @@
 export const queryKeys = {
   health: ["health"] as const,
+  llm: {
+    status: ["llm", "status"] as const,
+  },
   translation: {
     status: ["translation", "status"] as const,
   },
@@ -50,6 +53,7 @@ export const queryKeys = {
 
 export const queryPolling = {
   health: 5_000,
+  llmStatus: 500,
   translationStatus: 15_000,
   browserStatus: 2_000,
   browserSelection: 500,

@@ -23,6 +23,7 @@ from app.ai.errors import (
     AIResponseError,
     AITimeoutError,
 )
+from app.ai.runtime_status import track_llm_request
 from app.ai.secrets import ProviderCredentialStore, get_deepseek_api_key
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -57,6 +58,7 @@ class DeepSeekClient:
         credential_store: ProviderCredentialStore | Any | None = None,
     ) -> None:
         self.model = self._validate_model(model)
+        self.base_url = DEEPSEEK_BASE_URL
         self.timeout = self._validate_timeout(timeout)
         self.max_retries = self._validate_retries(max_retries)
         self.thinking_enabled = bool(thinking_enabled)
@@ -173,6 +175,15 @@ class DeepSeekClient:
         if validated_max_tokens is not None:
             request["max_tokens"] = validated_max_tokens
 
+        route_key = f"deepseek|{self.model}|{DEEPSEEK_BASE_URL}"
+        with track_llm_request(
+            provider="deepseek",
+            model=self.model,
+            route_key=route_key,
+        ):
+            return self._complete_request(request)
+
+    def _complete_request(self, request: dict[str, Any]) -> str:
         try:
             response = self._client.chat.completions.create(**request)
         except AuthenticationError as exc:
@@ -203,6 +214,24 @@ class DeepSeekClient:
         if not isinstance(content, str) or not content.strip():
             raise AIResponseError("DeepSeek API returned empty content.")
         return content.strip()
+
+    def probe(self) -> None:
+        try:
+            self._client.models.list()
+        except AuthenticationError as exc:
+            raise AIAuthenticationError("DeepSeek API authentication failed.") from exc
+        except RateLimitError as exc:
+            raise AIRateLimitError("DeepSeek API rate limit exceeded.") from exc
+        except APITimeoutError as exc:
+            raise AITimeoutError("DeepSeek API request timed out.") from exc
+        except APIConnectionError as exc:
+            raise AIConnectionError("Unable to connect to the DeepSeek API.") from exc
+        except APIStatusError as exc:
+            status_code = getattr(exc, "status_code", None)
+            detail = f" with HTTP status {status_code}" if status_code is not None else ""
+            raise AIResponseError(f"DeepSeek API health check failed{detail}.") from exc
+        except Exception as exc:
+            raise AIResponseError("DeepSeek API health check failed.") from exc
 
     def close(self) -> None:
         """Release an SDK client created by this wrapper."""

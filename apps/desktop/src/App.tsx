@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import AgentWorkspace from "./features/agent/AgentWorkspace"
@@ -9,6 +10,8 @@ import { useTranslationWorkspace } from "./features/translation/useTranslationWo
 import WorkspaceShell from "./features/workspace/WorkspaceShell"
 import { workspaceRouteUsesFixedHeight } from "./features/workspace/workspace-navigation"
 import WorkspaceRouteBoundary from "./shared/errors/WorkspaceRouteBoundary"
+import { getLlmRuntimeStatus, type LlmRuntimeStatus } from "./api/llm-settings"
+import { queryKeys, queryPolling } from "./shared/query/query-keys"
 
 const ReadingWorkspace = lazy(() => import("./features/reading/ReadingWorkspace"))
 const CompanionWorkspaceV2 = lazy(() => import("./features/companion/CompanionWorkspaceV2"))
@@ -36,14 +39,29 @@ function App() {
   const workspace = useTranslationWorkspace()
   const location = useLocation()
   const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
+  const llmStatusQuery = useQuery({
+    queryKey: queryKeys.llm.status,
+    queryFn: getLlmRuntimeStatus,
+    enabled: workspace.backendState === "connected",
+    refetchInterval: queryPolling.llmStatus,
+    retry: 0,
+  })
+  const unavailableStatus: LlmRuntimeStatus = {
+    state: "unavailable",
+    provider: "",
+    model: "",
+    detail: workspace.backendState === "offline"
+      ? "Backend is unavailable."
+      : "Checking the configured LLM API…",
+    active_requests: 0,
+  }
+  const llmStatus = llmStatusQuery.isError
+    ? { ...unavailableStatus, detail: "Unable to read LLM status." }
+    : llmStatusQuery.data ?? unavailableStatus
 
   return (
     <WorkspaceShell
-      backendState={workspace.backendState}
-      backendService={workspace.backendService}
-      providerName={workspace.providerName}
-      browserStatus={workspace.browserStatus}
-      browserStatusChecking={workspace.browserStatusChecking}
+      llmStatus={llmStatus}
     >
       <CompanionHandoffNavigator />
       <div

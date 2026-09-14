@@ -30,9 +30,18 @@ class LLMSettingsUpdateRequest(BaseModel):
     base_url: str = Field(default="", max_length=2048)
 
 
+class LLMRuntimeStatusResponse(BaseModel):
+    state: Literal["available", "calling", "unavailable"]
+    provider: str = ""
+    model: str = ""
+    detail: str = ""
+    active_requests: int = Field(default=0, ge=0)
+
+
 __all__ = [
     "AIProviderName",
     "LLMProviderOption",
+    "LLMRuntimeStatusResponse",
     "LLMSettingsResponse",
     "LLMSettingsUpdateRequest",
 ]

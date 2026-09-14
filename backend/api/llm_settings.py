@@ -14,6 +14,7 @@ from app.ai.factory import (
     SUPPORTED_AI_PROVIDERS,
     provider_defaults,
 )
+from app.ai.runtime_status import llm_runtime_status
 from app.infrastructure.settings import SettingsManager
 from backend.api.dependencies import (
     close_agent_tool_registry,
@@ -24,9 +25,11 @@ from backend.api.dependencies import (
 from backend.api.llm_dependencies import reset_llm_dependencies
 from backend.models.llm_settings import (
     LLMProviderOption,
+    LLMRuntimeStatusResponse,
     LLMSettingsResponse,
     LLMSettingsUpdateRequest,
 )
+from backend.services.llm_status_service import LLMStatusService
 
 router = APIRouter(prefix="/api/settings/llm", tags=["settings"])
 
@@ -89,11 +92,24 @@ def _refresh_runtime() -> None:
     close_quick_action_service()
     close_companion_chat_service()
     reset_llm_dependencies()
+    llm_runtime_status.reset()
 
 
 @router.get("", response_model=LLMSettingsResponse)
 def get_llm_settings() -> LLMSettingsResponse:
     return _response(SettingsManager())
+
+
+@router.get("/status", response_model=LLMRuntimeStatusResponse)
+def get_llm_runtime_status() -> LLMRuntimeStatusResponse:
+    current = LLMStatusService().status()
+    return LLMRuntimeStatusResponse(
+        state=current.state,
+        provider=current.provider,
+        model=current.model,
+        detail=current.detail,
+        active_requests=current.active_requests,
+    )
 
 
 @router.put("", response_model=LLMSettingsResponse)
