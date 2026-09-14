@@ -59,16 +59,16 @@ export default function KnowledgeResearchBridgePanel({
         sourceLanguage: workspace.sourceLanguage,
         targetLanguage: workspace.targetLanguage,
       })
-      const knowledgeDocumentIds = [
+      const knowledgeDocumentIds = [...new Set([
         ...knowledgeCardDocumentIds(item),
         ...workspace.researchRetrievalScope.knowledgeDocumentIds,
-      ]
-      await createCompanionHandoff({
+      ])].slice(0, 100)
+      const scopedHandoff = {
         ...handoff,
-        research_workspace_id: workspace.activeResearchWorkspaceId || undefined,
-        knowledge_document_ids: [...new Set(knowledgeDocumentIds)].slice(0, 100),
-        research_source_ids: workspace.researchRetrievalScope.researchSourceIds,
-      })
+        knowledge_enabled: knowledgeDocumentIds.length > 0,
+        knowledge_document_ids: knowledgeDocumentIds,
+      }
+      await createCompanionHandoff(scopedHandoff)
       navigate("/chat")
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to open this knowledge card in AI Chat.")
@@ -86,7 +86,7 @@ export default function KnowledgeResearchBridgePanel({
             Knowledge Evidence
           </div>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-            Canonical evidence and Agent insights from Paper Reader are available here without being copied into Research Notes. Open one in AI Chat to continue with its source paper and current research scope.
+            Canonical evidence and Agent insights from Paper Reader are available here without being copied into Research Notes. Open one in AI Chat to continue with its source paper and current document scope.
           </p>
         </div>
         <Badge>{cards.length} grounded cards</Badge>
