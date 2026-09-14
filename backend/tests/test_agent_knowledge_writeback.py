@@ -57,7 +57,7 @@ def test_save_knowledge_card_writes_canonical_item_relation_and_provenance(tmp_p
     assert created.metadata["provenance"]["created_by"] == "agent"
     assert created.metadata["provenance"]["operation"] == "summarize"
     assert created.metadata["sources"][0]["document_id"] == "doc-agent-planning"
-    assert workspace._repository.find_item_by_resource_document_id("doc-agent-planning") == source
+    assert workspace.get_item(source.item_id) == source
 
     relation = workspace.get_relation(str(result.data["relation_id"]))
     assert relation is not None
