@@ -90,6 +90,15 @@ _OPERATION_TITLE = {
     "research": "Research insight",
     "question": "Question",
 }
+_GROUNDING_METADATA_KEYS = (
+    "document_id",
+    "section_id",
+    "section_heading",
+    "page_start",
+    "page_end",
+    "context_before",
+    "context_after",
+)
 
 
 def _document_ids(args: KnowledgeSearchArgs) -> list[str]:
@@ -124,18 +133,42 @@ def _result_item(candidate: RetrievalCandidate) -> dict[str, Any]:
     }
 
 
+def _grounding_metadata(source: KnowledgeItem) -> dict[str, Any]:
+    raw = source.metadata if isinstance(source.metadata, dict) else {}
+    grounding: dict[str, Any] = {}
+    for key in _GROUNDING_METADATA_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                grounding[key] = normalized
+        elif key in {"page_start", "page_end"} and isinstance(value, int):
+            grounding[key] = value
+
+    resource_document_id = (source.resource_document_id or "").strip()
+    if resource_document_id:
+        grounding["document_id"] = resource_document_id
+    return grounding
+
+
 def _source_refs(source: KnowledgeItem) -> list[dict[str, Any]]:
     metadata = source.metadata if isinstance(source.metadata, dict) else {}
     raw_sources = metadata.get("sources")
     sources = [dict(item) for item in raw_sources if isinstance(item, dict)] if isinstance(raw_sources, list) else []
-    document_id = (source.resource_document_id or "").strip()
-    if document_id and not any(str(item.get("document_id", "")) == document_id for item in sources):
-        sources.append(
-            {
-                "document_id": document_id,
-                "source_uri": source.source_uri,
-            }
-        )
+    grounding = _grounding_metadata(source)
+    document_id = str(grounding.get("document_id", "")).strip()
+    if document_id and not any(str(item.get("document_id", "")).strip() == document_id for item in sources):
+        reference: dict[str, Any] = {
+            "document_id": document_id,
+            "source_uri": source.source_uri,
+        }
+        section_heading = grounding.get("section_heading")
+        if section_heading:
+            reference["section"] = section_heading
+        page = grounding.get("page_start")
+        if isinstance(page, int):
+            reference["page"] = page
+        sources.append(reference)
     return sources[:64]
 
 
@@ -305,10 +338,12 @@ class KnowledgeAgentTools:
             "run_id": context.run_id,
             "operation": operation,
         }
+        grounding = _grounding_metadata(source)
         metadata: dict[str, Any] = {
             "provenance": provenance,
             "source_item_id": source.item_id,
             "source_item_type": source.item_type.value,
+            **grounding,
         }
         sources = _source_refs(source)
         if sources:
@@ -318,6 +353,7 @@ class KnowledgeAgentTools:
             item_type=item_type,
             title=title,
             summary=content,
+            resource_document_id=str(grounding.get("document_id", "")).strip() or None,
             source_uri=source.source_uri,
             metadata=metadata,
         )
