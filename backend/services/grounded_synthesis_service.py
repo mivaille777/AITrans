@@ -61,11 +61,11 @@ class VerifiedGroundedSynthesisResult:
 class GroundedSynthesisService:
     """Grounded synthesis plus deterministic post-generation verification.
 
-    Full verification remains deliberately sentence-strict. Partial grounding
-    is evaluated at paragraph granularity because academic prose commonly puts
-    one citation at the end of a paragraph that contains several related
-    sentences. Unknown citations and citations pointing to missing evidence are
-    still hard failures; paragraph tolerance never overrides citation integrity.
+    The verifier owns the shared release decision used by both synchronous and
+    WebSocket production paths. ``strict_passed`` records sentence-level full
+    verification; a release-safe paragraph-grounded answer is preserved with a
+    notice. Invalid citations and genuinely weak grounding still fall back to
+    source-owned evidence only.
     """
 
     def __init__(
@@ -109,8 +109,6 @@ class GroundedSynthesisService:
         provider: str | None = None,
         model: str | None = None,
     ) -> CompanionChatResult:
-        """Copy the stable chat-result surface without assuming a dataclass."""
-
         raw_request_id = getattr(answer, "request_id", 0)
         try:
             request_id = max(0, int(raw_request_id or 0))
@@ -183,7 +181,7 @@ class GroundedSynthesisService:
     def _preserve_partial_grounding(
         verification: ClaimEvidenceVerification,
     ) -> bool:
-        """Accept useful academic synthesis without weakening citation safety."""
+        """Compatibility policy for custom/legacy verifier adapters."""
 
         if verification.invalid_citation_count != 0:
             return False
@@ -201,7 +199,6 @@ class GroundedSynthesisService:
         paragraph_support_rate = float(
             getattr(verification, "paragraph_support_rate", 0.0) or 0.0
         )
-
         if paragraph_count > 0:
             return (
                 cited_paragraph_count > 0
@@ -211,8 +208,6 @@ class GroundedSynthesisService:
                 and paragraph_support_rate >= _PARTIAL_MIN_PARAGRAPH_SUPPORT_RATE
             )
 
-        # Compatibility path for custom verifier adapters that only expose the
-        # older sentence-level result surface.
         if (
             verification.claim_count <= 0
             or verification.cited_claim_count <= 0
@@ -267,13 +262,20 @@ class GroundedSynthesisService:
             evidence=included_evidence,
             citations=included_citations,
         )
-        if verification.passed:
+
+        strict_passed = bool(
+            getattr(verification, "strict_passed", verification.passed)
+        )
+        if strict_passed:
             return VerifiedGroundedSynthesisResult(
                 answer=answer,
                 verification=verification,
             )
 
-        if self._preserve_partial_grounding(verification):
+        release_safe_partial = bool(verification.passed) or bool(
+            getattr(verification, "partial_grounding", False)
+        )
+        if release_safe_partial or self._preserve_partial_grounding(verification):
             partial_answer = self._copy_answer(
                 answer,
                 output_text=(
@@ -308,8 +310,6 @@ class GroundedSynthesisService:
         citations: list[AgentCitationRef],
         **kwargs: Any,
     ) -> CompanionChatResult:
-        """Backward-compatible grounded synthesis entry point."""
-
         return self.send_verified(
             evidence=evidence,
             citations=citations,
