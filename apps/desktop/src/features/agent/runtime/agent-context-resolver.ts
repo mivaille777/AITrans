@@ -106,8 +106,22 @@ export function inferAgentContextMode({
 }
 
 export function resolveAgentContext(input: AgentContextResolverInput): AgentResolvedContext {
+  const explicitKnowledgeHandoff = input.readingContext?.source_kind === "knowledge_document"
+
+  // A knowledge/card/canvas handoff is an explicit bounded context chosen by
+  // the user. Keep it attached even if the next free-form prompt is classified
+  // as General/Knowledge/Research. This is deliberately narrower than ordinary
+  // ambient Reading context so stale browser/desktop selections remain isolated.
+  if (explicitKnowledgeHandoff) {
+    return {
+      mode: input.mode,
+      sourceText: (input.readingText || input.fallbackText || "").trim(),
+      context: input.readingContext ?? emptyContext,
+    }
+  }
+
   // General, Knowledge and Research requests are intentionally detached from
-  // the ambient Reading selection. Their evidence arrives through conversation
+  // ambient Reading selections. Their evidence arrives through conversation
   // history, trusted research scope and retrieval tools instead.
   if (input.mode === "general" || input.mode === "knowledge" || input.mode === "research") {
     return {
