@@ -71,7 +71,11 @@ export function getAgentTimelineStageId(
 }
 
 export function getAgentTimelineEventLabel(eventType: AgentTraceEventType): string {
-  if (eventType === "agent_start" || eventType === "context_ready") return "Setup"
+  if (
+    eventType === "agent_start"
+    || eventType === "context_ready"
+    || eventType === "knowledge_context_ready"
+  ) return "Setup"
   const stageId = getAgentTimelineStageId(eventType)
   return agentTimelineStageDefinitions.find((stage) => stage.id === stageId)?.label ?? "Runtime"
 }
