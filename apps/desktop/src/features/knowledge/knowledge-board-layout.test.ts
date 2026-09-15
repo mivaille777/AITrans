@@ -43,10 +43,27 @@ describe("knowledge board layout", () => {
     expect(Number.isFinite(viewport.y)).toBe(true)
   })
 
-  it("creates a directed bezier edge between card centers", () => {
+  it("routes a left-to-right relation from the facing horizontal edges", () => {
     const edge = boardEdgePath(node("a", 10, 20, 200, 100), node("b", 420, 200, 200, 100))
-    expect(edge.path).toContain("M 210 70")
+    expect(edge.path).toMatch(/^M 210 70 C /)
     expect(edge.path).toContain("420 250")
+  })
+
+  it("routes a right-to-left relation without doubling back into a fake loop", () => {
+    const edge = boardEdgePath(node("a", 420, 200, 200, 100), node("b", 10, 20, 200, 100))
+    expect(edge.path).toMatch(/^M 420 250 C /)
+    expect(edge.path).toContain("210 70")
+    expect(edge.path).not.toContain("M 620 250")
+  })
+
+  it("routes vertically separated cards through their facing top and bottom edges", () => {
+    const downward = boardEdgePath(node("a", 100, 20, 200, 100), node("b", 130, 320, 200, 100))
+    expect(downward.path).toMatch(/^M 200 120 C 200 /)
+    expect(downward.path).toContain("230 320")
+
+    const upward = boardEdgePath(node("a", 130, 320, 200, 100), node("b", 100, 20, 200, 100))
+    expect(upward.path).toMatch(/^M 230 320 C 230 /)
+    expect(upward.path).toContain("200 120")
   })
 
   it("clamps board zoom to safe interaction limits", () => {
