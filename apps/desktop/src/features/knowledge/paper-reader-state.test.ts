@@ -6,6 +6,7 @@ import {
   buildSelectionCardTitle,
   paperPageLabel,
   resolveDerivedPaperRelationType,
+  resolvePaperReaderSectionForPage,
   resolvePaperReaderSectionId,
 } from "./paper-reader-state"
 
@@ -21,15 +22,20 @@ const section: KnowledgeDocumentSection = {
   truncated: false,
 }
 
-function outlineSection(sectionId: string): KnowledgeDocumentOutlineSection {
+function outlineSection(
+  sectionId: string,
+  pageStart = 1,
+  pageEnd: number | null = pageStart,
+  level = 1,
+): KnowledgeDocumentOutlineSection {
   return {
     section_id: sectionId,
     heading: sectionId,
-    level: 1,
+    level,
     parent_section_id: null,
     section_path: [sectionId],
-    page_start: 1,
-    page_end: 1,
+    page_start: pageStart,
+    page_end: pageEnd,
     block_count: 1,
     has_equations: false,
     has_tables: false,
@@ -44,6 +50,22 @@ describe("paper reader state", () => {
     const sections = [outlineSection("intro"), outlineSection("method")]
     expect(resolvePaperReaderSectionId(sections, "method")).toBe("method")
     expect(resolvePaperReaderSectionId(sections, "missing")).toBe("intro")
+  })
+
+  it("maps a PDF page to the most specific outline section", () => {
+    const sections = [
+      outlineSection("chapter", 3, 10, 1),
+      outlineSection("method", 5, 7, 2),
+      outlineSection("detail", 6, 6, 3),
+    ]
+    expect(resolvePaperReaderSectionForPage(sections, 6)?.section_id).toBe("detail")
+    expect(resolvePaperReaderSectionForPage(sections, 8)?.section_id).toBe("chapter")
+  })
+
+  it("falls back to the nearest preceding section for an uncovered PDF page", () => {
+    const sections = [outlineSection("intro", 1, 2), outlineSection("results", 5, 6)]
+    expect(resolvePaperReaderSectionForPage(sections, 4)?.section_id).toBe("intro")
+    expect(resolvePaperReaderSectionForPage(sections, 8)?.section_id).toBe("results")
   })
 
   it("captures bounded context around a selected passage", () => {
