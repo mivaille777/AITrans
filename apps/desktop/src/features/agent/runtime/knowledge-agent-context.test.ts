@@ -40,12 +40,34 @@ describe("knowledge agent context", () => {
     expect(resolved?.context.source_kind).toBe("knowledge_evidence")
     expect(resolved?.context.resource_url).toContain("knowledge-item://evidence-1")
     expect(resolved?.context.resource_url).toContain("type=insight")
+    expect(resolved?.knowledgeContext.cards[0]).toMatchObject({
+      item_id: "evidence-1",
+      item_type: "evidence",
+      title: "Safety-constrained Bayesian optimization",
+      document_id: "doc-1",
+    })
   })
 
-  it("serializes canonical canvas relations without treating them as evidence", () => {
+  it("keeps canonical canvas relations as structured context instead of source text", () => {
     const resolved = resolveKnowledgeAgentContext({
       item: evidence,
       writeback: null,
+      cards: [
+        {
+          itemId: "insight-1",
+          itemType: "insight",
+          title: "LLM refinement insight",
+          summary: "The LLM performs bounded local refinement.",
+          documentId: "doc-1",
+        },
+        {
+          itemId: "evidence-1",
+          itemType: "evidence",
+          title: "Safety-constrained Bayesian optimization",
+          summary: "Selected evidence.",
+          documentId: "doc-1",
+        },
+      ],
       canvas: {
         boardId: "board-1",
         boardName: "PID research",
@@ -66,11 +88,31 @@ describe("knowledge agent context", () => {
       ],
     })
 
-    expect(resolved?.sourceText).toContain("Canvas relationship context")
-    expect(resolved?.sourceText).toContain("[R1] LLM refinement insight")
-    expect(resolved?.sourceText).toContain("--supports-->")
-    expect(resolved?.sourceText).toContain("origin=manual")
-    expect(resolved?.sourceText).toContain("not independent factual evidence")
+    expect(resolved?.sourceText).toBe("Selected evidence.")
+    expect(resolved?.sourceText).not.toContain("relation-1")
+    expect(resolved?.knowledgeContext.canvas).toEqual({
+      board_id: "board-1",
+      board_name: "PID research",
+      scope_label: "Selected cards",
+    })
+    expect(resolved?.knowledgeContext.cards).toHaveLength(2)
+    expect(resolved?.knowledgeContext.cards[0]).toMatchObject({
+      item_id: "insight-1",
+      title: "LLM refinement insight",
+    })
+    expect(resolved?.knowledgeContext.relations).toEqual([
+      {
+        relation_id: "relation-1",
+        source_item_id: "insight-1",
+        source_title: "LLM refinement insight",
+        target_item_id: "evidence-1",
+        target_title: "Safety-constrained Bayesian optimization",
+        relation_type: "supports",
+        label: "User-confirmed support edge",
+        origin: "manual",
+        confidence: null,
+      },
+    ])
     expect(resolved?.relations).toHaveLength(1)
     expect(resolved?.canvas?.boardName).toBe("PID research")
   })
