@@ -1,0 +1,9 @@
+[
+  {
+    "case_id": "quality-incomplete-answer",
+    "verdict": "fail",
+    "reviewer": "fixture-reviewer",
+    "reason_codes": ["material_requested_content_missing"],
+    "note": "The response defines IAE but omits TVu entirely."
+  }
+]

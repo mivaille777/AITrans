@@ -42,39 +42,44 @@ def test_windows_credential_store_round_trip_and_delete() -> None:
     first = ProviderCredentialStore(backend=backend)
     second = ProviderCredentialStore(backend=backend)
 
-    first.set("deepseek", "sk-persisted")
+    target_name = ProviderCredentialStore.target_name("deepseek")
+    backend.CredWrite(
+        {
+            "Type": backend.CRED_TYPE_GENERIC,
+            "TargetName": target_name,
+            "CredentialBlob": "sk-persisted",
+        }
+    )
 
     assert second.get("deepseek") == "sk-persisted"
 
-    second.delete("deepseek")
+    backend.CredDelete(target_name, backend.CRED_TYPE_GENERIC)
     assert first.get("deepseek") is None
 
 
-def test_persisted_credential_precedes_environment_value() -> None:
+def test_provider_api_key_reads_persisted_credential() -> None:
     backend = FakeWin32Cred()
     store = ProviderCredentialStore(backend=backend)
-    store.set("deepseek", "sk-persisted")
-
-    value = get_provider_api_key(
-        "deepseek",
-        environ={"DEEPSEEK_API_KEY": "sk-env"},
-        credential_store=store,
+    backend.CredWrite(
+        {
+            "Type": backend.CRED_TYPE_GENERIC,
+            "TargetName": ProviderCredentialStore.target_name("deepseek"),
+            "CredentialBlob": "sk-persisted",
+        }
     )
+
+    value = get_provider_api_key("deepseek", credential_store=store)
 
     assert value == "sk-persisted"
 
 
-def test_environment_fallback_remains_supported() -> None:
+def test_environment_value_is_not_used_as_a_fallback(monkeypatch) -> None:
     backend = FakeWin32Cred()
     store = ProviderCredentialStore(backend=backend)
 
-    value = get_provider_api_key(
-        "deepseek",
-        environ={"DEEPSEEK_API_KEY": "sk-env"},
-        credential_store=store,
-    )
-
-    assert value == "sk-env"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-env")
+    with pytest.raises(AIConfigurationError, match="Cloud LLM"):
+        get_provider_api_key("deepseek", credential_store=store)
 
 
 def test_missing_provider_credential_raises_configuration_error() -> None:
@@ -84,6 +89,5 @@ def test_missing_provider_credential_raises_configuration_error() -> None:
     with pytest.raises(AIConfigurationError):
         get_provider_api_key(
             "openai_compatible",
-            environ={},
             credential_store=store,
         )

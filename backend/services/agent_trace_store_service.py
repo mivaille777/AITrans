@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-import sqlite3
 from threading import RLock
 from typing import Iterable
 
@@ -38,6 +38,23 @@ class StoredAgentRun:
     timeout_count: int
     fallback_reason: str
     event_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StoredAgentEvent:
+    """One already-redacted persisted runtime event.
+
+    The event payload is constrained by ``_ALLOWED_EVENT_FIELDS`` before it is
+    written to SQLite. Evaluation code can therefore inspect the execution
+    trajectory without gaining access to user text, document content, model
+    output, tool arguments, or private reasoning.
+    """
+
+    sequence: int
+    event_type: str
+    timestamp: str
+    elapsed_ms: int
+    payload: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,8 +107,26 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
         {
             "action",
             "tool_name",
+            "mode",
+            "route_kind",
+            "route_source",
             "request_id",
             "duration_ms",
+            "provider",
+            "model",
+            "prompt_id",
+        }
+    ),
+    "react_started": frozenset(
+        {"max_iterations", "max_tool_calls", "max_knowledge_searches", "request_id"}
+    ),
+    "decision_ready": frozenset(
+        {
+            "iteration",
+            "kind",
+            "tool_name",
+            "argument_keys",
+            "action_fingerprint",
             "provider",
             "model",
             "prompt_id",
@@ -111,8 +146,91 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
             "duration_ms",
         }
     ),
+    "observation_ready": frozenset(
+        {
+            "observation_id",
+            "iteration",
+            "tool_name",
+            "success",
+            "summary_chars",
+            "evidence_count",
+            "citation_count",
+            "knowledge_search_count",
+            "query_fingerprint",
+            "retrieval_strategy",
+            "result_count",
+            "novel_evidence_count",
+            "retrieval_fallback",
+            "gate_action",
+            "gate_quality_score",
+        }
+    ),
+    "evidence_gate_evaluated": frozenset(
+        {
+            "iteration",
+            "action",
+            "coverage_score",
+            "diversity_score",
+            "novelty_score",
+            "quality_score",
+            "evidence_count",
+            "unique_source_count",
+            "unique_location_count",
+            "novel_evidence_count",
+            "search_count",
+            "remaining_searches",
+            "retrieval_fallback",
+            "reason_codes",
+        }
+    ),
+    "react_limit_reached": frozenset(
+        {"iteration", "tool_call_count", "knowledge_search_count", "reason"}
+    ),
+    "rag_query_started": frozenset({"query_id", "retrieval_strategy"}),
+    "rag_query_rewritten": frozenset(
+        {"query_id", "rewritten", "subquery_count"}
+    ),
+    "rag_dense_completed": frozenset(
+        {"query_id", "dense_count", "embedding_ms", "dense_search_ms"}
+    ),
+    "rag_sparse_completed": frozenset(
+        {"query_id", "sparse_count", "sparse_search_ms"}
+    ),
+    "rag_fusion_completed": frozenset(
+        {"query_id", "fusion_count", "fusion_ms"}
+    ),
+    "rag_rerank_completed": frozenset(
+        {"query_id", "final_count", "rerank_ms"}
+    ),
+    "rag_evidence_selected": frozenset(
+        {"query_id", "final_count", "total_rag_ms", "evidence"}
+    ),
+    "rag_fallback": frozenset({"query_id", "fallback_reason"}),
+    "grounding_verification_evaluated": frozenset(
+        {
+            "passed",
+            "fallback_applied",
+            "claim_count",
+            "cited_claim_count",
+            "supported_claim_count",
+            "unsupported_claim_count",
+            "invalid_citation_count",
+            "citation_coverage",
+            "support_rate",
+            "reason_codes",
+            "request_id",
+        }
+    ),
     "synthesis_ready": frozenset(
-        {"provider", "model", "prompt_id", "request_id", "duration_ms"}
+        {
+            "provider",
+            "model",
+            "prompt_id",
+            "request_id",
+            "duration_ms",
+            "source",
+            "grounded",
+        }
     ),
     "failure": frozenset({"code", "stage", "fallback_reason"}),
     "cancelled": frozenset({"code", "fallback_reason"}),
@@ -429,20 +547,43 @@ class AgentTraceStoreService:
             ),
         )
 
-    def event_payloads(self, run_id: str) -> tuple[dict[str, object], ...]:
-        """Testing/debug helper returning only already-redacted persisted payloads."""
+    def list_events(self, run_id: str) -> tuple[StoredAgentEvent, ...]:
+        """Return the redacted persisted event sequence for one run."""
+
+        candidate = str(run_id or "").strip()
+        if not candidate:
+            return ()
         with self._lock:
             with closing(self._connect()) as connection:
                 self._ensure_schema(connection)
                 rows = connection.execute(
-                    "SELECT payload_json FROM agent_events WHERE run_id = ? ORDER BY sequence ASC",
-                    (str(run_id or "").strip(),),
+                    """
+                    SELECT sequence, event_type, timestamp, elapsed_ms, payload_json
+                    FROM agent_events
+                    WHERE run_id = ?
+                    ORDER BY sequence ASC
+                    """,
+                    (candidate,),
                 ).fetchall()
-        return tuple(json.loads(str(row["payload_json"])) for row in rows)
+        return tuple(
+            StoredAgentEvent(
+                sequence=int(row["sequence"]),
+                event_type=str(row["event_type"]),
+                timestamp=str(row["timestamp"]),
+                elapsed_ms=int(row["elapsed_ms"]),
+                payload=json.loads(str(row["payload_json"])),
+            )
+            for row in rows
+        )
+
+    def event_payloads(self, run_id: str) -> tuple[dict[str, object], ...]:
+        """Testing/debug helper returning only already-redacted persisted payloads."""
+        return tuple(event.payload for event in self.list_events(run_id))
 
 
 __all__ = [
     "AgentTraceStoreService",
     "StoredAgentRun",
+    "StoredAgentEvent",
     "AgentObservabilitySummary",
 ]

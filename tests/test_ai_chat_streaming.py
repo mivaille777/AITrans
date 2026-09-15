@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.ai.chat.models import ChatContext, ChatRequest
-from app.ai.chat.streaming import StreamingAIChatService
+from app.ai.chat.stream_service import ProviderStreamingAIChatService
 
 
 class _FakeCompletions:
@@ -52,7 +52,7 @@ class _FakeTextService:
 
 def test_streaming_chat_service_yields_incremental_provider_content() -> None:
     text_service = _FakeTextService()
-    service = StreamingAIChatService(text_service)
+    service = ProviderStreamingAIChatService(text_service)
     request = ChatRequest(
         session_id="session-1",
         user_message="问候一下",

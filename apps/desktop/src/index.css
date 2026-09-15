@@ -5,15 +5,18 @@
   font-family: "Segoe UI Variable Text", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --ait-radius-window: 28px;
-  --ait-radius-panel: 22px;
-  --ait-radius-control: 12px;
-  --ait-surface-canvas: transparent;
-  --ait-surface-panel: rgba(255,255,255,.82);
-  --ait-border-soft: rgba(148,163,184,.22);
-  --ait-shadow-window: 0 30px 90px rgba(15,23,42,.16), 0 8px 24px rgba(15,23,42,.08);
-  --ait-motion-standard: 240ms;
+  --ait-radius-window: 24px;
+  --ait-radius-panel: 18px;
+  --ait-radius-control: 11px;
+  --ait-surface-canvas: #f6f8fb;
+  --ait-surface-panel: rgba(255,255,255,.96);
+  --ait-border-soft: rgba(148,163,184,.2);
+  --ait-shadow-window: 0 24px 72px rgba(15,23,42,.13), 0 6px 20px rgba(15,23,42,.07);
+  --ait-motion-standard: 200ms;
   --ait-ease-standard: cubic-bezier(.22,1,.36,1);
+  --ait-scroll-thumb: rgba(100,116,139,.42);
+  --ait-scroll-thumb-hover: rgba(71,85,105,.62);
+  --ait-scroll-track: rgba(241,245,249,.74);
 }
 
 *,*::before,*::after { box-sizing:border-box; }
@@ -32,63 +35,65 @@ body {
 }
 
 button,input,select,textarea { font:inherit; }
+button { -webkit-tap-highlight-color:transparent; }
 
-.ait-panel {
+.ait-app-shell { background:linear-gradient(180deg,rgba(248,250,252,.95),rgba(241,245,249,.82)); }
+
+.ait-panel,
+.ait-surface {
   border:1px solid var(--ait-border-soft);
   border-radius:var(--ait-radius-panel);
   background:var(--ait-surface-panel);
-  box-shadow:0 12px 36px rgba(15,23,42,.08);
-  backdrop-filter:blur(18px);
+  box-shadow:0 8px 28px rgba(15,23,42,.045);
 }
 
 .ait-input {
-  border:1px solid rgba(148,163,184,.24);
-  border-radius:16px;
-  background:rgba(248,250,252,.8);
+  border:1px solid rgba(148,163,184,.25);
+  border-radius:14px;
+  background:#fbfcfe;
   transition:var(--ait-motion-standard) var(--ait-ease-standard);
 }
 
 .ait-input:focus {
   background:white;
-  border-color:rgba(100,116,139,.5);
-  box-shadow:0 8px 24px rgba(15,23,42,.08);
+  border-color:rgba(37,99,235,.38);
+  box-shadow:0 0 0 3px rgba(59,130,246,.08),0 8px 22px rgba(15,23,42,.05);
 }
 
 .ait-button-primary {
-  border-radius:14px;
-  background:#0f172a;
+  border-radius:12px;
+  background:#2563eb;
   color:white;
+  box-shadow:0 6px 18px rgba(37,99,235,.2);
   transition:var(--ait-motion-standard) var(--ait-ease-standard);
 }
 
 .ait-button-primary:hover {
-  background:#1e293b;
+  background:#1d4ed8;
   transform:translateY(-1px);
 }
 
 .workspace-header {
-  position:sticky;
-  top:0;
+  position:relative;
   z-index:20;
-  margin:12px 12px 0;
-  border-radius:18px;
-  border:1px solid rgba(148,163,184,.18);
-  background:rgba(255,255,255,.72);
-  backdrop-filter:blur(20px);
+  flex:none;
+  border-bottom:1px solid rgba(148,163,184,.16);
+  background:rgba(255,255,255,.94);
 }
 
 .workspace-header-inner {
   display:flex;
+  min-height:76px;
   align-items:center;
   justify-content:space-between;
   gap:20px;
-  padding:14px 20px;
+  padding:16px 24px;
 }
 
 .workspace-title {
   margin:0;
-  font-size:22px;
-  font-weight:650;
+  font-size:21px;
+  font-weight:680;
   letter-spacing:-.025em;
   color:#0f172a;
 }
@@ -96,31 +101,148 @@ button,input,select,textarea { font:inherit; }
 .workspace-description {
   margin:4px 0 0;
   color:#64748b;
-  font-size:13px;
+  font-size:12.5px;
 }
 
 .workspace-status {
   display:flex;
   align-items:center;
-  gap:8px;
+  justify-content:center;
+  gap:7px;
   cursor:pointer;
   list-style:none;
+  width:38px;
+  height:34px;
   border:1px solid rgba(148,163,184,.2);
-  border-radius:999px;
-  padding:7px 12px;
-  background:rgba(255,255,255,.8);
-  color:#475569;
-  font-size:12px;
-  font-weight:600;
+  border-radius:11px;
+  background:#fff;
+  color:#64748b;
+  transition:var(--ait-motion-standard) var(--ait-ease-standard);
 }
+.workspace-status:hover { background:#f8fafc; color:#0f172a; }
+.workspace-status::-webkit-details-marker { display:none; }
 
 .workspace-route-enter {
   animation:ait-workspace-enter var(--ait-motion-standard) var(--ait-ease-standard) both;
 }
 
+.ait-control-motion { transition:all var(--ait-motion-standard) var(--ait-ease-standard); }
+.ait-conversation-item { transition:all var(--ait-motion-standard) var(--ait-ease-standard); }
+.ait-chat-message-enter { animation:ait-message-enter 180ms var(--ait-ease-standard) both; }
+.ait-context-panel-enter { animation:ait-fade-enter 160ms var(--ait-ease-standard) both; }
+
 @keyframes ait-workspace-enter {
-  from { opacity:0; transform:translateY(10px) scale(.985); filter:blur(6px); }
-  to { opacity:1; transform:none; filter:blur(0); }
+  from { opacity:0; transform:translateY(5px); }
+  to { opacity:1; transform:none; }
+}
+@keyframes ait-message-enter {
+  from { opacity:0; transform:translateY(5px); }
+  to { opacity:1; transform:none; }
+}
+@keyframes ait-fade-enter { from{opacity:0} to{opacity:1} }
+
+/* Explicit scroll ownership: page, secondary panel, primary conversation and dark navigation. */
+.ait-scroll-page,
+.ait-scroll-panel,
+.ait-scroll-dark,
+.ait-chat-message-scroll,
+.ait-chat-composer textarea {
+  scrollbar-gutter:stable;
+  scrollbar-width:thin;
+}
+
+.ait-scroll-page,
+.ait-scroll-panel,
+.ait-chat-composer textarea {
+  scrollbar-color:var(--ait-scroll-thumb) transparent;
+}
+
+.ait-scroll-page::-webkit-scrollbar,
+.ait-scroll-panel::-webkit-scrollbar,
+.ait-chat-composer textarea::-webkit-scrollbar {
+  width:8px;
+  height:8px;
+}
+
+.ait-scroll-page::-webkit-scrollbar-track,
+.ait-scroll-panel::-webkit-scrollbar-track,
+.ait-chat-composer textarea::-webkit-scrollbar-track {
+  background:transparent;
+}
+
+.ait-scroll-page::-webkit-scrollbar-thumb,
+.ait-scroll-panel::-webkit-scrollbar-thumb,
+.ait-chat-composer textarea::-webkit-scrollbar-thumb {
+  border:2px solid transparent;
+  border-radius:999px;
+  background:var(--ait-scroll-thumb);
+  background-clip:padding-box;
+}
+
+.ait-scroll-page::-webkit-scrollbar-thumb:hover,
+.ait-scroll-panel::-webkit-scrollbar-thumb:hover,
+.ait-chat-composer textarea::-webkit-scrollbar-thumb:hover {
+  background:var(--ait-scroll-thumb-hover);
+  background-clip:padding-box;
+}
+
+.ait-scroll-dark {
+  scrollbar-color:rgba(148,163,184,.44) transparent;
+}
+
+.ait-scroll-dark::-webkit-scrollbar { width:7px; }
+.ait-scroll-dark::-webkit-scrollbar-track { background:transparent; }
+.ait-scroll-dark::-webkit-scrollbar-thumb {
+  border:2px solid transparent;
+  border-radius:999px;
+  background:rgba(148,163,184,.38);
+  background-clip:padding-box;
+}
+.ait-scroll-dark::-webkit-scrollbar-thumb:hover {
+  background:rgba(203,213,225,.58);
+  background-clip:padding-box;
+}
+
+/* The chat surface is intentionally flatter than dashboard cards: conversation is primary. */
+.ait-chat-shell { background:#fff; }
+.ait-chat-shell > * { min-width:0; }
+.ait-chat-shell textarea { resize:none; }
+
+.ait-chat-message-scroll {
+  min-height:0;
+  overflow-y:scroll;
+  overscroll-behavior:contain;
+  scrollbar-color:rgba(71,85,105,.56) var(--ait-scroll-track);
+}
+
+.ait-chat-message-scroll::-webkit-scrollbar {
+  width:10px;
+}
+
+.ait-chat-message-scroll::-webkit-scrollbar-track {
+  background:var(--ait-scroll-track);
+  border-left:1px solid rgba(226,232,240,.72);
+}
+
+.ait-chat-message-scroll::-webkit-scrollbar-thumb {
+  min-height:44px;
+  border:2px solid var(--ait-scroll-track);
+  border-radius:999px;
+  background:rgba(71,85,105,.5);
+}
+
+.ait-chat-message-scroll::-webkit-scrollbar-thumb:hover {
+  background:rgba(51,65,85,.7);
+}
+
+.ait-chat-composer {
+  min-height:96px;
+  box-shadow:0 -8px 22px rgba(15,23,42,.035);
+}
+
+@media(max-width:767px){
+  .ait-global-nav { display:none; }
+  .workspace-header-inner { min-height:68px; padding:14px 18px; }
 }
 
 @media(prefers-reduced-motion:reduce){

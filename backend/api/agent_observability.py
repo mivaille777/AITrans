@@ -75,26 +75,26 @@ def evaluate_persisted_agent_run(
             case_id=payload.case_id,
             expected_intent=payload.expected_intent,
             expected_tool_name=payload.expected_tool_name,
+            expected_tool_sequence=tuple(payload.expected_tool_sequence),
             expected_status=payload.expected_status,
+            expected_fallback_reason=payload.expected_fallback_reason,
+            expected_final_evidence_gate_action=payload.expected_final_evidence_gate_action,
+            expected_grounding_verification_pass=payload.expected_grounding_verification_pass,
             max_total_duration_ms=payload.max_total_duration_ms,
             max_retry_count=payload.max_retry_count,
             require_zero_failures=payload.require_zero_failures,
+            expect_react=payload.expect_react,
+            max_react_iterations=payload.max_react_iterations,
+            max_tool_calls=payload.max_tool_calls,
+            max_redundant_actions=payload.max_redundant_actions,
+            require_no_react_limit=payload.require_no_react_limit,
+            require_grounded_response=payload.require_grounded_response,
+            require_grounding_verification_pass=payload.require_grounding_verification_pass,
+            require_confirmation_guard=payload.require_confirmation_guard,
         ),
+        events=store.list_events(run_id),
     )
-    return AgentEvaluationResponse(
-        case_id=result.case_id,
-        run_id=result.run_id,
-        trace_id=result.trace_id,
-        passed=result.passed,
-        score=result.score,
-        intent_match=result.intent_match,
-        tool_match=result.tool_match,
-        status_match=result.status_match,
-        latency_pass=result.latency_pass,
-        retry_pass=result.retry_pass,
-        failure_pass=result.failure_pass,
-        failures=list(result.failures),
-    )
+    return AgentEvaluationResponse.model_validate(asdict(result))
 
 
 __all__ = ["router"]

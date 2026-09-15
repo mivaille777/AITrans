@@ -94,6 +94,10 @@ class StubCompanionChatService:
             provider="stub-ai",
             model="stub-model",
             request_id=kwargs["request_id"],
+            knowledge_enabled=kwargs.get("knowledge_enabled", False),
+            knowledge_fallback_reason="",
+            evidence=(),
+            citations=(),
         )
 
 
@@ -111,6 +115,8 @@ def test_companion_chat_api_passes_history_and_reading_context_to_service() -> N
                 {"role": "assistant", "content": "It defines the local region."},
             ],
             "request_id": 9,
+            "knowledge_enabled": True,
+            "knowledge_document_ids": ["doc-1"],
         }
     )
 
@@ -125,6 +131,8 @@ def test_companion_chat_api_passes_history_and_reading_context_to_service() -> N
         "user",
         "Explain the previous sentence.",
     )
+    assert service.last_call["knowledge_enabled"] is True
+    assert service.last_call["knowledge_document_ids"] == ("doc-1",)
 
 
 class StubResearchNoteService:

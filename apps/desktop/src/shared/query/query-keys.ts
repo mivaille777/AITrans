@@ -1,5 +1,8 @@
 export const queryKeys = {
   health: ["health"] as const,
+  llm: {
+    status: ["llm", "status"] as const,
+  },
   translation: {
     status: ["translation", "status"] as const,
   },
@@ -32,10 +35,25 @@ export const queryKeys = {
     source: (sourceId: string) => ["research", "source", sourceId] as const,
     detail: (noteId: string) => ["research", "detail", noteId] as const,
   },
+  knowledge: {
+    documents: ["knowledge", "documents"] as const,
+    document: (documentId: string) => ["knowledge", "documents", documentId] as const,
+    items: ["knowledge", "items"] as const,
+    item: (itemId: string) => ["knowledge", "items", itemId] as const,
+    boards: ["knowledge", "boards"] as const,
+    board: (boardId: string) => ["knowledge", "boards", boardId] as const,
+    relations: ["knowledge", "relations"] as const,
+    relationSuggestions: (focusItemId: string, status = "pending") => ["knowledge", "relation-suggestions", focusItemId, status] as const,
+    runtime: ["knowledge", "runtime"] as const,
+  },
+  ragModels: {
+    list: ["rag-models", "list"] as const,
+  },
 } as const
 
 export const queryPolling = {
   health: 5_000,
+  llmStatus: 500,
   translationStatus: 15_000,
   browserStatus: 2_000,
   browserSelection: 500,
@@ -48,4 +66,6 @@ export const queryPolling = {
   conversationList: 5_000,
   researchNotes: 5_000,
   researchWorkspace: 5_000,
+  knowledgeDocuments: 5_000,
+  knowledgeActiveDocuments: 1_000,
 } as const

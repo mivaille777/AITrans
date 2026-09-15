@@ -3,6 +3,7 @@ export type WorkspaceRoutePath =
   | "/reading"
   | "/chat"
   | "/agent"
+  | "/knowledge"
   | "/research"
   | "/settings"
 
@@ -14,16 +15,6 @@ export interface WorkspaceRouteMeta {
 
 export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
-    path: "/translation",
-    label: "Translation",
-    description: "Translate manual input or the latest reading selection.",
-  },
-  {
-    path: "/reading",
-    label: "Reading",
-    description: "Inspect the active selection, document identity, section, and nearby context.",
-  },
-  {
     path: "/chat",
     label: "AI Chat",
     description: "Continue reasoning from a frozen reading or research context.",
@@ -31,12 +22,27 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
     path: "/agent",
     label: "Agent Workspace",
-    description: "Manage context, execution trace, and AI agent interactions.",
+    description: "Run Agent tasks with visible context, execution trace, tool activity, and results.",
+  },
+  {
+    path: "/reading",
+    label: "Reading",
+    description: "Inspect the active selection, document identity, section, and nearby context.",
   },
   {
     path: "/research",
     label: "Research",
     description: "Browse saved reading evidence and reopen it as chat context.",
+  },
+  {
+    path: "/knowledge",
+    label: "Knowledge",
+    description: "Import local documents and manage their retrieval index.",
+  },
+  {
+    path: "/translation",
+    label: "Translation",
+    description: "Translate manual input or the latest reading selection.",
   },
   {
     path: "/settings",
@@ -49,4 +55,12 @@ const fallbackRoute = workspaceRoutes[0]
 
 export function getWorkspaceRouteMeta(pathname: string): WorkspaceRouteMeta {
   return workspaceRoutes.find((route) => route.path === pathname) ?? fallbackRoute
+}
+
+/**
+ * Routes that own their internal scroll containers instead of letting the
+ * workspace <main> element scroll the whole page.
+ */
+export function workspaceRouteUsesFixedHeight(pathname: string): boolean {
+  return pathname === "/chat"
 }

@@ -1,0 +1,67 @@
+/*
+ * Light-overlay readability contract.
+ *
+ * The light material is intentionally translucent, so text must not depend on
+ * pale Tailwind utility colors that were designed for the classic dark shell.
+ * Keep every textual control on a dark ink palette while preserving a small
+ * hierarchy between primary, secondary, and muted copy.
+ */
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] {
+  --ait-overlay-readable-primary: rgba(16, 24, 40, 0.98);
+  --ait-overlay-readable-secondary: rgba(30, 41, 59, 0.92);
+  --ait-overlay-readable-muted: rgba(51, 65, 85, 0.84);
+  --ait-overlay-readable-placeholder: rgba(71, 85, 105, 0.72);
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-action-toast {
+  color: var(--ait-overlay-readable-primary) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] :where(
+  .ait-overlay-shell,
+  .ait-overlay-context-menu,
+  .ait-overlay-action-toast
+) :where(
+  p,
+  span,
+  label,
+  button,
+  textarea,
+  input,
+  select,
+  option,
+  a,
+  li,
+  strong,
+  em,
+  code,
+  blockquote,
+  kbd
+) {
+  color: var(--ait-overlay-readable-primary) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-400,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu .text-slate-400 {
+  color: var(--ait-overlay-readable-secondary) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-500,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-600,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu .text-slate-500,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu .text-slate-600 {
+  color: var(--ait-overlay-readable-muted) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell textarea::placeholder,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell input::placeholder {
+  color: var(--ait-overlay-readable-placeholder) !important;
+  opacity: 1;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell :disabled,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu :disabled {
+  color: var(--ait-overlay-readable-muted) !important;
+}

@@ -11,22 +11,52 @@ dist/*
 !dist/AITranslator/**
 coverage.xml
 .coverage
+test-results/
+apps/desktop/test-results/
 
 logs/*
 !logs/.gitkeep
 
-# Per-user settings are local state and must never be committed.
+# Per-user settings and runtime databases are local state and must never be committed.
 config/user.toml
-config/translation_cache.sqlite3*
-config/chat_history.sqlite3*
-config/research_notes.sqlite3*
-config/web_chat.sqlite3*
+config/*.sqlite3
 config/*.sqlite3-shm
 config/*.sqlite3-wal
 # Legacy JSON is no longer read, but keep any old local file untracked.
 config/chat_history.json
 
+# Local LangSmith/LangGraph credentials and developer overrides.
+.env
+.env.*
+!.env.example
+
 *.log
 
 # Private development plan; keep it local and never publish it.
 Windows桌面划词翻译软件_架构技术路线与Codex分步提示词.md
+
+# Agent runtime
+
+.langgraph_api/
+
+# Local runtime data
+
+data/
+models/
+!backend/models/
+!backend/models/llm_settings.py
+.cache/
+
+# RAG local storage
+
+config/rag/
+
+# Python runtime
+
+**pycache**/
+*.pyc
+
+# Serialized runtime state
+
+*.pkl
+*.pickle

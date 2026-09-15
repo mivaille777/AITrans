@@ -1,6 +1,9 @@
 import type { DesktopPoint, OverlayPositionMode } from "./adapter"
 
-const STORAGE_KEY = "aitrans.overlay.preferences.v2"
+export type OverlayVisualTheme = "light" | "dark"
+
+const STORAGE_KEY = "aitrans.overlay.preferences.v3"
+const PREVIOUS_STORAGE_KEY = "aitrans.overlay.preferences.v2"
 const LEGACY_STORAGE_KEY = "aitrans.overlay.preferences.v1"
 const CHANGE_EVENT = "aitrans-overlay-preferences-changed"
 
@@ -11,6 +14,7 @@ export interface OverlayPreferences {
   clickThrough: boolean
   smartAutoDismiss: boolean
   customPosition: DesktopPoint | null
+  theme: OverlayVisualTheme
 }
 
 export const DEFAULT_OVERLAY_PREFERENCES: OverlayPreferences = {
@@ -20,6 +24,7 @@ export const DEFAULT_OVERLAY_PREFERENCES: OverlayPreferences = {
   clickThrough: false,
   smartAutoDismiss: true,
   customPosition: null,
+  theme: "light",
 }
 
 function isPositionMode(value: unknown): value is OverlayPositionMode {
@@ -30,6 +35,10 @@ function isPositionMode(value: unknown): value is OverlayPositionMode {
     "desktop_lyrics_top",
     "custom_fixed_position",
   ].includes(String(value))
+}
+
+function isOverlayTheme(value: unknown): value is OverlayVisualTheme {
+  return value === "light" || value === "dark"
 }
 
 function isDesktopPoint(value: unknown): value is DesktopPoint {
@@ -71,7 +80,15 @@ function normalizePreferences(
     customPosition: isDesktopPoint(parsed.customPosition)
       ? parsed.customPosition
       : null,
+    theme: isOverlayTheme(parsed.theme)
+      ? parsed.theme
+      : DEFAULT_OVERLAY_PREFERENCES.theme,
   }
+}
+
+function persistMigratedPreferences(preferences: OverlayPreferences): OverlayPreferences {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences))
+  return preferences
 }
 
 export function readOverlayPreferences(): OverlayPreferences {
@@ -83,18 +100,25 @@ export function readOverlayPreferences(): OverlayPreferences {
       return normalizePreferences(JSON.parse(raw) as Partial<OverlayPreferences>)
     }
 
+    const previousRaw = window.localStorage.getItem(PREVIOUS_STORAGE_KEY)
+    if (previousRaw) {
+      return persistMigratedPreferences(
+        normalizePreferences(JSON.parse(previousRaw) as Partial<OverlayPreferences>),
+      )
+    }
+
     const legacyRaw = window.localStorage.getItem(LEGACY_STORAGE_KEY)
     if (!legacyRaw) return DEFAULT_OVERLAY_PREFERENCES
 
     // v1 could persist click-through=true indefinitely, leaving the native overlay
     // impossible to click after an upgrade. Preserve placement preferences but make
     // pointer interaction safe again; users can explicitly re-enable click-through.
-    const migrated = normalizePreferences(
-      JSON.parse(legacyRaw) as Partial<OverlayPreferences>,
-      { resetClickThrough: true },
+    return persistMigratedPreferences(
+      normalizePreferences(
+        JSON.parse(legacyRaw) as Partial<OverlayPreferences>,
+        { resetClickThrough: true },
+      ),
     )
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
-    return migrated
   } catch {
     return DEFAULT_OVERLAY_PREFERENCES
   }
@@ -123,7 +147,11 @@ export function subscribeOverlayPreferences(
   if (typeof window === "undefined") return () => undefined
 
   const handleStorage = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY || event.key === LEGACY_STORAGE_KEY) {
+    if (
+      event.key === STORAGE_KEY ||
+      event.key === PREVIOUS_STORAGE_KEY ||
+      event.key === LEGACY_STORAGE_KEY
+    ) {
       callback(readOverlayPreferences())
     }
   }

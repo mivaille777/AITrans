@@ -22,6 +22,23 @@ import { resolveLanguageSwap } from "./translation-utils"
 
 export type BackendState = "checking" | "connected" | "offline"
 
+export interface AcademicReadingContext {
+  context_id: string
+  document_id: string
+  text: string
+  resource_url: string
+  resource_title: string
+  section_heading: string
+  context_before: string
+  context_after: string
+  source_kind: "knowledge_document"
+}
+
+export interface ResearchRetrievalScope {
+  knowledgeDocumentIds: string[]
+  researchSourceIds: string[]
+}
+
 export interface TranslationWorkspaceController {
   backendState: BackendState
   backendService: string
@@ -33,6 +50,9 @@ export interface TranslationWorkspaceController {
   browserSelection: BrowserSelection | null
   browserPage: BrowserPage | null
   readingSelection: ReadingSelection | null
+  academicReadingContext: AcademicReadingContext | null
+  activeResearchWorkspaceId: string
+  researchRetrievalScope: ResearchRetrievalScope
   sourceText: string
   sourceLanguage: string
   targetLanguage: string
@@ -52,6 +72,13 @@ export interface TranslationWorkspaceController {
   swapLanguages: () => void
   clear: () => void
   useLatestSelection: () => void
+  useAcademicReadingContext: (context: AcademicReadingContext) => void
+  setActiveResearchWorkspaceId: (workspaceId: string) => void
+  setResearchRetrievalScope: (scope: ResearchRetrievalScope) => void
+}
+
+function normalizeScopeIds(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 100)
 }
 
 export function useTranslationWorkspace(): TranslationWorkspaceController {
@@ -60,10 +87,14 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
   const [targetLanguage, setTargetLanguage] = useState("zh-CN")
   const [translation, setTranslation] = useState<TranslationResponse | null>(null)
   const [translationError, setTranslationError] = useState("")
+  const [academicReadingContext, setAcademicReadingContext] =
+    useState<AcademicReadingContext | null>(null)
+  const [activeResearchWorkspaceId, setActiveResearchWorkspaceIdState] = useState("")
+  const [researchRetrievalScope, setResearchRetrievalScopeState] = useState<ResearchRetrievalScope>({
+    knowledgeDocumentIds: [],
+    researchSourceIds: [],
+  })
   const [followBrowserSelection, setFollowBrowserSelection] = useState(true)
-  // Selection capture now opens the AI assistant first. Keep the preference
-  // field for settings/backward compatibility, but never let it steal the
-  // initial overlay presentation away from Assistant mode.
   const [autoTranslateSelection, setAutoTranslateSelection] = useState(false)
   const lastSelectionId = useRef("")
 
@@ -148,8 +179,7 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
     const nextText = readingSelection.text
 
     queueMicrotask(() => {
-      // A fresh external selection owns the composer seed. Clear any stale
-      // translation state, but do not auto-translate or mutate the selection.
+      setAcademicReadingContext(null)
       setSourceText(nextText)
       setTranslation(null)
       setTranslationError("")
@@ -176,6 +206,7 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
       : "offline"
 
   function updateSourceText(value: string) {
+    setAcademicReadingContext(null)
     setSourceText(value)
     setTranslationError("")
   }
@@ -210,6 +241,7 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
     setTargetLanguage(next.targetLanguage)
 
     if (translation) {
+      setAcademicReadingContext(null)
       setSourceText(translation.translated_text)
       setTranslation(null)
       setTranslationError("")
@@ -217,6 +249,7 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
   }
 
   function clear() {
+    setAcademicReadingContext(null)
     setSourceText("")
     setTranslation(null)
     setTranslationError("")
@@ -225,9 +258,28 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
 
   function useLatestSelection() {
     if (!readingSelection) return
+    setAcademicReadingContext(null)
     setSourceText(readingSelection.text)
     setTranslation(null)
     setTranslationError("")
+  }
+
+  function useAcademicReadingContext(context: AcademicReadingContext) {
+    setAcademicReadingContext(context)
+    setSourceText(context.text)
+    setTranslation(null)
+    setTranslationError("")
+  }
+
+  function setActiveResearchWorkspaceId(workspaceId: string) {
+    setActiveResearchWorkspaceIdState(workspaceId.trim())
+  }
+
+  function setResearchRetrievalScope(scope: ResearchRetrievalScope) {
+    setResearchRetrievalScopeState({
+      knowledgeDocumentIds: normalizeScopeIds(scope.knowledgeDocumentIds),
+      researchSourceIds: normalizeScopeIds(scope.researchSourceIds),
+    })
   }
 
   return {
@@ -241,6 +293,9 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
     browserSelection,
     browserPage,
     readingSelection,
+    academicReadingContext,
+    activeResearchWorkspaceId,
+    researchRetrievalScope,
     sourceText,
     sourceLanguage,
     targetLanguage,
@@ -260,5 +315,8 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
     swapLanguages,
     clear,
     useLatestSelection,
+    useAcademicReadingContext,
+    setActiveResearchWorkspaceId,
+    setResearchRetrievalScope,
   }
 }

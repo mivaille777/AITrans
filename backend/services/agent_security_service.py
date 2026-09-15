@@ -11,12 +11,6 @@ from backend.models.agent_tools import AgentPlan
 from backend.services.agent_tool_registry import AgentToolSpec
 
 
-_ALLOWED_PLANNER_ARGUMENTS = frozenset({"target_language", "style", "user_note"})
-_ARGUMENT_LIMITS = {
-    "target_language": 64,
-    "style": 64,
-    "user_note": 4_000,
-}
 _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "ignore_instruction",
@@ -69,26 +63,14 @@ class AgentSecurityService:
 
         spec = next((tool for tool in tools if tool.name == plan.tool_name), None)
         if spec is None:
-            raise AIResponseError(f"Agent planner selected an unregistered tool: {plan.tool_name}.")
-
-        unknown = set(plan.arguments) - _ALLOWED_PLANNER_ARGUMENTS
-        if unknown:
-            names = ", ".join(sorted(unknown))
             raise AIResponseError(
-                f"Agent planner attempted arguments outside its authority: {names}."
+                f"Agent planner selected an unregistered tool: {plan.tool_name}."
             )
 
-        sanitized: dict[str, str] = {}
-        for key, value in plan.arguments.items():
-            text = str(value or "").strip()
-            limit = _ARGUMENT_LIMITS.get(key, 512)
-            if len(text) > limit:
-                raise AIResponseError(f"Agent planner argument {key} exceeds the allowed length.")
-            if key not in spec.input_schema:
-                raise AIResponseError(
-                    f"Agent planner argument {key} is not accepted by tool {spec.name}."
-                )
-            sanitized[key] = text
+        try:
+            sanitized = spec.validate_planner_arguments(plan.arguments)
+        except ValueError as exc:
+            raise AIResponseError(str(exc)) from exc
 
         if sanitized != plan.arguments:
             return plan.model_copy(update={"arguments": sanitized})

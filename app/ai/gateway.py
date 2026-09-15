@@ -1,17 +1,34 @@
-"""Code-owned LLM routing for AITranslator AI workloads."""
+"""Runtime-configurable, code-owned LLM routing for AITranslator workloads."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from threading import RLock
 from typing import Any
 
-from app.ai.client import DeepSeekClient, DEFAULT_DEEPSEEK_MODEL, SUPPORTED_DEEPSEEK_MODELS
+from app.ai.client import (
+    DEFAULT_DEEPSEEK_MODEL,
+    SUPPORTED_DEEPSEEK_MODELS,
+    DeepSeekClient,
+)
 from app.ai.errors import AIConfigurationError
+from app.ai.factory import (
+    DEFAULT_AI_PROVIDER,
+    OPENAI_COMPATIBLE_PROVIDER,
+    normalize_ai_provider,
+    provider_defaults,
+)
 from app.ai.models import AITextRequest, AITextResult
+from app.ai.openai_compatible import (
+    OpenAICompatibleClient,
+    OpenAICompatibleTextProvider,
+)
 from app.ai.provider import DeepSeekTextProvider
+from app.ai.runtime_status import llm_runtime_status
 from app.ai.service import AITextService
+from app.infrastructure.settings import SettingsManager
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +36,7 @@ class LLMRoute:
     role: str
     provider: str
     model: str
+    base_url: str = ""
     thinking_enabled: bool = False
 
 
@@ -39,7 +57,7 @@ _ENV_BY_ROLE = {
 
 
 class RoutedAITextService:
-    """Lazy AITextService facade bound to one immutable LLM route."""
+    """Lazy AITextService facade bound to one saved provider configuration."""
 
     def __init__(self, route: LLMRoute) -> None:
         self.route = route
@@ -51,11 +69,39 @@ class RoutedAITextService:
             return self._service
         with self._lock:
             if self._service is None:
-                client = DeepSeekClient(
-                    model=self.route.model,
-                    thinking_enabled=self.route.thinking_enabled,
+                route_key = "|".join(
+                    (
+                        self.route.provider,
+                        self.route.model,
+                        self.route.base_url.rstrip("/"),
+                    )
                 )
-                self._service = AITextService(DeepSeekTextProvider(client=client))
+                try:
+                    if self.route.provider == DEFAULT_AI_PROVIDER:
+                        client = DeepSeekClient(
+                            model=self.route.model,
+                            thinking_enabled=self.route.thinking_enabled,
+                        )
+                        provider = DeepSeekTextProvider(client=client)
+                    elif self.route.provider == OPENAI_COMPATIBLE_PROVIDER:
+                        client = OpenAICompatibleClient(
+                            model=self.route.model,
+                            base_url=self.route.base_url,
+                        )
+                        provider = OpenAICompatibleTextProvider(client=client)
+                    else:  # Defensive: routes are validated by LLMGateway.
+                        raise AIConfigurationError(
+                            f"Unsupported saved AI provider: {self.route.provider}."
+                        )
+                    self._service = AITextService(provider)
+                except AIConfigurationError as exc:
+                    llm_runtime_status.mark_unavailable(
+                        provider=self.route.provider,
+                        model=self.route.model,
+                        route_key=route_key,
+                        detail=str(exc),
+                    )
+                    raise
             return self._service
 
     @property
@@ -88,28 +134,75 @@ class RoutedAITextService:
 
 
 class LLMGateway:
-    """Resolve model routes from a code-side allowlist.
+    """Resolve safe, persisted provider settings for every product LLM role.
 
-    The current implementation intentionally supports only the existing
-    DeepSeek provider. The boundary is role-based so additional providers can
-    be added later without allowing prompts or model output to choose a route.
+    Provider selection is local user configuration. Prompt and role ownership
+    remain code-owned; environment role overrides are retained for development
+    and deployment diagnostics only.
     """
 
+    def __init__(
+        self,
+        *,
+        settings_factory: Callable[[], Any] = SettingsManager,
+    ) -> None:
+        self._settings_factory = settings_factory
+
+    @staticmethod
+    def _config_value(config: Any, key: str, default: str) -> str:
+        get = getattr(config, "get", None)
+        if not callable(get):
+            return default
+        return str(get("ai", key, default) or default).strip()
+
+    @staticmethod
+    def _has_saved_user_value(config: Any, key: str) -> bool:
+        """Distinguish shipped defaults from an explicit settings-page save."""
+
+        user_data = getattr(config, "user_data", None)
+        if user_data is None:
+            # Test and integration config adapters conventionally expose only
+            # effective values, which should be treated as deliberate input.
+            return True
+        ai_values = user_data.get("ai") if isinstance(user_data, Mapping) else None
+        return isinstance(ai_values, Mapping) and key in ai_values
+
     def route(self, role: str) -> LLMRoute:
-        normalized = str(role or "").strip().lower()
-        if normalized not in _DEFAULT_MODELS:
-            raise AIConfigurationError(f"Unsupported LLM route role: {normalized or '<empty>'}.")
-        configured = os.getenv(_ENV_BY_ROLE[normalized], "").strip()
-        model = configured or _DEFAULT_MODELS[normalized]
-        if model not in SUPPORTED_DEEPSEEK_MODELS:
+        normalized_role = str(role or "").strip().lower()
+        if normalized_role not in _DEFAULT_MODELS:
+            raise AIConfigurationError(
+                f"Unsupported LLM route role: {normalized_role or '<empty>'}."
+            )
+
+        settings = self._settings_factory()
+        provider = normalize_ai_provider(
+            self._config_value(settings, "provider", DEFAULT_AI_PROVIDER)
+        )
+        default_model, default_base_url = provider_defaults(provider)
+        configured_model = self._config_value(settings, "model", default_model)
+        configured_base_url = self._config_value(settings, "base_url", default_base_url)
+        environment_model = os.getenv(_ENV_BY_ROLE[normalized_role], "").strip()
+        saved_model = self._has_saved_user_value(settings, "model")
+        model = environment_model or (
+            configured_model if saved_model else _DEFAULT_MODELS[normalized_role]
+        )
+
+        if provider == DEFAULT_AI_PROVIDER and model not in SUPPORTED_DEEPSEEK_MODELS:
             supported = ", ".join(sorted(SUPPORTED_DEEPSEEK_MODELS))
             raise AIConfigurationError(
-                f"Unsupported model for LLM route {normalized}: {model}. Supported models: {supported}."
+                f"Unsupported model for DeepSeek LLM route {normalized_role}: "
+                f"{model}. Supported models: {supported}."
             )
+        if provider == OPENAI_COMPATIBLE_PROVIDER and not model:
+            raise AIConfigurationError("OpenAI-compatible provider requires a model identifier.")
+        if provider == OPENAI_COMPATIBLE_PROVIDER and not configured_base_url:
+            raise AIConfigurationError("OpenAI-compatible provider requires a base URL.")
+
         return LLMRoute(
-            role=normalized,
-            provider="deepseek",
+            role=normalized_role,
+            provider=provider,
             model=model,
+            base_url=configured_base_url,
             thinking_enabled=False,
         )
 

@@ -109,17 +109,11 @@ def test_injected_sdk_client_is_not_closed_by_wrapper() -> None:
     assert sdk.closed is False
 
 
-@pytest.mark.skip(
-    reason="Credential Manager intentionally takes precedence over the environment on configured developer machines."
-)
-def test_api_key_prefers_explicit_value_and_falls_back_to_environment() -> None:
-    assert get_deepseek_api_key(" explicit ", environ={"DEEPSEEK_API_KEY": "env"}) == "explicit"
-    assert get_deepseek_api_key(environ={"DEEPSEEK_API_KEY": " env "}) == "env"
+class EmptyCredentialStore:
+    def get(self, _provider: str) -> None:
+        return None
 
 
-@pytest.mark.skip(
-    reason="A configured Windows Credential Manager key means the runtime is not in a missing-key state."
-)
 def test_missing_api_key_is_configuration_error() -> None:
     with pytest.raises(AIConfigurationError):
-        get_deepseek_api_key(environ={})
+        get_deepseek_api_key(credential_store=EmptyCredentialStore())

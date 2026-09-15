@@ -5,7 +5,14 @@ from contextlib import suppress
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from pydantic import ValidationError
 
 from app.ai.errors import AIConfigurationError, AIError
@@ -20,7 +27,11 @@ from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
 from backend.api.agent_dependencies import get_agent_runtime
-from backend.api.dependencies import get_agent_tool_registry
+from backend.api.dependencies import (
+    get_agent_tool_registry,
+    get_research_note_service,
+    get_research_workspace_service,
+)
 from backend.models.agent_tools import (
     AgentPlan,
     AgentRunRequest,
@@ -32,7 +43,13 @@ from backend.models.agent_tools import (
     AgentToolExecuteResponse,
     AgentTraceEvent,
 )
-from backend.services.agent_tool_registry import AgentToolExecutionResult, AgentToolRegistry
+from backend.services.agent_conversation_service import AgentConversationBusyError
+from backend.services.agent_tool_registry import (
+    AgentToolExecutionResult,
+    AgentToolRegistry,
+)
+from backend.services.research_note_service import ResearchNoteService, research_source_id
+from backend.services.research_workspace_service import ResearchWorkspaceService
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 AgentToolRegistryDependency = Annotated[
@@ -42,6 +59,14 @@ AgentToolRegistryDependency = Annotated[
 AgentRuntimeDependency = Annotated[
     AgentRuntime,
     Depends(get_agent_runtime),
+]
+ResearchWorkspaceDependency = Annotated[
+    ResearchWorkspaceService,
+    Depends(get_research_workspace_service),
+]
+ResearchNoteDependency = Annotated[
+    ResearchNoteService,
+    Depends(get_research_note_service),
 ]
 
 
@@ -63,7 +88,44 @@ def _state_tool_response(result: dict[str, Any]) -> AgentToolExecuteResponse:
     return AgentToolExecuteResponse.model_validate(payload)
 
 
-def _state_from_run_request(payload: AgentRunRequest) -> AgentState:
+def _workspace_research_source_ids(
+    note_ids: tuple[str, ...],
+    research_notes: ResearchNoteService,
+) -> list[str]:
+    source_ids: list[str] = []
+    seen: set[str] = set()
+    for note_id in note_ids:
+        note = research_notes.get(note_id)
+        if note is None:
+            continue
+        source_id = research_source_id(note)
+        if not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        source_ids.append(source_id)
+        if len(source_ids) >= 100:
+            break
+    return source_ids
+
+
+def _empty_workspace_scope_id(workspace_id: str, kind: str) -> str:
+    """Return an impossible persisted-resource id that keeps an empty scope closed.
+
+    Existing retrieval Tools interpret an empty list as global scope. A selected
+    Research Workspace must never widen to global just because it currently has
+    zero members, so the trusted API boundary supplies a non-empty sentinel that
+    cannot match generated document/source identifiers.
+    """
+
+    return f"__workspace_empty_scope__:{kind}:{workspace_id}"
+
+
+def _state_from_run_request(
+    payload: AgentRunRequest,
+    *,
+    workspace_service: ResearchWorkspaceService | None = None,
+    research_notes: ResearchNoteService | None = None,
+) -> AgentState:
     context = payload.model_dump(
         exclude={
             "session_id",
@@ -72,6 +134,30 @@ def _state_from_run_request(payload: AgentRunRequest) -> AgentState:
             "source_text",
         }
     )
+    workspace_id = payload.workspace_id.strip()
+    if workspace_id:
+        if workspace_service is None or research_notes is None:
+            raise ValueError("Research workspace context is unavailable.")
+        workspace = workspace_service.get(workspace_id)
+        if workspace is None:
+            raise ValueError("Research workspace not found.")
+        # A selected Workspace is authoritative. Client-side temporary scopes are
+        # ignored so the Agent receives the persisted research-project context.
+        # Empty project membership must remain an empty scope rather than falling
+        # through to the legacy global-search meaning of an empty list.
+        document_ids = list(workspace.document_ids)
+        research_source_ids = _workspace_research_source_ids(
+            workspace.note_ids,
+            research_notes,
+        )
+        context["workspace_id"] = workspace_id
+        context["knowledge_document_ids"] = document_ids or [
+            _empty_workspace_scope_id(workspace_id, "document")
+        ]
+        context["research_source_ids"] = research_source_ids or [
+            _empty_workspace_scope_id(workspace_id, "research")
+        ]
+
     kwargs: dict[str, Any] = {
         "session_id": payload.session_id,
         "user_input": payload.user_message,
@@ -83,25 +169,83 @@ def _state_from_run_request(payload: AgentRunRequest) -> AgentState:
     return AgentState(**kwargs)
 
 
+def _associate_workspace_result(
+    payload: AgentRunRequest,
+    state: AgentState,
+    workspace_service: ResearchWorkspaceService | None,
+) -> None:
+    workspace_id = payload.workspace_id.strip()
+    if not workspace_id or workspace_service is None:
+        return
+    if workspace_service.get(workspace_id) is None:
+        return
+
+    conversation_id = state.conversation.conversation_id.strip()
+    if conversation_id:
+        workspace_service.attach_conversation(workspace_id, conversation_id)
+
+    for raw_result in reversed(state.tool_results):
+        if str(raw_result.get("tool_name", "") or "") != "save_research_note":
+            continue
+        data = raw_result.get("data", {})
+        if not isinstance(data, dict):
+            continue
+        note_id = str(data.get("note_id", "") or "").strip()
+        if note_id:
+            workspace_service.attach_note(workspace_id, note_id)
+        break
+
+
 def _run_response(state: AgentState) -> AgentRunResponse:
     response = state.response
     tool_result = (
         _state_tool_response(state.tool_results[-1]) if state.tool_results else None
     )
+    multi_step = state.plan if state.plan.mode == "multi_step" else None
+    compatibility_plan = (
+        AgentPlan(
+            action="answer",
+            user_visible_reason=state.plan.goal or "Completed the multi-step plan.",
+        )
+        if multi_step is not None
+        else AgentPlan.model_validate(state.planned_action)
+    )
     return AgentRunResponse(
         status=str(response.get("status", "completed") or "completed"),
-        plan=AgentPlan.model_validate(state.planned_action),
+        plan=compatibility_plan,
+        multi_step_plan=multi_step,
         output_text=str(response.get("output_text", "") or ""),
         provider=str(response.get("provider", "") or ""),
         model=str(response.get("model", "") or ""),
         request_id=max(0, int(response.get("request_id", 0) or 0)),
+        conversation_id=state.conversation.conversation_id,
         tool_result=tool_result,
+        evidence=state.evidence,
+        citations=state.citations,
     )
 
 
-def _execute_runtime(payload: AgentRunRequest, runtime: AgentRuntime) -> AgentState:
+def _execute_runtime(
+    payload: AgentRunRequest,
+    runtime: AgentRuntime,
+    *,
+    workspace_service: ResearchWorkspaceService | None = None,
+    research_notes: ResearchNoteService | None = None,
+) -> AgentState:
     try:
-        return runtime.execute(_state_from_run_request(payload))
+        state = _state_from_run_request(
+            payload,
+            workspace_service=workspace_service,
+            research_notes=research_notes,
+        )
+        result = runtime.execute(state)
+        _associate_workspace_result(payload, result, workspace_service)
+        return result
+    except AgentConversationBusyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except AIConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -148,6 +292,8 @@ def _trace_response(state: AgentState, runtime: AgentRuntime) -> AgentRunTraceRe
 def _stream_error_code(exc: Exception) -> str:
     if isinstance(exc, AgentCancelledError):
         return "cancelled"
+    if isinstance(exc, AgentConversationBusyError):
+        return exc.reason
     if isinstance(exc, AgentBudgetExceededError):
         return "budget_exceeded"
     if isinstance(exc, AgentToolTimeoutError):
@@ -203,16 +349,32 @@ def execute_agent_tool(
 def run_product_agent(
     payload: AgentRunRequest,
     runtime: AgentRuntimeDependency,
+    workspace_service: ResearchWorkspaceDependency = None,
+    research_notes: ResearchNoteDependency = None,
 ) -> AgentRunResponse:
-    return _run_response(_execute_runtime(payload, runtime))
+    return _run_response(
+        _execute_runtime(
+            payload,
+            runtime,
+            workspace_service=workspace_service,
+            research_notes=research_notes,
+        )
+    )
 
 
 @router.post("/run/trace", response_model=AgentRunTraceResponse)
 def run_product_agent_trace(
     payload: AgentRunRequest,
     runtime: AgentRuntimeDependency,
+    workspace_service: ResearchWorkspaceDependency = None,
+    research_notes: ResearchNoteDependency = None,
 ) -> AgentRunTraceResponse:
-    state = _execute_runtime(payload, runtime)
+    state = _execute_runtime(
+        payload,
+        runtime,
+        workspace_service=workspace_service,
+        research_notes=research_notes,
+    )
     return _trace_response(state, runtime)
 
 
@@ -220,6 +382,8 @@ def run_product_agent_trace(
 async def stream_product_agent(
     websocket: WebSocket,
     runtime: AgentRuntimeDependency,
+    workspace_service: ResearchWorkspaceDependency,
+    research_notes: ResearchNoteDependency,
 ) -> None:
     """Stream bounded Agent lifecycle events with cooperative cancellation."""
 
@@ -251,7 +415,15 @@ async def stream_product_agent(
 
         try:
             payload = AgentRunRequest.model_validate(incoming.get("request"))
-        except ValidationError as exc:
+            state = _state_from_run_request(
+                payload,
+                workspace_service=workspace_service,
+                research_notes=research_notes,
+            )
+        except (ValidationError, ValueError) as exc:
+            message = str(exc)
+            if isinstance(exc, ValidationError) and exc.errors():
+                message = str(exc.errors()[0].get("msg") or "Invalid Agent request.")
             await websocket.send_json(
                 {
                     "type": "error",
@@ -260,14 +432,13 @@ async def stream_product_agent(
                     "run_id": "",
                     "trace_id": "",
                     "code": "invalid_request",
-                    "message": str(exc.errors()[0].get("msg") if exc.errors() else "Invalid Agent request."),
+                    "message": message or "Invalid Agent request.",
                 }
             )
             return
 
         request_id = payload.request_id
         session_id = payload.session_id
-        state = _state_from_run_request(payload)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -304,6 +475,7 @@ async def stream_product_agent(
                     event_sink=observe,
                     control=control,
                 )
+                _associate_workspace_result(payload, result_state, workspace_service)
                 trace = _trace_response(result_state, runtime)
                 enqueue(
                     {
@@ -387,8 +559,6 @@ async def stream_product_agent(
             if control_result == "disconnect":
                 sender_task.cancel()
                 return
-            # Cancellation was requested. Keep the sender alive until Runtime
-            # reaches a safe checkpoint or completes an already-started write.
             with suppress(WebSocketDisconnect):
                 await sender_task
         else:

@@ -5,13 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "desktop-translator"
 version = "0.1.0"
-description = "A Windows desktop selection translation overlay application."
+description = "Local business backend for the AITranslator React/Tauri desktop application."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    # 6.7.3 is the tested Windows baseline for the legacy desktop UI during migration.
-    "PySide6==6.7.3",
     "pywin32>=306",
+    # Retained for the headless Windows clipboard selection fallback.
     "pynput>=1.7.6",
     "cachetools>=5.3",
     "certifi>=2024.8.30",
@@ -26,24 +25,36 @@ dependencies = [
     "uvicorn[standard]>=0.35,<1",
     # LangGraph is the stateful orchestration layer for chat/workspace/tool execution.
     "langgraph>=1.2,<1.3",
-    # Local Document Agent tools. PDF/DOCX parsing remains deterministic.
+    # Local Document Agent and RAG ingestion tools remain deterministic.
     "pypdf>=5.0,<6",
     "python-docx>=1.1,<2",
+    "lxml>=6.0,<7",
+    # Qdrant Local is imported by the normal FastAPI RAG runtime, so it is a
+    # core runtime dependency rather than an optional GPU/model dependency.
+    "qdrant-client>=1.19,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
-    "pytest-qt>=4.2",
     "httpx>=0.27,<1",
     "ruff>=0.12,<1",
+]
+studio = [
+    # Local Agent Server + LangSmith Studio development only.
+    "langgraph-cli[inmem]>=0.4.31,<0.5",
 ]
 build = [
     "pyinstaller>=6.10,<7",
 ]
+rag-advanced = [
+    # Optional scientific-PDF parsing. The minimum version supports the
+    # page-aware Markdown export path used to retain citation provenance.
+    # OCR and formula enrichment remain disabled by default.
+    "docling>=2.115,<3",
+]
 
 [project.scripts]
-desktop-translator = "app.main:main"
 aitrans-backend = "backend.main:main"
 
 [tool.setuptools.packages.find]
@@ -53,4 +64,6 @@ include = ["app*", "backend*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra"
-qt_api = "pyside6"
+markers = [
+    "rag_gpu: opt-in tests that load real local RAG models and require suitable hardware",
+]

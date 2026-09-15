@@ -8,7 +8,6 @@ from backend.api.dependencies import get_agent_tool_registry
 from backend.main import create_app
 from backend.services.agent_tool_registry import AgentToolRegistry
 
-
 READING = {
     "source_text": "Gaussian processes provide a statistical anchor.",
     "translated_text": "高斯过程提供统计锚点。",
@@ -93,11 +92,36 @@ def test_agent_tool_catalog_declares_side_effect_boundaries() -> None:
         "analyze_section_role",
         "polish_selection",
         "save_research_note",
+        "list_research_notes",
+        "search_research_notes",
+        "get_research_note",
+        "update_research_note",
+        "define_terms",
+        "analyze_equation",
+        "summarize_current_section",
+        "search_knowledge_base",
+        "save_knowledge_card",
     }
     assert tools["translate_selection"].effect == "compute"
     assert tools["translate_selection"].requires_confirmation is False
     assert tools["save_research_note"].effect == "write"
     assert tools["save_research_note"].requires_confirmation is True
+    assert tools["list_research_notes"].effect == "read"
+    assert tools["list_research_notes"].requires_confirmation is False
+    assert tools["search_research_notes"].effect == "read"
+    assert tools["search_research_notes"].requires_confirmation is False
+    assert tools["get_research_note"].effect == "read"
+    assert tools["get_research_note"].requires_confirmation is False
+    assert tools["update_research_note"].effect == "write"
+    assert tools["update_research_note"].requires_confirmation is True
+    assert tools["define_terms"].effect == "compute"
+    assert tools["analyze_equation"].effect == "compute"
+    assert tools["summarize_current_section"].effect == "compute"
+    assert tools["search_knowledge_base"].effect == "read"
+    assert tools["search_knowledge_base"].requires_confirmation is False
+    assert tools["save_knowledge_card"].effect == "write"
+    assert tools["save_knowledge_card"].requires_confirmation is True
+    assert "delete_research_note" not in tools
 
 
 def test_agent_tool_registry_reuses_existing_translation_and_quick_actions() -> None:
@@ -160,6 +184,12 @@ def test_agent_tool_http_contract_exposes_catalog_and_execution() -> None:
     )
     assert save_tool["effect"] == "write"
     assert save_tool["requires_confirmation"] is True
+
+    knowledge_save_tool = next(
+        item for item in catalog.json()["tools"] if item["name"] == "save_knowledge_card"
+    )
+    assert knowledge_save_tool["effect"] == "write"
+    assert knowledge_save_tool["requires_confirmation"] is True
 
     executed = client.post(
         "/api/agent/tools/inspect_reading_context/execute",

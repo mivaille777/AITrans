@@ -34,7 +34,10 @@ $DesktopDir = Join-Path $RepoRoot "apps\desktop"
 $TauriDir = Join-Path $DesktopDir "src-tauri"
 $ExpectedBranch = "WebReBuild"
 $ExpectedCondaEnvironment = "aitrans"
+$FrontendDevPort = 5173
+$BackendPort = 8766
 $FrontendDependenciesPrepared = $false
+$ReuseExistingBackend = $false
 
 function Write-Step {
     param(
@@ -116,8 +119,17 @@ function Get-GitDirtyClassification {
         # Ignore them only while they are UNTRACKED. If any of these files ever
         # become tracked, modifications must block the pull like normal source files.
         $safeGenerated = $status -eq "??" -and (
-            $path -eq "apps/desktop/src-tauri/Cargo.lock" -or
-            $path -match '^config/.+\.sqlite3(?:-shm|-wal)?$'
+            $path -match '^\.langgraph_api/' -or
+            $path -match '^config/[^/]+\.sqlite3$' -or
+            $path -match '^config/rag/' -or
+            $path -match '^data/' -or
+            $path -match '^models/' -or
+            $path -match '^\.cache/' -or
+            $path -match '^\.pytest_cache/' -or
+            $path -match '^test-results/' -or
+            $path -match '^apps/desktop/test-results/' -or
+            $path -match '\.(?:pkl|pickle)$' -or
+            $path -match '(?:^|/)[^/]*pycache[^/]*/'
         )
 
         if ($safeGenerated) {
@@ -144,6 +156,77 @@ function Prepare-FrontendDependencies {
     npm ci --no-audit --prefer-offline
     Assert-LastExitCode "Frontend dependency installation failed."
     $script:FrontendDependenciesPrepared = $true
+}
+
+function Get-ListeningProcessInfo {
+    param([int]$Port)
+
+    $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+
+    if (-not $connection) {
+        return $null
+    }
+
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($connection.OwningProcess)" -ErrorAction SilentlyContinue
+    if (-not $process) {
+        return [PSCustomObject]@{
+            Id = $connection.OwningProcess
+            Name = "unknown"
+            CommandLine = ""
+        }
+    }
+
+    return [PSCustomObject]@{
+        Id = [int]$process.ProcessId
+        Name = [string]$process.Name
+        CommandLine = if ($process.CommandLine) { [string]$process.CommandLine } else { "" }
+    }
+}
+
+function Test-AITranslatorBackendHealth {
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/health" -Method Get -TimeoutSec 2
+        return $health.status -eq "ok" -and $health.service -eq "aitrans-backend"
+    }
+    catch {
+        return $false
+    }
+}
+
+function Prepare-DevelopmentPorts {
+    $frontendOwner = Get-ListeningProcessInfo -Port $FrontendDevPort
+    if ($frontendOwner) {
+        $desktopPath = [IO.Path]::GetFullPath($DesktopDir).ToLowerInvariant()
+        $commandLine = $frontendOwner.CommandLine.ToLowerInvariant()
+        $isCurrentRepoVite =
+            $frontendOwner.Name -match '^node(?:\.exe)?$' -and
+            $commandLine.Contains("vite") -and
+            $commandLine.Contains($desktopPath)
+
+        if (-not $isCurrentRepoVite) {
+            throw "Port $FrontendDevPort is already used by PID $($frontendOwner.Id) ($($frontendOwner.Name)). Refusing to stop an unrelated process. Close it manually and retry."
+        }
+
+        Write-Host "Stopping stale AITranslator Vite process on port $FrontendDevPort (PID $($frontendOwner.Id))..." -ForegroundColor DarkYellow
+        Stop-Process -Id $frontendOwner.Id -Force
+        Start-Sleep -Milliseconds 400
+
+        if (Get-ListeningProcessInfo -Port $FrontendDevPort) {
+            throw "Port $FrontendDevPort is still occupied after stopping the stale AITranslator Vite process."
+        }
+    }
+
+    $backendOwner = Get-ListeningProcessInfo -Port $BackendPort
+    if ($backendOwner) {
+        if (Test-AITranslatorBackendHealth) {
+            $script:ReuseExistingBackend = $true
+            Write-Host "Healthy AITranslator backend already running on port $BackendPort (PID $($backendOwner.Id)); it will be reused." -ForegroundColor Green
+        }
+        else {
+            throw "Port $BackendPort is already used by PID $($backendOwner.Id) ($($backendOwner.Name)), but /health is not the AITranslator backend. Close that process and retry."
+        }
+    }
 }
 
 Write-Host ""
@@ -198,7 +281,8 @@ if ($AllowLocalChanges) {
 }
 else {
     # Protect real source/config changes, but do not block normal verification on
-    # known untracked runtime artifacts such as the local SQLite DB or Cargo.lock.
+    # known untracked runtime artifacts such as local databases, model caches,
+    # RAG storage, test reports, and serialized runtime state.
     $DirtyFiles = @(git status --porcelain --untracked-files=all)
     Assert-LastExitCode "Unable to read Git working tree status."
     $DirtyClassification = Get-GitDirtyClassification $DirtyFiles
@@ -346,6 +430,7 @@ if ($NoStart) {
 
 Write-Step "Start Backend + Tauri concurrently" 8
 
+Prepare-DevelopmentPorts
 $PowerShellExe = Resolve-PowerShellExecutable
 
 # Explicitly activate Conda inside BOTH child shells. Child processes do not
@@ -383,22 +468,30 @@ npm run tauri:dev
 $BackendEncoded = ConvertTo-EncodedPowerShellCommand $BackendCommand
 $TauriEncoded = ConvertTo-EncodedPowerShellCommand $TauriCommand
 
-# Start both processes immediately. We intentionally do not wait for Backend
-# to exit before starting Tauri: the two development services run together.
-$BackendProcess = Start-Process `
-    -FilePath $PowerShellExe `
-    -ArgumentList "-NoExit", "-EncodedCommand", $BackendEncoded `
-    -PassThru
+$BackendProcess = $null
+if (-not $ReuseExistingBackend) {
+    $BackendProcess = Start-Process `
+        -FilePath $PowerShellExe `
+        -ArgumentList "-NoExit", "-EncodedCommand", $BackendEncoded `
+        -PassThru
+}
 
+# Tauri starts Vite through beforeDevCommand. The preflight above guarantees
+# that port 5173 is free before this process is created.
 $TauriProcess = Start-Process `
     -FilePath $PowerShellExe `
     -ArgumentList "-NoExit", "-EncodedCommand", $TauriEncoded `
     -PassThru
 
-Write-Host "Backend PID        : $($BackendProcess.Id)" -ForegroundColor Green
+if ($BackendProcess) {
+    Write-Host "Backend PID        : $($BackendProcess.Id)" -ForegroundColor Green
+}
+else {
+    Write-Host "Backend            : reused healthy service on port $BackendPort" -ForegroundColor Green
+}
 Write-Host "Tauri PID          : $($TauriProcess.Id)" -ForegroundColor Green
 Write-Host ""
-Write-Host "Backend and Tauri were launched concurrently in separate PowerShell windows." -ForegroundColor Green
-Write-Host "Keep both windows open while manually testing the desktop app." -ForegroundColor Cyan
+Write-Host "Backend and Tauri are ready for concurrent desktop testing." -ForegroundColor Green
+Write-Host "Keep the Tauri window and any newly opened backend shell running while manually testing the app." -ForegroundColor Cyan
 
 Set-Location $RepoRoot

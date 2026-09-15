@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from threading import Event, Lock
 from time import monotonic
@@ -24,7 +25,10 @@ from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
     CompanionOwnershipClaim,
 )
+from backend.services.conversation_grounding_service import save_message_grounding
 from backend.services.conversation_store_service import ConversationStoreService
+from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
+from backend.services.grounded_synthesis_service import evidence_only_grounding_fallback
 
 router = APIRouter(tags=["companion-stream"])
 CompanionChatServiceDependency = Annotated[
@@ -43,6 +47,7 @@ CompanionOwnershipDependency = Annotated[
 _TERMINAL_EVENT_TYPES = frozenset({"done", "error", "cancelled"})
 _STREAM_FLUSH_INTERVAL_SECONDS = 0.25
 _STREAM_FLUSH_CHARACTER_STEP = 256
+_logger = logging.getLogger(__name__)
 
 
 def _stream_kwargs(payload: Any) -> dict[str, Any]:
@@ -62,6 +67,8 @@ def _stream_kwargs(payload: Any) -> dict[str, Any]:
         "history": tuple((item.role, item.content) for item in payload.history),
         "request_id": payload.request_id,
         "context_mode": payload.context_mode,
+        "knowledge_enabled": payload.knowledge_enabled,
+        "knowledge_document_ids": tuple(payload.knowledge_document_ids),
     }
 
 
@@ -306,7 +313,22 @@ async def stream_companion_chat(
             persisted_length = 0
             last_flush = monotonic()
             try:
-                for delta in service.stream(**_stream_kwargs(payload)):
+                stream_kwargs = _stream_kwargs(payload)
+                grounding = None
+                prepare_knowledge = getattr(service, "prepare_knowledge", None)
+                if payload.knowledge_enabled and callable(prepare_knowledge):
+                    grounding = prepare_knowledge(
+                        payload.user_message,
+                        tuple(payload.knowledge_document_ids),
+                        history=tuple(
+                            (item.role, item.content) for item in payload.history
+                        ),
+                    )
+                    stream_kwargs["tool_name"] = "search_knowledge_base"
+                    stream_kwargs["tool_context"] = grounding.tool_context
+                stream_kwargs.pop("knowledge_enabled", None)
+                stream_kwargs.pop("knowledge_document_ids", None)
+                for delta in service.stream(**stream_kwargs):
                     if cancel_event.is_set():
                         return
                     ownership.touch(
@@ -316,6 +338,23 @@ async def stream_companion_chat(
                     )
                     accumulated.append(delta)
                     text = "".join(accumulated)
+                    if payload.knowledge_enabled:
+                        # Knowledge output is provisional until deterministic
+                        # grounding verification completes. The desktop runtime
+                        # renders accumulated_text as a replaceable streaming
+                        # draft, while persistence remains untouched until the
+                        # authoritative verified/fallback result is available.
+                        emit(
+                            {
+                                "type": "delta",
+                                "request_id": request_id,
+                                "conversation_id": conversation_id,
+                                "message_id": assistant_message_id,
+                                "delta": delta,
+                                "accumulated_text": text,
+                            }
+                        )
+                        continue
                     update_latest(text)
                     now = monotonic()
                     if (
@@ -338,14 +377,92 @@ async def stream_companion_chat(
 
                 if cancel_event.is_set():
                     return
-                text = "".join(accumulated)
+                generated_text = "".join(accumulated)
+                text = generated_text
                 update_latest(text)
+                grounding_fallback = (
+                    str(getattr(grounding, "fallback_reason", "") or "")
+                    if grounding
+                    else ""
+                )
+                grounding_evidence = tuple(getattr(grounding, "evidence", ()) or ())
+                grounding_citations = tuple(getattr(grounding, "citations", ()) or ())
+                verification_payload: dict[str, Any] | None = None
+                if payload.knowledge_enabled:
+                    verification = AgentClaimEvidenceVerifier().verify(
+                        output_text=text,
+                        evidence=grounding_evidence,
+                        citations=grounding_citations,
+                    )
+                    verification_payload = {
+                        "passed": verification.passed,
+                        "strict_passed": verification.strict_passed,
+                        "partial_grounding": verification.partial_grounding,
+                        "claim_count": verification.claim_count,
+                        "cited_claim_count": verification.cited_claim_count,
+                        "supported_claim_count": verification.supported_claim_count,
+                        "unsupported_claim_count": verification.unsupported_claim_count,
+                        "invalid_citation_count": verification.invalid_citation_count,
+                        "citation_coverage": verification.citation_coverage,
+                        "support_rate": verification.support_rate,
+                        "paragraph_count": verification.paragraph_count,
+                        "cited_paragraph_count": verification.cited_paragraph_count,
+                        "supported_paragraph_count": verification.supported_paragraph_count,
+                        "paragraph_citation_coverage": verification.paragraph_citation_coverage,
+                        "paragraph_support_rate": verification.paragraph_support_rate,
+                        "reason_codes": list(verification.reason_codes),
+                    }
+                    if not verification.passed:
+                        text = evidence_only_grounding_fallback(
+                            evidence=list(grounding_evidence),
+                            citations=list(grounding_citations),
+                        )
+                        grounding_fallback = "; ".join(
+                            part
+                            for part in (
+                                grounding_fallback,
+                                "grounding_verification_failed:",
+                                ",".join(verification.reason_codes),
+                            )
+                            if part
+                        )
+                    update_latest(text)
+                    store.update_stream(assistant_message_id, text)
+                    if text != generated_text:
+                        # accumulated_text is authoritative for delta rendering,
+                        # so a hard fallback atomically replaces the provisional
+                        # draft instead of appending to it.
+                        emit(
+                            {
+                                "type": "delta",
+                                "request_id": request_id,
+                                "conversation_id": conversation_id,
+                                "message_id": assistant_message_id,
+                                "delta": "",
+                                "accumulated_text": text,
+                            }
+                        )
                 commit_terminal(
                     "complete",
                     content=text,
                     provider=service.provider_name,
                     model=service.model,
                 )
+                if payload.knowledge_enabled:
+                    try:
+                        save_message_grounding(
+                            store.storage_path,
+                            assistant_message_id,
+                            knowledge_enabled=True,
+                            knowledge_fallback_reason=grounding_fallback,
+                            evidence=list(grounding_evidence),
+                            citations=list(grounding_citations),
+                        )
+                    except Exception:  # noqa: BLE001 - live answer must survive metadata persistence failure
+                        _logger.exception(
+                            "Failed to persist knowledge grounding for message %s",
+                            assistant_message_id,
+                        )
                 emit(
                     {
                         "type": "done",
@@ -355,6 +472,15 @@ async def stream_companion_chat(
                         "output_text": text,
                         "provider": service.provider_name,
                         "model": service.model,
+                        "knowledge_enabled": payload.knowledge_enabled,
+                        "knowledge_fallback_reason": grounding_fallback,
+                        "evidence": [
+                            item.model_dump(mode="json") for item in grounding_evidence
+                        ],
+                        "citations": [
+                            item.model_dump(mode="json") for item in grounding_citations
+                        ],
+                        "grounding_verification": verification_payload,
                     }
                 )
             except Exception as exc:

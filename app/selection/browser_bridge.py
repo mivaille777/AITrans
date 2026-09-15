@@ -117,6 +117,35 @@ class _BrowserBridgeRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if body:
             self.wfile.write(body)
+        # Flush the complete response while the handler still owns the socket.
+        # This matters on Windows where an early request rejection can otherwise
+        # surface to urllib as WinError 10053 instead of the intended HTTPError.
+        self.wfile.flush()
+
+    def _read_bounded_body(self) -> tuple[int, bytes | None]:
+        """Read one bounded POST body before protocol-level rejection.
+
+        Consuming a small, declared request body before returning a 4xx avoids
+        Windows resetting the TCP connection because unread inbound bytes remain
+        when BaseHTTPRequestHandler finishes the request. The bytes are not
+        parsed or trusted until bridge header/origin validation succeeds.
+        """
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            return 400, None
+        if length <= 0:
+            return 400, None
+        if length > MAX_BROWSER_BRIDGE_PAYLOAD_BYTES:
+            return 413, None
+        try:
+            raw = self.rfile.read(length)
+        except OSError:
+            return 400, None
+        if len(raw) != length:
+            return 400, None
+        return 200, raw
 
     def do_OPTIONS(self) -> None:  # noqa: N802 - stdlib handler contract
         # A normal webpage attempting the custom bridge header would need a
@@ -138,6 +167,15 @@ class _BrowserBridgeRequestHandler(BaseHTTPRequestHandler):
         if self.path != BROWSER_SELECTION_PATH:
             self._write_status(404)
             return
+
+        body_status, raw = self._read_bounded_body()
+        if raw is None:
+            self._write_status(body_status)
+            return
+
+        # Authentication still happens before payload decoding/validation. We
+        # only consumed the bounded raw bytes above so Windows can receive a
+        # deterministic HTTP response instead of a connection reset.
         if self.headers.get(BRIDGE_HEADER_NAME, "") != BRIDGE_HEADER_VALUE:
             self._write_status(403)
             return
@@ -152,18 +190,8 @@ class _BrowserBridgeRequestHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except (TypeError, ValueError):
-            self._write_status(400)
-            return
-        if length <= 0 or length > MAX_BROWSER_BRIDGE_PAYLOAD_BYTES:
-            self._write_status(413 if length > 0 else 400)
-            return
-
-        try:
-            raw = self.rfile.read(length)
             payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+        except (UnicodeDecodeError, json.JSONDecodeError):
             self._write_status(400)
             return
         if not isinstance(payload, dict):

@@ -38,7 +38,6 @@ def main() -> int:
     print(f"Windows version: {_windows_version()}")
 
     checks = [
-        ("PySide6", ("PySide6",)),
         ("pywin32", ("win32com.client", "win32api")),
         ("pynput", ("pynput",)),
         ("cachetools", ("cachetools",)),

@@ -1,0 +1,142 @@
+import type { ReadingContextFields } from "../../../api/types"
+import type { AgentContextMode } from "./agent-context-mode"
+
+export interface AgentResolvedContext {
+  mode: AgentContextMode
+  sourceText: string
+  context: ReadingContextFields
+}
+
+export interface AgentContextResolverInput {
+  mode: AgentContextMode
+  readingText?: string
+  readingContext?: ReadingContextFields | null
+  browserContext?: ReadingContextFields | null
+  fallbackText?: string
+}
+
+export interface AgentContextModeInput {
+  userMessage: string
+  hasReadingContext?: boolean
+  hasKnowledgeScope?: boolean
+  hasResearchWorkspace?: boolean
+}
+
+const emptyContext: ReadingContextFields = {
+  resource_url: "",
+  resource_title: "",
+  section_heading: "",
+  context_before: "",
+  context_after: "",
+  source_kind: "desktop",
+}
+
+const KNOWLEDGE_PATTERNS = [
+  /知识库/u,
+  /知识文档/u,
+  /knowledge\s*(base|library)/i,
+  /indexed\s+documents?/i,
+]
+
+const RESEARCH_PATTERNS = [
+  /研究项目/u,
+  /研究笔记/u,
+  /证据账本/u,
+  /research\s+projects?/i,
+  /research\s+notes?/i,
+  /evidence\s+ledger/i,
+]
+
+const READING_PATTERNS = [
+  /当前(?:选中|选区|段落|章节|文章|论文|文档|证据)/u,
+  /选中(?:内容|文本|段落|章节|证据)/u,
+  /这(?:一?段|一?节|一?章|篇论文|篇文章|个文档|条证据|个证据)/u,
+  /\bcurrent\s+(?:selection|passage|section|paper|document|evidence)\b/i,
+  /\bselected\s+(?:text|passage|section|evidence)\b/i,
+  /\bthis\s+(?:passage|section|paper|document|evidence)\b/i,
+]
+
+const TRANSLATION_PATTERNS = [
+  /翻译/u,
+  /译成/u,
+  /译为/u,
+  /\btranslat(?:e|ion|ing)\b/i,
+]
+
+function matchesAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text))
+}
+
+export function inferAgentContextMode({
+  userMessage,
+  hasReadingContext = false,
+  hasKnowledgeScope = false,
+  hasResearchWorkspace = false,
+}: AgentContextModeInput): AgentContextMode {
+  const message = userMessage.trim()
+  if (!message) return "general"
+
+  // Explicit corpus/project references outrank embedded operations such as
+  // "translate the abstract" so a compound knowledge task cannot inherit an
+  // unrelated reading selection merely because translation is one subtask.
+  if (matchesAny(message, KNOWLEDGE_PATTERNS)) return "knowledge"
+  if (matchesAny(message, RESEARCH_PATTERNS)) return "research"
+
+  // Deictic references such as "this evidence" are reading-grounded when a
+  // trusted selection is attached. This must run before the broader
+  // Knowledge/Research fallbacks below; otherwise mentioning "paper" or
+  // "evidence" can detach the exact Paper Reader selection that the tool needs.
+  if (matchesAny(message, READING_PATTERNS) && hasReadingContext) {
+    return matchesAny(message, TRANSLATION_PATTERNS) ? "translation" : "reading"
+  }
+
+  if (matchesAny(message, TRANSLATION_PATTERNS) && hasReadingContext) {
+    return "translation"
+  }
+
+  if (hasResearchWorkspace && /(?:项目|project|evidence|证据|笔记|notes?)/iu.test(message)) {
+    return "research"
+  }
+
+  if (hasKnowledgeScope && /(?:论文|文献|documents?|papers?|corpus|资料)/iu.test(message)) {
+    return "knowledge"
+  }
+
+  return "general"
+}
+
+export function resolveAgentContext(input: AgentContextResolverInput): AgentResolvedContext {
+  const explicitKnowledgeHandoff = input.readingContext?.source_kind === "knowledge_document"
+
+  // A knowledge/card/canvas handoff is an explicit bounded context chosen by
+  // the user. Keep it attached even if the next free-form prompt is classified
+  // as General/Knowledge/Research. This is deliberately narrower than ordinary
+  // ambient Reading context so stale browser/desktop selections remain isolated.
+  if (explicitKnowledgeHandoff) {
+    return {
+      mode: input.mode,
+      sourceText: (input.readingText || input.fallbackText || "").trim(),
+      context: input.readingContext ?? emptyContext,
+    }
+  }
+
+  // General, Knowledge and Research requests are intentionally detached from
+  // ambient Reading selections. Their evidence arrives through conversation
+  // history, trusted research scope and retrieval tools instead.
+  if (input.mode === "general" || input.mode === "knowledge" || input.mode === "research") {
+    return {
+      mode: input.mode,
+      sourceText: "",
+      context: emptyContext,
+    }
+  }
+
+  const sourceText = (input.readingText || input.fallbackText || "").trim()
+  const context = input.readingContext ?? input.browserContext ?? emptyContext
+
+  return {
+    mode: input.mode,
+    sourceText,
+    context,
+  }
+}

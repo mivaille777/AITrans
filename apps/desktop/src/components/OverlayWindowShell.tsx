@@ -25,7 +25,7 @@ export default function OverlayWindowShell({
     >
       <section
         data-overlay-context-id={contextId}
-        className={`ait-overlay-shell flex h-full flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-900 shadow-2xl ${
+        className={`ait-overlay-shell flex h-full flex-col overflow-hidden rounded-[24px] border border-white/10 shadow-2xl ${
           nearCursor ? "ait-overlay-near-enter" : ""
         }`}
       >

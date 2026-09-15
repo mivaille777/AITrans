@@ -9,6 +9,7 @@ from backend.agent_core.state import AgentState
 from backend.api.agent import run_product_agent, run_product_agent_trace
 from backend.api.agent_dependencies import get_agent_runtime
 from backend.main import create_app
+from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.models.agent_tools import AgentRunRequest
 
 
@@ -142,6 +143,32 @@ class CancellableRuntime:
             control.checkpoint("cancellable_test")
 
 
+class EvidenceRuntime(FakeRuntime):
+    def execute(self, state: AgentState, *, event_sink=None, control=None) -> AgentState:
+        state = super().execute(state, event_sink=event_sink, control=control)
+        state.evidence = [
+            AgentEvidenceItem(
+                evidence_id="evidence:chunk-1",
+                source_type="knowledge",
+                source_id="document-1",
+                title="Control Paper",
+                resource_url="file:///C:/papers/control.pdf",
+                location="Page 3 · Section Method",
+                excerpt="The controller uses bounded evidence.",
+                score=0.91,
+            )
+        ]
+        state.citations = [
+            AgentCitationRef(
+                citation_id="citation-1",
+                evidence_ids=["evidence:chunk-1"],
+                label="[1]",
+            )
+        ]
+        state.response["output_text"] = "Grounded response [1]"
+        return state
+
+
 def _request() -> AgentRunRequest:
     return AgentRunRequest(
         session_id="session-12",
@@ -220,6 +247,16 @@ def test_agent_trace_response_includes_correlation_and_timing_metadata() -> None
     ]
     assert all(event.run_id == response.run_id for event in response.events)
     assert all(event.trace_id == "trace-api-12" for event in response.events)
+
+
+def test_agent_response_exposes_program_verified_evidence_and_citations() -> None:
+    response = run_product_agent_trace(_request(), EvidenceRuntime())
+
+    assert response.run.output_text == "Grounded response [1]"
+    assert response.run.citations[0].label == "[1]"
+    assert response.run.citations[0].evidence_ids == ["evidence:chunk-1"]
+    assert response.run.evidence[0].resource_url == "file:///C:/papers/control.pdf"
+    assert response.run.evidence[0].location == "Page 3 · Section Method"
 
 
 def test_agent_trace_confirmation_has_no_tool_result_event() -> None:

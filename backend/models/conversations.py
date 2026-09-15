@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+
 ConversationMessageStatus = Literal["complete", "streaming", "cancelled", "error"]
 ConversationRole = Literal["user", "assistant"]
 ConversationContextMode = Literal["general", "reading"]
@@ -19,6 +21,10 @@ class ConversationMessageResponse(BaseModel):
     provider: str = ""
     model: str = ""
     error_code: str = ""
+    knowledge_enabled: bool = False
+    knowledge_fallback_reason: str = ""
+    evidence: list[AgentEvidenceItem] = Field(default_factory=list)
+    citations: list[AgentCitationRef] = Field(default_factory=list)
     created_at: str
     updated_at: str
 

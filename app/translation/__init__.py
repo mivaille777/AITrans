@@ -14,11 +14,6 @@ from app.translation.manager import TranslationManager
 from app.translation.request_version import RequestVersionController
 from app.translation.normalizer import TextNormalizer
 from app.translation.sqlite_cache import SQLiteTranslationStore, normalized_text_hash
-from app.translation.task import (
-    TranslationTask,
-    TranslationTaskFailure,
-    TranslationTaskSignals,
-)
 from app.translation.token.google_tk import generate_token
 from app.translation.youdao_web_provider import YoudaoWebTranslationProvider
 
@@ -35,9 +30,6 @@ __all__ = [
     "WebTranslationError",
     "TranslationManager",
     "RequestVersionController",
-    "TranslationTask",
-    "TranslationTaskFailure",
-    "TranslationTaskSignals",
     "TextNormalizer",
     "TranslationProvider",
     "TranslationRequest",

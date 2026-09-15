@@ -29,11 +29,6 @@ export default function BrowserReadingContextPanel(props: BrowserReadingContextP
     readingSelection?.resource_title ||
     (isBrowserSelection ? browserPage?.title : "") ||
     "Waiting for a reading selection…"
-  const locator =
-    readingSelection?.resource_url ||
-    readingSelection?.local_locator ||
-    (isBrowserSelection ? browserPage?.url : "") ||
-    ""
   const heading =
     readingSelection?.section_heading ||
     (isBrowserSelection ? browserPage?.heading : "") ||
@@ -41,12 +36,12 @@ export default function BrowserReadingContextPanel(props: BrowserReadingContextP
   const captureLabel = readingSelection
     ? `${readingSelection.source_kind || "reading"} · ${readingSelection.provider}`
     : browserStatus?.has_extension_activity
-      ? "Browser DOM bridge ready · Native readers also available"
+      ? "Browser DOM bridge ready · native readers available"
       : "Waiting for Browser DOM / PDF UIA / Word / Desktop UIA"
 
   return (
-    <section className="rounded-[24px] border border-slate-200/70 bg-white/90 p-5 shadow-[0_12px_38px_rgba(15,23,42,0.055)] backdrop-blur-xl">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <section className="rounded-[16px] border border-slate-200/70 bg-white px-4 py-3 shadow-[0_6px_20px_rgba(15,23,42,0.035)]">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
             <span
@@ -56,37 +51,31 @@ export default function BrowserReadingContextPanel(props: BrowserReadingContextP
                   : "bg-slate-300"
               }`}
             />
-            <h2 className="text-sm font-semibold tracking-tight text-slate-900">Unified Reading Context</h2>
+            <h2 className="text-xs font-semibold tracking-tight text-slate-900">Unified Reading Context</h2>
             {readingSelection && (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">
                 {readingSelection.source_kind || "reading"}
               </span>
             )}
           </div>
-          <p className="mt-2 truncate text-sm text-slate-600">{title}</p>
-          {locator && <p className="mt-1 truncate text-xs text-slate-400">{locator}</p>}
-          <p className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.13em] text-slate-400">
-            {captureLabel}
-          </p>
+          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="max-w-[520px] truncate text-xs text-slate-600">{title}</p>
+            {heading && <span className="text-[10px] text-slate-400">§ {heading}</span>}
+            <span className="text-[9px] font-medium uppercase tracking-[0.1em] text-slate-400">{captureLabel}</span>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Toggle
             label="Follow selection"
             checked={followBrowserSelection}
             onChange={onFollowBrowserSelectionChange}
           />
-          <span className="rounded-full border border-cyan-200/70 bg-cyan-50 px-3 py-1.5 text-[11px] font-medium text-cyan-700">
+          <span className="rounded-full border border-cyan-200/70 bg-cyan-50 px-3 py-1.5 text-[10px] font-medium text-cyan-700">
             Assistant-first overlay
           </span>
         </div>
       </div>
-
-      {heading && (
-        <p className="mt-4 rounded-[14px] border border-slate-200/60 bg-slate-50/80 px-3.5 py-2.5 text-xs text-slate-500">
-          Section: <strong className="font-medium text-slate-700">{heading}</strong>
-        </p>
-      )}
     </section>
   )
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class ChatRole(str, Enum):
@@ -61,6 +62,7 @@ class ChatRequest:
     request_id: int = 0
     tool_name: str = ""
     tool_context: str = ""
+    knowledge_context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

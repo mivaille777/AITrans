@@ -44,3 +44,14 @@ class AgentToolTimeoutError(AgentToolError):
             stage="tool",
             fallback_reason="tool_timeout_after_safe_retries",
         )
+
+
+class AgentDecisionTimeoutError(AgentRuntimeError):
+    """Raised when one side-effect-free ReAct decision exceeds its time bound."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message,
+            stage="react_decision",
+            fallback_reason="react_decision_timeout",
+        )

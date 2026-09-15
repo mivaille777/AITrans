@@ -1,0 +1,24 @@
+{
+  "source": "CI run 33181045657 on WebReBuild",
+  "head_sha": "295d36d538eaa4bfe424f48c19c9c6e39b075ea7",
+  "dataset": "backend/evaluation/datasets/stage14_live.jsonl",
+  "case_count": 40,
+  "metrics": {
+    "pass_rate": 1.0,
+    "intent_accuracy": 1.0,
+    "tool_accuracy": 1.0,
+    "task_completion_rate": 0.825,
+    "fallback_rate": 0.1,
+    "tool_failure_rate": 0.1,
+    "retry_rate": 0.125,
+    "timeout_rate": 0.0,
+    "latency_p50_ms": 0,
+    "latency_p95_ms": 15,
+    "average_total_tokens": 395.0,
+    "grounded_rate": 0.25,
+    "grounding_verification_pass_rate": 0.9,
+    "confirmation_guard_rate": 1.0,
+    "redundant_action_rate": 0.025,
+    "react_limit_rate": 0.05
+  }
+}

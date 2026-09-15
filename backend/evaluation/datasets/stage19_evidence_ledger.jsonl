@@ -1,0 +1,10 @@
+{"case_id":"agreement-supported","fixture":"agreement_supported","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_supported_count":1}
+{"case_id":"idempotent-capture","fixture":"idempotent_capture","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_supported_count":1}
+{"case_id":"one-stale-source","fixture":"one_stale_source","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_insufficient_count":1}
+{"case_id":"all-stale-sources","fixture":"all_stale_sources","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_stale_count":1}
+{"case_id":"one-provenance-replaced","fixture":"one_provenance_replaced","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_insufficient_count":1}
+{"case_id":"all-provenance-replaced","fixture":"all_provenance_replaced","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_stale_count":1}
+{"case_id":"disagreement-contested","fixture":"disagreement_contested","capture_query":"Controller defined","query":"Controller","expected_entry_count":2,"expected_contested_count":2}
+{"case_id":"disagreement-peer-stale","fixture":"disagreement_peer_stale","capture_query":"Controller defined","query":"Controller","expected_entry_count":2,"expected_insufficient_count":2}
+{"case_id":"workspace-isolation","fixture":"workspace_isolation","capture_query":"tracking error","query":"tracking error","expected_entry_count":1,"expected_supported_count":1}
+{"case_id":"query-filter","fixture":"query_filter","capture_query":"tracking error","query":"unrelated taxonomy","expected_entry_count":0}

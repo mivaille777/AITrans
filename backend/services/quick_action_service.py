@@ -9,9 +9,12 @@ from app.ai.chat.service import AIChatService
 from app.ai.errors import AIConfigurationError
 from app.ai.service import AITextService
 from app.models.reading_actions import (
+    READING_ANALYZE_EQUATION,
     READING_CONTEXT_TRANSLATE,
+    READING_DEFINE_TERMS,
     READING_EXPLAIN,
     READING_SECTION_ROLE,
+    READING_SECTION_SUMMARIZE,
     READING_SUMMARIZE,
     reading_action_prompt,
 )
@@ -24,6 +27,9 @@ SUPPORTED_QUICK_ACTIONS = frozenset(
         READING_EXPLAIN,
         READING_SUMMARIZE,
         READING_SECTION_ROLE,
+        READING_DEFINE_TERMS,
+        READING_ANALYZE_EQUATION,
+        READING_SECTION_SUMMARIZE,
     }
 )
 

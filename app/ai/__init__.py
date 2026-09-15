@@ -47,7 +47,6 @@ from app.ai.service import (
     DEFAULT_AI_SOURCE_LANGUAGE,
     DEFAULT_AI_TARGET_LANGUAGE,
 )
-from app.ai.task import AITextTask, AITextTaskFailure, AITextTaskSignals
 
 
 __all__ = [
@@ -64,9 +63,6 @@ __all__ = [
     "AITextRequest",
     "AITextResult",
     "AITextService",
-    "AITextTask",
-    "AITextTaskFailure",
-    "AITextTaskSignals",
     "DEFAULT_AI_POLISH_STYLE",
     "DEFAULT_AI_PROVIDER",
     "DEFAULT_AI_SOURCE_LANGUAGE",

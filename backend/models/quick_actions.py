@@ -60,6 +60,7 @@ class ResearchNoteSaveRequest(ReadingContextPayload):
     ai_action: str = Field(default="", max_length=128)
     user_note: str = Field(default="", max_length=20_000)
     conversation_id: str = Field(default="", max_length=128)
+    workspace_id: str = Field(default="", max_length=128)
 
 
 class ResearchNoteSaveResponse(BaseModel):

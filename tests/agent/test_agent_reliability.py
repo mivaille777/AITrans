@@ -8,11 +8,13 @@ from backend.agent_core.events import AgentEventType
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
     AgentCancelledError,
+    AgentDecisionTimeoutError,
     AgentToolTimeoutError,
 )
 from backend.agent_core.reliability import (
     AgentExecutionPolicy,
     AgentRunControl,
+    run_react_decision_with_timeout,
     run_safe_tool_with_timeout,
 )
 from backend.agent_core.runtime import AgentRuntime
@@ -53,6 +55,21 @@ def test_safe_tool_timeout_never_waits_for_blocking_compute_result() -> None:
             lambda: (sleep(0.1), "late")[1],
             control=control,
             tool_name="slow_compute",
+        )
+
+
+def test_react_decision_timeout_never_waits_for_blocking_model_result() -> None:
+    control = AgentRunControl(
+        policy=AgentExecutionPolicy(
+            total_timeout_seconds=1.0,
+            react_decision_timeout_seconds=0.01,
+        )
+    )
+
+    with pytest.raises(AgentDecisionTimeoutError):
+        run_react_decision_with_timeout(
+            lambda: (sleep(0.1), "late decision")[1],
+            control=control,
         )
 
 

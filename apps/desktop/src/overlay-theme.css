@@ -1,0 +1,334 @@
+/*
+ * Overlay material system.
+ *
+ * Layout, interaction and motion continue to live in overlay.css /
+ * overlay-mode-navigation.css. This file is the final material layer: both
+ * themes resolve through semantic tokens instead of light-theme overrides
+ * fighting the classic dark rules.
+ *
+ * The light theme keeps a transparent native host, but the CSS glass itself is
+ * intentionally readability-first: the shell and local surfaces carry a
+ * stronger milky tint so dark text stays legible over busy documents and apps.
+ */
+
+html[data-ait-view="overlay"] {
+  --ait-overlay-host-background: #17171a;
+  --ait-overlay-scrollbar: rgba(229, 229, 236, 0.42);
+  --ait-overlay-scrollbar-hover: rgba(245, 245, 250, 0.62);
+
+  --ait-overlay-shell-border: rgba(255, 255, 255, 0.09);
+  --ait-overlay-shell-background: linear-gradient(155deg, #252528, #17171a 56%, #111113);
+  --ait-overlay-shell-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+  --ait-overlay-shell-backdrop: none;
+  --ait-overlay-shell-highlight: none;
+  --ait-overlay-shell-highlight-shadow: none;
+
+  --ait-overlay-divider: rgba(255, 255, 255, 0.07);
+  --ait-overlay-surface-background: rgba(255, 255, 255, 0.035);
+  --ait-overlay-surface-strong: rgba(255, 255, 255, 0.055);
+  --ait-overlay-surface-hover: rgba(255, 255, 255, 0.09);
+  --ait-overlay-surface-border: rgba(255, 255, 255, 0.08);
+  --ait-overlay-surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+
+  --ait-overlay-control-background: rgba(255, 255, 255, 0.045);
+  --ait-overlay-control-hover: rgba(255, 255, 255, 0.085);
+  --ait-overlay-control-border: rgba(255, 255, 255, 0.075);
+  --ait-overlay-control-border-hover: rgba(255, 255, 255, 0.135);
+  --ait-overlay-control-text: rgba(242, 242, 247, 0.76);
+  --ait-overlay-control-text-hover: rgba(255, 255, 255, 0.96);
+  --ait-overlay-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+
+  --ait-overlay-text-primary: rgba(245, 245, 247, 0.94);
+  --ait-overlay-text-secondary: rgba(203, 213, 225, 0.78);
+  --ait-overlay-text-muted: rgba(148, 163, 184, 0.58);
+  --ait-overlay-accent: rgba(160, 211, 255, 0.94);
+
+  --ait-overlay-field-background: rgba(255, 255, 255, 0.045);
+  --ait-overlay-field-border: rgba(255, 255, 255, 0.08);
+  --ait-overlay-field-focus-border: rgba(255, 255, 255, 0.16);
+  --ait-overlay-field-shadow: none;
+  --ait-overlay-field-backdrop: none;
+
+  --ait-overlay-popover-background: rgba(38, 38, 41, 0.94);
+  --ait-overlay-popover-border: rgba(255, 255, 255, 0.09);
+  --ait-overlay-popover-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --ait-overlay-popover-backdrop: blur(18px) saturate(110%);
+
+  color-scheme: dark;
+  scrollbar-color: var(--ait-overlay-scrollbar) transparent;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] {
+  --ait-overlay-host-background: transparent;
+  --ait-overlay-scrollbar: rgba(57, 75, 102, 0.42);
+  --ait-overlay-scrollbar-hover: rgba(46, 64, 92, 0.58);
+
+  /* Readability-first Liquid Glass: keep the native host transparent, but let
+   * the main shell carry enough milky opacity to separate text from whatever
+   * application happens to be behind the overlay. */
+  --ait-overlay-shell-border: rgba(255, 255, 255, 0.78);
+  --ait-overlay-shell-background:
+    radial-gradient(circle at 14% -8%, rgba(255, 255, 255, 0.72), transparent 46%),
+    radial-gradient(circle at 96% 8%, rgba(200, 222, 250, 0.34), transparent 42%),
+    linear-gradient(145deg, rgba(251, 253, 255, 0.68), rgba(240, 247, 255, 0.62) 48%, rgba(222, 234, 249, 0.56));
+  --ait-overlay-shell-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(82, 108, 145, 0.14),
+    inset 10px 0 26px rgba(255, 255, 255, 0.08);
+  --ait-overlay-shell-backdrop: none;
+  --ait-overlay-shell-highlight:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.42), transparent 22%, transparent 72%, rgba(150, 191, 245, 0.12)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), transparent 20%, transparent 82%, rgba(133, 168, 215, 0.08));
+  --ait-overlay-shell-highlight-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    inset 0 12px 24px rgba(255, 255, 255, 0.08);
+
+  --ait-overlay-divider: rgba(62, 84, 116, 0.22);
+  --ait-overlay-surface-background: rgba(255, 255, 255, 0.3);
+  --ait-overlay-surface-strong: rgba(255, 255, 255, 0.56);
+  --ait-overlay-surface-hover: rgba(255, 255, 255, 0.68);
+  --ait-overlay-surface-border: rgba(73, 96, 130, 0.24);
+  --ait-overlay-surface-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+
+  --ait-overlay-control-background: linear-gradient(145deg, rgba(255, 255, 255, 0.68), rgba(221, 234, 251, 0.52));
+  --ait-overlay-control-hover: linear-gradient(145deg, rgba(255, 255, 255, 0.8), rgba(215, 231, 251, 0.62));
+  --ait-overlay-control-border: rgba(66, 93, 133, 0.28);
+  --ait-overlay-control-border-hover: rgba(52, 84, 137, 0.4);
+  --ait-overlay-control-text: rgba(27, 51, 86, 0.94);
+  --ait-overlay-control-text-hover: rgba(18, 42, 81, 1);
+  --ait-overlay-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+
+  --ait-overlay-text-primary: rgba(18, 29, 45, 0.98);
+  --ait-overlay-text-secondary: rgba(37, 52, 73, 0.9);
+  --ait-overlay-text-muted: rgba(54, 72, 98, 0.78);
+  --ait-overlay-accent: rgba(35, 78, 151, 0.96);
+
+  --ait-overlay-field-background: linear-gradient(145deg, rgba(255, 255, 255, 0.78), rgba(232, 241, 253, 0.58));
+  --ait-overlay-field-border: rgba(65, 90, 127, 0.28);
+  --ait-overlay-field-focus-border: rgba(55, 104, 186, 0.52);
+  --ait-overlay-field-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 5px 14px rgba(53, 76, 110, 0.08);
+  --ait-overlay-field-backdrop: blur(8px) saturate(108%);
+
+  --ait-overlay-popover-background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(230, 240, 253, 0.82));
+  --ait-overlay-popover-border: rgba(255, 255, 255, 0.9);
+  --ait-overlay-popover-shadow:
+    0 18px 46px rgba(55, 75, 105, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  --ait-overlay-popover-backdrop: blur(12px) saturate(112%);
+
+  color-scheme: light;
+  scrollbar-color: var(--ait-overlay-scrollbar) transparent;
+}
+
+html[data-ait-view="overlay"],
+html[data-ait-view="overlay"] body,
+html[data-ait-view="overlay"] #root,
+html[data-ait-view="overlay"] .ait-overlay-root {
+  background: var(--ait-overlay-host-background) !important;
+}
+
+html[data-ait-view="overlay"] *::-webkit-scrollbar-thumb {
+  background: var(--ait-overlay-scrollbar);
+  background-clip: padding-box;
+}
+
+html[data-ait-view="overlay"] *::-webkit-scrollbar-thumb:hover {
+  background: var(--ait-overlay-scrollbar-hover);
+  background-clip: padding-box;
+}
+
+html[data-ait-view="overlay"] .ait-overlay-shell {
+  position: relative;
+  isolation: isolate;
+  border-color: var(--ait-overlay-shell-border) !important;
+  background: var(--ait-overlay-shell-background) !important;
+  box-shadow: var(--ait-overlay-shell-shadow) !important;
+  backdrop-filter: var(--ait-overlay-shell-backdrop);
+  -webkit-backdrop-filter: var(--ait-overlay-shell-backdrop);
+}
+
+html[data-ait-view="overlay"] .ait-overlay-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--ait-overlay-shell-highlight);
+  box-shadow: var(--ait-overlay-shell-highlight-shadow);
+}
+
+html[data-ait-view="overlay"] .ait-overlay-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-ait-view="overlay"] .ait-overlay-shell > header {
+  border-color: var(--ait-overlay-divider) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell > header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(245, 249, 255, 0.38));
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.54);
+}
+
+html[data-ait-view="overlay"] .ait-overlay-source-context,
+html[data-ait-view="overlay"] .ait-overlay-translation-workspace,
+html[data-ait-view="overlay"] .ait-overlay-conversation-divider,
+html[data-ait-view="overlay"] .ait-overlay-conversation-composer {
+  border-color: var(--ait-overlay-divider) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-source-context,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation-divider,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation-composer {
+  background: var(--ait-overlay-surface-background) !important;
+  box-shadow: var(--ait-overlay-surface-highlight);
+}
+
+html[data-ait-view="overlay"] .ait-overlay-translation-select,
+html[data-ait-view="overlay"] .ait-overlay-translation-editor,
+html[data-ait-view="overlay"] .ait-overlay-translation-workspace section:has(.ait-overlay-translation-output),
+html[data-ait-view="overlay"] .ait-overlay-conversation-composer textarea {
+  border-color: var(--ait-overlay-field-border) !important;
+  background: var(--ait-overlay-field-background) !important;
+  box-shadow: var(--ait-overlay-field-shadow);
+  backdrop-filter: var(--ait-overlay-field-backdrop);
+  -webkit-backdrop-filter: var(--ait-overlay-field-backdrop);
+}
+
+html[data-ait-view="overlay"] .ait-overlay-translation-select:focus,
+html[data-ait-view="overlay"] .ait-overlay-translation-editor:focus,
+html[data-ait-view="overlay"] .ait-overlay-conversation-composer textarea:focus {
+  border-color: var(--ait-overlay-field-focus-border) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-translation-select,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-translation-editor,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-translation-output,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation-composer textarea {
+  color: var(--ait-overlay-text-primary) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-translation-select option {
+  background: #f7faff;
+  color: #1f2f49;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation {
+  background: rgba(244, 249, 255, 0.22) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation-messages .rounded-\[15px\] {
+  border-color: var(--ait-overlay-surface-border) !important;
+  background: var(--ait-overlay-surface-strong) !important;
+  color: var(--ait-overlay-text-primary) !important;
+  box-shadow: var(--ait-overlay-surface-highlight);
+}
+
+html[data-ait-view="overlay"] .ait-overlay-action-button {
+  border-color: var(--ait-overlay-control-border) !important;
+  background: var(--ait-overlay-control-background) !important;
+  color: var(--ait-overlay-control-text) !important;
+  box-shadow: var(--ait-overlay-control-shadow) !important;
+}
+
+html[data-ait-view="overlay"] .ait-overlay-action-button:hover:not(:disabled) {
+  border-color: var(--ait-overlay-control-border-hover) !important;
+  background: var(--ait-overlay-control-hover) !important;
+  color: var(--ait-overlay-control-text-hover) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-quiet-button,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-copy-button {
+  border-color: var(--ait-overlay-surface-border) !important;
+  background: var(--ait-overlay-surface-strong) !important;
+  color: var(--ait-overlay-text-secondary) !important;
+  box-shadow: var(--ait-overlay-surface-highlight);
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-quiet-button:hover,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-copy-button:hover {
+  background: var(--ait-overlay-surface-hover) !important;
+  color: var(--ait-overlay-text-primary) !important;
+}
+
+html[data-ait-view="overlay"] .ait-overlay-action-toast,
+html[data-ait-view="overlay"] .ait-overlay-context-menu {
+  border-color: var(--ait-overlay-popover-border) !important;
+  background: var(--ait-overlay-popover-background) !important;
+  box-shadow: var(--ait-overlay-popover-shadow) !important;
+  backdrop-filter: var(--ait-overlay-popover-backdrop);
+  -webkit-backdrop-filter: var(--ait-overlay-popover-backdrop);
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation-scroll > button {
+  border-color: var(--ait-overlay-surface-border) !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+  box-shadow: var(--ait-overlay-surface-highlight) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-drag-handle {
+  color: rgba(52, 70, 96, 0.72) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] header:hover .ait-overlay-drag-handle {
+  color: rgba(32, 51, 80, 0.9) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-conversation-composer textarea::placeholder {
+  color: rgba(62, 77, 99, 0.72) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu button:not(.text-rose-300) {
+  color: rgba(28, 40, 58, 0.94) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu button:not(.text-rose-300):hover {
+  background: rgba(255, 255, 255, 0.72) !important;
+  color: rgba(15, 29, 52, 1) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu kbd {
+  border-color: rgba(66, 88, 121, 0.2) !important;
+  background: rgba(255, 255, 255, 0.62) !important;
+  color: rgba(45, 61, 85, 0.82) !important;
+}
+
+/* Tailwind utility remap for legacy component markup inside the light shell. */
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-100,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-200,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-300 {
+  color: var(--ait-overlay-text-primary) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-400 {
+  color: var(--ait-overlay-text-secondary) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-500,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-shell .text-slate-600 {
+  color: var(--ait-overlay-text-muted) !important;
+}
+
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu .text-slate-300,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu .text-slate-400,
+html[data-ait-view="overlay"][data-ait-overlay-theme="light"] .ait-overlay-context-menu .text-slate-500 {
+  color: var(--ait-overlay-text-secondary) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-ait-view="overlay"] .ait-overlay-shell::before {
+    transition: none;
+  }
+}

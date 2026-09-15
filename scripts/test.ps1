@@ -7,8 +7,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$previousQtPlatform = $env:QT_QPA_PLATFORM
-
 Push-Location $repoRoot
 try {
     $pythonVersion = (& python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Trim()
@@ -27,8 +25,6 @@ try {
         }
     }
 
-    $env:QT_QPA_PLATFORM = "offscreen"
-
     Write-Host "Running local pytest with Python $pythonVersion..."
     & python -m pytest -q --ignore=tests/manual @PytestArgs
     if ($LASTEXITCODE -ne 0) {
@@ -38,11 +34,5 @@ try {
     Write-Host "Local pytest passed."
 }
 finally {
-    if ($null -eq $previousQtPlatform) {
-        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
-    }
-    else {
-        $env:QT_QPA_PLATFORM = $previousQtPlatform
-    }
     Pop-Location
 }

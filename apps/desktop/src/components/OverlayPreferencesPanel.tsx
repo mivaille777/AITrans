@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 
 import { desktop } from "../desktop"
+import { applyOverlayNativeVisualTheme } from "../desktop/overlay-native-theme"
 import type { OverlayPositionMode } from "../desktop"
 import {
   readOverlayPreferences,
@@ -31,6 +32,9 @@ export default function OverlayPreferencesPanel() {
     }
     if ("clickThrough" in patch) {
       await desktop.overlay.setClickThrough(next.clickThrough)
+    }
+    if ("theme" in patch) {
+      await applyOverlayNativeVisualTheme(next.theme).catch(() => undefined)
     }
     if ("positionMode" in patch || "customPosition" in patch) {
       await desktop.overlay.place(next.positionMode, next.customPosition)
@@ -79,7 +83,7 @@ export default function OverlayPreferencesPanel() {
             </p>
             <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">Placement and interaction</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Tune where the overlay appears and how it behaves without changing the reading workflow itself.
+              Tune where the overlay appears, how it behaves, and whether it uses the light Liquid Glass or classic dark appearance.
             </p>
           </div>
 
@@ -107,6 +111,18 @@ export default function OverlayPreferencesPanel() {
               {positionOptions.map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
+            </select>
+          </label>
+
+          <label className="grid gap-2 rounded-[18px] border border-slate-200/60 bg-slate-50/70 p-4 text-xs font-medium text-slate-600">
+            <span>Appearance</span>
+            <select
+              className="rounded-[13px] border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+              value={preferences.theme}
+              onChange={(event) => void apply({ theme: event.target.value as OverlayPreferences["theme"] })}
+            >
+              <option value="light">Light · Liquid Glass</option>
+              <option value="dark">Dark · Classic</option>
             </select>
           </label>
 

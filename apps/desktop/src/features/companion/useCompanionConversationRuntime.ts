@@ -60,6 +60,8 @@ export interface CompanionRuntimeResetOptions {
   draft?: string
   sessionId?: string
   scopeId?: string
+  knowledgeEnabled?: boolean
+  knowledgeDocumentIds?: string[]
 }
 
 export interface UseCompanionConversationRuntimeOptions {
@@ -87,6 +89,10 @@ export interface CompanionConversationRuntime {
   chatStatusLoaded: boolean
   openingConversation: boolean
   contextUpdating: boolean
+  knowledgeEnabled: boolean
+  setKnowledgeEnabled: (enabled: boolean) => void
+  knowledgeDocumentIds: string[]
+  setKnowledgeDocumentIds: (documentIds: string[]) => void
   conversationBusyElsewhere: boolean
   ownerSurface: CompanionClientSurface
   recoveryState: CompanionRecoveryState
@@ -106,6 +112,10 @@ export interface CompanionConversationRuntime {
   ) => Promise<boolean>
 }
 
+function normalizedDocumentIds(values: string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 100)
+}
+
 export function useCompanionConversationRuntime(
   options: UseCompanionConversationRuntimeOptions = {},
 ): CompanionConversationRuntime {
@@ -123,8 +133,12 @@ export function useCompanionConversationRuntime(
   )
   const [openingConversation, setOpeningConversation] = useState(false)
   const [contextUpdating, setContextUpdating] = useState(false)
+  const [knowledgeEnabled, setKnowledgeEnabled] = useState(false)
+  const [knowledgeDocumentIds, setKnowledgeDocumentIds] = useState<string[]>([])
   const [recoveryState, setRecoveryState] = useState<CompanionRecoveryState>("idle")
   const [recoveryDetail, setRecoveryDetail] = useState("")
+  const [clientSurface] = useState<CompanionClientSurface>(options.clientSurface ?? "unknown")
+  const [clientId] = useState(() => createCompanionScope(`client-${clientSurface}`))
 
   const contextRef = useRef(context)
   const contextModeRef = useRef(contextMode)
@@ -135,8 +149,6 @@ export function useCompanionConversationRuntime(
   const scopeRef = useRef(
     options.initialScopeId ?? createCompanionScope("companion"),
   )
-  const clientSurfaceRef = useRef<CompanionClientSurface>(options.clientSurface ?? "unknown")
-  const clientIdRef = useRef(createCompanionScope(`client-${clientSurfaceRef.current}`))
   const requestCounterRef = useRef(0)
   const activeRequestRef = useRef<number | null>(null)
   const streamHandleRef = useRef<CompanionChatStreamHandle | null>(null)
@@ -168,7 +180,7 @@ export function useCompanionConversationRuntime(
   const conversationBusyElsewhere = Boolean(
     conversationId &&
       ownershipQuery.data?.busy &&
-      ownershipQuery.data.owner_id !== clientIdRef.current,
+      ownershipQuery.data.owner_id !== clientId,
   )
 
   const clearRecovery = useCallback(() => {
@@ -221,6 +233,9 @@ export function useCompanionConversationRuntime(
     setMessages([])
     setDraft(next.draft ?? "")
     setErrorMessage("")
+    const nextKnowledgeDocumentIds = normalizedDocumentIds(next.knowledgeDocumentIds)
+    setKnowledgeDocumentIds(nextKnowledgeDocumentIds)
+    setKnowledgeEnabled(Boolean(next.knowledgeEnabled && nextKnowledgeDocumentIds.length > 0))
   }, [
     applyContext,
     applyContextMode,
@@ -510,6 +525,10 @@ export function useCompanionConversationRuntime(
                 serverMessageId: event.message_id,
                 provider: event.provider,
                 model: event.model,
+                knowledgeEnabled: event.knowledge_enabled,
+                knowledgeFallbackReason: event.knowledge_fallback_reason,
+                evidence: event.evidence,
+                citations: event.citations,
                 status: "complete",
               }
             : message,
@@ -613,6 +632,7 @@ export function useCompanionConversationRuntime(
         role: "assistant",
         content: "",
         status: "streaming",
+        knowledgeEnabled,
       },
     ])
 
@@ -627,13 +647,15 @@ export function useCompanionConversationRuntime(
     const payload = buildCompanionChatRequest({
       conversationId: conversationIdRef.current,
       sessionId: sessionIdRef.current,
-      clientId: clientIdRef.current,
-      clientSurface: clientSurfaceRef.current,
+      clientId,
+      clientSurface,
       userMessage: normalized,
       contextMode: contextModeRef.current,
       context: currentContext,
       messages: baseMessages,
       requestId,
+      knowledgeEnabled,
+      knowledgeDocumentIds,
     })
 
     streamHandleRef.current = streamCompanionChat(payload, {
@@ -679,10 +701,14 @@ export function useCompanionConversationRuntime(
     return true
   }, [
     clearRecovery,
+    clientId,
+    clientSurface,
     conversationBusyElsewhere,
     draft,
     finishRequest,
     handleStreamEvent,
+    knowledgeDocumentIds,
+    knowledgeEnabled,
     messages,
     ownerSurface,
     recoverConversation,
@@ -825,6 +851,10 @@ export function useCompanionConversationRuntime(
     chatStatusLoaded: chatStatusQuery.isSuccess,
     openingConversation,
     contextUpdating,
+    knowledgeEnabled,
+    setKnowledgeEnabled,
+    knowledgeDocumentIds,
+    setKnowledgeDocumentIds,
     conversationBusyElsewhere,
     ownerSurface,
     recoveryState,

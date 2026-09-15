@@ -13,6 +13,7 @@ function resolveDesktopAdapter(): DesktopAdapter {
 export const desktop = resolveDesktopAdapter()
 export type {
   DesktopAdapter,
+  DesktopFilesAdapter,
   DesktopPoint,
   DesktopRuntime,
   DesktopSize,

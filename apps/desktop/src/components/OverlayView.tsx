@@ -51,6 +51,7 @@ export default function OverlayView() {
   const overlayContextId = state?.context_id ?? ""
   const overlayRevision = state?.revision ?? 0
   const overlayMode = state?.mode ?? "assistant"
+  const overlayTranslatedText = state?.translated_text ?? ""
   const menuOpen = menuPosition !== null
   const overlaySize = useMemo(
     () => state
@@ -73,13 +74,13 @@ export default function OverlayView() {
   }, [])
 
   const handleCopy = useCallback(async () => {
-    if (!state?.translated_text) return
+    if (!overlayTranslatedText) return
     try {
-      await navigator.clipboard.writeText(state.translated_text)
+      await navigator.clipboard.writeText(overlayTranslatedText)
     } catch {
       // Clipboard access can be unavailable during a dev reload.
     }
-  }, [state?.translated_text])
+  }, [overlayTranslatedText])
 
   useEffect(() => subscribeOverlayPreferences(setPreferences), [])
   useEffect(() => () => cancelAutoDismiss(), [cancelAutoDismiss])

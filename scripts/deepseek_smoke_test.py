@@ -1,11 +1,10 @@
 """Minimal DeepSeek API connectivity smoke test.
 
-The smoke test now exercises the shared Stage 2 DeepSeekClient instead of
-calling the provider SDK directly. It still performs a real network request
-and therefore requires DEEPSEEK_API_KEY.
+The smoke test exercises the shared DeepSeekClient instead of calling the
+provider SDK directly. It performs a real network request and requires a
+DeepSeek key already saved from Settings -> Cloud LLM in the Tauri desktop app.
 
 Usage (PowerShell):
-    $env:DEEPSEEK_API_KEY="your_api_key"
     python scripts/deepseek_smoke_test.py
 """
 

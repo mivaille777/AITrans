@@ -305,7 +305,7 @@ Toast 自动消失，不打断论文阅读；点击“查看”可直接打开 R
 - Python 3.11；
 - 复用 `scripts/test.ps1`；
 - 运行完整 pytest；
-- 运行 `python -m app.main --smoke-test`；
+- 运行 FastAPI 应用工厂 smoke test；
 - 上传 JUnit test artifact；
 - workflow 权限为 `contents: read`。
 
@@ -379,7 +379,7 @@ AITranslator 的首个公开版本，定位为 Windows 桌面划词翻译工具�
 ## v0.1.0 验证结果
 
 - Python 3.11.7 开发环境验证通过。
-- PySide6、pywin32、pynput 和 UI Automation 依赖验证通过。
+- Windows 原生选区、pywin32、pynput 和 UI Automation 依赖验证通过。
 - PyInstaller EXE smoke test 通过。
 - EXE 启动后能够创建配置目录和日志目录。
 - 退出后未发现本次构建产生的残留进程。

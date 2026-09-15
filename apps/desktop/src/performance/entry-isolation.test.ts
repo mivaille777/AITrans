@@ -21,6 +21,7 @@ describe("Batch 5 desktop entry isolation", () => {
 
     expect(source).toContain('import OverlayView from "./components/OverlayView"')
     expect(source).toContain('import "./overlay.css"')
+    expect(source).toContain('import "./overlay-theme.css"')
     expect(source).not.toContain('import App from "./App"')
     expect(source).not.toContain("HashRouter")
   })
@@ -48,10 +49,10 @@ describe("Batch 5 desktop entry isolation", () => {
     expect(overlayWindow?.url).toBe("overlay.html")
     expect(overlayWindow).toMatchObject({
       decorations: false,
-      transparent: false,
+      transparent: true,
       shadow: false,
-      backgroundColor: "#17171a",
     })
+    expect(overlayWindow).not.toHaveProperty("backgroundColor")
   })
 
   it("lazy-loads non-default main workspaces instead of importing them into translation startup", () => {

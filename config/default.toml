@@ -24,19 +24,15 @@ chat_selection_capture_enabled = true
 
 [google_web]
 enabled = true
-# Browser-facing Google Translate only; no Google Cloud/API endpoint is used.
 endpoint = "https://translate.google.com/translate_a/single"
 timeout_ms = 8000
-# One bounded retry absorbs stale sessions and short 429/5xx bursts.
 max_retries = 1
-# Keep automatic/manual live translation from creating back-to-back web hits.
 min_interval_ms = 120
 
 [youdao_web]
 enabled = true
 endpoint = "https://dict.youdao.com/webtranslate"
 timeout_ms = 8000
-# Current WebFanyi keys are fetched lazily from /webtranslate/key.
 max_retries = 1
 min_interval_ms = 200
 
@@ -65,7 +61,6 @@ uia_timeout_ms = 250
 position_mode = "desktop_lyrics_bottom"
 font_family = "Segoe UI"
 font_size = 24
-# Legacy single-opacity key; new settings use the two fields below.
 opacity = 1.0
 background_opacity = 1.0
 text_opacity = 1.0
@@ -78,3 +73,129 @@ custom_position_x = 80
 custom_position_y = 80
 mouse_offset_x = 16
 mouse_offset_y = 16
+
+[rag]
+enabled = true
+
+[rag.advanced_parsing]
+enabled = true
+provider = "docling"
+device = "cpu"
+layout_enabled = true
+table_enabled = true
+ocr_enabled = false
+formula_enabled = false
+document_timeout_seconds = 120.0
+
+[rag.visual_understanding]
+# Stage 2: optional figure-to-text enrichment for the existing text RAG path.
+enabled = false
+provider = "openai_compatible"
+model = ""
+base_url = ""
+inherit_ai_settings = true
+detail = "auto"
+timeout_seconds = 30.0
+max_retries = 1
+max_images_per_document = 24
+max_asset_bytes = 8388608
+
+[rag.visual_retrieval]
+# Stage 3: native late-interaction retrieval over rendered PDF pages / DOCX
+# pictures. Disabled by default so the existing Qwen3 + BM25 text pipeline and
+# its dependency footprint are unchanged unless explicitly enabled.
+enabled = false
+provider = "colpali_engine"
+model_family = "colqwen2_5"
+# Multilingual default suits mixed Chinese/English literature. It is loaded
+# lazily only after Stage 3 is enabled and the first visual encode is required.
+model = "tsystems/colqwen2.5-3b-multilingual-v1.0"
+model_path = ""
+device = "auto"
+precision = "default"
+dimension = 128
+batch_size = 1
+local_files_only = false
+# Preserve the training-time prefix for ColQwen2.5 checkpoints that expect it.
+query_prefix = "Query: "
+# Separate collection: never mutate the established dense-text collection.
+collection_name = "aitrans_knowledge_visual"
+storage_path = "config/rag/qdrant"
+distance = "dot"
+on_disk = false
+asset_storage_path = "config/rag/visual_pages"
+render_dpi = 144
+max_pages_per_document = 64
+max_visual_items_per_document = 96
+text_candidate_pool = 20
+visual_top_k = 12
+# Stage 3.1: first retrieve a wider candidate pool with an L2-normalized
+# centroid vector, then apply ColQwen/ColPali MaxSim only to that pool.
+# Disable prefetch_enabled to recover the exact Stage 3 full-MaxSim path.
+prefetch_enabled = true
+prefetch_top_k = 48
+# If the two-stage Query API fails, retry one direct MaxSim search before
+# degrading to text-only retrieval.
+prefetch_fallback_to_full_scan = true
+fusion_top_k = 20
+rrf_k = 60
+text_weight = 1.0
+visual_weight = 1.0
+
+[rag.chunking]
+target_tokens = 420
+preferred_max_tokens = 550
+hard_max_tokens = 750
+overlap_tokens = 80
+minimum_tokens = 80
+
+[rag.semantic_chunking]
+enabled = true
+merge_similarity = 0.72
+strong_merge_similarity = 0.82
+strong_split_similarity = 0.58
+small_chunk_merge_similarity = 0.78
+adaptive_threshold_enabled = true
+adaptive_std_factor = 1.0
+min_paragraphs_for_adaptive = 4
+centroid_window = 4
+semantic_sentence_fallback = false
+
+[rag.embedding]
+provider = "qwen3"
+model = "Qwen/Qwen3-Embedding-0.6B"
+device = "auto"
+dimension = 1024
+batch_size = 8
+normalize = true
+max_input_tokens = 2048
+warmup = true
+precision = "default"
+local_files_only = false
+model_path = ""
+
+[rag.vector_store]
+provider = "qdrant_local"
+collection_name = "aitrans_knowledge"
+distance = "cosine"
+storage_path = "config/rag/qdrant"
+
+[rag.retrieval]
+dense_top_k = 30
+sparse_top_k = 30
+fusion_top_k = 20
+final_top_k = 8
+fusion = "rrf"
+small_to_big_enabled = true
+small_to_big_top_k = 4
+small_to_big_neighbor_radius = 1
+small_to_big_max_tokens_per_anchor = 1200
+
+[rag.reranker]
+provider = "qwen3"
+model = "Qwen/Qwen3-Reranker-0.6B"
+device = "auto"
+batch_size = 8
+lazy_load = true
+local_files_only = false
+model_path = ""

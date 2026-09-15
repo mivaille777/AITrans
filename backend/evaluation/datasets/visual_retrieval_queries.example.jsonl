@@ -1,0 +1,6 @@
+# Unlabeled cases use full-MaxSim as the oracle. Add relevant_chunk_ids for labeled Recall@K/MRR.
+{"case_id":"architecture","query":"Which figure shows the overall system architecture?"}
+{"case_id":"workflow","query":"Where is the safety gate located in the workflow diagram?"}
+{"case_id":"comparison-chart","query":"Which chart compares the performance of the evaluated methods?"}
+{"case_id":"trend-plot","query":"Which figure shows how the response changes over time?"}
+{"case_id":"table-layout","query":"Which page contains the main quantitative comparison table?"}

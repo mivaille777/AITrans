@@ -129,5 +129,6 @@ def test_bridge_http_receiver_rejects_requests_without_bridge_header() -> None:
         with pytest.raises(HTTPError) as caught:
             urlopen(request, timeout=1.0)
         assert caught.value.code == 403
+        assert bridge.status_snapshot().has_extension_activity is False
     finally:
         bridge.stop()

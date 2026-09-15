@@ -61,6 +61,8 @@ def _handoff_response(state: CompanionHandoffState) -> CompanionHandoffResponse:
         ai_content=state.ai_content,
         ai_action=state.ai_action,
         suggested_prompt=state.suggested_prompt,
+        knowledge_enabled=state.knowledge_enabled,
+        knowledge_document_ids=list(state.knowledge_document_ids),
     )
 
 
@@ -160,6 +162,8 @@ def send_companion_chat(
             history=tuple((item.role, item.content) for item in payload.history),
             request_id=payload.request_id,
             context_mode=payload.context_mode,
+            knowledge_enabled=payload.knowledge_enabled,
+            knowledge_document_ids=tuple(payload.knowledge_document_ids),
         )
     except AIConfigurationError as exc:
         raise HTTPException(
@@ -180,4 +184,8 @@ def send_companion_chat(
         provider=result.provider,
         model=result.model,
         request_id=result.request_id,
+        knowledge_enabled=result.knowledge_enabled,
+        knowledge_fallback_reason=result.knowledge_fallback_reason,
+        evidence=list(result.evidence),
+        citations=list(result.citations),
     )

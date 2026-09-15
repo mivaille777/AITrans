@@ -1,0 +1,13 @@
+{
+  "min_total_cases": 8,
+  "min_pass_rate": 1.0,
+  "min_trajectory_case_rate": 1.0,
+  "min_react_run_rate": 0.3,
+  "min_grounded_rate": 0.25,
+  "min_grounding_verification_run_rate": 0.25,
+  "min_confirmation_guard_rate": 1.0,
+  "min_fallback_accuracy": 1.0,
+  "min_evidence_gate_accuracy": 1.0,
+  "max_redundant_action_rate": 0.0,
+  "max_react_limit_rate": 0.0
+}

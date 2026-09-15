@@ -14,9 +14,6 @@ on:
 permissions:
   contents: read
 
-# Keep only the newest CI for each event/source pair. Push and pull_request
-# workflows must not share the same concurrency group because a branch push
-# can otherwise cancel the PR check that is required before merging to main.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -54,16 +51,57 @@ jobs:
         shell: pwsh
         run: .\scripts\test.ps1 -Install -PytestArgs '--junitxml=test-results/pytest.xml'
 
-      - name: Run legacy application smoke test
+      - name: Run Research Memory reliability benchmark
         shell: pwsh
-        run: python -m app.main --smoke-test
+        run: python scripts/run_research_memory_regression.py --report test-results/research-memory-regression.json
 
-      - name: Upload pytest report
+      - name: Run Cross-document Research benchmark
+        shell: pwsh
+        run: python scripts/run_cross_document_research_regression.py --report test-results/cross-document-research-regression.json
+
+      - name: Run Evidence Ledger benchmark
+        shell: pwsh
+        run: python scripts/run_evidence_ledger_regression.py --report test-results/evidence-ledger-regression.json
+
+      - name: Run Evidence Review & Synthesis benchmark
+        shell: pwsh
+        run: python scripts/run_evidence_review_regression.py --report test-results/evidence-review-regression.json
+
+      - name: Run Agent literature synthesis regression
+        shell: pwsh
+        run: python scripts/run_agent_literature_synthesis_regression.py --report test-results/agent-literature-synthesis-regression.json
+
+      - name: Run Agent regression benchmark
+        shell: pwsh
+        run: python scripts/run_agent_regression_benchmark.py --report test-results/agent-regression.json
+
+      - name: Validate Agent qualitative evaluation protocol
+        shell: pwsh
+        run: >-
+          python scripts/run_agent_quality_evaluation.py
+          --judgements backend/evaluation/fixtures/stage15_quality_judgements.json
+          --reviews backend/evaluation/fixtures/stage15_human_reviews.json
+          --report test-results/agent-quality-protocol.json
+          --require-resolved
+
+      - name: Run FastAPI smoke test
+        shell: pwsh
+        run: python -c "from backend.main import create_app; assert create_app().title == 'AITranslator API'"
+
+      - name: Upload Python test reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ci-pytest-${{ github.run_id }}
-          path: test-results/pytest.xml
+          name: ci-python-${{ github.run_id }}
+          path: |
+            test-results/pytest.xml
+            test-results/research-memory-regression.json
+            test-results/cross-document-research-regression.json
+            test-results/evidence-ledger-regression.json
+            test-results/evidence-review-regression.json
+            test-results/agent-literature-synthesis-regression.json
+            test-results/agent-regression.json
+            test-results/agent-quality-protocol.json
           if-no-files-found: warn
           retention-days: 14
 
@@ -100,7 +138,7 @@ jobs:
         run: npm run build
 
   tauri-shell:
-    name: Tauri shell check
+    name: Tauri shell build
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -111,6 +149,6 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Check Tauri shell
+      - name: Build and link Tauri shell
         shell: pwsh
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features
+        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features

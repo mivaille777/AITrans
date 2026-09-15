@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.models.quick_actions import ReadingContextPayload
 
 
@@ -12,6 +13,8 @@ class CompanionHandoffRequest(ReadingContextPayload):
     ai_content: str = Field(default="", max_length=30_000)
     ai_action: str = Field(default="", max_length=128)
     suggested_prompt: str = Field(default="", max_length=2_000)
+    knowledge_enabled: bool = False
+    knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class CompanionHandoffResponse(ReadingContextPayload):
@@ -22,6 +25,8 @@ class CompanionHandoffResponse(ReadingContextPayload):
     ai_content: str = ""
     ai_action: str = ""
     suggested_prompt: str = ""
+    knowledge_enabled: bool = False
+    knowledge_document_ids: list[str] = Field(default_factory=list)
 
 
 class CompanionHandoffEnvelope(BaseModel):
@@ -61,6 +66,8 @@ class CompanionChatRequest(BaseModel):
     context_before: str = Field(default="", max_length=4000)
     context_after: str = Field(default="", max_length=4000)
     source_kind: str = Field(default="", max_length=128)
+    knowledge_enabled: bool = False
+    knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator("source_language", "target_language")
     @classmethod
@@ -71,7 +78,7 @@ class CompanionChatRequest(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_reading_context(self) -> "CompanionChatRequest":
+    def validate_reading_context(self) -> CompanionChatRequest:
         if self.context_mode == "reading" and not self.source_text.strip():
             raise ValueError("Reading-grounded chat requires selected source text.")
         return self
@@ -85,6 +92,10 @@ class CompanionChatResponse(BaseModel):
     provider: str
     model: str
     request_id: int
+    knowledge_enabled: bool = False
+    knowledge_fallback_reason: str = ""
+    evidence: list[AgentEvidenceItem] = Field(default_factory=list)
+    citations: list[AgentCitationRef] = Field(default_factory=list)
 
 
 class CompanionChatStatusResponse(BaseModel):

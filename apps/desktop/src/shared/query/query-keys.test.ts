@@ -21,4 +21,9 @@ describe("query key registry", () => {
   it("keeps browser selection polling faster than page metadata polling", () => {
     expect(queryPolling.browserSelection).toBeLessThan(queryPolling.browserPage)
   })
+
+  it("uses one shared Knowledge document list key", () => {
+    expect(queryKeys.knowledge.documents).toEqual(["knowledge", "documents"])
+    expect(queryPolling.knowledgeActiveDocuments).toBeLessThan(queryPolling.knowledgeDocuments)
+  })
 })

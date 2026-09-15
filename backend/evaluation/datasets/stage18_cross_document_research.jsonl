@@ -1,0 +1,10 @@
+{"case_id":"crossdoc-exact-claim-agreement","fixture":"exact_claim_agreement","query":"tracking error","expected_document_count":2,"min_agreement_count":1,"max_disagreement_count":0,"min_claim_support_count":2}
+{"case_id":"crossdoc-same-document-sections","fixture":"same_document_sections","query":"Method A","expected_document_count":1,"max_agreement_count":0,"max_disagreement_count":0,"min_relation_support_count":2}
+{"case_id":"crossdoc-relation-agreement","fixture":"relation_agreement","query":"Controller uses Method A","expected_document_count":2,"min_agreement_count":1,"max_disagreement_count":0,"min_relation_support_count":2}
+{"case_id":"crossdoc-conservative-disagreement","fixture":"cross_document_disagreement","query":"Controller defined","expected_document_count":2,"max_agreement_count":0,"min_disagreement_count":1,"min_relation_support_count":2}
+{"case_id":"crossdoc-internal-conflict-not-crossdoc","fixture":"same_document_conflict","query":"Controller defined","expected_document_count":1,"max_disagreement_count":0,"min_relation_support_count":2}
+{"case_id":"crossdoc-stale-peer-excluded","fixture":"stale_peer","query":"Method A","expected_document_count":2,"max_agreement_count":0,"max_disagreement_count":0,"min_relation_support_count":1}
+{"case_id":"crossdoc-detached-peer-excluded","fixture":"detached_peer","query":"Method A","expected_document_count":2,"max_agreement_count":0,"max_disagreement_count":0,"min_relation_support_count":1}
+{"case_id":"crossdoc-workspace-isolation","fixture":"workspace_isolation","query":"Method A","expected_document_count":1,"max_agreement_count":0,"max_disagreement_count":0,"min_relation_support_count":1}
+{"case_id":"crossdoc-query-no-match","fixture":"no_match","query":"zzzz-no-cross-document-match","expected_document_count":2,"max_agreement_count":0,"max_disagreement_count":0,"min_relation_support_count":2}
+{"case_id":"crossdoc-three-document-agreement","fixture":"three_document_agreement","query":"Controller uses Method A","expected_document_count":3,"min_agreement_count":1,"max_disagreement_count":0,"min_relation_support_count":3}

@@ -7,6 +7,7 @@ import type {
   ConversationDetail,
   ConversationMessage,
 } from "../../api/types"
+import type { AgentCitationRef, AgentEvidenceItem } from "../evidence/evidence-types"
 
 export type CompanionMessageStatus = "complete" | "streaming" | "cancelled" | "error"
 
@@ -17,6 +18,10 @@ export interface CompanionRuntimeMessage extends CompanionChatMessage {
   model?: string
   serverMessageId?: string
   errorCode?: string
+  knowledgeEnabled?: boolean
+  knowledgeFallbackReason?: string
+  evidence?: AgentEvidenceItem[]
+  citations?: AgentCitationRef[]
 }
 
 export interface CompanionContextSnapshot {
@@ -70,23 +75,38 @@ export function companionContextSnapshot(
   }
 }
 
+type ScopedCompanionHandoff = CompanionHandoff & {
+  knowledge_enabled?: boolean
+  knowledge_document_ids?: string[]
+}
+
+function normalizedDocumentIds(values: string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 100)
+}
+
 export interface CompanionHandoffRuntimeSeed {
   context: CompanionContextSnapshot
   contextMode: "reading"
   draft: string
   sessionId: string
   scopeId: string
+  knowledgeEnabled: boolean
+  knowledgeDocumentIds: string[]
 }
 
 export function companionHandoffRuntimeSeed(
   handoff: CompanionHandoff,
 ): CompanionHandoffRuntimeSeed {
+  const scoped = handoff as ScopedCompanionHandoff
+  const knowledgeDocumentIds = normalizedDocumentIds(scoped.knowledge_document_ids)
   return {
     context: companionContextSnapshot(handoff),
     contextMode: "reading",
     draft: handoff.suggested_prompt ?? "",
     sessionId: `companion-${handoff.handoff_id}`,
     scopeId: `handoff:${handoff.handoff_id}`,
+    knowledgeEnabled: Boolean(scoped.knowledge_enabled && knowledgeDocumentIds.length > 0),
+    knowledgeDocumentIds,
   }
 }
 
@@ -100,19 +120,33 @@ export function companionHistory(
     .map(({ role, content }) => ({ role, content }))
 }
 
+type PersistedGroundingMessage = ConversationMessage & {
+  knowledge_enabled?: boolean
+  knowledge_fallback_reason?: string
+  evidence?: AgentEvidenceItem[]
+  citations?: AgentCitationRef[]
+}
+
 export function restoreCompanionMessages(
   messages: ConversationMessage[],
 ): CompanionRuntimeMessage[] {
-  return messages.map((message) => ({
-    id: message.message_id,
-    role: message.role,
-    content: message.content,
-    status: message.status,
-    provider: message.provider,
-    model: message.model,
-    serverMessageId: message.message_id,
-    errorCode: message.error_code,
-  }))
+  return messages.map((message) => {
+    const grounded = message as PersistedGroundingMessage
+    return {
+      id: message.message_id,
+      role: message.role,
+      content: message.content,
+      status: message.status,
+      provider: message.provider,
+      model: message.model,
+      serverMessageId: message.message_id,
+      errorCode: message.error_code,
+      knowledgeEnabled: grounded.knowledge_enabled ?? false,
+      knowledgeFallbackReason: grounded.knowledge_fallback_reason ?? "",
+      evidence: grounded.evidence ?? [],
+      citations: grounded.citations ?? [],
+    }
+  })
 }
 
 export function previousCompanionUserMessage(
@@ -144,6 +178,8 @@ export interface CompanionRequestInput {
   context?: CompanionContextSnapshot | null
   messages: CompanionRuntimeMessage[]
   requestId: number
+  knowledgeEnabled?: boolean
+  knowledgeDocumentIds?: string[]
 }
 
 export function buildCompanionChatRequest({
@@ -156,6 +192,8 @@ export function buildCompanionChatRequest({
   context = EMPTY_COMPANION_CONTEXT,
   messages,
   requestId,
+  knowledgeEnabled = false,
+  knowledgeDocumentIds = [],
 }: CompanionRequestInput): CompanionChatRequestWithClient {
   const resolvedContext = context ?? EMPTY_COMPANION_CONTEXT
   return {
@@ -178,5 +216,7 @@ export function buildCompanionChatRequest({
     source_kind: resolvedContext.source_kind,
     history: companionHistory(messages),
     request_id: requestId,
+    knowledge_enabled: knowledgeEnabled,
+    knowledge_document_ids: knowledgeEnabled ? knowledgeDocumentIds : [],
   }
 }

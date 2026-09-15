@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from threading import Lock
 
+from backend.api.knowledge_dependencies import get_retrieval_service
+from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
 from backend.api.llm_dependencies import (
+    build_rag_query_planner,
     build_routed_product_agent_service,
     build_routed_quick_action_service,
 )
@@ -10,7 +13,9 @@ from backend.services.agent_tool_registry import AgentToolRegistry
 from backend.services.browser_context_service import BrowserContextService
 from backend.services.companion_chat_service import CompanionChatService
 from backend.services.companion_handoff_service import CompanionHandoffService
-from backend.services.companion_ownership_service import CompanionConversationOwnershipService
+from backend.services.companion_ownership_service import (
+    CompanionConversationOwnershipService,
+)
 from backend.services.conversation_lifecycle_service import ConversationLifecycleService
 from backend.services.conversation_store_service import ConversationStoreService
 from backend.services.overlay_state_service import OverlayStateService
@@ -18,6 +23,7 @@ from backend.services.product_agent_service import ProductAgentService
 from backend.services.quick_action_service import QuickActionService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.research_note_service import ResearchNoteService
+from backend.services.research_workspace_service import ResearchWorkspaceService
 from backend.services.translation_service import TranslationService
 
 _translation_service: TranslationService | None = None
@@ -30,6 +36,8 @@ _overlay_state_service: OverlayStateService | None = None
 _overlay_state_service_lock = Lock()
 _quick_action_service: QuickActionService | None = None
 _quick_action_service_lock = Lock()
+_research_workspace_service: ResearchWorkspaceService | None = None
+_research_workspace_service_lock = Lock()
 _research_note_service: ResearchNoteService | None = None
 _research_note_service_lock = Lock()
 _companion_handoff_service: CompanionHandoffService | None = None
@@ -134,6 +142,22 @@ def close_quick_action_service() -> None:
         service.close()
 
 
+def get_research_workspace_service() -> ResearchWorkspaceService:
+    global _research_workspace_service
+    if _research_workspace_service is not None:
+        return _research_workspace_service
+    with _research_workspace_service_lock:
+        if _research_workspace_service is None:
+            _research_workspace_service = ResearchWorkspaceService()
+        return _research_workspace_service
+
+
+def close_research_workspace_service() -> None:
+    global _research_workspace_service
+    with _research_workspace_service_lock:
+        _research_workspace_service = None
+
+
 def get_research_note_service() -> ResearchNoteService:
     global _research_note_service
     if _research_note_service is not None:
@@ -141,7 +165,8 @@ def get_research_note_service() -> ResearchNoteService:
     with _research_note_service_lock:
         if _research_note_service is None:
             _research_note_service = ResearchNoteService(
-                reading_resolver=get_reading_selection_resolver()
+                reading_resolver=get_reading_selection_resolver(),
+                workspace_service=get_research_workspace_service(),
             )
         return _research_note_service
 
@@ -165,7 +190,9 @@ def get_companion_chat_service() -> CompanionChatService:
     with _companion_chat_service_lock:
         if _companion_chat_service is None:
             _companion_chat_service = CompanionChatService(
-                reading_resolver=get_reading_selection_resolver()
+                reading_resolver=get_reading_selection_resolver(),
+                retrieval_service=get_retrieval_service(),
+                query_planner=build_rag_query_planner(),
             )
         return _companion_chat_service
 
@@ -220,10 +247,30 @@ def get_agent_tool_registry() -> AgentToolRegistry:
         return _agent_tool_registry
     with _agent_tool_registry_lock:
         if _agent_tool_registry is None:
+            # Local imports avoid module cycles: research-memory and ledger
+            # dependencies reuse the Note/Workspace singletons defined here.
+            from backend.api.evidence_ledger_dependencies import get_evidence_ledger_service
+            from backend.api.research_memory_dependencies import get_research_memory_service
+            from backend.services.cross_document_research_service import (
+                CrossDocumentResearchService,
+            )
+
+            research_note_service = get_research_note_service()
+            research_memory_service = get_research_memory_service()
+            cross_document_service = CrossDocumentResearchService(
+                research_memory_service=research_memory_service,
+                research_note_service=research_note_service,
+            )
             _agent_tool_registry = AgentToolRegistry(
                 translation_service=get_translation_service(),
                 quick_action_service=get_quick_action_service(),
-                research_note_service=get_research_note_service(),
+                research_note_service=research_note_service,
+                research_memory_service=research_memory_service,
+                cross_document_research_service=cross_document_service,
+                evidence_ledger_service=get_evidence_ledger_service(),
+                retrieval_service=get_retrieval_service(),
+                query_planner=build_rag_query_planner(),
+                knowledge_workspace_service=get_knowledge_workspace_service(),
             )
         return _agent_tool_registry
 

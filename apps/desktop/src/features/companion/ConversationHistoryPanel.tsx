@@ -10,6 +10,7 @@ import {
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
 import { Badge } from "../../shared/ui/Badge"
 import { Button } from "../../shared/ui/Button"
+import { companionLayoutClassNames } from "./companion-layout"
 import {
   filterConversationHistory,
   groupConversationHistory,
@@ -83,35 +84,27 @@ export default function ConversationHistoryPanel({
   }
 
   return (
-    <aside className="border-b border-slate-200 bg-[#060918] p-3 text-slate-200 xl:border-b-0 xl:border-r xl:border-white/[0.06]">
-      <div className="px-1 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Conversations
-            </p>
-            <p className="mt-1 text-xs text-slate-400">Local history</p>
-          </div>
-          <Button size="xs" onClick={onNewGeneralConversation}>
-            <Plus size={12} />
-            New
-          </Button>
-        </div>
+    <aside className={companionLayoutClassNames.historyPanel}>
+      <div className="shrink-0 px-1 py-1">
+        <Button className="w-full justify-center" size="xs" onClick={onNewGeneralConversation}>
+          <Plus size={13} />
+          New chat
+        </Button>
 
         {hasCurrentReading && (
           <button
             type="button"
-            className="ait-control-motion mt-3 w-full rounded-[13px] border border-cyan-400/20 bg-cyan-400/[0.09] px-3 py-2.5 text-left text-xs font-medium text-cyan-100 hover:bg-cyan-400/[0.14]"
+            className="ait-control-motion mt-2.5 w-full rounded-[11px] border border-blue-200/70 bg-blue-50/70 px-3 py-2.5 text-left text-xs font-medium text-blue-700 hover:bg-blue-50"
             onClick={onUseCurrentReading}
           >
             Use current reading context
           </button>
         )}
 
-        <label className="mt-3 flex items-center gap-2 rounded-[13px] border border-white/[0.06] bg-white/[0.045] px-3 py-2.5 transition-colors focus-within:border-white/[0.14] focus-within:bg-white/[0.06]">
-          <Search size={13} className="shrink-0 text-slate-500" />
+        <label className="mt-2.5 flex items-center gap-2 rounded-[11px] border border-slate-200/80 bg-white px-3 py-2.5 transition-colors focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100">
+          <Search size={13} className="shrink-0 text-slate-400" />
           <input
-            className="min-w-0 flex-1 bg-transparent text-xs text-slate-200 outline-none placeholder:text-slate-600"
+            className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"
             value={search}
             placeholder="Search conversations"
             onChange={(event) => setSearch(event.target.value)}
@@ -119,25 +112,25 @@ export default function ConversationHistoryPanel({
         </label>
       </div>
 
-      <div className="mt-2 max-h-[540px] overflow-y-auto pr-1">
+      <div className={companionLayoutClassNames.historyScroller}>
         {conversationsQuery.isLoading && (
-          <p className="px-2 py-3 text-xs text-slate-500">Loading conversations…</p>
+          <p className="px-2 py-3 text-xs text-slate-400">Loading conversations…</p>
         )}
         {!conversationsQuery.isLoading && conversations.length === 0 && (
-          <p className="px-2 py-3 text-xs leading-5 text-slate-500">
+          <p className="px-2 py-3 text-xs leading-5 text-slate-400">
             No saved conversations yet. Start a General Chat or open the current reading context.
           </p>
         )}
         {!conversationsQuery.isLoading && conversations.length > 0 && filtered.length === 0 && (
-          <p className="px-2 py-3 text-xs leading-5 text-slate-500">
+          <p className="px-2 py-3 text-xs leading-5 text-slate-400">
             No conversations match “{search.trim()}”.
           </p>
         )}
 
-        <div className="space-y-4">
+        <div className="space-y-4 pt-2">
           {groups.map((group) => (
             <section key={group.label}>
-              <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+              <p className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-slate-400">
                 {group.label}
               </p>
               <div className="space-y-1">
@@ -147,17 +140,17 @@ export default function ConversationHistoryPanel({
                   return (
                     <div
                       key={conversation.conversation_id}
-                      className={`ait-conversation-item group rounded-[14px] border p-2.5 ${
+                      className={`ait-conversation-item group rounded-[11px] border p-2.5 ${
                         active
-                          ? "translate-x-1 border-white/[0.09] bg-white/[0.09] shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
-                          : "border-transparent hover:translate-x-0.5 hover:border-white/[0.06] hover:bg-white/[0.05]"
+                          ? "border-blue-200/70 bg-blue-50/75 shadow-sm"
+                          : "border-transparent hover:border-slate-200/80 hover:bg-white"
                       }`}
                     >
                       {editing ? (
                         <div>
                           <input
                             autoFocus
-                            className="w-full rounded-[10px] border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-500/50"
+                            className="w-full rounded-[9px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-800 outline-none focus:border-blue-300"
                             value={editingTitle}
                             onChange={(event) => setEditingTitle(event.target.value)}
                             onKeyDown={(event) => {
@@ -171,7 +164,7 @@ export default function ConversationHistoryPanel({
                           <div className="mt-2 flex gap-1">
                             <button
                               type="button"
-                              className="rounded-[9px] bg-slate-800 px-2 py-1 text-[10px] text-slate-200"
+                              className="rounded-[8px] bg-slate-900 px-2 py-1 text-[10px] text-white"
                               disabled={renameMutation.isPending}
                               onClick={() => commitRename(conversation.conversation_id)}
                             >
@@ -179,7 +172,7 @@ export default function ConversationHistoryPanel({
                             </button>
                             <button
                               type="button"
-                              className="rounded-[9px] px-2 py-1 text-[10px] text-slate-500 hover:text-slate-200"
+                              className="rounded-[8px] px-2 py-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                               onClick={() => {
                                 setEditingId("")
                                 setEditingTitle("")
@@ -196,7 +189,7 @@ export default function ConversationHistoryPanel({
                             className="block w-full text-left"
                             onClick={() => onOpen(conversation.conversation_id)}
                           >
-                            <p className="line-clamp-2 text-xs font-medium leading-5 text-slate-200">
+                            <p className="line-clamp-2 text-xs font-medium leading-5 text-slate-700">
                               {conversation.title}
                             </p>
                             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -205,23 +198,23 @@ export default function ConversationHistoryPanel({
                               </Badge>
                               {conversation.model && <Badge tone="neutral">{conversation.model}</Badge>}
                               {conversation.section_heading && (
-                                <span className="line-clamp-1 text-[10px] text-slate-500">
+                                <span className="line-clamp-1 text-[10px] text-slate-400">
                                   {conversation.section_heading}
                                 </span>
                               )}
                             </div>
                           </button>
-                          <div className={`mt-2 flex gap-1 transition-opacity ${active ? "opacity-80" : "opacity-0 group-hover:opacity-80"}`}>
+                          <div className={`mt-2 flex gap-1 transition-opacity ${active ? "opacity-70" : "opacity-0 group-hover:opacity-70"}`}>
                             <button
                               type="button"
-                              className="rounded-[8px] px-1.5 py-1 text-[10px] text-slate-500 hover:bg-white/[0.06] hover:text-slate-200"
+                              className="rounded-[7px] px-1.5 py-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                               onClick={() => beginRename(conversation.conversation_id, conversation.title)}
                             >
                               Rename
                             </button>
                             <button
                               type="button"
-                              className="rounded-[8px] px-1.5 py-1 text-[10px] text-slate-500 hover:bg-rose-500/10 hover:text-rose-300"
+                              className="rounded-[7px] px-1.5 py-1 text-[10px] text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                               onClick={() => remove(conversation.conversation_id, conversation.title)}
                             >
                               Delete

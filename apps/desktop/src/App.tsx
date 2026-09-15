@@ -1,17 +1,22 @@
 import { lazy, Suspense } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
+import AgentWorkspace from "./features/agent/AgentWorkspace"
 import CompanionHandoffNavigator from "./features/companion/CompanionHandoffNavigator"
-import AgentWorkspace from "./features/companion/AgentWorkspace"
 import BrowserReadingContextPanel from "./features/reading/BrowserReadingContextPanel"
 import TranslationWorkspace from "./features/translation/TranslationWorkspace"
 import { useTranslationWorkspace } from "./features/translation/useTranslationWorkspace"
 import WorkspaceShell from "./features/workspace/WorkspaceShell"
+import { workspaceRouteUsesFixedHeight } from "./features/workspace/workspace-navigation"
 import WorkspaceRouteBoundary from "./shared/errors/WorkspaceRouteBoundary"
+import { getLlmRuntimeStatus, type LlmRuntimeStatus } from "./api/llm-settings"
+import { queryKeys, queryPolling } from "./shared/query/query-keys"
 
 const ReadingWorkspace = lazy(() => import("./features/reading/ReadingWorkspace"))
 const CompanionWorkspaceV2 = lazy(() => import("./features/companion/CompanionWorkspaceV2"))
 const ResearchRoute = lazy(() => import("./features/research/ResearchRoute"))
+const KnowledgeRoute = lazy(() => import("./features/knowledge/KnowledgeRoute"))
 const SettingsWorkspace = lazy(() => import("./features/settings/SettingsWorkspace"))
 
 function WorkspaceRouteFallback() {
@@ -33,21 +38,40 @@ function WorkspaceRouteFallback() {
 function App() {
   const workspace = useTranslationWorkspace()
   const location = useLocation()
+  const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
+  const llmStatusQuery = useQuery({
+    queryKey: queryKeys.llm.status,
+    queryFn: getLlmRuntimeStatus,
+    enabled: workspace.backendState === "connected",
+    refetchInterval: queryPolling.llmStatus,
+    retry: 0,
+  })
+  const unavailableStatus: LlmRuntimeStatus = {
+    state: "unavailable",
+    provider: "",
+    model: "",
+    detail: workspace.backendState === "offline"
+      ? "Backend is unavailable."
+      : "Checking the configured LLM API…",
+    active_requests: 0,
+  }
+  const llmStatus = llmStatusQuery.isError
+    ? { ...unavailableStatus, detail: "Unable to read LLM status." }
+    : llmStatusQuery.data ?? unavailableStatus
 
   return (
     <WorkspaceShell
-      backendState={workspace.backendState}
-      backendService={workspace.backendService}
-      providerName={workspace.providerName}
-      browserStatus={workspace.browserStatus}
-      browserStatusChecking={workspace.browserStatusChecking}
+      llmStatus={llmStatus}
     >
       <CompanionHandoffNavigator />
-      <div key={location.pathname} className="workspace-route-enter">
+      <div
+        key={location.pathname}
+        className={`workspace-route-enter ${fixedHeightRoute ? "h-full min-h-0" : ""}`}
+      >
         <WorkspaceRouteBoundary>
           <Suspense fallback={<WorkspaceRouteFallback />}>
             <Routes>
-              <Route path="/" element={<Navigate to="/translation" replace />} />
+              <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route
                 path="/translation"
                 element={(
@@ -69,9 +93,13 @@ function App() {
               <Route path="/reading" element={<ReadingWorkspace workspace={workspace} />} />
               <Route path="/chat" element={<CompanionWorkspaceV2 />} />
               <Route path="/agent" element={<AgentWorkspace workspace={workspace} />} />
-              <Route path="/research" element={<ResearchRoute backendState={workspace.backendState} />} />
+              <Route path="/knowledge" element={<KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />} />
+              <Route
+                path="/research"
+                element={<ResearchRoute backendState={workspace.backendState} workspace={workspace} />}
+              />
               <Route path="/settings" element={<SettingsWorkspace workspace={workspace} />} />
-              <Route path="*" element={<Navigate to="/translation" replace />} />
+              <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>
           </Suspense>
         </WorkspaceRouteBoundary>

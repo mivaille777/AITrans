@@ -35,10 +35,10 @@ export default function OverlayTranslationWorkspace({
   const [notice, setNotice] = useState(state.translation_notice ?? "")
   const [errorMessage, setErrorMessage] = useState("")
   const [pending, setPending] = useState(false)
+  const [userTouched, setUserTouched] = useState(false)
 
   const activeContextRef = useRef(state.context_id)
   const requestSequenceRef = useRef(0)
-  const userTouchedRef = useRef(false)
   const immediateRef = useRef(false)
 
   useEffect(() => {
@@ -46,7 +46,6 @@ export default function OverlayTranslationWorkspace({
 
     activeContextRef.current = state.context_id
     requestSequenceRef.current += 1
-    userTouchedRef.current = false
     immediateRef.current = false
 
     setWorkingText(state.source_text)
@@ -59,6 +58,7 @@ export default function OverlayTranslationWorkspace({
     setNotice(state.translation_notice ?? "")
     setErrorMessage("")
     setPending(false)
+    setUserTouched(false)
   }, [
     state.context_id,
     state.provider,
@@ -72,44 +72,15 @@ export default function OverlayTranslationWorkspace({
   useEffect(() => {
     if (visible) return
     requestSequenceRef.current += 1
-    setPending(false)
+    const timer = window.setTimeout(() => setPending(false), 0)
+    return () => window.clearTimeout(timer)
   }, [visible])
 
   useEffect(() => {
-    if (!visible || userTouchedRef.current) return
-    if (!state.translated_text.trim()) return
-    if (workingText !== state.source_text) return
-
-    setTranslatedText(state.translated_text)
-    setActualProvider(state.provider)
-    setSourceLanguage(state.source_language || "auto")
-    setTargetLanguage(state.target_language || "zh-CN")
-    setNotice(state.translation_notice ?? "")
-    setErrorMessage("")
-  }, [
-    state.provider,
-    state.source_language,
-    state.source_text,
-    state.target_language,
-    state.translated_text,
-    state.translation_notice,
-    visible,
-    workingText,
-  ])
-
-  useEffect(() => {
-    if (!visible || !userTouchedRef.current) return
+    if (!visible || !userTouched) return
 
     const normalizedSource = workingText.trim()
-    if (!normalizedSource) {
-      requestSequenceRef.current += 1
-      setTranslatedText("")
-      setActualProvider("")
-      setNotice("")
-      setErrorMessage("")
-      setPending(false)
-      return
-    }
+    if (!normalizedSource) return
 
     const delay = immediateRef.current ? 0 : TRANSLATION_DEBOUNCE_MS
     immediateRef.current = false
@@ -186,13 +157,43 @@ export default function OverlayTranslationWorkspace({
     state.source_kind,
     state.source_text,
     targetLanguage,
+    userTouched,
     visible,
     workingText,
   ])
 
+  const useOverlayTranslation = (
+    !userTouched &&
+    workingText === state.source_text &&
+    Boolean(state.translated_text.trim())
+  )
+  const displayedTranslatedText = useOverlayTranslation
+    ? state.translated_text
+    : translatedText
+  const displayedActualProvider = useOverlayTranslation
+    ? state.provider
+    : actualProvider
+  const displayedSourceLanguage = useOverlayTranslation
+    ? state.source_language || "auto"
+    : sourceLanguage
+  const displayedTargetLanguage = useOverlayTranslation
+    ? state.target_language || "zh-CN"
+    : targetLanguage
+  const displayedNotice = useOverlayTranslation
+    ? state.translation_notice ?? ""
+    : notice
+
   function markUserChange(immediate = false) {
+    if (!userTouched) {
+      setTranslatedText(displayedTranslatedText)
+      setActualProvider(displayedActualProvider)
+      setSourceLanguage(displayedSourceLanguage)
+      setTargetLanguage(displayedTargetLanguage)
+      setNotice(displayedNotice)
+      setErrorMessage("")
+      setUserTouched(true)
+    }
     requestSequenceRef.current += 1
-    userTouchedRef.current = true
     immediateRef.current = immediate
     setPending(false)
   }
@@ -214,8 +215,8 @@ export default function OverlayTranslationWorkspace({
 
   function handleSwapLanguages() {
     const swapped = resolveTranslationLanguageSwap(
-      sourceLanguage,
-      targetLanguage,
+      displayedSourceLanguage,
+      displayedTargetLanguage,
       detectedSourceLanguage,
     )
     if (!swapped) return
@@ -224,9 +225,19 @@ export default function OverlayTranslationWorkspace({
     setTargetLanguage(swapped.targetLanguage)
   }
 
+  function handleWorkingTextChange(value: string) {
+    markUserChange(false)
+    setWorkingText(value)
+    if (value.trim()) return
+    setTranslatedText("")
+    setActualProvider("")
+    setNotice("")
+    setErrorMessage("")
+  }
+
   const canSwap = resolveTranslationLanguageSwap(
-    sourceLanguage,
-    targetLanguage,
+    displayedSourceLanguage,
+    displayedTargetLanguage,
     detectedSourceLanguage,
   ) !== null
 
@@ -253,7 +264,7 @@ export default function OverlayTranslationWorkspace({
         <label className="min-w-0 flex-1">
           <span className="sr-only">Source language</span>
           <select
-            value={sourceLanguage}
+            value={displayedSourceLanguage}
             className="ait-overlay-translation-select w-full"
             onChange={(event) => handleSourceLanguageChange(event.target.value)}
           >
@@ -276,7 +287,7 @@ export default function OverlayTranslationWorkspace({
         <label className="min-w-0 flex-1">
           <span className="sr-only">Target language</span>
           <select
-            value={targetLanguage}
+            value={displayedTargetLanguage}
             className="ait-overlay-translation-select w-full"
             onChange={(event) => handleTargetLanguageChange(event.target.value)}
           >
@@ -297,10 +308,7 @@ export default function OverlayTranslationWorkspace({
             value={workingText}
             rows={3}
             className="ait-overlay-translation-editor w-full resize-none rounded-[11px] border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[11px] leading-4 text-slate-200 outline-none focus:border-white/[0.16] focus:bg-white/[0.055]"
-            onChange={(event) => {
-              markUserChange(false)
-              setWorkingText(event.target.value)
-            }}
+            onChange={(event) => handleWorkingTextChange(event.target.value)}
           />
         </section>
 
@@ -310,32 +318,32 @@ export default function OverlayTranslationWorkspace({
             <span className="truncate text-[8px] text-slate-600">
               {pending
                 ? "Translating…"
-                : actualProvider
-                  ? translationProviderLabel(actualProvider)
+                : displayedActualProvider
+                  ? translationProviderLabel(displayedActualProvider)
                   : providerMode === "auto"
                     ? "Auto"
                     : translationProviderLabel(providerMode)}
             </span>
           </div>
 
-          {pending && !translatedText ? (
+          {pending && !displayedTranslatedText ? (
             <div className="ait-overlay-translation-output flex items-center gap-2 text-[10px] text-slate-500">
               <span className="h-3 w-3 animate-spin rounded-full border border-white/20 border-t-white/70" />
               Translating current text…
             </div>
           ) : errorMessage ? (
             <p className="ait-overlay-translation-output whitespace-pre-wrap text-[10px] leading-4 text-rose-200/85">{errorMessage}</p>
-          ) : translatedText ? (
-            <p className="ait-overlay-translation-output overflow-y-auto whitespace-pre-wrap text-[11px] leading-4 text-slate-200">{translatedText}</p>
+          ) : displayedTranslatedText ? (
+            <p className="ait-overlay-translation-output overflow-y-auto whitespace-pre-wrap text-[11px] leading-4 text-slate-200">{displayedTranslatedText}</p>
           ) : (
             <p className="ait-overlay-translation-output text-[10px] leading-4 text-slate-600">Edit the original text to translate in real time.</p>
           )}
         </section>
       </div>
 
-      {notice && (
-        <p className="mt-1.5 truncate text-[8px] leading-3 text-amber-100/65" title={notice}>
-          {notice}
+      {displayedNotice && (
+        <p className="mt-1.5 truncate text-[8px] leading-3 text-amber-100/65" title={displayedNotice}>
+          {displayedNotice}
         </p>
       )}
     </div>

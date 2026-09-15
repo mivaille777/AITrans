@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "case_id": "fast-translate-selection",
+      "run": {"run_id":"regression-fast-translate-selection","trace_id":"trace-fast-translate-selection","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"completed","intent":"translate_selection","ui_mode":"translation","tool_name":"translate_selection","provider":"fixture","model":"fixture-model","total_duration_ms":600,"planning_duration_ms":0,"tool_duration_ms":200,"synthesis_duration_ms":0,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":3},
+      "events": [
+        {"sequence":0,"event_type":"tool_call","timestamp":"","elapsed_ms":10,"payload":{"name":"translate_selection","effect":"compute","requires_confirmation":false}},
+        {"sequence":1,"event_type":"tool_result","timestamp":"","elapsed_ms":30,"payload":{"tool_name":"translate_selection","effect":"compute"}},
+        {"sequence":2,"event_type":"agent_end","timestamp":"","elapsed_ms":60,"payload":{"intent":"translate_selection","status":"completed"}}
+      ]
+    },
+    {
+      "case_id": "fast-explain-selection",
+      "run": {"run_id":"regression-fast-explain-selection","trace_id":"trace-fast-explain-selection","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"completed","intent":"explain_selection","ui_mode":"assistant","tool_name":"explain_selection","provider":"fixture","model":"fixture-model","total_duration_ms":800,"planning_duration_ms":0,"tool_duration_ms":240,"synthesis_duration_ms":180,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":4},
+      "events": [
+        {"sequence":0,"event_type":"tool_call","timestamp":"","elapsed_ms":10,"payload":{"name":"explain_selection","effect":"compute","requires_confirmation":false}},
+        {"sequence":1,"event_type":"tool_result","timestamp":"","elapsed_ms":30,"payload":{"tool_name":"explain_selection","effect":"compute"}},
+        {"sequence":2,"event_type":"synthesis_ready","timestamp":"","elapsed_ms":50,"payload":{"grounded":false}},
+        {"sequence":3,"event_type":"agent_end","timestamp":"","elapsed_ms":80,"payload":{"intent":"explain_selection","status":"completed"}}
+      ]
+    },
+    {
+      "case_id": "react-search-explain",
+      "run": {"run_id":"regression-react-search-explain","trace_id":"trace-react-search-explain","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"completed","intent":"complex","ui_mode":"assistant","tool_name":"explain_selection","provider":"fixture","model":"fixture-model","total_duration_ms":1600,"planning_duration_ms":0,"tool_duration_ms":400,"synthesis_duration_ms":200,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":9},
+      "events": [
+        {"sequence":0,"event_type":"react_started","timestamp":"","elapsed_ms":0,"payload":{"max_iterations":6,"max_tool_calls":4}},
+        {"sequence":1,"event_type":"decision_ready","timestamp":"","elapsed_ms":10,"payload":{"iteration":1,"kind":"tool","tool_name":"search_knowledge_base","action_fingerprint":"search:q1"}},
+        {"sequence":2,"event_type":"tool_call","timestamp":"","elapsed_ms":20,"payload":{"name":"search_knowledge_base","effect":"read","requires_confirmation":false}},
+        {"sequence":3,"event_type":"observation_ready","timestamp":"","elapsed_ms":30,"payload":{"iteration":1,"tool_name":"search_knowledge_base","success":true,"evidence_count":0,"citation_count":0,"query_fingerprint":"q1","novel_evidence_count":0,"retrieval_fallback":false}},
+        {"sequence":4,"event_type":"decision_ready","timestamp":"","elapsed_ms":40,"payload":{"iteration":2,"kind":"tool","tool_name":"explain_selection","action_fingerprint":"explain:selection"}},
+        {"sequence":5,"event_type":"tool_call","timestamp":"","elapsed_ms":50,"payload":{"name":"explain_selection","effect":"compute","requires_confirmation":false}},
+        {"sequence":6,"event_type":"observation_ready","timestamp":"","elapsed_ms":60,"payload":{"iteration":2,"tool_name":"explain_selection","success":true}},
+        {"sequence":7,"event_type":"decision_ready","timestamp":"","elapsed_ms":70,"payload":{"iteration":3,"kind":"final"}},
+        {"sequence":8,"event_type":"agent_end","timestamp":"","elapsed_ms":90,"payload":{"intent":"complex","status":"completed"}}
+      ]
+    },
+    {
+      "case_id": "agentic-rag-refine-stop",
+      "run": {"run_id":"regression-agentic-rag-refine-stop","trace_id":"trace-agentic-rag-refine-stop","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"completed","intent":"complex","ui_mode":"assistant","tool_name":"search_knowledge_base","provider":"fixture","model":"fixture-model","total_duration_ms":2200,"planning_duration_ms":0,"tool_duration_ms":600,"synthesis_duration_ms":260,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":13},
+      "events": [
+        {"sequence":0,"event_type":"react_started","timestamp":"","elapsed_ms":0,"payload":{"max_iterations":6,"max_tool_calls":4,"max_knowledge_searches":3}},
+        {"sequence":1,"event_type":"decision_ready","timestamp":"","elapsed_ms":10,"payload":{"iteration":1,"kind":"tool","tool_name":"search_knowledge_base","action_fingerprint":"search:anchor"}},
+        {"sequence":2,"event_type":"tool_call","timestamp":"","elapsed_ms":20,"payload":{"name":"search_knowledge_base","effect":"read","requires_confirmation":false}},
+        {"sequence":3,"event_type":"observation_ready","timestamp":"","elapsed_ms":30,"payload":{"iteration":1,"tool_name":"search_knowledge_base","success":true,"evidence_count":1,"citation_count":1,"query_fingerprint":"anchor","novel_evidence_count":1,"retrieval_fallback":false}},
+        {"sequence":4,"event_type":"evidence_gate_evaluated","timestamp":"","elapsed_ms":40,"payload":{"iteration":1,"action":"refine","quality_score":0.6,"evidence_count":1}},
+        {"sequence":5,"event_type":"decision_ready","timestamp":"","elapsed_ms":50,"payload":{"iteration":2,"kind":"tool","tool_name":"search_knowledge_base","action_fingerprint":"search:refined"}},
+        {"sequence":6,"event_type":"tool_call","timestamp":"","elapsed_ms":60,"payload":{"name":"search_knowledge_base","effect":"read","requires_confirmation":false}},
+        {"sequence":7,"event_type":"observation_ready","timestamp":"","elapsed_ms":70,"payload":{"iteration":2,"tool_name":"search_knowledge_base","success":true,"evidence_count":2,"citation_count":2,"query_fingerprint":"refined","novel_evidence_count":1,"retrieval_fallback":false}},
+        {"sequence":8,"event_type":"evidence_gate_evaluated","timestamp":"","elapsed_ms":80,"payload":{"iteration":2,"action":"stop","quality_score":0.92,"evidence_count":2}},
+        {"sequence":9,"event_type":"decision_ready","timestamp":"","elapsed_ms":90,"payload":{"iteration":3,"kind":"final"}},
+        {"sequence":10,"event_type":"synthesis_ready","timestamp":"","elapsed_ms":100,"payload":{"grounded":true}},
+        {"sequence":11,"event_type":"grounding_verification_evaluated","timestamp":"","elapsed_ms":110,"payload":{"passed":true,"fallback_applied":false,"claim_count":2,"cited_claim_count":2,"supported_claim_count":2,"unsupported_claim_count":0,"invalid_citation_count":0,"citation_coverage":1.0,"support_rate":1.0}},
+        {"sequence":12,"event_type":"agent_end","timestamp":"","elapsed_ms":130,"payload":{"intent":"complex","status":"completed"}}
+      ]
+    },
+    {
+      "case_id": "grounding-verification-fallback",
+      "run": {"run_id":"regression-grounding-verification-fallback","trace_id":"trace-grounding-verification-fallback","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"completed","intent":"search_knowledge_base","ui_mode":"assistant","tool_name":"search_knowledge_base","provider":"fixture","model":"fixture-model","total_duration_ms":1500,"planning_duration_ms":0,"tool_duration_ms":350,"synthesis_duration_ms":240,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":5},
+      "events": [
+        {"sequence":0,"event_type":"tool_call","timestamp":"","elapsed_ms":10,"payload":{"name":"search_knowledge_base","effect":"read","requires_confirmation":false}},
+        {"sequence":1,"event_type":"observation_ready","timestamp":"","elapsed_ms":30,"payload":{"iteration":1,"tool_name":"search_knowledge_base","success":true,"evidence_count":1,"citation_count":1,"query_fingerprint":"direct","novel_evidence_count":1,"retrieval_fallback":false}},
+        {"sequence":2,"event_type":"synthesis_ready","timestamp":"","elapsed_ms":50,"payload":{"grounded":true}},
+        {"sequence":3,"event_type":"grounding_verification_evaluated","timestamp":"","elapsed_ms":60,"payload":{"passed":false,"fallback_applied":true,"claim_count":2,"cited_claim_count":2,"supported_claim_count":1,"unsupported_claim_count":1,"invalid_citation_count":0,"citation_coverage":1.0,"support_rate":0.5}},
+        {"sequence":4,"event_type":"agent_end","timestamp":"","elapsed_ms":80,"payload":{"intent":"search_knowledge_base","status":"completed"}}
+      ]
+    },
+    {
+      "case_id": "save-note-confirmation",
+      "run": {"run_id":"regression-save-note-confirmation","trace_id":"trace-save-note-confirmation","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"confirmation_required","intent":"save_research_note","ui_mode":"assistant","tool_name":"save_research_note","provider":"fixture","model":"fixture-model","total_duration_ms":400,"planning_duration_ms":0,"tool_duration_ms":0,"synthesis_duration_ms":0,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":2},
+      "events": [
+        {"sequence":0,"event_type":"tool_call","timestamp":"","elapsed_ms":10,"payload":{"name":"save_research_note","effect":"write","requires_confirmation":true}},
+        {"sequence":1,"event_type":"agent_end","timestamp":"","elapsed_ms":40,"payload":{"intent":"save_research_note","status":"confirmation_required"}}
+      ]
+    },
+    {
+      "case_id": "tool-timeout-safe-failure",
+      "run": {"run_id":"regression-tool-timeout-safe-failure","trace_id":"trace-tool-timeout-safe-failure","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"failed","intent":"translate_selection","ui_mode":"translation","tool_name":"translate_selection","provider":"fixture","model":"fixture-model","total_duration_ms":19000,"planning_duration_ms":0,"tool_duration_ms":18000,"synthesis_duration_ms":0,"retry_count":1,"failure_count":1,"timeout_count":1,"fallback_reason":"tool_timeout_after_safe_retries","event_count":4},
+      "events": [
+        {"sequence":0,"event_type":"tool_call","timestamp":"","elapsed_ms":10,"payload":{"name":"translate_selection","effect":"compute","requires_confirmation":false}},
+        {"sequence":1,"event_type":"retry","timestamp":"","elapsed_ms":10000,"payload":{"tool_name":"translate_selection","attempt":2,"max_attempts":2}},
+        {"sequence":2,"event_type":"failure","timestamp":"","elapsed_ms":18500,"payload":{"code":"AgentToolTimeoutError","stage":"tool","fallback_reason":"tool_timeout_after_safe_retries"}},
+        {"sequence":3,"event_type":"agent_end","timestamp":"","elapsed_ms":19000,"payload":{"intent":"translate_selection","status":"failed"}}
+      ]
+    },
+    {
+      "case_id": "agentic-rag-retrieval-fallback",
+      "run": {"run_id":"regression-agentic-rag-retrieval-fallback","trace_id":"trace-agentic-rag-retrieval-fallback","session_id":"regression-suite","created_at":"2026-08-28T00:00:00+00:00","status":"completed","intent":"complex","ui_mode":"assistant","tool_name":"search_knowledge_base","provider":"fixture","model":"fixture-model","total_duration_ms":2000,"planning_duration_ms":0,"tool_duration_ms":700,"synthesis_duration_ms":180,"retry_count":0,"failure_count":0,"timeout_count":0,"fallback_reason":"","event_count":11},
+      "events": [
+        {"sequence":0,"event_type":"react_started","timestamp":"","elapsed_ms":0,"payload":{"max_iterations":6,"max_tool_calls":4,"max_knowledge_searches":2}},
+        {"sequence":1,"event_type":"decision_ready","timestamp":"","elapsed_ms":10,"payload":{"iteration":1,"kind":"tool","tool_name":"search_knowledge_base","action_fingerprint":"search:fallback-1"}},
+        {"sequence":2,"event_type":"tool_call","timestamp":"","elapsed_ms":20,"payload":{"name":"search_knowledge_base","effect":"read","requires_confirmation":false}},
+        {"sequence":3,"event_type":"observation_ready","timestamp":"","elapsed_ms":30,"payload":{"iteration":1,"tool_name":"search_knowledge_base","success":true,"evidence_count":0,"citation_count":0,"query_fingerprint":"fallback-1","novel_evidence_count":0,"retrieval_fallback":true}},
+        {"sequence":4,"event_type":"evidence_gate_evaluated","timestamp":"","elapsed_ms":40,"payload":{"iteration":1,"action":"retrieve","quality_score":0.1,"evidence_count":0,"retrieval_fallback":true}},
+        {"sequence":5,"event_type":"decision_ready","timestamp":"","elapsed_ms":50,"payload":{"iteration":2,"kind":"tool","tool_name":"search_knowledge_base","action_fingerprint":"search:fallback-2"}},
+        {"sequence":6,"event_type":"tool_call","timestamp":"","elapsed_ms":60,"payload":{"name":"search_knowledge_base","effect":"read","requires_confirmation":false}},
+        {"sequence":7,"event_type":"observation_ready","timestamp":"","elapsed_ms":70,"payload":{"iteration":2,"tool_name":"search_knowledge_base","success":true,"evidence_count":0,"citation_count":0,"query_fingerprint":"fallback-2","novel_evidence_count":0,"retrieval_fallback":true}},
+        {"sequence":8,"event_type":"evidence_gate_evaluated","timestamp":"","elapsed_ms":80,"payload":{"iteration":2,"action":"stop","quality_score":0.1,"evidence_count":0,"retrieval_fallback":true}},
+        {"sequence":9,"event_type":"decision_ready","timestamp":"","elapsed_ms":90,"payload":{"iteration":3,"kind":"final"}},
+        {"sequence":10,"event_type":"agent_end","timestamp":"","elapsed_ms":110,"payload":{"intent":"complex","status":"completed"}}
+      ]
+    }
+  ]
+}

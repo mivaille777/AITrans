@@ -1,0 +1,8 @@
+-r aitranslator-rag-requirements.txt
+
+# Optional Stage 3 native page/image late-interaction retrieval.
+# Keep these out of the default RAG dependency set because the feature is
+# disabled by default and model loading is GPU/memory intensive.
+Pillow>=10,<13
+PyMuPDF>=1.24,<2
+colpali-engine==0.3.18

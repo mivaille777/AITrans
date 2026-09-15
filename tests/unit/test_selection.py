@@ -9,10 +9,10 @@ from unittest.mock import MagicMock, call
 
 import pytest
 from pynput import keyboard
-from PySide6.QtCore import QMimeData
 
 from app.models.selection import SelectedText
 from app.selection.base import SelectionProvider
+from app.selection.clipboard_adapter import ClipboardAdapter
 from app.selection.clipboard_provider import ClipboardSelectionProvider
 from app.selection.copy_command import CopyCommandAdapter
 from app.selection.errors import SelectionError
@@ -66,6 +66,72 @@ class FakeClock:
 
     def sleep(self, duration: float) -> None:
         self.value += duration
+
+
+def test_headless_clipboard_adapter_restores_text_and_dib_formats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unicode_text = 13
+    device_independent_bitmap = 8
+    contents: dict[int, str | bytes] = {
+        unicode_text: "keep this text",
+        device_independent_bitmap: b"image-data",
+    }
+
+    class FakeWin32Clipboard:
+        @staticmethod
+        def OpenClipboard() -> None:
+            return None
+
+        @staticmethod
+        def CloseClipboard() -> None:
+            return None
+
+        @staticmethod
+        def EnumClipboardFormats(current_format: int) -> int:
+            return next((key for key in sorted(contents) if key > current_format), 0)
+
+        @staticmethod
+        def GetClipboardData(format_id: int) -> str | bytes:
+            return contents[format_id]
+
+        @staticmethod
+        def IsClipboardFormatAvailable(format_id: int) -> bool:
+            return format_id in contents
+
+        @staticmethod
+        def EmptyClipboard() -> None:
+            contents.clear()
+
+        @staticmethod
+        def SetClipboardData(format_id: int, value: str | bytes) -> None:
+            contents[format_id] = value
+
+        @staticmethod
+        def GetClipboardSequenceNumber() -> int:
+            return 1
+
+    monkeypatch.setitem(sys.modules, "win32clipboard", FakeWin32Clipboard)
+    monkeypatch.setitem(
+        sys.modules,
+        "win32con",
+        SimpleNamespace(CF_UNICODETEXT=unicode_text, CF_TEXT=1),
+    )
+    adapter = ClipboardAdapter(platform_name="win32")
+
+    snapshot = adapter.snapshot()
+    adapter.write_text("temporary selection")
+    adapter.restore(snapshot)
+
+    assert snapshot.text == "keep this text"
+    assert snapshot.formats == (
+        (device_independent_bitmap, b"image-data"),
+        (unicode_text, "keep this text"),
+    )
+    assert contents == {
+        unicode_text: "keep this text",
+        device_independent_bitmap: b"image-data",
+    }
 
 
 def test_clipboard_provider_returns_selected_text_and_restores_clipboard() -> None:
@@ -263,43 +329,6 @@ def test_clipboard_provider_waits_before_copying_to_release_hotkey_modifier() ->
     assert events[:2] == ["sleep", "copy"]
 
 
-class FakeQtClipboard:
-    def __init__(self, mime_data: QMimeData) -> None:
-        self._mime_data = mime_data
-
-    def mimeData(self) -> QMimeData:  # noqa: N802 - Qt-compatible test double
-        return self._mime_data
-
-    def text(self) -> str:
-        return self._mime_data.text()
-
-    def setMimeData(self, mime_data: QMimeData) -> None:  # noqa: N802
-        self._mime_data = mime_data
-
-
-def test_clipboard_restore_skips_chromium_private_formats() -> None:
-    from app.selection.clipboard_adapter import ClipboardAdapter
-
-    mime_data = QMimeData()
-    mime_data.setText("keep this text")
-    mime_data.setData(
-        'application/x-qt-windows-mime;value="Chromium internal source URL"',
-        b"private browser data",
-    )
-    clipboard = FakeQtClipboard(mime_data)
-    adapter = ClipboardAdapter(
-        clipboard,
-        sequence_number_reader=lambda: 1,
-        restore_attempts=1,
-    )
-
-    snapshot = adapter.snapshot()
-    adapter.restore(snapshot)
-
-    assert clipboard.text() == "keep this text"
-    assert all("chromium" not in item.lower() for item in clipboard.mimeData().formats())
-
-
 def test_native_clipboard_adapter_reads_and_restores_text_without_qt(
     monkeypatch,
 ) -> None:
@@ -313,6 +342,12 @@ def test_native_clipboard_adapter_reads_and_restores_text_without_qt(
         @classmethod
         def CloseClipboard(cls) -> None:
             return None
+
+        @classmethod
+        def EnumClipboardFormats(cls, current_format: int) -> int:
+            if current_format == 0 and cls.text:
+                return 13
+            return 0
 
         @classmethod
         def IsClipboardFormatAvailable(cls, format_id: int) -> bool:
@@ -353,59 +388,6 @@ def test_native_clipboard_adapter_reads_and_restores_text_without_qt(
 
     assert snapshot.text == "original text"
     assert FakeNativeClipboard.text == "original text"
-
-
-def test_native_clipboard_adapter_preserves_image_mime_formats(monkeypatch) -> None:
-    class FakeNativeClipboard:
-        @classmethod
-        def OpenClipboard(cls) -> None:
-            return None
-
-        @classmethod
-        def CloseClipboard(cls) -> None:
-            return None
-
-        @classmethod
-        def EnumClipboardFormats(cls, current: int) -> int:
-            return 8 if current == 0 else 0  # CF_DIB
-
-        @classmethod
-        def IsClipboardFormatAvailable(cls, _format_id: int) -> bool:
-            return False
-
-        @classmethod
-        def GetClipboardData(cls, _format_id: int) -> str:
-            return ""
-
-    monkeypatch.setitem(sys.modules, "win32clipboard", FakeNativeClipboard)
-    monkeypatch.setitem(
-        sys.modules,
-        "win32con",
-        SimpleNamespace(CF_UNICODETEXT=13, CF_TEXT=1, CF_OEMTEXT=7),
-    )
-
-    image_data = QMimeData()
-    image_data.setData("image/png", b"screenshot-bytes")
-    clipboard = FakeQtClipboard(image_data)
-
-    from app.selection.clipboard_adapter import ClipboardAdapter
-
-    adapter = ClipboardAdapter(
-        sequence_number_reader=lambda: 1,
-        restore_attempts=1,
-        platform_name="win32",
-    )
-    # Keep native text access and Qt MIME access separate, as they are on the
-    # real Windows path, while allowing this test to control both stores.
-    adapter._clipboard_object = clipboard
-
-    snapshot = adapter.snapshot()
-    assert any(name == "image/png" for name, _ in snapshot.formats)
-
-    clipboard.setMimeData(QMimeData())
-    adapter.restore(snapshot)
-
-    assert clipboard.mimeData().data("image/png") == b"screenshot-bytes"
 
 
 class FakeProvider(SelectionProvider):

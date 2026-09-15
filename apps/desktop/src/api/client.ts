@@ -62,6 +62,13 @@ export function apiPatch<TResponse, TBody>(path: string, body: TBody): Promise<T
   })
 }
 
+export function apiPut<TResponse, TBody>(path: string, body: TBody): Promise<TResponse> {
+  return apiRequest<TResponse>(path, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  })
+}
+
 export function apiDelete<TResponse>(path: string): Promise<TResponse> {
   return apiRequest<TResponse>(path, { method: "DELETE" })
 }

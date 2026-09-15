@@ -6,7 +6,7 @@ on:
       target_ref:
         description: Branch, tag, or commit to test
         required: true
-        default: LLM_API_Calling
+        default: WebReBuild
         type: string
 
 permissions:
@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 30
 
     env:
-      QT_QPA_PLATFORM: offscreen
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -57,9 +56,9 @@ jobs:
         shell: pwsh
         run: .\scripts\test.ps1 -Install -PytestArgs '--junitxml=test-results/pytest.xml'
 
-      - name: Run application smoke test
+      - name: Run FastAPI smoke test
         shell: pwsh
-        run: python -m app.main --smoke-test
+        run: python -c "from backend.main import create_app; assert create_app().title == 'AITranslator API'"
 
       - name: Upload pytest report
         if: always()

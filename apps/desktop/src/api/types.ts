@@ -1,3 +1,5 @@
+import type { AgentCitationRef, AgentEvidenceItem } from "../features/evidence/evidence-types"
+
 export interface HealthResponse {
   status: "ok"
   service: string
@@ -122,6 +124,9 @@ export type QuickActionKey =
   | "reading_explain"
   | "reading_summarize"
   | "reading_section_role"
+  | "reading_define_terms"
+  | "reading_analyze_equation"
+  | "reading_section_summarize"
 
 export interface QuickActionRequest extends ReadingContextFields {
   action: QuickActionKey
@@ -285,6 +290,8 @@ export interface CompanionChatRequest extends ReadingContextFields {
   context_mode: ChatContextMode
   history: CompanionChatMessage[]
   request_id?: number
+  knowledge_enabled: boolean
+  knowledge_document_ids: string[]
 }
 
 export interface CompanionChatResponse {
@@ -295,6 +302,10 @@ export interface CompanionChatResponse {
   provider: string
   model: string
   request_id: number
+  knowledge_enabled: boolean
+  knowledge_fallback_reason: string
+  evidence: AgentEvidenceItem[]
+  citations: AgentCitationRef[]
 }
 
 export interface CompanionChatStatusResponse {
@@ -329,6 +340,10 @@ export interface CompanionChatStreamDone {
   output_text: string
   provider: string
   model: string
+  knowledge_enabled: boolean
+  knowledge_fallback_reason: string
+  evidence: AgentEvidenceItem[]
+  citations: AgentCitationRef[]
 }
 
 export interface CompanionChatStreamError {

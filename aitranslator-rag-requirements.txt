@@ -1,0 +1,7 @@
+numpy>=1.26,<3
+transformers==5.15.0
+sentence-transformers==5.7.0
+accelerate
+safetensors
+huggingface_hub
+qdrant-client==1.19.0

@@ -1,0 +1,22 @@
+{
+  "min_total_cases": 40,
+  "min_pass_rate": 1.0,
+  "min_intent_accuracy": 1.0,
+  "min_tool_accuracy": 1.0,
+  "min_task_completion_rate": 0.8,
+  "min_trajectory_case_rate": 1.0,
+  "min_react_run_rate": 0.25,
+  "min_grounded_rate": 0.2,
+  "min_grounding_verification_run_rate": 0.2,
+  "min_confirmation_guard_rate": 1.0,
+  "min_fallback_accuracy": 1.0,
+  "min_evidence_gate_accuracy": 1.0,
+  "min_token_usage_available_rate": 0.5,
+  "max_fallback_rate": 0.12,
+  "max_tool_failure_rate": 0.12,
+  "max_retry_rate": 0.15,
+  "max_timeout_rate": 0.02,
+  "max_latency_p95_ms": 5000,
+  "max_redundant_action_rate": 0.03,
+  "max_react_limit_rate": 0.06
+}

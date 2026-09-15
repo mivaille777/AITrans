@@ -594,6 +594,8 @@ export default function CompanionWorkspace() {
       source_kind: context.source_kind,
       history,
       request_id: requestId,
+      knowledge_enabled: false,
+      knowledge_document_ids: [],
     }
 
     const scopeId = scopeRef.current || uniqueScope("draft-general")

@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import importlib
-import os
+from collections.abc import Mapping
 from typing import Any
 
 from app.ai.errors import AIConfigurationError
 
-
 CREDENTIAL_TARGET_PREFIX = "AITranslator/ai"
-DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
-OPENAI_COMPATIBLE_API_KEY_ENV = "OPENAI_API_KEY"
-PROVIDER_ENV_VARS = {
-    "deepseek": DEEPSEEK_API_KEY_ENV,
-    "openai_compatible": OPENAI_COMPATIBLE_API_KEY_ENV,
-}
-SUPPORTED_SECRET_PROVIDERS = frozenset(PROVIDER_ENV_VARS)
+SUPPORTED_SECRET_PROVIDERS = frozenset({"deepseek", "openai_compatible"})
 _WINDOWS_CREDENTIAL_NOT_FOUND = 1168
 
 
@@ -104,104 +96,41 @@ class ProviderCredentialStore:
         value = _decode_credential_blob(credential.get("CredentialBlob"))
         return value.strip() or None
 
-    def set(self, provider: object, api_key: object) -> None:
-        normalized = normalize_provider_name(provider)
-        secret = str(api_key).strip()
-        if not secret:
-            self.delete(normalized)
-            return
-
-        backend = self._module()
-        credential = {
-            "Type": backend.CRED_TYPE_GENERIC,
-            "TargetName": self.target_name(normalized),
-            "UserName": normalized,
-            "CredentialBlob": secret,
-            "Comment": "AITranslator AI provider API key",
-            "Persist": backend.CRED_PERSIST_LOCAL_MACHINE,
-        }
-        try:
-            backend.CredWrite(credential, 0)
-        except Exception as exc:
-            raise AIConfigurationError(
-                "Unable to save the AI provider credential."
-            ) from exc
-
-    def delete(self, provider: object) -> None:
-        normalized = normalize_provider_name(provider)
-        backend = self._module()
-        try:
-            backend.CredDelete(
-                self.target_name(normalized),
-                backend.CRED_TYPE_GENERIC,
-                0,
-            )
-        except Exception as exc:
-            if _error_code(exc) == _WINDOWS_CREDENTIAL_NOT_FOUND:
-                return
-            raise AIConfigurationError(
-                "Unable to delete the stored AI provider credential."
-            ) from exc
-
-
 def get_provider_api_key(
     provider: object,
-    explicit_api_key: str | None = None,
     *,
-    environ: Mapping[str, str] | None = None,
     credential_store: ProviderCredentialStore | Any | None = None,
 ) -> str:
-    """Resolve an API key without ever writing it to the normal TOML config."""
+    """Read an API key from the local desktop credential vault only."""
 
     normalized = normalize_provider_name(provider)
-
-    if explicit_api_key is not None and str(explicit_api_key).strip():
-        return str(explicit_api_key).strip()
-
     store = credential_store or ProviderCredentialStore()
-    try:
-        stored = store.get(normalized)
-    except AIConfigurationError:
-        stored = None
+    stored = store.get(normalized)
     if isinstance(stored, str) and stored.strip():
         return stored.strip()
 
-    source = os.environ if environ is None else environ
-    env_name = PROVIDER_ENV_VARS[normalized]
-    value = source.get(env_name, "")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-
     raise AIConfigurationError(
         f"API key for provider '{normalized}' is not configured. "
-        "Open Settings -> AI model and API key, or set "
-        f"{env_name} for the current process."
+        "Open Settings -> Cloud LLM and save the key in the desktop app."
     )
 
 
 def get_deepseek_api_key(
-    explicit_api_key: str | None = None,
     *,
-    environ: Mapping[str, str] | None = None,
     credential_store: ProviderCredentialStore | Any | None = None,
 ) -> str:
-    """Compatibility helper for the existing DeepSeek client."""
+    """Read the DeepSeek key from the local desktop credential vault."""
 
     return get_provider_api_key(
         "deepseek",
-        explicit_api_key,
-        environ=environ,
         credential_store=credential_store,
     )
 
 
 __all__ = [
     "CREDENTIAL_TARGET_PREFIX",
-    "DEEPSEEK_API_KEY_ENV",
-    "OPENAI_COMPATIBLE_API_KEY_ENV",
-    "PROVIDER_ENV_VARS",
-    "ProviderCredentialStore",
     "SUPPORTED_SECRET_PROVIDERS",
+    "ProviderCredentialStore",
     "get_deepseek_api_key",
     "get_provider_api_key",
     "normalize_provider_name",

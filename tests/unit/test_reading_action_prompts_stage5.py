@@ -16,14 +16,15 @@ from app.models.reading_actions import (
 
 
 def test_stage5_reading_actions_are_unique_and_stable() -> None:
-    assert READING_ACTION_KEYS == {
+    stage5_keys = {
         READING_EXPLAIN,
         READING_CONTEXT_TRANSLATE,
         READING_SUMMARIZE,
         READING_SECTION_ROLE,
     }
-    assert len({spec.key for spec in READING_ACTION_SPECS}) == 4
-    assert [spec.label for spec in READING_ACTION_SPECS] == [
+    assert stage5_keys <= READING_ACTION_KEYS
+    assert len({spec.key for spec in READING_ACTION_SPECS}) == len(READING_ACTION_SPECS)
+    assert [spec.label for spec in READING_ACTION_SPECS[:4]] == [
         "解释这段",
         "结合上下文翻译",
         "总结这段",

@@ -219,6 +219,14 @@ async function invokeWindowControl<T>(command: string): Promise<T> {
 
 export const tauriDesktopAdapter: DesktopAdapter = {
   runtime: "tauri",
+  files: {
+    async pickKnowledgeDocument() {
+      return invoke<string | null>("pick_knowledge_document")
+    },
+    async openEvidenceSource(resourceUrl) {
+      await invoke("open_evidence_source", { resourceUrl })
+    },
+  },
   window: {
     async show() {
       const main = await getMainWindow()

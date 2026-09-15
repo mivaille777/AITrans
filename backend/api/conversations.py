@@ -21,6 +21,7 @@ from backend.models.conversations import (
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
+from backend.services.conversation_grounding_service import load_message_grounding
 from backend.services.conversation_store_service import (
     ConversationStoreService,
     StoredConversation,
@@ -38,7 +39,11 @@ CompanionOwnershipDependency = Annotated[
 ]
 
 
-def _message_response(message: StoredMessage) -> ConversationMessageResponse:
+def _message_response(
+    service: ConversationStoreService,
+    message: StoredMessage,
+) -> ConversationMessageResponse:
+    grounding = load_message_grounding(service.storage_path, message.message_id)
     return ConversationMessageResponse(
         message_id=message.message_id,
         conversation_id=message.conversation_id,
@@ -49,6 +54,10 @@ def _message_response(message: StoredMessage) -> ConversationMessageResponse:
         provider=message.provider,
         model=message.model,
         error_code=message.error_code,
+        knowledge_enabled=grounding.knowledge_enabled,
+        knowledge_fallback_reason=grounding.knowledge_fallback_reason,
+        evidence=list(grounding.evidence),
+        citations=list(grounding.citations),
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -83,7 +92,7 @@ def _summary_response(
 
 
 def _detail_response(
-    service: Any,
+    service: ConversationStoreService,
     conversation: StoredConversation,
 ) -> ConversationDetailResponse:
     return ConversationDetailResponse(
@@ -95,7 +104,7 @@ def _detail_response(
         resource_url=conversation.resource_url,
         context_before=conversation.context_before,
         context_after=conversation.context_after,
-        messages=[_message_response(message) for message in conversation.messages],
+        messages=[_message_response(service, message) for message in conversation.messages],
     )
 
 

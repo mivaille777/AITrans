@@ -4,6 +4,15 @@ let browserWindowMaximized = false
 
 export const browserDesktopAdapter: DesktopAdapter = {
   runtime: "browser",
+  files: {
+    async pickKnowledgeDocument() {
+      const path = window.prompt("Enter an absolute path to a local knowledge document:")
+      return path?.trim() || null
+    },
+    async openEvidenceSource() {
+      throw new Error("Opening local evidence files requires the desktop app.")
+    },
+  },
   window: {
     async show() {
       // Browser development mode has no native desktop window lifecycle.

@@ -17,12 +17,15 @@ from backend.services.agent_trace_store_service import AgentTraceStoreService
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate persisted Agent runs against a deterministic JSONL benchmark."
+        description=(
+            "Evaluate persisted Agent runs against deterministic final-state and "
+            "trajectory reliability criteria."
+        )
     )
     parser.add_argument(
         "--dataset",
         default="backend/evaluation/datasets/smoke.jsonl",
-        help="JSONL file containing expected intent/tool/status/latency criteria.",
+        help="JSONL file containing expected result and trajectory criteria.",
     )
     parser.add_argument(
         "--mapping",
@@ -49,26 +52,9 @@ def main() -> int:
     batch = evaluate_agent_batch(
         cases,
         resolve_run=lambda case: store.get_run(mapping.get(case.case_id, "")),
+        resolve_events=lambda run: store.list_events(run.run_id),
     )
-    print(
-        json.dumps(
-            {
-                "total_cases": batch.total_cases,
-                "passed_cases": batch.passed_cases,
-                "pass_rate": batch.pass_rate,
-                "average_score": batch.average_score,
-                "intent_accuracy": batch.intent_accuracy,
-                "tool_accuracy": batch.tool_accuracy,
-                "status_accuracy": batch.status_accuracy,
-                "latency_pass_rate": batch.latency_pass_rate,
-                "retry_pass_rate": batch.retry_pass_rate,
-                "failure_pass_rate": batch.failure_pass_rate,
-                "results": [asdict(result) for result in batch.results],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    print(json.dumps(asdict(batch), ensure_ascii=False, indent=2))
     return 0 if batch.pass_rate == 1.0 else 1
 
 

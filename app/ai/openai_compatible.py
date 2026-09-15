@@ -24,8 +24,8 @@ from app.ai.errors import (
     AITimeoutError,
 )
 from app.ai.provider import DeepSeekTextProvider
-from app.ai.secrets import get_provider_api_key
-
+from app.ai.runtime_status import track_llm_request
+from app.ai.secrets import ProviderCredentialStore, get_provider_api_key
 
 DEFAULT_COMPATIBLE_TIMEOUT_SECONDS = 15.0
 DEFAULT_COMPATIBLE_MAX_RETRIES = 1
@@ -36,13 +36,13 @@ class OpenAICompatibleClient:
 
     def __init__(
         self,
-        api_key: str | None = None,
         *,
         base_url: str,
         model: str,
         timeout: float = DEFAULT_COMPATIBLE_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_COMPATIBLE_MAX_RETRIES,
         sdk_client: Any | None = None,
+        credential_store: ProviderCredentialStore | Any | None = None,
     ) -> None:
         self.base_url = self._validate_base_url(base_url)
         self.model = self._validate_model(model)
@@ -55,7 +55,7 @@ class OpenAICompatibleClient:
         else:
             resolved_api_key = get_provider_api_key(
                 "openai_compatible",
-                api_key,
+                credential_store=credential_store,
             )
             self._client = OpenAI(
                 api_key=resolved_api_key,
@@ -148,32 +148,16 @@ class OpenAICompatibleClient:
             )
         return max_tokens
 
-    def complete(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> str:
-        if not isinstance(system_prompt, str) or not system_prompt.strip():
-            raise AIConfigurationError("System prompt must not be empty.")
-        if not isinstance(user_prompt, str) or not user_prompt.strip():
-            raise AIConfigurationError("User prompt must not be empty.")
+    def _complete_request(self, request: dict[str, Any]) -> str:
+        route_key = f"openai_compatible|{self.model}|{self.base_url}"
+        with track_llm_request(
+            provider="openai_compatible",
+            model=self.model,
+            route_key=route_key,
+        ):
+            return self._complete_request_untracked(request)
 
-        request: dict[str, Any] = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "stream": False,
-            "temperature": self._validate_temperature(temperature),
-        }
-        validated_max_tokens = self._validate_max_tokens(max_tokens)
-        if validated_max_tokens is not None:
-            request["max_tokens"] = validated_max_tokens
-
+    def _complete_request_untracked(self, request: dict[str, Any]) -> str:
         try:
             response = self._client.chat.completions.create(**request)
         except AuthenticationError as exc:
@@ -220,6 +204,53 @@ class OpenAICompatibleClient:
                 "OpenAI-compatible API returned empty content."
             )
         return content.strip()
+
+    def complete_messages(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Complete provider-neutral chat messages, including multimodal content."""
+
+        if not isinstance(messages, list) or not messages:
+            raise AIConfigurationError("Messages must be a non-empty list.")
+        if not all(isinstance(message, dict) for message in messages):
+            raise AIConfigurationError("Each message must be a mapping.")
+
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": self._validate_temperature(temperature),
+        }
+        validated_max_tokens = self._validate_max_tokens(max_tokens)
+        if validated_max_tokens is not None:
+            request["max_tokens"] = validated_max_tokens
+        return self._complete_request(request)
+
+    def complete(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> str:
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            raise AIConfigurationError("System prompt must not be empty.")
+        if not isinstance(user_prompt, str) or not user_prompt.strip():
+            raise AIConfigurationError("User prompt must not be empty.")
+
+        return self.complete_messages(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     def close(self) -> None:
         if not self._owns_sdk_client:

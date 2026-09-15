@@ -36,6 +36,22 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
+type ObservabilitySnapshot = {
+  refreshToken: number
+  summary: AgentObservabilitySummary | null
+  runs: AgentRunMetric[]
+  runtimeConfig: AgentRuntimeConfig | null
+  errorMessage: string
+}
+
+const EMPTY_SNAPSHOT: ObservabilitySnapshot = {
+  refreshToken: -1,
+  summary: null,
+  runs: [],
+  runtimeConfig: null,
+  errorMessage: "",
+}
+
 export function AgentObservabilityPanel({
   refreshToken,
   currentRunId,
@@ -43,33 +59,32 @@ export function AgentObservabilityPanel({
   refreshToken: number
   currentRunId: string
 }) {
-  const [summary, setSummary] = useState<AgentObservabilitySummary | null>(null)
-  const [runs, setRuns] = useState<AgentRunMetric[]>([])
-  const [runtimeConfig, setRuntimeConfig] = useState<AgentRuntimeConfig | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [errorMessage, setErrorMessage] = useState("")
+  const [snapshot, setSnapshot] = useState<ObservabilitySnapshot>(EMPTY_SNAPSHOT)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setErrorMessage("")
     void Promise.all([
       getAgentObservabilitySummary(100),
       getRecentAgentRuns(6),
       getAgentRuntimeConfig(),
     ])
-      .then(([nextSummary, nextRuns, nextConfig]) => {
+      .then(([summary, runs, runtimeConfig]) => {
         if (cancelled) return
-        setSummary(nextSummary)
-        setRuns(nextRuns)
-        setRuntimeConfig(nextConfig)
+        setSnapshot({
+          refreshToken,
+          summary,
+          runs,
+          runtimeConfig,
+          errorMessage: "",
+        })
       })
       .catch((error) => {
         if (cancelled) return
-        setErrorMessage(error instanceof Error ? error.message : "Unable to load Agent metrics.")
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
+        setSnapshot((current) => ({
+          ...current,
+          refreshToken,
+          errorMessage: error instanceof Error ? error.message : "Unable to load Agent metrics.",
+        }))
       })
 
     return () => {
@@ -77,6 +92,8 @@ export function AgentObservabilityPanel({
     }
   }, [refreshToken])
 
+  const { summary, runs, runtimeConfig, errorMessage } = snapshot
+  const loading = snapshot.refreshToken !== refreshToken
   const current = useMemo(
     () => runs.find((run) => run.run_id === currentRunId) ?? null,
     [currentRunId, runs],

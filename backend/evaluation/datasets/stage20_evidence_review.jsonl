@@ -1,0 +1,10 @@
+{"case_id":"accepted_supported","machine_status":"supported","review_status":"accepted","expected_bucket":"consensus","expected_reason":"accepted_supported"}
+{"case_id":"accepted_contested","machine_status":"contested","review_status":"accepted","expected_bucket":"disagreement","expected_reason":"accepted_contested"}
+{"case_id":"accepted_insufficient","machine_status":"insufficient","review_status":"accepted","expected_bucket":"excluded","expected_reason":"machine_insufficient"}
+{"case_id":"accepted_stale","machine_status":"stale","review_status":"accepted","expected_bucket":"excluded","expected_reason":"machine_stale"}
+{"case_id":"rejected_supported","machine_status":"supported","review_status":"rejected","expected_bucket":"excluded","expected_reason":"review_rejected"}
+{"case_id":"unreviewed_supported","machine_status":"supported","review_status":"unreviewed","expected_bucket":"excluded","expected_reason":"review_unreviewed"}
+{"case_id":"needs_review_supported","machine_status":"supported","review_status":"needs_review","expected_bucket":"excluded","expected_reason":"review_needs_review"}
+{"case_id":"rejected_contested","machine_status":"contested","review_status":"rejected","expected_bucket":"excluded","expected_reason":"review_rejected"}
+{"case_id":"unreviewed_contested","machine_status":"contested","review_status":"unreviewed","expected_bucket":"excluded","expected_reason":"review_unreviewed"}
+{"case_id":"needs_review_stale","machine_status":"stale","review_status":"needs_review","expected_bucket":"excluded","expected_reason":"review_needs_review"}

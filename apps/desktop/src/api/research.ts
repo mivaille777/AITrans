@@ -1,13 +1,81 @@
-import { apiDelete, apiGet, apiPatch } from "./client"
+import { apiDelete, apiGet, apiPatch, apiPost } from "./client"
 import type {
   ResearchNoteDeleteResponse,
   ResearchNoteDetail,
   ResearchSourceProfile,
   ResearchWorkspaceResponse,
 } from "./types"
+import type {
+  ResearchProjectWorkspaceCreateRequest,
+  ResearchProjectWorkspaceDeleteResponse,
+  ResearchProjectWorkspaceListResponse,
+  ResearchProjectWorkspaceMemberResponse,
+  ResearchProjectWorkspaceProfile,
+  ResearchWorkspaceMemberKind,
+} from "../features/research/research-workspace-types"
 
 export function getResearchWorkspace(limit = 100): Promise<ResearchWorkspaceResponse> {
   return apiGet<ResearchWorkspaceResponse>(`/api/research/workspace?limit=${limit}`)
+}
+
+export function listResearchProjectWorkspaces(limit = 50): Promise<ResearchProjectWorkspaceListResponse> {
+  return apiGet<ResearchProjectWorkspaceListResponse>(`/api/research/workspaces?limit=${limit}`)
+}
+
+export function createResearchProjectWorkspace(
+  payload: ResearchProjectWorkspaceCreateRequest,
+): Promise<ResearchProjectWorkspaceProfile> {
+  return apiPost<ResearchProjectWorkspaceProfile, ResearchProjectWorkspaceCreateRequest>(
+    "/api/research/workspaces",
+    payload,
+  )
+}
+
+export function getResearchProjectWorkspace(
+  workspaceId: string,
+): Promise<ResearchProjectWorkspaceProfile> {
+  return apiGet<ResearchProjectWorkspaceProfile>(
+    `/api/research/workspaces/${encodeURIComponent(workspaceId)}`,
+  )
+}
+
+export function updateResearchProjectWorkspace(
+  workspaceId: string,
+  payload: Required<ResearchProjectWorkspaceCreateRequest>,
+): Promise<ResearchProjectWorkspaceProfile> {
+  return apiPatch<ResearchProjectWorkspaceProfile, Required<ResearchProjectWorkspaceCreateRequest>>(
+    `/api/research/workspaces/${encodeURIComponent(workspaceId)}`,
+    payload,
+  )
+}
+
+export function deleteResearchProjectWorkspace(
+  workspaceId: string,
+): Promise<ResearchProjectWorkspaceDeleteResponse> {
+  return apiDelete<ResearchProjectWorkspaceDeleteResponse>(
+    `/api/research/workspaces/${encodeURIComponent(workspaceId)}`,
+  )
+}
+
+export function attachResearchProjectMember(
+  workspaceId: string,
+  kind: ResearchWorkspaceMemberKind,
+  resourceId: string,
+): Promise<ResearchProjectWorkspaceMemberResponse> {
+  return apiPost<ResearchProjectWorkspaceMemberResponse, { resource_id: string }>(
+    `/api/research/workspaces/${encodeURIComponent(workspaceId)}/members/${kind}`,
+    { resource_id: resourceId },
+  )
+}
+
+export function detachResearchProjectMember(
+  workspaceId: string,
+  kind: ResearchWorkspaceMemberKind,
+  resourceId: string,
+): Promise<ResearchProjectWorkspaceMemberResponse> {
+  return apiDelete<ResearchProjectWorkspaceMemberResponse>(
+    `/api/research/workspaces/${encodeURIComponent(workspaceId)}/members/${kind}/${encodeURIComponent(resourceId)}`,
+  )
 }
 
 export function getResearchSource(

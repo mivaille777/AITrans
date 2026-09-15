@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEvent, AgentEventType
 from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
 from backend.agent_core.reliability import AgentRunControl
@@ -27,6 +28,12 @@ class AgentRuntime:
     ownership of planning, tool validation, confirmation gates and synthesis.
     Runtime telemetry persistence is a best-effort observer and cannot change
     execution outcomes.
+
+    Stage 5.8 adds an optional ``collaboration_adapter`` that runs inside this
+    same reliability boundary after reading-context resolution and before the
+    canonical workflow adapter. It may enrich ``AgentState`` with advisory
+    multi-agent context, but it does not replace the production workflow or its
+    safety/grounding contracts.
     """
 
     def __init__(
@@ -35,12 +42,14 @@ class AgentRuntime:
         context_provider: Callable[[AgentState], dict[str, Any]] | None = None,
         planner: Callable[[AgentState], dict[str, Any]] | None = None,
         tool_executor: Callable[[AgentState], dict[str, Any]] | None = None,
+        collaboration_adapter: Any | None = None,
         workflow_adapter: Callable[[AgentState], AgentState] | None = None,
         run_recorder: AgentRunRecorder | None = None,
     ) -> None:
         self.context_provider = context_provider
         self.planner = planner
         self.tool_executor = tool_executor
+        self.collaboration_adapter = collaboration_adapter
         self.workflow_adapter = workflow_adapter
         self.run_recorder = run_recorder
         self.events: list[AgentEvent] = []
@@ -67,6 +76,23 @@ class AgentRuntime:
                 # WebSocket or broken debug sink must not change Agent behavior.
                 pass
 
+    def _run_collaboration(self, state: AgentState, control: AgentRunControl) -> AgentState:
+        adapter = self.collaboration_adapter
+        if adapter is None:
+            return state
+
+        should_run = getattr(adapter, "should_run", None)
+        if callable(should_run) and not bool(should_run(state)):
+            return state
+
+        eventful_run = getattr(adapter, "run_with_events", None)
+        if callable(eventful_run):
+            state = eventful_run(state, self._emit, control=control)
+        elif callable(adapter):
+            state = adapter(state)
+        state.sync_contract()
+        return state
+
     def execute(
         self,
         state: AgentState,
@@ -81,6 +107,7 @@ class AgentRuntime:
         self._active_state = state
         self._control = control or AgentRunControl()
         self.events.clear()
+        state.sync_contract()
 
         try:
             active_control = self._control
@@ -97,9 +124,26 @@ class AgentRuntime:
 
             active_control.checkpoint("context_resolution")
             if self.context_provider:
-                state.browser_context = self.context_provider(state)
+                state.apply_reading_context(self.context_provider(state))
+            else:
+                state.sync_contract()
             active_control.checkpoint("context_ready")
-            self._emit(AgentEventType.CONTEXT_READY, state.browser_context)
+            public_context = {
+                key: value
+                for key, value in state.browser_context.items()
+                if key != "knowledge_context"
+            }
+            self._emit(AgentEventType.CONTEXT_READY, public_context)
+            knowledge_diagnostics = knowledge_context_diagnostics(
+                state.browser_context.get("knowledge_context")
+            )
+            if knowledge_diagnostics:
+                self._emit(
+                    AgentEventType.KNOWLEDGE_CONTEXT_READY,
+                    knowledge_diagnostics,
+                )
+
+            state = self._run_collaboration(state, active_control)
 
             if self.workflow_adapter is not None:
                 previous_call_count = len(state.tool_calls)
@@ -116,6 +160,7 @@ class AgentRuntime:
                     for result in state.tool_results[previous_result_count:]:
                         self._emit(AgentEventType.TOOL_RESULT, result)
 
+                state.sync_contract()
                 # Do not re-check cancellation after a workflow has returned a
                 # completed result. A confirmed write may have finished while a
                 # late cancel request was arriving; reporting the real side
@@ -136,6 +181,7 @@ class AgentRuntime:
                 state.planned_action = self.planner(state)
                 active_control.checkpoint("planner_result")
                 state.intent = state.planned_action.get("intent", state.intent)
+                state.sync_contract()
                 self._emit(AgentEventType.PLAN_READY, state.planned_action)
 
             if self.tool_executor:
@@ -150,14 +196,17 @@ class AgentRuntime:
                 result = self.tool_executor(state)
                 active_control.checkpoint("tool_result")
                 state.tool_results.append(result)
+                state.sync_contract()
                 self._emit(AgentEventType.TOOL_RESULT, result)
 
+            state.sync_contract()
             self._emit(
                 AgentEventType.AGENT_END,
                 {"intent": state.intent, "total_duration_ms": active_control.elapsed_ms},
             )
             return state
         except AgentCancelledError as exc:
+            state.sync_contract()
             self._emit(
                 AgentEventType.CANCELLED,
                 {
@@ -177,6 +226,7 @@ class AgentRuntime:
             )
             raise
         except Exception as exc:
+            state.sync_contract()
             self._emit(
                 AgentEventType.FAILURE,
                 {

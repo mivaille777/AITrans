@@ -1,4 +1,4 @@
-"""Conversational AI primitives for the Overlay chat MVP."""
+"""Headless conversational AI primitives used by the local backend."""
 
 from app.ai.chat.models import (
     ChatContext,
@@ -10,13 +10,9 @@ from app.ai.chat.models import (
 )
 from app.ai.chat.service import AIChatService
 from app.ai.chat.session import ChatSession
-from app.ai.chat.task import AIChatTask, AIChatTaskFailure, AIChatTaskSignals
 
 __all__ = [
     "AIChatService",
-    "AIChatTask",
-    "AIChatTaskFailure",
-    "AIChatTaskSignals",
     "ChatContext",
     "ChatMessage",
     "ChatRequest",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import suppress
+from typing import Any
 
 from openai import (
     APIConnectionError,
@@ -23,6 +25,7 @@ from app.ai.errors import (
     AIResponseError,
     AITimeoutError,
 )
+from app.ai.runtime_status import track_llm_request
 
 
 class ProviderStreamingAIChatService(AIChatService):
@@ -38,15 +41,20 @@ class ProviderStreamingAIChatService(AIChatService):
         if callable(stream_method):
             received = False
             try:
-                for delta in stream_method(
-                    system_prompt=prompt_spec.system_prompt,
-                    user_prompt=prompt,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
+                with track_llm_request(
+                    provider=self.provider_name,
+                    model=self.model,
+                    route_key=self._runtime_route_key(wrapper),
                 ):
-                    if isinstance(delta, str) and delta:
-                        received = True
-                        yield delta
+                    for delta in stream_method(
+                        system_prompt=prompt_spec.system_prompt,
+                        user_prompt=prompt,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                    ):
+                        if isinstance(delta, str) and delta:
+                            received = True
+                            yield delta
             except AIError:
                 raise
             except Exception as exc:
@@ -106,15 +114,20 @@ class ProviderStreamingAIChatService(AIChatService):
         received = False
         response_stream: Any | None = None
         try:
-            response_stream = create(**payload)
-            for event in response_stream:
-                try:
-                    delta = event.choices[0].delta.content
-                except (AttributeError, IndexError, TypeError):
-                    continue
-                if isinstance(delta, str) and delta:
-                    received = True
-                    yield delta
+            with track_llm_request(
+                provider=self.provider_name,
+                model=model,
+                route_key=self._runtime_route_key(wrapper),
+            ):
+                response_stream = create(**payload)
+                for event in response_stream:
+                    try:
+                        delta = event.choices[0].delta.content
+                    except (AttributeError, IndexError, TypeError):
+                        continue
+                    if isinstance(delta, str) and delta:
+                        received = True
+                        yield delta
         except AuthenticationError as exc:
             raise AIAuthenticationError("AI chat API authentication failed.") from exc
         except RateLimitError as exc:
@@ -137,13 +150,15 @@ class ProviderStreamingAIChatService(AIChatService):
         finally:
             close = getattr(response_stream, "close", None)
             if callable(close):
-                try:
+                with suppress(Exception):
                     close()
-                except Exception:
-                    pass
 
         if not received:
             raise AIResponseError("AI chat provider returned empty streamed content.")
+
+    def _runtime_route_key(self, wrapper: Any) -> str:
+        base_url = str(getattr(wrapper, "base_url", "")).strip().rstrip("/")
+        return f"{self.provider_name}|{self.model}|{base_url}"
 
 
 __all__ = ["ProviderStreamingAIChatService"]

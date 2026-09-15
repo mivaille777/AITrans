@@ -1,0 +1,91 @@
+"""Strongly typed Agent tool contracts and capability definitions."""
+
+from backend.agent_tools.base import (
+    AgentToolExecutionResult,
+    AgentToolInvocationContext,
+    AgentToolModel,
+    AgentToolSpec,
+    TypedAgentToolDefinition,
+)
+from backend.agent_tools.knowledge import (
+    KnowledgeAgentTools,
+    KnowledgeSearchArgs,
+    KnowledgeSearchPlannerArgs,
+    KnowledgeSearchResultData,
+    KnowledgeSearchResultItem,
+    build_knowledge_tool_definitions,
+)
+from backend.agent_tools.reading import (
+    InspectReadingContextResultData,
+    QuickActionResultData,
+    ReadingAgentTools,
+    build_reading_tool_definitions,
+)
+from backend.agent_tools.research import (
+    GetResearchNoteArgs,
+    ListResearchNotesArgs,
+    ResearchAgentTools,
+    ResearchNoteDetailData,
+    ResearchNoteListResultData,
+    ResearchNoteLookupResultData,
+    ResearchNoteResultData,
+    ResearchNoteSummaryData,
+    ResearchNoteUpdateResultData,
+    SaveResearchNoteArgs,
+    SaveResearchNotePlannerArgs,
+    UpdateResearchNoteArgs,
+    UpdateResearchNotePlannerArgs,
+    build_research_tool_definitions,
+)
+from backend.agent_tools.translation import (
+    TranslateSelectionArgs,
+    TranslationAgentTool,
+    TranslationResultData,
+    build_translation_tool_definition,
+)
+from backend.agent_tools.writing import (
+    PolishSelectionArgs,
+    WritingAgentTool,
+    WritingResultData,
+    build_writing_tool_definition,
+)
+
+__all__ = [
+    "AgentToolExecutionResult",
+    "AgentToolInvocationContext",
+    "AgentToolModel",
+    "AgentToolSpec",
+    "GetResearchNoteArgs",
+    "InspectReadingContextResultData",
+    "KnowledgeAgentTools",
+    "KnowledgeSearchArgs",
+    "KnowledgeSearchPlannerArgs",
+    "KnowledgeSearchResultData",
+    "KnowledgeSearchResultItem",
+    "ListResearchNotesArgs",
+    "PolishSelectionArgs",
+    "QuickActionResultData",
+    "ReadingAgentTools",
+    "ResearchAgentTools",
+    "ResearchNoteDetailData",
+    "ResearchNoteListResultData",
+    "ResearchNoteLookupResultData",
+    "ResearchNoteResultData",
+    "ResearchNoteSummaryData",
+    "ResearchNoteUpdateResultData",
+    "SaveResearchNoteArgs",
+    "SaveResearchNotePlannerArgs",
+    "TranslateSelectionArgs",
+    "TranslationAgentTool",
+    "TranslationResultData",
+    "TypedAgentToolDefinition",
+    "UpdateResearchNoteArgs",
+    "UpdateResearchNotePlannerArgs",
+    "WritingAgentTool",
+    "WritingResultData",
+    "build_knowledge_tool_definitions",
+    "build_reading_tool_definitions",
+    "build_research_tool_definitions",
+    "build_translation_tool_definition",
+    "build_writing_tool_definition",
+]

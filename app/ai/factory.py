@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.ai.client import (
-    DEFAULT_DEEPSEEK_MODEL,
     DEEPSEEK_BASE_URL,
+    DEFAULT_DEEPSEEK_MODEL,
     DeepSeekClient,
 )
 from app.ai.errors import AIConfigurationError
@@ -15,9 +15,8 @@ from app.ai.openai_compatible import (
     OpenAICompatibleTextProvider,
 )
 from app.ai.provider import DeepSeekTextProvider
-from app.ai.secrets import ProviderCredentialStore, get_provider_api_key
+from app.ai.secrets import ProviderCredentialStore
 from app.ai.service import AITextService
-
 
 DEFAULT_AI_PROVIDER = "deepseek"
 OPENAI_COMPATIBLE_PROVIDER = "openai_compatible"
@@ -66,15 +65,10 @@ def create_ai_text_service(
     model = _config_value(config_manager, "model", default_model)
     base_url = _config_value(config_manager, "base_url", default_base_url)
 
-    api_key = get_provider_api_key(
-        provider,
-        credential_store=credential_store,
-    )
-
     if provider == DEFAULT_AI_PROVIDER:
         client = DeepSeekClient(
-            api_key=api_key,
             model=model or DEFAULT_DEEPSEEK_MODEL,
+            credential_store=credential_store,
         )
         return AITextService(
             provider=DeepSeekTextProvider(client=client),
@@ -89,9 +83,9 @@ def create_ai_text_service(
             "OpenAI-compatible provider requires a base URL."
         )
     client = OpenAICompatibleClient(
-        api_key=api_key,
         model=model,
         base_url=base_url,
+        credential_store=credential_store,
     )
     return AITextService(
         provider=OpenAICompatibleTextProvider(client=client),

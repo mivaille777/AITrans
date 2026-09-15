@@ -115,7 +115,7 @@ export default function ResearchWorkspace() {
         </div>
       </header>
 
-      <div className="grid min-h-[690px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:grid-cols-[250px_330px_minmax(0,1fr)]">
+      <div className="grid min-h-[620px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:h-[clamp(620px,68vh,780px)] xl:min-h-0 xl:grid-cols-[250px_330px_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)]">
         <SourcePanel
           sources={sources}
           sourceKinds={sourceKinds}
@@ -146,7 +146,7 @@ export default function ResearchWorkspace() {
           onClearSection={() => setSectionHeading("")}
         />
 
-        <main className="min-w-0 bg-white">
+        <main className="min-h-0 min-w-0 overflow-hidden bg-white">
           {detailMode === "source" && sourceId ? (
             <ResearchSourceProfilePanel
               sourceId={sourceId}
@@ -172,7 +172,7 @@ export default function ResearchWorkspace() {
               }}
             />
           ) : (
-            <div className="p-6">
+            <div className="ait-scroll-panel h-full overflow-y-auto p-6">
               <EmptyState
                 icon={<Search size={28} strokeWidth={1.5} />}
                 title={notes.length === 0 ? "No notes match this filter" : "Choose a source or evidence note"}
@@ -206,8 +206,8 @@ function SourcePanel({
   onSelectSourceKind: (sourceKind: string) => void
 }) {
   return (
-    <aside className="border-b border-slate-200 bg-slate-950 p-3 text-slate-200 xl:border-b-0 xl:border-r xl:border-slate-800">
-      <div className="px-2 py-2">
+    <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-950 p-3 text-slate-200 xl:border-b-0 xl:border-r xl:border-slate-800">
+      <div className="shrink-0 px-2 py-2">
         <div className="flex items-center gap-2">
           <BookOpenText size={15} className="text-cyan-400" />
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Sources</p>
@@ -224,7 +224,7 @@ function SourcePanel({
         </select>
       </div>
 
-      <div className="mt-2 max-h-[590px] space-y-1 overflow-y-auto pr-1">
+      <div className="ait-scroll-dark mt-2 max-h-[520px] min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 xl:max-h-none">
         <button
           type="button"
           className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
@@ -300,38 +300,40 @@ function NoteListPanel({
   onClearSection: () => void
 }) {
   return (
-    <aside className="border-b border-slate-200 bg-slate-50/70 p-3 xl:border-b-0 xl:border-r">
-      <label className="relative block">
-        <Search size={14} className="pointer-events-none absolute left-3 top-2.5 text-slate-400" />
-        <input
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Search evidence or annotations"
-          className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-slate-400"
-        />
-      </label>
+    <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 p-3 xl:border-b-0 xl:border-r">
+      <div className="shrink-0">
+        <label className="relative block">
+          <Search size={14} className="pointer-events-none absolute left-3 top-2.5 text-slate-400" />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search evidence or annotations"
+            className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-slate-400"
+          />
+        </label>
 
-      {(selectedSourceId || sectionHeading) && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {selectedSourceId && (
-            <Button size="xs" variant="ghost" onClick={onOpenSourceOverview}>
-              Source overview
-            </Button>
-          )}
-          {sectionHeading && (
-            <button
-              type="button"
-              className="rounded-full bg-cyan-100 px-2.5 py-1 text-[10px] font-medium text-cyan-800"
-              onClick={onClearSection}
-              title="Clear section filter"
-            >
-              {sectionHeading} ×
-            </button>
-          )}
-        </div>
-      )}
+        {(selectedSourceId || sectionHeading) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {selectedSourceId && (
+              <Button size="xs" variant="ghost" onClick={onOpenSourceOverview}>
+                Source overview
+              </Button>
+            )}
+            {sectionHeading && (
+              <button
+                type="button"
+                className="rounded-full bg-cyan-100 px-2.5 py-1 text-[10px] font-medium text-cyan-800"
+                onClick={onClearSection}
+                title="Clear section filter"
+              >
+                {sectionHeading} ×
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
-      <div className="mt-3 max-h-[570px] space-y-2 overflow-y-auto pr-1">
+      <div className="ait-scroll-panel mt-3 max-h-[500px] min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1 xl:max-h-none">
         {notes.map((note) => {
           const active = note.note_id === selectedNoteId
           return (
@@ -421,8 +423,8 @@ function ResearchNoteEditor({
   const dirty = annotation !== savedAnnotation
 
   return (
-    <div className="flex h-full min-h-[690px] flex-col">
-      <header className="border-b border-slate-100 px-5 py-4 lg:px-6">
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="shrink-0 border-b border-slate-100 px-5 py-4 lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Evidence note</p>
@@ -436,7 +438,7 @@ function ResearchNoteEditor({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 lg:px-6">
+      <div className="ait-scroll-panel min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 lg:px-6">
         <EvidenceBlock title="Selected source" icon={<FileText size={14} />}>
           <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{note.source_text}</p>
         </EvidenceBlock>
@@ -496,7 +498,7 @@ function ResearchNoteEditor({
         )}
       </div>
 
-      <footer className="border-t border-slate-100 p-4 lg:px-6">
+      <footer className="shrink-0 border-t border-slate-100 p-4 lg:px-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-2">
             {note.conversation_id ? (

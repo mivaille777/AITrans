@@ -65,6 +65,14 @@ export default function OverlayCompactChat({
   })
   const runtimeConversationId = runtime.conversationId
   const openRuntimeConversation = runtime.openConversation
+  const attachReadingContext = runtime.attachReadingContext
+  const closeRuntimeStream = runtime.closeActiveStream
+  const setRuntimeDraft = runtime.setDraft
+  const runtimeActiveRequestId = runtime.activeRequestId
+  const runtimeContextUpdating = runtime.contextUpdating
+  const runtimeBusyElsewhere = runtime.conversationBusyElsewhere
+  const runtimeContextSourceText = runtime.context.source_text
+  const runtimeContextTranslatedText = runtime.context.translated_text
   const mode = state.mode ?? "assistant"
   const lastModeRef = useRef(mode)
   const draftControlIntent = resolveOverlayControlIntent(runtime.draft, mode)
@@ -78,20 +86,20 @@ export default function OverlayCompactChat({
     followTailRef.current = true
     setShowJumpToLatest(false)
 
-    runtime.closeActiveStream()
-    runtime.setDraft(state.source_text)
+    closeRuntimeStream()
+    setRuntimeDraft(state.source_text)
 
-    void runtime.attachReadingContext(context).finally(() => {
+    void attachReadingContext(context).finally(() => {
       if (activeReadingContextRef.current !== nextContextId) return
-      runtime.setDraft(state.source_text)
+      setRuntimeDraft(state.source_text)
       const scroll = messageScrollRef.current
       if (scroll) scroll.scrollTop = scroll.scrollHeight
     })
   }, [
+    attachReadingContext,
+    closeRuntimeStream,
     context,
-    runtime.attachReadingContext,
-    runtime.closeActiveStream,
-    runtime.setDraft,
+    setRuntimeDraft,
     state.context_id,
     state.source_text,
   ])
@@ -158,15 +166,15 @@ export default function OverlayCompactChat({
     const translatedText = state.translated_text.trim()
     if (
       !translatedText ||
-      runtime.activeRequestId !== null ||
-      runtime.contextUpdating ||
-      runtime.conversationBusyElsewhere
+      runtimeActiveRequestId !== null ||
+      runtimeContextUpdating ||
+      runtimeBusyElsewhere
     ) {
       return
     }
     if (
-      runtime.context.source_text === state.source_text &&
-      runtime.context.translated_text === state.translated_text
+      runtimeContextSourceText === state.source_text &&
+      runtimeContextTranslatedText === state.translated_text
     ) {
       return
     }
@@ -175,15 +183,15 @@ export default function OverlayCompactChat({
     if (syncedTranslationRef.current === signature) return
     syncedTranslationRef.current = signature
 
-    void runtime.attachReadingContext(context)
+    void attachReadingContext(context)
   }, [
+    attachReadingContext,
     context,
-    runtime.activeRequestId,
-    runtime.attachReadingContext,
-    runtime.context.source_text,
-    runtime.context.translated_text,
-    runtime.contextUpdating,
-    runtime.conversationBusyElsewhere,
+    runtimeActiveRequestId,
+    runtimeBusyElsewhere,
+    runtimeContextSourceText,
+    runtimeContextTranslatedText,
+    runtimeContextUpdating,
     state.context_id,
     state.source_text,
     state.translated_text,

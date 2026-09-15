@@ -4,23 +4,89 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from backend.models.agent_runtime import (
+    AgentCitationRef,
+    AgentEvidenceItem,
+    AgentPlanContext,
+)
 from backend.models.quick_actions import ReadingContextPayload
 
 AgentToolEffect = Literal["read", "compute", "write"]
 AgentRunStatus = Literal["completed", "confirmation_required"]
 AgentPlanAction = Literal["answer", "tool"]
+AgentClientSurface = Literal["main", "overlay", "unknown"]
+AgentContextMode = Literal["general", "reading", "knowledge", "research", "translation"]
 AgentTraceEventType = Literal[
     "agent_start",
     "context_ready",
+    "knowledge_retrieval_started",
+    "knowledge_retrieved",
+    "knowledge_context_ready",
+    "multi_agent_started",
+    "multi_agent_plan_ready",
+    "multi_agent_knowledge_started",
+    "multi_agent_knowledge_ready",
+    "multi_agent_context_ready",
+    "multi_agent_specialist_started",
+    "multi_agent_specialist_completed",
+    "multi_agent_specialist_failed",
+    "multi_agent_specialist_skipped",
+    "multi_agent_completed",
     "plan_ready",
+    "react_started",
+    "decision_ready",
     "tool_call",
     "retry",
     "tool_result",
+    "observation_ready",
+    "evidence_gate_evaluated",
+    "react_limit_reached",
+    "rag_query_started",
+    "rag_query_rewritten",
+    "rag_dense_completed",
+    "rag_sparse_completed",
+    "rag_fusion_completed",
+    "rag_rerank_completed",
+    "rag_evidence_selected",
+    "rag_fallback",
     "synthesis_ready",
+    "grounding_verification_evaluated",
     "failure",
     "cancelled",
     "agent_end",
 ]
+
+
+class AgentKnowledgeCanvasContext(BaseModel):
+    board_id: str = Field(default="", max_length=128)
+    board_name: str = Field(default="", max_length=512)
+    scope_label: str = Field(default="", max_length=256)
+
+
+class AgentKnowledgeCardContext(BaseModel):
+    item_id: str = Field(max_length=128)
+    item_type: str = Field(default="", max_length=64)
+    title: str = Field(default="", max_length=1024)
+    summary: str = Field(default="", max_length=8000)
+    document_id: str = Field(default="", max_length=256)
+
+
+class AgentKnowledgeRelationContext(BaseModel):
+    relation_id: str = Field(max_length=128)
+    source_item_id: str = Field(max_length=128)
+    source_title: str = Field(default="", max_length=1024)
+    target_item_id: str = Field(max_length=128)
+    target_title: str = Field(default="", max_length=1024)
+    relation_type: str = Field(max_length=128)
+    label: str = Field(default="", max_length=1024)
+    origin: str = Field(default="", max_length=64)
+    confidence: float | None = None
+
+
+class AgentKnowledgeContext(BaseModel):
+    canvas: AgentKnowledgeCanvasContext | None = None
+    cards: list[AgentKnowledgeCardContext] = Field(default_factory=list, max_length=60)
+    relations: list[AgentKnowledgeRelationContext] = Field(default_factory=list, max_length=60)
 
 
 class AgentToolDefinition(BaseModel):
@@ -44,6 +110,7 @@ class AgentToolExecuteRequest(ReadingContextPayload):
     ai_content: str = Field(default="", max_length=30_000)
     ai_action: str = Field(default="", max_length=128)
     conversation_id: str = Field(default="", max_length=128)
+    workspace_id: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
 
 
@@ -74,23 +141,42 @@ class AgentPlan(BaseModel):
 
 
 class AgentRunRequest(ReadingContextPayload):
+    # Agent runs may be context-free. ReadingContextPayload is reused for the
+    # bounded field set, but a General/Knowledge/Research request must not be
+    # forced to attach an ambient reading selection just to satisfy validation.
+    source_text: str = Field(default="", max_length=20_000)
     session_id: str = Field(default="agent-session", min_length=1, max_length=128)
     trace_id: str = Field(default="", max_length=128)
+    client_id: str = Field(default="", max_length=128)
+    client_surface: AgentClientSurface = "unknown"
+    context_mode: AgentContextMode = "reading"
     user_message: str = Field(min_length=1, max_length=20_000)
     style: str = Field(default="academic", min_length=1, max_length=64)
     conversation_id: str = Field(default="", max_length=128)
+    workspace_id: str = Field(default="", max_length=128)
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
+    knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
+    research_source_ids: list[str] = Field(default_factory=list, max_length=100)
+    knowledge_context: AgentKnowledgeContext | None = None
+    knowledge_item_id: str = Field(default="", max_length=128)
+    knowledge_writeback_type: str = Field(default="", max_length=64)
+    knowledge_writeback_operation: str = Field(default="", max_length=128)
+    knowledge_relation_type: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
 
 
 class AgentRunResponse(BaseModel):
     status: AgentRunStatus
     plan: AgentPlan
+    multi_step_plan: AgentPlanContext | None = None
     output_text: str = ""
     provider: str = ""
     model: str = ""
     request_id: int = 0
+    conversation_id: str = ""
     tool_result: AgentToolExecuteResponse | None = None
+    evidence: list[AgentEvidenceItem] = Field(default_factory=list)
+    citations: list[AgentCitationRef] = Field(default_factory=list)
 
 
 class AgentTraceEvent(BaseModel):

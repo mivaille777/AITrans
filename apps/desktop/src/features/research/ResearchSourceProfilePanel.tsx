@@ -36,7 +36,7 @@ export default function ResearchSourceProfilePanel({
 
   if (sourceQuery.isError || !sourceQuery.data) {
     return (
-      <div className="p-6">
+      <div className="ait-scroll-panel h-full overflow-y-auto p-6">
         <EmptyState
           icon={<BookOpenText size={28} strokeWidth={1.5} />}
           title="Unable to load source profile"
@@ -49,8 +49,8 @@ export default function ResearchSourceProfilePanel({
   const source = sourceQuery.data
 
   return (
-    <div className="flex h-full min-h-[690px] flex-col">
-      <header className="border-b border-slate-100 px-5 py-5 lg:px-6">
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="shrink-0 border-b border-slate-100 px-5 py-5 lg:px-6">
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
           Source profile
         </p>
@@ -73,7 +73,7 @@ export default function ResearchSourceProfilePanel({
         )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 lg:px-6">
+      <div className="ait-scroll-panel min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 lg:px-6">
         <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-5">
           <Metric icon={<FileText size={15} />} label="Evidence" value={source.note_count} />
           <Metric icon={<BookOpenText size={15} />} label="Sections" value={source.section_count} />

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import re
 from typing import Any
 
 from app.ai.chat.models import ChatContext, ReadingContext
@@ -12,14 +14,74 @@ from backend.services.research_source_profile import (
     summarize_source,
 )
 
+_RESEARCH_SEARCH_SCAN_LIMIT = 100
+_RESEARCH_SEARCH_DEFAULT_LIMIT = 8
+_RESEARCH_SEARCH_MAX_LIMIT = 20
+_SEARCH_TOKEN_RE = re.compile(r"[\w-]+", re.UNICODE)
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchNoteSearchMatch:
+    note: ResearchNote
+    source_id: str
+    score: float
+
+
+def _search_text(value: object) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _query_tokens(query: str) -> tuple[str, ...]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for token in _SEARCH_TOKEN_RE.findall(query.casefold()):
+        normalized = token.strip("_-")
+        if normalized and normalized not in seen:
+            tokens.append(normalized)
+            seen.add(normalized)
+    return tuple(tokens)
+
+
+def _field_score(*, value: object, query: str, tokens: tuple[str, ...], weight: float) -> float:
+    text = _search_text(value)
+    if not text:
+        return 0.0
+    score = 0.0
+    if query and query in text:
+        score += weight * 2.0
+    if tokens:
+        matched = sum(1 for token in tokens if token in text)
+        score += weight * (matched / len(tokens))
+    return score
+
+
+def _note_search_score(note: ResearchNote, *, query: str, tokens: tuple[str, ...]) -> float:
+    weighted_fields = (
+        (note.resource_title, 6.0),
+        (note.section_heading, 5.0),
+        (note.user_note, 4.5),
+        (note.ai_content, 3.5),
+        (note.source_text, 3.0),
+        (note.translated_text, 2.5),
+        (note.context_before, 1.0),
+        (note.context_after, 1.0),
+    )
+    return round(
+        sum(
+            _field_score(value=value, query=query, tokens=tokens, weight=weight)
+            for value, weight in weighted_fields
+        ),
+        6,
+    )
+
 
 class ResearchNoteService:
     """Application boundary around the existing SQLite research-note store.
 
     When the supplied text still matches the unified reading resolver, missing
-    source metadata is filled from that frozen selection. This lets Browser DOM,
-    PDF/UIA, Word COM and generic UIA evidence enter the same Research Note path
-    without teaching the note store about capture-provider details.
+    source metadata is filled from that frozen selection. Stage 16 optionally
+    associates newly saved notes/conversations with a Research Workspace without
+    changing the underlying note schema.
     """
 
     def __init__(
@@ -27,9 +89,11 @@ class ResearchNoteService:
         store: ResearchNoteStore | Any | None = None,
         *,
         reading_resolver: Any | None = None,
+        workspace_service: Any | None = None,
     ) -> None:
         self._store = store or ResearchNoteStore()
         self._reading_resolver = reading_resolver
+        self._workspace_service = workspace_service
 
     def _resolved_fields(
         self,
@@ -104,10 +168,8 @@ class ResearchNoteService:
         ai_action: str = "",
         user_note: str = "",
         conversation_id: str = "",
+        workspace_id: str = "",
     ) -> ResearchNoteSaveResult:
-        # Language fields are part of the shared reading-context HTTP contract.
-        # ResearchNoteStore does not persist them independently because the
-        # selected source/translation already carry the relevant language data.
         _ = (source_language, target_language)
         (
             source_text,
@@ -141,16 +203,83 @@ class ResearchNoteService:
                 source_kind=source_kind,
             ),
         )
-        return self._store.save_context(
+        result = self._store.save_context(
             context,
             ai_content=ai_content,
             ai_action=ai_action,
             user_note=user_note,
             conversation_id=conversation_id,
         )
+        workspace = str(workspace_id or "").strip()
+        service = self._workspace_service
+        if workspace and service is not None:
+            if not service.attach_note(workspace, result.note.note_id):
+                raise ValueError("Research workspace not found.")
+            conversation = str(conversation_id or "").strip()
+            if conversation:
+                service.attach_conversation(workspace, conversation)
+        return result
 
     def list_recent(self, *, limit: int = 5) -> tuple[ResearchNote, ...]:
         return tuple(self._store.list_recent(limit=limit))
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = _RESEARCH_SEARCH_DEFAULT_LIMIT,
+        source_ids: tuple[str, ...] | list[str] = (),
+        note_ids: tuple[str, ...] | list[str] = (),
+    ) -> tuple[ResearchNoteSearchMatch, ...]:
+        """Rank persisted research memory without invoking an LLM.
+
+        ``source_ids`` remains available for the Stage 13 user-selected source
+        scope. ``note_ids`` is a narrower runtime-only Stage 16 scope resolved
+        from a Research Workspace and is never exposed to the planner.
+        """
+
+        normalized_query = _search_text(query)
+        if not normalized_query:
+            raise ValueError("Research-note search query must not be empty.")
+        try:
+            bounded_limit = max(1, min(_RESEARCH_SEARCH_MAX_LIMIT, int(limit)))
+        except (TypeError, ValueError):
+            bounded_limit = _RESEARCH_SEARCH_DEFAULT_LIMIT
+
+        trusted_sources = {
+            str(source_id or "").strip()
+            for source_id in source_ids
+            if str(source_id or "").strip()
+        }
+        trusted_notes = {
+            str(note_id or "").strip()
+            for note_id in note_ids
+            if str(note_id or "").strip()
+        }
+        tokens = _query_tokens(normalized_query)
+        matches: list[ResearchNoteSearchMatch] = []
+        for note in self.list_recent(limit=_RESEARCH_SEARCH_SCAN_LIMIT):
+            if trusted_notes and note.note_id not in trusted_notes:
+                continue
+            source_id = research_source_id(note)
+            if trusted_sources and source_id not in trusted_sources:
+                continue
+            score = _note_search_score(note, query=normalized_query, tokens=tokens)
+            if score <= 0:
+                continue
+            matches.append(
+                ResearchNoteSearchMatch(
+                    note=note,
+                    source_id=source_id,
+                    score=score,
+                )
+            )
+
+        matches.sort(
+            key=lambda item: (item.score, item.note.updated_at, item.note.note_id),
+            reverse=True,
+        )
+        return tuple(matches[:bounded_limit])
 
     def get(self, note_id: str) -> ResearchNote | None:
         getter = getattr(self._store, "get", None)
@@ -212,6 +341,7 @@ class ResearchNoteService:
 
 
 __all__ = [
+    "ResearchNoteSearchMatch",
     "ResearchNoteService",
     "ResearchSourceProfile",
     "ResearchSourceSummary",

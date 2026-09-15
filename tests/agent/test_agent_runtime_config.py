@@ -7,8 +7,15 @@ from backend.api.agent_runtime_config import get_agent_runtime_config
 from backend.main import create_app
 
 
+class DefaultSettings:
+    user_data: dict[str, object] = {}
+
+    def get(self, _section: str, _key: str, default=None):
+        return default
+
+
 def test_runtime_config_exposes_only_safe_routing_metadata() -> None:
-    response = get_agent_runtime_config(LLMGateway())
+    response = get_agent_runtime_config(LLMGateway(settings_factory=DefaultSettings))
 
     routes = {route.role: route for route in response.model_routes}
     assert routes["planner"].model == "deepseek-v4-flash"
@@ -21,8 +28,10 @@ def test_runtime_config_exposes_only_safe_routing_metadata() -> None:
     assert response.chat_context_max_chars > response.planner_context_max_chars
 
     prompt_ids = {prompt.prompt_id for prompt in response.prompts}
-    assert "agent.planner@1.1.0" in prompt_ids
-    assert "chat.reading@1.1.0" in prompt_ids
+    assert "agent.planner@1.2.0" in prompt_ids
+    assert "agent.multi_step_planner@1.1.0" in prompt_ids
+    assert "rag.query_planner@1.3.0" in prompt_ids
+    assert "chat.reading@1.3.0" in prompt_ids
     assert "text.translate@1.0.0" in prompt_ids
     assert all("prompt" not in prompt.model_dump() for prompt in response.prompts)
 

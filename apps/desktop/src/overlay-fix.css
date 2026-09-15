@@ -28,15 +28,18 @@ html[data-ait-view="overlay"] .ait-overlay-shell > div::-webkit-scrollbar {
 
 html[data-ait-view="overlay"] .ait-overlay-shell > div::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(255,255,255,.28);
 }
 
-/* Match the opaque native window layer used to suppress WebView2 ghost chrome. */
+/*
+ * The native Tauri window is transparent in both themes. The material layer
+ * in overlay-theme.css decides whether the WebView host is opaque (classic
+ * dark) or transparent so DWM can supply the light desktop backdrop.
+ */
 html[data-ait-view="overlay"],
 html[data-ait-view="overlay"] body,
 html[data-ait-view="overlay"] #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #17171a !important;
+  background: var(--ait-overlay-host-background) !important;
 }
