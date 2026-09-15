@@ -38,6 +38,7 @@ describe("Agent run request", () => {
       conversation_id: "conversation-1",
       workspace_id: "",
       confirmed_write_tools: [],
+      knowledge_context: null,
     })
   })
 
@@ -68,12 +69,66 @@ describe("Agent run request", () => {
     expect(request.resource_title).toBe("")
   })
 
+  it("carries Canvas cards and relations independently of context mode or source text", () => {
+    const request = buildAgentRunRequest({
+      context: {
+        resource_url: "",
+        resource_title: "",
+        section_heading: "",
+        context_before: "",
+        context_after: "",
+        source_kind: "knowledge_document",
+      },
+      contextMode: "general",
+      sessionId: "agent-session-canvas",
+      traceId: "trace-canvas",
+      requestId: 6,
+      userMessage: "List every explicit Canvas relation in context",
+      sourceText: "",
+      translatedText: "",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      conversationId: "",
+      knowledgeContext: {
+        canvas: { board_id: "board-1", board_name: "test1", scope_label: "Canvas" },
+        cards: [
+          { item_id: "a", item_type: "insight", title: "A", summary: "A summary", document_id: "doc-1" },
+          { item_id: "b", item_type: "evidence", title: "B", summary: "B summary", document_id: "doc-1" },
+        ],
+        relations: [
+          {
+            relation_id: "r1",
+            source_item_id: "a",
+            source_title: "A",
+            target_item_id: "b",
+            target_title: "B",
+            relation_type: "supports",
+            label: "manual edge",
+            origin: "manual",
+            confidence: null,
+          },
+        ],
+      },
+    })
+
+    expect(request.context_mode).toBe("general")
+    expect(request.source_text).toBe("")
+    expect(request.knowledge_context?.canvas?.board_name).toBe("test1")
+    expect(request.knowledge_context?.cards).toHaveLength(2)
+    expect(request.knowledge_context?.relations[0]).toMatchObject({
+      relation_id: "r1",
+      relation_type: "supports",
+      origin: "manual",
+      label: "manual edge",
+    })
+  })
+
   it("carries only the explicitly confirmed write tool into a retry", () => {
     const request = buildAgentRunRequest({
       context,
       sessionId: "agent-session-1",
       traceId: "trace-2",
-      requestId: 6,
+      requestId: 7,
       userMessage: "Save this note",
       sourceText: "source",
       translatedText: "",
@@ -91,7 +146,7 @@ describe("Agent run request", () => {
       context,
       sessionId: "agent-session-1",
       traceId: "trace-stage16",
-      requestId: 7,
+      requestId: 8,
       userMessage: "Compare my project evidence",
       sourceText: "source",
       translatedText: "",
