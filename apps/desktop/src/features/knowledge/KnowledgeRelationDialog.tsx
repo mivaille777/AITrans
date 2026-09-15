@@ -69,6 +69,9 @@ function KnowledgeRelationDialogContent({
           <ArrowRight size={15} className="text-slate-400" />
           <div className="min-w-0"><p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Target</p><p className="mt-1 truncate text-xs font-semibold text-slate-800">{target.title}</p></div>
         </div>
+        <p className="mt-3 rounded-[12px] border border-amber-100 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
+          This creates a canonical user-authored relation. The Agent can use it to understand your knowledge structure, but the relation alone is not treated as document evidence.
+        </p>
         <label className="mt-5 block text-xs font-semibold text-slate-700">Relation<select value={relationType} onChange={(event) => setRelationType(event.target.value)} className="mt-2 w-full rounded-[13px] border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal outline-none transition focus:border-cyan-300">{relationTypes.map((relation) => <option key={relation.value} value={relation.value}>{relation.label}</option>)}</select></label>
         <label className="mt-4 block text-xs font-semibold text-slate-700">Optional label<input value={label} onChange={(event) => setLabel(event.target.value)} className="mt-2 w-full rounded-[13px] border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none transition focus:border-cyan-300" placeholder="Add context to this edge" /></label>
         <footer className="mt-5 flex justify-end gap-2"><Button variant="ghost" disabled={creating} onClick={onClose}>Cancel</Button><Button variant="primary" disabled={creating} onClick={() => onCreate({ source_item_id: source.item_id, target_item_id: target.item_id, relation_type: relationType, label: label.trim(), origin: "manual" })}>{creating ? "Connecting…" : "Create relation"}</Button></footer>
