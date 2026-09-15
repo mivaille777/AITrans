@@ -28,10 +28,25 @@ function CardIcon({ type }: { type: KnowledgeItem["item_type"] }) {
   return <FileText size={16} />
 }
 
+function selectionProvenanceLabel(item: KnowledgeItem): string {
+  const metadata = item.metadata
+  const page = metadata.pdf_page_number
+  const section = metadata.section_heading?.trim()
+  if (metadata.selection_source === "pdf") {
+    if (page && section) return `PDF p.${page} · ${section}`
+    if (page) return `PDF p.${page}`
+    if (section) return `PDF · ${section}`
+    return "PDF selection"
+  }
+  if (metadata.selection_source === "text" && section) return `Text · ${section}`
+  return ""
+}
+
 export default function KnowledgeCardRenderer({ item }: { item: KnowledgeItem }) {
   const confidence = knowledgeCardConfidence(item)
   const sources = knowledgeCardSources(item)
   const provenance = knowledgeCardProvenance(item)
+  const selectionProvenance = selectionProvenanceLabel(item)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
@@ -49,6 +64,7 @@ export default function KnowledgeCardRenderer({ item }: { item: KnowledgeItem })
       </div>
       <div className="flex flex-wrap items-center gap-x-2 border-t border-slate-100 px-3 py-2 text-[9px] font-medium text-slate-400">
         <span>{item.item_type === "paper" ? "Research source" : "Knowledge card"}</span>
+        {selectionProvenance ? <span className="max-w-full truncate">· {selectionProvenance}</span> : null}
         {confidence !== null ? <span>· {Math.round(confidence * 100)}%</span> : null}
         {sources.length > 0 ? <span>· {sources.length} source{sources.length === 1 ? "" : "s"}</span> : null}
         {provenance ? <span>· {provenance.created_by}</span> : null}
