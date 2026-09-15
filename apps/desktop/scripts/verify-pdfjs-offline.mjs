@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 import process from "node:process"
-import { fileURLToPath } from "node:url"
 
 const inputs = process.argv.slice(2).map((value) => path.resolve(value))
 if (inputs.length === 0) {

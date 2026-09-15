@@ -83,3 +83,14 @@ must additionally be run in the release WebView with networking disabled:
 
 Scanned/image-only PDFs remain outside this acceptance because they require OCR
 and do not gain a text layer from local PDF.js packaging.
+
+## Batch 8 permanent guard
+
+Every `npm run build` now runs `npm run check:pdfjs-offline` after Vite emits the
+production bundle. The check fails when the source or `dist` contains a known
+PDF.js CDN URL, when `pdfjs-dist` is not exactly `6.3.289`, when the runtime is no
+longer a lazy entry, when the worker is absent or unreferenced, or when any CMap,
+standard-font, ICC, WASM, or license asset class is missing.
+
+Final Batch 8 result: 63 test files and 264 tests passed; the production guard
+passed; and the Tauri release build completed successfully.
