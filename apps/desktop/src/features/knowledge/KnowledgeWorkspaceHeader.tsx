@@ -1,6 +1,6 @@
-import { BookOpenText, LayoutDashboard, LibraryBig, Network } from "lucide-react"
+import { LayoutDashboard, LibraryBig, Network } from "lucide-react"
 
-import type { KnowledgePrimaryView, KnowledgeView } from "./knowledge-workspace-navigation"
+import type { KnowledgePrimaryView } from "./knowledge-workspace-navigation"
 
 const primaryViews = [
   ["canvas", LayoutDashboard, "Canvas"],
@@ -12,7 +12,7 @@ export default function KnowledgeWorkspaceHeader({
   view,
   onSelectView,
 }: {
-  view: KnowledgeView
+  view: KnowledgePrimaryView
   onSelectView: (view: KnowledgePrimaryView) => void
 }) {
   return (
@@ -20,7 +20,7 @@ export default function KnowledgeWorkspaceHeader({
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Knowledge workspace</p>
         <h1 className="mt-1 text-lg font-semibold text-slate-950">AI Knowledge Space</h1>
-        <p className="mt-1 text-xs text-slate-500">Organize papers, concepts, notes, relations, and agent-ready context in one place.</p>
+        <p className="mt-1 text-xs text-slate-500">Organize papers, concepts, notes, evidence, relations, and agent-ready knowledge. Open papers in Reading for focused reading actions.</p>
       </div>
       <nav className="flex items-center gap-1 rounded-[14px] border border-slate-200 bg-white p-1 shadow-sm" aria-label="Knowledge workspace view">
         {primaryViews.map(([value, Icon, label]) => (
@@ -34,12 +34,6 @@ export default function KnowledgeWorkspaceHeader({
             {label}
           </button>
         ))}
-        {view === "reader" ? (
-          <button type="button" className="flex items-center gap-2 rounded-[10px] bg-slate-950 px-3 py-2 text-xs font-semibold text-white shadow-sm">
-            <BookOpenText size={14} />
-            Reader
-          </button>
-        ) : null}
       </nav>
     </header>
   )

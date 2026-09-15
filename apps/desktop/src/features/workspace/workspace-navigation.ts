@@ -27,7 +27,7 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
     path: "/reading",
     label: "Reading",
-    description: "Inspect the active selection, document identity, section, and nearby context.",
+    description: "Read indexed papers, inspect live selections, and turn passages into evidence, notes, translations, or AI context.",
   },
   {
     path: "/research",
@@ -37,7 +37,7 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
     path: "/knowledge",
     label: "Knowledge",
-    description: "Import local documents and manage their retrieval index.",
+    description: "Organize cards, documents, canvases, graphs, and relations while Reading owns document-reading actions.",
   },
   {
     path: "/translation",
