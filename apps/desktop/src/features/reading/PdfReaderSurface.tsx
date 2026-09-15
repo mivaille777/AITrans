@@ -145,6 +145,7 @@ export default function PdfReaderSurface({
       .catch((reason: unknown) => {
         if (disposed) return
         setLoading(false)
+        setRendering(false)
         setError(reason instanceof Error ? reason.message : "Unable to load the interactive PDF reader.")
       })
 
@@ -260,6 +261,7 @@ export default function PdfReaderSurface({
   }
 
   const pageCount = pdfDocument?.numPages ?? 0
+  const nativePreviewUrl = `${url}#page=${Math.max(1, pageNumber)}`
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-100/75">
@@ -271,10 +273,10 @@ export default function PdfReaderSurface({
         </div>
         <span className="hidden text-slate-400 lg:inline">Select PDF text to create knowledge or ask AI.</span>
         <div className="flex items-center gap-1.5">
-          <Button size="xs" variant="ghost" disabled={zoom <= MIN_ZOOM} onClick={() => { clearNativeSelection(); setZoom((value) => Math.max(MIN_ZOOM, value - ZOOM_STEP)) }}><Minus size={12} /></Button>
+          <Button size="xs" variant="ghost" disabled={zoom <= MIN_ZOOM || Boolean(error)} onClick={() => { clearNativeSelection(); setZoom((value) => Math.max(MIN_ZOOM, value - ZOOM_STEP)) }}><Minus size={12} /></Button>
           <span className="w-10 text-center">{Math.round(zoom * 100)}%</span>
-          <Button size="xs" variant="ghost" disabled={zoom >= MAX_ZOOM} onClick={() => { clearNativeSelection(); setZoom((value) => Math.min(MAX_ZOOM, value + ZOOM_STEP)) }}><Plus size={12} /></Button>
-          <Button size="xs" variant="ghost" disabled={zoom === 1} onClick={() => { clearNativeSelection(); setZoom(1) }}><RotateCcw size={12} /></Button>
+          <Button size="xs" variant="ghost" disabled={zoom >= MAX_ZOOM || Boolean(error)} onClick={() => { clearNativeSelection(); setZoom((value) => Math.min(MAX_ZOOM, value + ZOOM_STEP)) }}><Plus size={12} /></Button>
+          <Button size="xs" variant="ghost" disabled={zoom === 1 || Boolean(error)} onClick={() => { clearNativeSelection(); setZoom(1) }}><RotateCcw size={12} /></Button>
         </div>
       </div>
 
@@ -285,10 +287,18 @@ export default function PdfReaderSurface({
           </div>
         )}
         {error ? (
-          <div className="mx-auto mt-12 max-w-lg rounded-[16px] border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-800">
-            <p className="font-semibold">Interactive PDF mode is unavailable.</p>
-            <p className="mt-1">{error}</p>
-            <p className="mt-2 text-[10px] text-amber-700">Text mode remains available. PDF.js is loaded from a pinned build for this interaction batch.</p>
+          <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-3">
+            <div className="shrink-0 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+              <p className="font-semibold">Interactive selection is unavailable; showing the native PDF preview instead.</p>
+              <p className="mt-1">{error}</p>
+              <p className="mt-1 text-[10px] text-amber-700">Text mode and the native preview remain available. Selection actions require the interactive PDF layer.</p>
+            </div>
+            <iframe
+              key={nativePreviewUrl}
+              title={`Native PDF fallback · ${title}`}
+              src={nativePreviewUrl}
+              className="min-h-[560px] flex-1 rounded-[12px] border border-slate-200 bg-white"
+            />
           </div>
         ) : (
           <div className="relative mx-auto w-fit bg-white shadow-[0_12px_40px_rgba(15,23,42,0.12)]" onMouseUp={captureSelection} onKeyUp={captureSelection}>
