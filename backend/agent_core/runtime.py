@@ -128,7 +128,12 @@ class AgentRuntime:
             else:
                 state.sync_contract()
             active_control.checkpoint("context_ready")
-            self._emit(AgentEventType.CONTEXT_READY, state.browser_context)
+            public_context = {
+                key: value
+                for key, value in state.browser_context.items()
+                if key != "knowledge_context"
+            }
+            self._emit(AgentEventType.CONTEXT_READY, public_context)
             knowledge_diagnostics = knowledge_context_diagnostics(
                 state.browser_context.get("knowledge_context")
             )
