@@ -101,7 +101,7 @@ def _percentile_95(values: list[int]) -> int:
 
 
 _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
-    "agent_start": frozenset({"budget_ms"}),
+    "agent_start": frozenset({"budget_ms", "resumed"}),
     "context_ready": frozenset({"source_kind"}),
     "plan_ready": frozenset(
         {
@@ -235,7 +235,7 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "failure": frozenset({"code", "stage", "fallback_reason"}),
     "cancelled": frozenset({"code", "fallback_reason"}),
     "agent_end": frozenset(
-        {"intent", "status", "ui_mode", "total_duration_ms"}
+        {"intent", "status", "ui_mode", "total_duration_ms", "resumed"}
     ),
 }
 

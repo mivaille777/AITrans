@@ -4,7 +4,11 @@ from typing import Any, Callable
 
 from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEvent, AgentEventType
-from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
+from backend.agent_core.exceptions import (
+    AgentBudgetExceededError,
+    AgentCancelledError,
+    AgentRuntimeError,
+)
 from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.state import AgentState
 
@@ -56,6 +60,12 @@ class AgentRuntime:
         self._event_sink: AgentEventSink | None = None
         self._active_state: AgentState | None = None
         self._control: AgentRunControl | None = None
+        configure_preworkflow = getattr(workflow_adapter, "configure_preworkflow", None)
+        if callable(configure_preworkflow):
+            configure_preworkflow(
+                context_provider=context_provider,
+                collaboration_adapter=collaboration_adapter,
+            )
 
     def _emit(self, event_type: AgentEventType, payload: dict[str, Any]) -> None:
         state = self._active_state
@@ -93,13 +103,29 @@ class AgentRuntime:
         state.sync_contract()
         return state
 
+    def restore_checkpoint(self, run_id: str) -> AgentState:
+        """Return the latest persisted graph state for an explicit resume."""
+
+        loader = getattr(self.workflow_adapter, "checkpoint_state", None)
+        state = loader(run_id) if callable(loader) else None
+        if not isinstance(state, AgentState):
+            raise AgentRuntimeError(
+                f"No resumable Agent checkpoint exists for run {run_id!r}.",
+                stage="checkpoint",
+                fallback_reason="checkpoint_not_found",
+            )
+        return state
+
     def execute(
         self,
         state: AgentState,
         *,
         event_sink: AgentEventSink | None = None,
         control: AgentRunControl | None = None,
+        resume: bool = False,
     ) -> AgentState:
+        if resume:
+            state = self.restore_checkpoint(state.run_id)
         previous_sink = self._event_sink
         previous_state = self._active_state
         previous_control = self._control
@@ -119,31 +145,67 @@ class AgentRuntime:
                     "run_id": state.run_id,
                     "trace_id": state.trace_id,
                     "budget_ms": int(active_control.policy.total_timeout_seconds * 1000),
+                    "resumed": resume,
                 },
             )
 
-            active_control.checkpoint("context_resolution")
-            if self.context_provider:
-                state.apply_reading_context(self.context_provider(state))
-            else:
-                state.sync_contract()
-            active_control.checkpoint("context_ready")
-            public_context = {
-                key: value
-                for key, value in state.browser_context.items()
-                if key != "knowledge_context"
-            }
-            self._emit(AgentEventType.CONTEXT_READY, public_context)
-            knowledge_diagnostics = knowledge_context_diagnostics(
-                state.browser_context.get("knowledge_context")
-            )
-            if knowledge_diagnostics:
-                self._emit(
-                    AgentEventType.KNOWLEDGE_CONTEXT_READY,
-                    knowledge_diagnostics,
+            if resume:
+                resume_with_events = getattr(
+                    self.workflow_adapter,
+                    "resume_with_events",
+                    None,
                 )
+                if not callable(resume_with_events):
+                    raise AgentRuntimeError(
+                        "The configured Agent workflow cannot resume checkpoints.",
+                        stage="checkpoint",
+                        fallback_reason="checkpoint_unavailable",
+                    )
+                state = resume_with_events(
+                    state,
+                    self._emit,
+                    control=active_control,
+                )
+                state.sync_contract()
+                self._active_state = state
+                self._emit(
+                    AgentEventType.AGENT_END,
+                    {
+                        "intent": state.intent,
+                        "status": state.response.get("status", ""),
+                        "ui_mode": state.ui_mode,
+                        "total_duration_ms": active_control.elapsed_ms,
+                        "resumed": True,
+                    },
+                )
+                return state
 
-            state = self._run_collaboration(state, active_control)
+            manages_preworkflow = bool(
+                getattr(self.workflow_adapter, "manages_preworkflow", False)
+            )
+            if not manages_preworkflow:
+                active_control.checkpoint("context_resolution")
+                if self.context_provider:
+                    state.apply_reading_context(self.context_provider(state))
+                else:
+                    state.sync_contract()
+                active_control.checkpoint("context_ready")
+                public_context = {
+                    key: value
+                    for key, value in state.browser_context.items()
+                    if key != "knowledge_context"
+                }
+                self._emit(AgentEventType.CONTEXT_READY, public_context)
+                knowledge_diagnostics = knowledge_context_diagnostics(
+                    state.browser_context.get("knowledge_context")
+                )
+                if knowledge_diagnostics:
+                    self._emit(
+                        AgentEventType.KNOWLEDGE_CONTEXT_READY,
+                        knowledge_diagnostics,
+                    )
+
+                state = self._run_collaboration(state, active_control)
 
             if self.workflow_adapter is not None:
                 previous_call_count = len(state.tool_calls)

@@ -48,7 +48,10 @@ from backend.services.agent_tool_registry import (
     AgentToolExecutionResult,
     AgentToolRegistry,
 )
-from backend.services.research_note_service import ResearchNoteService, research_source_id
+from backend.services.research_note_service import (
+    ResearchNoteService,
+    research_source_id,
+)
 from backend.services.research_workspace_service import ResearchWorkspaceService
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -211,6 +214,8 @@ def _run_response(state: AgentState) -> AgentRunResponse:
         else AgentPlan.model_validate(state.planned_action)
     )
     return AgentRunResponse(
+        run_id=state.run_id,
+        trace_id=state.trace_id,
         status=str(response.get("status", "completed") or "completed"),
         plan=compatibility_plan,
         multi_step_plan=multi_step,
@@ -233,12 +238,21 @@ def _execute_runtime(
     research_notes: ResearchNoteService | None = None,
 ) -> AgentState:
     try:
-        state = _state_from_run_request(
-            payload,
-            workspace_service=workspace_service,
-            research_notes=research_notes,
+        resume_run_id = payload.resume_run_id.strip()
+        state = (
+            runtime.restore_checkpoint(resume_run_id)
+            if resume_run_id
+            else _state_from_run_request(
+                payload,
+                workspace_service=workspace_service,
+                research_notes=research_notes,
+            )
         )
-        result = runtime.execute(state)
+        result = (
+            runtime.execute(state, resume=True)
+            if resume_run_id
+            else runtime.execute(state)
+        )
         _associate_workspace_result(payload, result, workspace_service)
         return result
     except AgentConversationBusyError as exc:
@@ -413,25 +427,43 @@ async def stream_product_agent(
             )
             return
 
+        raw_request = incoming.get("request")
+        raw_identity = raw_request if isinstance(raw_request, dict) else {}
         try:
-            payload = AgentRunRequest.model_validate(incoming.get("request"))
-            state = _state_from_run_request(
-                payload,
-                workspace_service=workspace_service,
-                research_notes=research_notes,
+            error_request_id = max(0, int(raw_identity.get("request_id", 0) or 0))
+        except (TypeError, ValueError):
+            error_request_id = 0
+        error_session_id = str(raw_identity.get("session_id", "") or "")
+        error_run_id = str(raw_identity.get("resume_run_id", "") or "")
+        error_trace_id = str(raw_identity.get("trace_id", "") or "")
+
+        try:
+            payload = AgentRunRequest.model_validate(raw_request)
+            resume_run_id = payload.resume_run_id.strip()
+            state = (
+                runtime.restore_checkpoint(resume_run_id)
+                if resume_run_id
+                else _state_from_run_request(
+                    payload,
+                    workspace_service=workspace_service,
+                    research_notes=research_notes,
+                )
             )
-        except (ValidationError, ValueError) as exc:
+        except (ValidationError, ValueError, AgentRuntimeError) as exc:
             message = str(exc)
             if isinstance(exc, ValidationError) and exc.errors():
                 message = str(exc.errors()[0].get("msg") or "Invalid Agent request.")
             await websocket.send_json(
                 {
                     "type": "error",
-                    "request_id": 0,
-                    "session_id": "",
-                    "run_id": "",
-                    "trace_id": "",
-                    "code": "invalid_request",
+                    "request_id": error_request_id,
+                    "session_id": error_session_id,
+                    "run_id": error_run_id,
+                    "trace_id": error_trace_id,
+                    "code": _stream_error_code(exc),
+                    "fallback_reason": str(
+                        getattr(exc, "fallback_reason", "") or ""
+                    ),
                     "message": message or "Invalid Agent request.",
                 }
             )
@@ -470,11 +502,13 @@ async def stream_product_agent(
 
         def produce() -> None:
             try:
-                result_state = runtime.execute(
-                    state,
-                    event_sink=observe,
-                    control=control,
-                )
+                execution_options: dict[str, Any] = {
+                    "event_sink": observe,
+                    "control": control,
+                }
+                if resume_run_id:
+                    execution_options["resume"] = True
+                result_state = runtime.execute(state, **execution_options)
                 _associate_workspace_result(payload, result_state, workspace_service)
                 trace = _trace_response(result_state, runtime)
                 enqueue(

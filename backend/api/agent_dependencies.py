@@ -8,6 +8,7 @@ from backend.agent_core.context import ReadingContextProvider
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
 from backend.api.agent_observability_dependencies import get_agent_trace_store_service
 from backend.api.dependencies import (
     get_companion_ownership_service,
@@ -17,6 +18,7 @@ from backend.api.dependencies import (
     get_research_note_service,
     get_translation_service,
 )
+from backend.services.agent_checkpoint_service import AgentCheckpointService
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.agent_trace_store_service import AgentTraceStoreService
 from backend.services.companion_ownership_service import (
@@ -50,6 +52,10 @@ AgentTraceStoreDependency = Annotated[
     AgentTraceStoreService | None,
     Depends(get_agent_trace_store_service),
 ]
+AgentCheckpointDependency = Annotated[
+    AgentCheckpointService | None,
+    Depends(get_agent_checkpoint_service),
+]
 ConversationStoreDependency = Annotated[
     ConversationStoreService,
     Depends(get_conversation_store_service),
@@ -80,6 +86,7 @@ def get_agent_runtime(
     research_service: ResearchNoteServiceDependency = None,
     translation_service: TranslationServiceDependency = None,
     trace_store: AgentTraceStoreDependency = None,
+    checkpoint_service: AgentCheckpointDependency = None,
 ) -> AgentRuntime:
     """Build one request-scoped canonical Agent Runtime.
 
@@ -94,14 +101,22 @@ def get_agent_runtime(
         service,
         conversation_service=conversation_service,
     )
-    graph = ReadingAgentGraph(adapter)
     collaboration_service = MultiAgentWorkspaceService(
         research_service=research_service,
         translation_service=translation_service,
     )
-    return AgentRuntime(
+    collaboration_adapter = MultiAgentRuntimeBridge(collaboration_service)
+    graph = ReadingAgentGraph(
+        adapter,
+        checkpointer=(
+            checkpoint_service.checkpointer
+            if checkpoint_service is not None
+            else None
+        ),
         context_provider=ReadingContextProvider(resolver),
-        collaboration_adapter=MultiAgentRuntimeBridge(collaboration_service),
+        collaboration_adapter=collaboration_adapter,
+    )
+    return AgentRuntime(
         workflow_adapter=graph,
         run_recorder=trace_store.record if trace_store is not None else None,
     )

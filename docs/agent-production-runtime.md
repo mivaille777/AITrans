@@ -125,7 +125,45 @@ Batch 6/7 `run_id`, `trace_id`, reliability events, redacted SQLite persistence,
 
 Live `plan_ready` and `synthesis_ready` events include the routed model and active prompt ID where available. The runtime-config endpoint provides the current route/prompt configuration without requiring raw prompt persistence.
 
-## 7. Local verification
+## 7. Durable LangGraph checkpoints
+
+Production `ReadingAgentGraph` instances use a process-wide synchronous
+`SqliteSaver` stored at `config/agent_checkpoints.sqlite3`. The Agent `run_id`
+is also the LangGraph `thread_id`, so checkpoints from different tasks cannot
+share state.
+
+LangGraph writes a checkpoint after every completed graph node. A caller can
+explicitly continue the latest checkpoint by sending the original run ID as
+`resume_run_id` in the normal `/api/agent/run`, `/api/agent/run/trace`, or
+WebSocket start request. Resume loads the persisted `run_id`, `trace_id`,
+conversation context, route, plan, ReAct observations, tool results, evidence,
+and response state. Context resolution and the advisory multi-Agent bridge are
+the first two explicit graph nodes. The initial task state is checkpointed
+before either runs, so an interruption inside either stage can resume safely;
+nodes already completed in the previous process are not repeated.
+
+After the WebSocket accepts a run, the desktop stores only its `run_id`,
+`trace_id`, `session_id`, request number, and acceptance time in local storage.
+It never duplicates the user prompt or document content there. A new desktop
+runtime automatically resumes a pending record younger than 24 hours and
+clears it after completion, cancellation, or a terminal backend error.
+
+Resume is deliberately explicit:
+
+- omitting `resume_run_id` always starts a new run;
+- an unknown run ID fails with `checkpoint_not_found`;
+- resuming a completed run returns its final checkpoint without executing nodes again;
+- a checkpoint waiting at a read/compute node continues from that node;
+- a checkpoint waiting to execute a write tool is blocked with
+  `write_checkpoint_requires_manual_recovery` so a crash cannot silently replay
+  a potentially completed side effect.
+
+Checkpoint state contains task and document content and is therefore not the
+redacted observability database. It remains local under the same per-user data
+root as the Conversation store. Serialization uses strict msgpack module
+loading without pickle fallback.
+
+## 8. Local verification
 
 From PowerShell:
 

@@ -118,6 +118,7 @@ export interface AgentKnowledgeContext {
 export interface AgentRunRequest extends ReadingContextFields {
   session_id: string
   trace_id?: string
+  resume_run_id?: string
   client_id?: string
   client_surface?: AgentClientSurface
   context_mode?: AgentContextMode
@@ -137,6 +138,8 @@ export interface AgentRunRequest extends ReadingContextFields {
 }
 
 export interface AgentRunResponse {
+  run_id: string
+  trace_id: string
   status: AgentRunStatus
   plan: AgentPlan
   multi_step_plan?: AgentMultiStepPlan | null

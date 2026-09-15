@@ -147,6 +147,7 @@ class AgentRunRequest(ReadingContextPayload):
     source_text: str = Field(default="", max_length=20_000)
     session_id: str = Field(default="agent-session", min_length=1, max_length=128)
     trace_id: str = Field(default="", max_length=128)
+    resume_run_id: str = Field(default="", max_length=128)
     client_id: str = Field(default="", max_length=128)
     client_surface: AgentClientSurface = "unknown"
     context_mode: AgentContextMode = "reading"
@@ -166,6 +167,8 @@ class AgentRunRequest(ReadingContextPayload):
 
 
 class AgentRunResponse(BaseModel):
+    run_id: str = ""
+    trace_id: str = ""
     status: AgentRunStatus
     plan: AgentPlan
     multi_step_plan: AgentPlanContext | None = None

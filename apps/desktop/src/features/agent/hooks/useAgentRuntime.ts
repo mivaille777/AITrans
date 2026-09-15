@@ -14,6 +14,12 @@ import { attachResearchProjectMember } from "../../../api/research"
 import type { ReadingContextFields } from "../../../api/types"
 import type { TranslationWorkspaceController } from "../../translation/useTranslationWorkspace"
 import { deriveAgentDecision } from "../decision/agent-decision"
+import {
+  buildAgentResumeRequest,
+  clearPendingAgentRun,
+  readPendingAgentRun,
+  rememberPendingAgentRun,
+} from "../runtime/agent-checkpoint-recovery"
 import type { AgentContextMode } from "../runtime/agent-context-mode"
 import {
   inferAgentContextMode,
@@ -42,6 +48,9 @@ export function useAgentRuntime(
   const requestId = useRef(0)
   const lastPayload = useRef<AgentRunRequest | null>(null)
   const streamHandle = useRef<AgentStreamHandle | null>(null)
+  const activeRunId = useRef("")
+  const recoveryAttempted = useRef(false)
+  const initialTargetLanguage = useRef(workspace.targetLanguage)
 
   useEffect(() => {
     return () => {
@@ -184,15 +193,25 @@ export function useAgentRuntime(
   function execute(payload: AgentRunRequest) {
     streamHandle.current?.close()
     streamHandle.current = null
+    if (!payload.resume_run_id) {
+      clearPendingAgentRun()
+    }
     setPending(true)
     setCancelRequested(false)
     setCancelledMessage("")
     setErrorMessage("")
     setFallbackReason("")
     setLiveEvents([])
+    activeRunId.current = payload.resume_run_id || ""
 
     streamHandle.current = streamAgentRun(payload, {
       onEvent(event) {
+        if (event.type === "accepted") {
+          activeRunId.current = event.run_id
+          rememberPendingAgentRun(event)
+          return
+        }
+
         if (event.type === "activity") {
           setLiveEvents((current) => {
             if (current.some((item) => item.sequence === event.event.sequence)) return current
@@ -207,6 +226,8 @@ export function useAgentRuntime(
         }
 
         if (event.type === "cancelled") {
+          clearPendingAgentRun(event.run_id || activeRunId.current)
+          activeRunId.current = ""
           setCancelledMessage(event.message || "Agent run cancelled.")
           setFallbackReason("")
           setCancelRequested(false)
@@ -217,6 +238,8 @@ export function useAgentRuntime(
         }
 
         if (event.type === "done") {
+          clearPendingAgentRun(event.run_id || activeRunId.current)
+          activeRunId.current = ""
           rememberConversation(event.trace.run.conversation_id || "")
           associateTraceWithWorkspace(event.trace)
           setTrace(event.trace)
@@ -230,6 +253,8 @@ export function useAgentRuntime(
         }
 
         if (event.type === "error") {
+          clearPendingAgentRun(event.run_id || activeRunId.current)
+          activeRunId.current = ""
           setErrorMessage(event.message || "Agent run failed.")
           setFallbackReason(event.fallback_reason || "")
           setCancelRequested(false)
@@ -247,6 +272,21 @@ export function useAgentRuntime(
       },
     })
   }
+
+  /* oxlint-disable react-hooks/exhaustive-deps -- checkpoint recovery is one-shot per mounted runtime */
+  useEffect(() => {
+    if (recoveryAttempted.current) return
+    recoveryAttempted.current = true
+    const pendingRun = readPendingAgentRun()
+    if (!pendingRun) return
+
+    requestId.current = Math.max(requestId.current, pendingRun.requestId)
+    const payload = buildAgentResumeRequest(pendingRun, initialTargetLanguage.current)
+    lastPayload.current = payload
+    const timer = window.setTimeout(() => execute(payload), 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   function submitPrompt() {
     const userMessage = prompt.trim()
@@ -322,6 +362,7 @@ export function useAgentRuntime(
 
   function cancelRun() {
     if (!pending || cancelRequested) return
+    clearPendingAgentRun(activeRunId.current)
     setCancelRequested(true)
     streamHandle.current?.cancel()
   }
