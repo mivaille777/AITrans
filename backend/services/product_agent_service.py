@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Any
 
 from app.ai.errors import AIConfigurationError, AIError
+from app.ai.knowledge_context import normalize_knowledge_context
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
     AgentCancelledError,
@@ -156,6 +157,9 @@ class ProductAgentService:
             "context_before": payload.get("context_before", ""),
             "context_after": payload.get("context_after", ""),
             "source_kind": payload.get("source_kind", "desktop"),
+            "knowledge_context": normalize_knowledge_context(
+                payload.get("knowledge_context")
+            ),
         }
 
     @staticmethod
@@ -253,6 +257,7 @@ class ProductAgentService:
             "context_before": str(reading["context_before"]),
             "context_after": str(reading["context_after"]),
             "source_kind": str(reading["source_kind"]),
+            "knowledge_context": dict(reading.get("knowledge_context", {}) or {}),
             "history": history,
         }
         route = self._semantic_route(tools=tools, payload=semantic_payload)
@@ -377,6 +382,9 @@ class ProductAgentService:
             "request_id": request_id,
             **validated_arguments,
         }
+        # Knowledge/Canvas context is prompt context for planning and synthesis,
+        # not an implicit argument to registered product tools.
+        execution_payload.pop("knowledge_context", None)
         workspace_id = str(payload.get("workspace_id", "") or "").strip()
         if workspace_id:
             execution_payload["workspace_id"] = workspace_id
