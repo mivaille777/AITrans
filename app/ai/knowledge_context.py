@@ -132,6 +132,84 @@ def compact_knowledge_context(value: Any, *, max_chars: int = 10_000) -> dict[st
     return result
 
 
+def _stage_diagnostics(normalized: dict[str, Any], *, max_chars: int) -> dict[str, Any]:
+    compact = compact_knowledge_context(normalized, max_chars=max_chars)
+    cards = list(normalized.get("cards", []))
+    relations = list(normalized.get("relations", []))
+    compact_cards = list(compact.get("cards", []))
+    compact_relations = list(compact.get("relations", []))
+
+    summaries_compacted = 0
+    for index, compact_card in enumerate(compact_cards):
+        if index >= len(cards):
+            break
+        if str(compact_card.get("summary", "")) != str(cards[index].get("summary", "")):
+            summaries_compacted += 1
+
+    used_chars = len(json.dumps(compact, ensure_ascii=False)) if compact else 0
+    cards_included = len(compact_cards)
+    relations_included = len(compact_relations)
+    return {
+        "max_chars": max(1_000, int(max_chars)),
+        "used_chars": used_chars,
+        "cards_included": cards_included,
+        "relations_included": relations_included,
+        "card_summaries_compacted": summaries_compacted,
+        "cards_dropped": max(0, len(cards) - cards_included),
+        "relations_dropped": max(0, len(relations) - relations_included),
+        "truncated": (
+            cards_included < len(cards)
+            or relations_included < len(relations)
+            or summaries_compacted > 0
+        ),
+    }
+
+
+def knowledge_context_diagnostics(value: Any) -> dict[str, Any]:
+    """Build a safe runtime summary without exposing card or relation content."""
+
+    normalized = normalize_knowledge_context(value)
+    if not normalized:
+        return {}
+
+    canvas = normalized.get("canvas") or {}
+    cards = list(normalized.get("cards", []))
+    relations = list(normalized.get("relations", []))
+    document_ids = {
+        str(card.get("document_id", "")).strip()
+        for card in cards
+        if str(card.get("document_id", "")).strip()
+    }
+    binding = "knowledge_canvas" if canvas.get("board_id") or canvas.get("board_name") else "knowledge_selection"
+
+    return {
+        "binding": binding,
+        "canvas": {
+            "board_id": _text(canvas.get("board_id"), 128),
+            "board_name": _text(canvas.get("board_name"), 512),
+            "scope_label": _text(canvas.get("scope_label"), 256),
+        }
+        if canvas
+        else None,
+        "attached": {
+            "cards": len(cards),
+            "relations": len(relations),
+            "documents": len(document_ids),
+        },
+        "stages": {
+            "planner": _stage_diagnostics(normalized, max_chars=7_000),
+            "react": _stage_diagnostics(normalized, max_chars=8_000),
+            "synthesis": _stage_diagnostics(normalized, max_chars=9_000),
+        },
+        "visibility": {
+            "planner": True,
+            "react": True,
+            "synthesis": True,
+        },
+        "relation_trust": "organizational_context_not_factual_evidence",
+    }
+
+
 def knowledge_context_json(value: Any, *, max_chars: int = 10_000) -> str:
     compact = compact_knowledge_context(value, max_chars=max_chars)
     return json.dumps(compact, ensure_ascii=False) if compact else "{}"
@@ -139,6 +217,7 @@ def knowledge_context_json(value: Any, *, max_chars: int = 10_000) -> str:
 
 __all__ = [
     "compact_knowledge_context",
+    "knowledge_context_diagnostics",
     "knowledge_context_json",
     "normalize_knowledge_context",
 ]
