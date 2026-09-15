@@ -1,6 +1,5 @@
 import time
 
-
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 
 

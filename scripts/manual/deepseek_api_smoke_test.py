@@ -5,7 +5,7 @@ provider SDK directly. It performs a real network request and requires a
 DeepSeek key already saved from Settings -> Cloud LLM in the Tauri desktop app.
 
 Usage (PowerShell):
-    python scripts/deepseek_smoke_test.py
+    python scripts/manual/deepseek_api_smoke_test.py
 """
 
 from __future__ import annotations

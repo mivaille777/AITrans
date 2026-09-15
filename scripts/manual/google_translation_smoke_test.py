@@ -2,16 +2,19 @@
 
 The script bypasses TranslationCache and FastAPI so it tests only the provider
 and its browser-style GTX request contract against ``translate.google.com``.
+
+Run from the repository root:
+    python scripts/manual/google_translation_smoke_test.py
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from pathlib import Path
-import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

@@ -1,8 +1,8 @@
 """Manual real-network smoke test for the current Youdao WebFanyi provider.
 
 Run from repository root:
-    python scripts/manual_real_youdao_test.py
-    python scripts/manual_real_youdao_test.py "Hello world" --source en --target zh-CN
+    python scripts/manual/youdao_translation_smoke_test.py
+    python scripts/manual/youdao_translation_smoke_test.py "Hello world" --source en --target zh-CN
 
 The provider is invoked directly so TranslationCache cannot hide a real
 network/protocol failure.
@@ -11,10 +11,10 @@ network/protocol failure.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

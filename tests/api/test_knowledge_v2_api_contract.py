@@ -9,7 +9,6 @@ from backend.knowledge.v2_repository import KnowledgeV2Repository
 from backend.knowledge.v2_service import KnowledgeV2Service
 from backend.main import create_app
 
-
 EXPECTED_ROUTES = {
     "/api/knowledge/v2/cards",
     "/api/knowledge/v2/cards/{card_id}",

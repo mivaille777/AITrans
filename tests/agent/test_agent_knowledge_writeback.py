@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from backend.agent_tools.base import AgentToolInvocationContext, EmptyToolArgs
-from backend.agent_tools.knowledge import KnowledgeAgentTools, build_knowledge_tool_definitions
+from backend.agent_tools.knowledge import (
+    KnowledgeAgentTools,
+    build_knowledge_tool_definitions,
+)
 from backend.knowledge.domain import KnowledgeItemType, KnowledgeRelationOrigin
 from backend.knowledge.repository import SqliteKnowledgeRepository
 from backend.knowledge.service import KnowledgeWorkspaceService

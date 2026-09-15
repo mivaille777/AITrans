@@ -1,4 +1,36 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = "Stop"
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$CondaEnvironment = if ($env:AITRANS_DIAGNOSTIC_CONDA_ENV) {
+    $env:AITRANS_DIAGNOSTIC_CONDA_ENV
+} else {
+    "aitrans"
+}
+$Conda = Get-Command conda -ErrorAction SilentlyContinue
+
 Write-Host "LLM Configuration Check"
 Write-Host "-----------------------"
 
-python -c "from backend.config import settings; print('Provider:', settings.LLM_PROVIDER); print('OpenAI configured:', bool(settings.OPENAI_API_KEY)); print('DeepSeek configured:', bool(settings.DEEPSEEK_API_KEY))" 2>&1
+$Checker = Join-Path $PSScriptRoot "check_llm.py"
+if (-not (Test-Path -LiteralPath $Checker -PathType Leaf)) {
+    throw "LLM diagnostic helper is missing: $Checker"
+}
+
+Push-Location $Root
+try {
+    if ($null -ne $Conda) {
+        $Output = & $Conda.Source run -n $CondaEnvironment python $Checker 2>&1
+    }
+    else {
+        $Output = & python $Checker 2>&1
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "LLM configuration check failed: $Output"
+    }
+    $Output
+}
+finally {
+    Pop-Location
+}

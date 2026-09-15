@@ -1,21 +1,43 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = "Stop"
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$CondaEnvironment = if ($env:AITRANS_DIAGNOSTIC_CONDA_ENV) {
+    $env:AITRANS_DIAGNOSTIC_CONDA_ENV
+} else {
+    "aitrans"
+}
+$Conda = Get-Command conda -ErrorAction SilentlyContinue
+
 Write-Host "Backend Check"
 Write-Host "-------------"
 
-Write-Host "Import test"
-python -c "from backend.main import create_app; app=create_app(); print(app.title, app.version)" 2>&1
-
-Write-Host ""
-Write-Host "Port 8766"
-$listener = Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue
-if ($listener) {
-    Write-Host "[PASS] Backend port 8766"
-} else {
-    Write-Warning "[WARN] Backend port 8766 is not listening"
-}
-
+Push-Location $Root
 try {
-    Invoke-RestMethod "http://127.0.0.1:8766/api/health" -TimeoutSec 3 | Out-String
-    Write-Host "[PASS] Health endpoint"
-} catch {
-    Write-Warning "[WARN] Health endpoint unavailable"
+    if ($null -ne $Conda) {
+        $ImportResult = & $Conda.Source run -n $CondaEnvironment python -c "from backend.main import create_app; app=create_app(); print(app.title, app.version)" 2>&1
+    }
+    else {
+        $ImportResult = & python -c "from backend.main import create_app; app=create_app(); print(app.title, app.version)" 2>&1
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Backend import failed: $ImportResult"
+    }
+    Write-Host "[PASS] Backend import: $ImportResult"
 }
+finally {
+    Pop-Location
+}
+
+$Listener = Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue
+if (-not $Listener) {
+    Write-Warning "[WARN] Backend port 8766 is not listening; live health check skipped"
+    return
+}
+
+$Health = Invoke-RestMethod "http://127.0.0.1:8766/health" -TimeoutSec 3
+if ($Health.status -ne "ok" -or $Health.service -ne "aitrans-backend") {
+    throw "Backend /health returned an unexpected response"
+}
+Write-Host "[PASS] Backend /health"
