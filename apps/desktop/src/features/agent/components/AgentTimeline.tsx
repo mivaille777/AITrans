@@ -29,6 +29,38 @@ function activityToneClass(item: AgentActivityItem): string {
   return "border-slate-100 bg-slate-50/70"
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function activityCopy(item: AgentActivityItem): { label: string; detail: string } {
+  if (item.eventType !== "knowledge_context_ready") {
+    return { label: item.label, detail: item.detail }
+  }
+
+  const payload = item.payload ?? {}
+  const canvas = record(payload.canvas)
+  const attached = record(payload.attached)
+  const name = stringValue(canvas.board_name) || stringValue(canvas.scope_label) || "Knowledge context"
+  const cards = numberValue(attached.cards)
+  const relations = numberValue(attached.relations)
+  const documents = numberValue(attached.documents)
+  return {
+    label: "Knowledge context attached",
+    detail: `${name} · ${cards} cards · ${relations} relations · ${documents} documents`,
+  }
+}
+
 export function AgentTimeline({
   activities,
   running,
@@ -106,27 +138,30 @@ export function AgentTimeline({
           </div>
         ) : (
           <ol className="ait-scroll-panel max-h-[420px] space-y-2 overflow-y-auto overscroll-contain pr-1" aria-label="Agent runtime events">
-            {activities.map((item) => (
-              <li
-                key={`${item.sequence}-${item.eventType}`}
-                className={`rounded-[14px] border px-3.5 py-3 ${activityToneClass(item)}`}
-              >
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex h-6 min-w-6 items-center justify-center rounded-full border border-white/80 bg-white text-[10px] font-semibold tabular-nums text-slate-500 shadow-sm">
-                    {item.sequence + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-slate-200/80 bg-white/80 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-                        {getAgentTimelineEventLabel(item.eventType)}
-                      </span>
-                      <p className="text-sm font-medium text-slate-800">{item.label}</p>
+            {activities.map((item) => {
+              const copy = activityCopy(item)
+              return (
+                <li
+                  key={`${item.sequence}-${item.eventType}`}
+                  className={`rounded-[14px] border px-3.5 py-3 ${activityToneClass(item)}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-6 min-w-6 items-center justify-center rounded-full border border-white/80 bg-white text-[10px] font-semibold tabular-nums text-slate-500 shadow-sm">
+                      {item.sequence + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-200/80 bg-white/80 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500">
+                          {getAgentTimelineEventLabel(item.eventType)}
+                        </span>
+                        <p className="text-sm font-medium text-slate-800">{copy.label}</p>
+                      </div>
+                      <p className="mt-1 break-words text-xs leading-5 text-slate-500">{copy.detail}</p>
                     </div>
-                    <p className="mt-1 break-words text-xs leading-5 text-slate-500">{item.detail}</p>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ol>
         )}
       </div>
