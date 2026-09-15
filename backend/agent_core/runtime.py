@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEvent, AgentEventType
 from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
 from backend.agent_core.reliability import AgentRunControl
@@ -128,6 +129,14 @@ class AgentRuntime:
                 state.sync_contract()
             active_control.checkpoint("context_ready")
             self._emit(AgentEventType.CONTEXT_READY, state.browser_context)
+            knowledge_diagnostics = knowledge_context_diagnostics(
+                state.browser_context.get("knowledge_context")
+            )
+            if knowledge_diagnostics:
+                self._emit(
+                    AgentEventType.KNOWLEDGE_CONTEXT_READY,
+                    knowledge_diagnostics,
+                )
 
             state = self._run_collaboration(state, active_control)
 
