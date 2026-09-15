@@ -64,7 +64,10 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
       },
     }
   }, [knowledgeAgentContext, resolvedKnowledgeContext, workspace])
-  const runtime = useAgentRuntime(runtimeWorkspace)
+  const runtime = useAgentRuntime(
+    runtimeWorkspace,
+    resolvedKnowledgeContext?.knowledgeContext ?? null,
+  )
   const { pending, prompt, setPrompt, sourceText, submitPrompt } = runtime
   const appliedDraftRef = useRef("")
   const submittedDraftRef = useRef("")
@@ -123,6 +126,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         confirmed_write_tools: ["save_knowledge_card"],
         knowledge_document_ids: resolved.documentIds,
         research_source_ids: [],
+        knowledge_context: resolved.knowledgeContext,
         request_id: 1,
       }
       const result = await runAgentTrace(payload)
