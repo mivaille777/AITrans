@@ -2,10 +2,7 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCcw } from 
 import { useEffect, useRef, useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
-
-const PDFJS_VERSION = "6.3.289"
-const PDFJS_MODULE_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.mjs`
-const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`
+import { loadPdfJs } from "./pdfjs-runtime"
 
 const MIN_ZOOM = 0.7
 const MAX_ZOOM = 2.2
@@ -73,19 +70,6 @@ interface PdfReaderSurfaceProps {
   onSelection: (selection: PdfReaderSelection | null) => void
 }
 
-let pdfJsPromise: Promise<PdfJsModule> | null = null
-
-async function loadPdfJs(): Promise<PdfJsModule> {
-  if (!pdfJsPromise) {
-    pdfJsPromise = import(/* @vite-ignore */ PDFJS_MODULE_URL).then((module) => {
-      const pdfjs = module as unknown as PdfJsModule
-      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL
-      return pdfjs
-    })
-  }
-  return pdfJsPromise
-}
-
 export function clampPdfPage(pageNumber: number, pageCount: number): number {
   if (!Number.isFinite(pageNumber) || pageCount <= 0) return 1
   return Math.min(pageCount, Math.max(1, Math.round(pageNumber)))
@@ -130,8 +114,9 @@ export default function PdfReaderSurface({
     setPdfDocument(null)
 
     void loadPdfJs()
-      .then((module) => {
+      .then((runtimeModule) => {
         if (disposed) return null
+        const module = runtimeModule as unknown as PdfJsModule
         setPdfJs(module)
         loadingTask = module.getDocument({ url })
         return loadingTask.promise
