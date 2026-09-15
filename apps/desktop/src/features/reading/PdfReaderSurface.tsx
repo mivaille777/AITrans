@@ -2,7 +2,8 @@ import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCcw } from 
 import { useEffect, useRef, useState } from "react"
 
 import { Button } from "../../shared/ui/Button"
-import { loadPdfJs } from "./pdfjs-runtime"
+import { createLocalPdfDocumentSource, loadPdfJs } from "./pdfjs-runtime"
+import type { LocalPdfDocumentSource } from "./pdfjs-runtime"
 
 const MIN_ZOOM = 0.7
 const MAX_ZOOM = 2.2
@@ -55,7 +56,7 @@ interface PdfLoadingTask {
 
 interface PdfJsModule {
   GlobalWorkerOptions: { workerSrc: string }
-  getDocument: (source: { url: string }) => PdfLoadingTask
+  getDocument: (source: LocalPdfDocumentSource) => PdfLoadingTask
   TextLayer: new (options: {
     textContentSource: unknown
     container: HTMLElement
@@ -118,7 +119,7 @@ export default function PdfReaderSurface({
         if (disposed) return null
         const module = runtimeModule as unknown as PdfJsModule
         setPdfJs(module)
-        loadingTask = module.getDocument({ url })
+        loadingTask = module.getDocument(createLocalPdfDocumentSource(url))
         return loadingTask.promise
       })
       .then((document) => {
