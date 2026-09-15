@@ -42,6 +42,27 @@ their stable prefixes and extensions rather than the recorded hash.
 
 ## Batch 7 hard-offline WebView checklist
 
+The command-line offline harness blocks `fetch`, supplies every document as local
+bytes, configures only local support-asset directories, extracts every page's
+text, and renders each first page to a native canvas. Run it from `apps/desktop`:
+
+```text
+node scripts/verify-pdfjs-offline.mjs <english.pdf> <cjk.pdf> <complex-layout.pdf>
+```
+
+Batch 7 command-line result (passed):
+
+| Profile | Temporary PDF.js test fixture | Pages | Text items | SHA-256 |
+| --- | --- | ---: | ---: | --- |
+| English paper | `tracemonkey.pdf` | 14 | 2,436 | `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113` |
+| CJK/CMap | `issue3521.pdf` | 1 | 1 | `5ab6217d6634589fb9a2c4c8780c6aed02b498bb0a60ad9419f9e13a2e1bfe2d` |
+| Rotated text | `rotated.pdf` | 1 | 9 | `08c31db1ebd2345d1dcdcd3ee2baffe47845db76e9911a823ad9ed8638b5a294` |
+
+These upstream Mozilla PDF.js test files were downloaded to a temporary directory
+for validation and are not vendored into AITrans. All three completed local-byte
+parsing, full text extraction, and first-page canvas rendering while the harness
+blocked `fetch`.
+
 The automated asset audit in Batch 8 proves the release has no PDF.js CDN
 reference and contains every required asset class. The following visual checks
 must additionally be run in the release WebView with networking disabled:
