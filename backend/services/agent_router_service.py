@@ -177,6 +177,18 @@ _COMPOUND_ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("save_knowledge", re.compile(r"(保存.{0,10}知识库|保存.{0,10}知识卡片|save.{0,16}knowledge)", re.I)),
 )
 
+_KNOWLEDGE_STRUCTURE_QUERY = re.compile(
+    r"(?:\b(?:list|show|enumerate|describe)\b.{0,120}\b(?:canvas|knowledge)\b.{0,80}\brelations?\b)"
+    r"|(?:\b(?:canvas|knowledge)\b.{0,80}\brelations?\b.{0,120}\b(?:relation\s+id|source\s+card|target\s+card|relation\s+type|origin|label)\b)"
+    r"|(?:列出|显示|枚举|描述).{0,80}(?:画布|canvas|知识).{0,50}关系"
+    r"|(?:画布|canvas|知识).{0,50}关系.{0,80}(?:关系\s*id|源卡片|目标卡片|关系类型|标签|来源)",
+    re.I,
+)
+_KNOWLEDGE_FACTUAL_QUERY = re.compile(
+    r"\b(?:prove|verify|evidence|factual|scientific\s+claim)\b|证据|证明|验证|事实性|科学结论",
+    re.I,
+)
+
 
 def _normalize_command(value: object) -> str:
     text = unicodedata.normalize("NFKC", str(value or ""))
@@ -203,12 +215,29 @@ def _looks_like_compound_request(value: object) -> bool:
     return len(actions) >= 2
 
 
+def _looks_like_knowledge_structure_query(value: object) -> bool:
+    """Recognize read-only inspection of already attached Canvas structure.
+
+    These requests should not spend a semantic-planner call or invoke retrieval.
+    The final synthesis model can answer directly from the first-class
+    ``knowledge_context`` contract. Requests that ask for factual verification
+    deliberately stay on the semantic path so Evidence/Paper retrieval remains
+    available.
+    """
+
+    command = _normalize_command(value)
+    if not command or _KNOWLEDGE_FACTUAL_QUERY.search(command):
+        return False
+    return _KNOWLEDGE_STRUCTURE_QUERY.search(command) is not None
+
+
 class AgentDeterministicRouterService:
     """Route explicit product commands without an LLM call.
 
-    Matching is deliberately full-command only. Requests that contain an
-    explicit action plus additional work remain unresolved so the semantic
-    router can interpret the compound request instead of silently dropping it.
+    Matching is deliberately full-command only for product actions. Read-only
+    Canvas structure inspection is also recognized because it is fully served
+    by the already attached first-class knowledge context and must not depend on
+    planner JSON formatting.
     """
 
     @staticmethod
@@ -241,6 +270,14 @@ class AgentDeterministicRouterService:
         available = _tool_names(tools)
         if not command:
             return AgentRouteDecision()
+
+        if _looks_like_knowledge_structure_query(command):
+            return AgentRouteDecision(
+                kind="answer",
+                source="deterministic",
+                intent="answer",
+                user_visible_reason="Answer directly from the attached Knowledge/Canvas structure.",
+            )
 
         target_match = _ZH_TRANSLATE_TARGET.fullmatch(command)
         if target_match is None:
