@@ -19,7 +19,10 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 
 import { Button } from "../../shared/ui/Button"
 import { EmptyState } from "../../shared/ui/EmptyState"
-import type { KnowledgeAgentRelationContext } from "../agent/runtime/knowledge-agent-context"
+import type {
+  KnowledgeAgentCardContext,
+  KnowledgeAgentRelationContext,
+} from "../agent/runtime/knowledge-agent-context"
 import type { KnowledgeAction } from "./KnowledgeActionMenu"
 import { knowledgeBoardCardDragType } from "./knowledge-board-dnd"
 import { nodeSnapshot, useKnowledgeBoardHistory, type KnowledgeBoardNodeSnapshot } from "./knowledge-board-history"
@@ -267,9 +270,23 @@ export default function KnowledgeBoardPanel({
     }))
   }
 
+  function cardContextsFor(scopeItems: KnowledgeItem[]): KnowledgeAgentCardContext[] {
+    return scopeItems.slice(0, 60).map((item) => {
+      const metadataDocumentId = typeof item.metadata?.document_id === "string" ? item.metadata.document_id : ""
+      return {
+        itemId: item.item_id,
+        itemType: item.item_type,
+        title: item.title,
+        summary: item.summary,
+        documentId: item.resource_document_id ?? metadataDocumentId,
+      }
+    })
+  }
+
   function askAgentForItems(scopeItems: KnowledgeItem[], scopeLabel: string) {
     if (scopeItems.length === 0 || !snapshot) return
     const relationContexts = relationContextsFor(scopeItems, scopeLabel)
+    const cardContexts = cardContextsFor(scopeItems)
     const sourceText = [
       `Canvas: ${snapshot.board.name}`,
       `Scope: ${scopeLabel}`,
@@ -302,6 +319,7 @@ export default function KnowledgeBoardPanel({
           writeback: null,
           sourceText,
           documentIds: [...new Set(documentIds)],
+          cards: cardContexts,
           relations: relationContexts,
           canvas: {
             boardId: snapshot.board.board_id,
