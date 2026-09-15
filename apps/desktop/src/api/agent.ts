@@ -83,6 +83,38 @@ export interface AgentToolExecuteResponse {
   data: Record<string, unknown>
 }
 
+export interface AgentKnowledgeCanvasContext {
+  board_id: string
+  board_name: string
+  scope_label: string
+}
+
+export interface AgentKnowledgeCardContext {
+  item_id: string
+  item_type: string
+  title: string
+  summary: string
+  document_id: string
+}
+
+export interface AgentKnowledgeRelationContext {
+  relation_id: string
+  source_item_id: string
+  source_title: string
+  target_item_id: string
+  target_title: string
+  relation_type: string
+  label: string
+  origin: string
+  confidence: number | null
+}
+
+export interface AgentKnowledgeContext {
+  canvas: AgentKnowledgeCanvasContext | null
+  cards: AgentKnowledgeCardContext[]
+  relations: AgentKnowledgeRelationContext[]
+}
+
 export interface AgentRunRequest extends ReadingContextFields {
   session_id: string
   trace_id?: string
@@ -100,6 +132,7 @@ export interface AgentRunRequest extends ReadingContextFields {
   confirmed_write_tools?: string[]
   knowledge_document_ids?: string[]
   research_source_ids?: string[]
+  knowledge_context?: AgentKnowledgeContext | null
   request_id?: number
 }
 
