@@ -47,11 +47,14 @@ export function deriveAgentDecision({
   }
 
   if (fallbackReason) {
+    const failureDetail = errorMessage.trim()
     return {
       kind: "fallback",
       tone: "warning",
       title: "Fallback activated",
-      detail: `The primary execution path could not continue. Runtime selected fallback: ${fallbackReason}.`,
+      detail: failureDetail
+        ? `${failureDetail} Runtime fallback: ${fallbackReason}.`
+        : `The primary execution path could not continue. Runtime fallback: ${fallbackReason}.`,
       toolName: "",
       requiresConfirmation: false,
     }
