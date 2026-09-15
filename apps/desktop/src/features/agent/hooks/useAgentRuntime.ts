@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 
 import type {
+  AgentKnowledgeContext,
   AgentRunRequest,
   AgentRunTraceResponse,
   AgentTraceEvent,
@@ -21,7 +22,10 @@ import {
 import { buildAgentRunRequest } from "../runtime/agent-run-request"
 import { deriveAgentWorkspaceState } from "../state/agent-workspace-state"
 
-export function useAgentRuntime(workspace: TranslationWorkspaceController) {
+export function useAgentRuntime(
+  workspace: TranslationWorkspaceController,
+  knowledgeContext: AgentKnowledgeContext | null = null,
+) {
   const [prompt, setPrompt] = useState("")
   const [trace, setTrace] = useState<AgentRunTraceResponse | null>(null)
   const [liveEvents, setLiveEvents] = useState<AgentTraceEvent[]>([])
@@ -294,6 +298,7 @@ export function useAgentRuntime(workspace: TranslationWorkspaceController) {
       workspaceId: workspace.activeResearchWorkspaceId,
       knowledgeDocumentIds: workspace.researchRetrievalScope.knowledgeDocumentIds,
       researchSourceIds: workspace.researchRetrievalScope.researchSourceIds,
+      knowledgeContext,
     })
     lastPayload.current = payload
     execute(payload)
