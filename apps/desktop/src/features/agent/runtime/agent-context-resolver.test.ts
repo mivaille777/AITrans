@@ -14,6 +14,15 @@ const readingContext = {
   source_kind: "browser_dom",
 }
 
+const knowledgeHandoffContext = {
+  resource_url: "knowledge-item://canvas-selection-board-1",
+  resource_title: "test1 · Canvas",
+  section_heading: "Knowledge card · concept",
+  context_before: "",
+  context_after: "",
+  source_kind: "knowledge_document",
+}
+
 describe("Agent context resolver", () => {
   it("keeps a general prompt general even when stale reading context exists", () => {
     expect(inferAgentContextMode({
@@ -70,5 +79,38 @@ describe("Agent context resolver", () => {
 
     expect(resolved.sourceText).toBe("Selected paper passage")
     expect(resolved.context).toEqual(readingContext)
+  })
+
+  it("preserves an explicit Canvas handoff even when the prompt is inferred as general", () => {
+    const canvasContext = [
+      "Canvas: test1",
+      "Knowledge cards:",
+      "[K1] Insight A",
+      "Canvas relationship context:",
+      "Canonical relations:",
+      "[R1] Insight A --supports--> Evidence B | origin=manual; label=manual test edge",
+    ].join("\n")
+
+    const resolved = resolveAgentContext({
+      mode: "general",
+      readingText: canvasContext,
+      readingContext: knowledgeHandoffContext,
+      fallbackText: "",
+    })
+
+    expect(resolved.mode).toBe("general")
+    expect(resolved.sourceText).toContain("[R1] Insight A --supports--> Evidence B")
+    expect(resolved.context).toEqual(knowledgeHandoffContext)
+  })
+
+  it("preserves an explicit Canvas handoff for a knowledge-mode follow-up too", () => {
+    const resolved = resolveAgentContext({
+      mode: "knowledge",
+      readingText: "[R1] A --related_to--> B | origin=manual",
+      readingContext: knowledgeHandoffContext,
+    })
+
+    expect(resolved.sourceText).toContain("[R1]")
+    expect(resolved.context.source_kind).toBe("knowledge_document")
   })
 })
