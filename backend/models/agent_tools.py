@@ -38,6 +38,38 @@ AgentTraceEventType = Literal[
 ]
 
 
+class AgentKnowledgeCanvasContext(BaseModel):
+    board_id: str = Field(default="", max_length=128)
+    board_name: str = Field(default="", max_length=512)
+    scope_label: str = Field(default="", max_length=256)
+
+
+class AgentKnowledgeCardContext(BaseModel):
+    item_id: str = Field(max_length=128)
+    item_type: str = Field(default="", max_length=64)
+    title: str = Field(default="", max_length=1024)
+    summary: str = Field(default="", max_length=8000)
+    document_id: str = Field(default="", max_length=256)
+
+
+class AgentKnowledgeRelationContext(BaseModel):
+    relation_id: str = Field(max_length=128)
+    source_item_id: str = Field(max_length=128)
+    source_title: str = Field(default="", max_length=1024)
+    target_item_id: str = Field(max_length=128)
+    target_title: str = Field(default="", max_length=1024)
+    relation_type: str = Field(max_length=128)
+    label: str = Field(default="", max_length=1024)
+    origin: str = Field(default="", max_length=64)
+    confidence: float | None = None
+
+
+class AgentKnowledgeContext(BaseModel):
+    canvas: AgentKnowledgeCanvasContext | None = None
+    cards: list[AgentKnowledgeCardContext] = Field(default_factory=list, max_length=60)
+    relations: list[AgentKnowledgeRelationContext] = Field(default_factory=list, max_length=60)
+
+
 class AgentToolDefinition(BaseModel):
     name: str
     title: str
@@ -106,6 +138,7 @@ class AgentRunRequest(ReadingContextPayload):
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
     research_source_ids: list[str] = Field(default_factory=list, max_length=100)
+    knowledge_context: AgentKnowledgeContext | None = None
     knowledge_item_id: str = Field(default="", max_length=128)
     knowledge_writeback_type: str = Field(default="", max_length=64)
     knowledge_writeback_operation: str = Field(default="", max_length=128)
