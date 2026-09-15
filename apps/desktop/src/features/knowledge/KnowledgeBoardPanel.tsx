@@ -19,6 +19,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 
 import { Button } from "../../shared/ui/Button"
 import { EmptyState } from "../../shared/ui/EmptyState"
+import type { KnowledgeAgentRelationContext } from "../agent/runtime/knowledge-agent-context"
 import type { KnowledgeAction } from "./KnowledgeActionMenu"
 import { knowledgeBoardCardDragType } from "./knowledge-board-dnd"
 import { nodeSnapshot, useKnowledgeBoardHistory, type KnowledgeBoardNodeSnapshot } from "./knowledge-board-history"
@@ -28,6 +29,7 @@ import { KnowledgeBoardManageDialog } from "./KnowledgeBoardManageDialog"
 import KnowledgeInspector from "./KnowledgeInspector"
 import { KnowledgeRelationDialog } from "./KnowledgeRelationDialog"
 import { KnowledgeRelationEditDialog } from "./KnowledgeRelationEditDialog"
+import { KnowledgeRelationInspector } from "./KnowledgeRelationInspector"
 import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
 import type {
   KnowledgeBoardNode,
@@ -123,6 +125,7 @@ export default function KnowledgeBoardPanel({
   const [manageBoardOpen, setManageBoardOpen] = useState(false)
   const [relationPair, setRelationPair] = useState<{ source: KnowledgeItem; target: KnowledgeItem } | null>(null)
   const [editingRelation, setEditingRelation] = useState<KnowledgeRelation | null>(null)
+  const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null)
 
   const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
   const nodeItemIds = useMemo(() => new Set((snapshot?.nodes ?? []).map((node) => node.item_id)), [snapshot?.nodes])
@@ -143,6 +146,9 @@ export default function KnowledgeBoardPanel({
     ? relations.filter((relation) => relation.source_item_id === selectedItem.item_id || relation.target_item_id === selectedItem.item_id)
     : []
   const relationsForBoard = relations.filter((relation) => nodeItemIds.has(relation.source_item_id) && nodeItemIds.has(relation.target_item_id))
+  const selectedRelation = selectedRelationId
+    ? relationsForBoard.find((relation) => relation.relation_id === selectedRelationId) ?? null
+    : null
   const lastEvent = workspaceContext?.lastEvent ?? fallbackLastEvent
   const loadError = library.itemsQuery.error ?? board.boardsQuery.error ?? board.boardQuery.error ?? board.relationsQuery.error
   const actionError = board.upsertNodeMutation.error
@@ -164,6 +170,7 @@ export default function KnowledgeBoardPanel({
 
   function updateSelection(ids: string[]) {
     const validIds = ids.filter((itemId) => nodeItemIds.has(itemId))
+    if (validIds.length > 0) setSelectedRelationId(null)
     const nextItem = validIds.length === 1 ? itemById.get(validIds[0]) ?? null : null
     if (workspaceContext) {
       workspaceContext.setSelectedKnowledgeIds(validIds)
@@ -230,7 +237,8 @@ export default function KnowledgeBoardPanel({
   function requestRelation(sourceItemId: string, targetItemId: string) {
     const source = itemById.get(sourceItemId)
     const target = itemById.get(targetItemId)
-    if (!source || !target) return
+    if (!source || !target || sourceItemId === targetItemId) return
+    setSelectedRelationId(null)
     setRelationPair({ source, target })
   }
 
@@ -238,35 +246,36 @@ export default function KnowledgeBoardPanel({
     setSearchParams(buildOpenLibraryItemParams(searchParams, item.item_id))
   }
 
-  function handleKnowledgeAction(action: KnowledgeAction) {
-    if (!selectedItem) return
-    if (workspaceContext) {
-      workspaceContext.runKnowledgeAction(action, selectedItem)
-      return
-    }
-    const request = dispatchKnowledgeAction(action, { item: selectedItem })
-    if (!request) return
-    setFallbackLastEvent(emitKnowledgeWorkspaceEvent(request))
+  function relationContextsFor(scopeItems: KnowledgeItem[], scopeLabel: string): KnowledgeAgentRelationContext[] {
+    const scopeIds = new Set(scopeItems.map((item) => item.item_id))
+    const scopedRelations = scopeLabel === "Canvas"
+      ? relationsForBoard
+      : scopeItems.length === 1
+        ? relationsForBoard.filter((relation) => scopeIds.has(relation.source_item_id) || scopeIds.has(relation.target_item_id))
+        : relationsForBoard.filter((relation) => scopeIds.has(relation.source_item_id) && scopeIds.has(relation.target_item_id))
+
+    return scopedRelations.slice(0, 60).map((relation) => ({
+      relationId: relation.relation_id,
+      sourceItemId: relation.source_item_id,
+      sourceTitle: itemById.get(relation.source_item_id)?.title ?? relation.source_item_id,
+      targetItemId: relation.target_item_id,
+      targetTitle: itemById.get(relation.target_item_id)?.title ?? relation.target_item_id,
+      relationType: relation.relation_type,
+      label: relation.label,
+      origin: relation.origin,
+      confidence: relation.confidence,
+    }))
   }
 
   function askAgentForItems(scopeItems: KnowledgeItem[], scopeLabel: string) {
     if (scopeItems.length === 0 || !snapshot) return
-    if (scopeItems.length === 1 && workspaceContext) {
-      workspaceContext.runKnowledgeAction("ask_agent", scopeItems[0])
-      return
-    }
-    const scopeIds = new Set(scopeItems.map((item) => item.item_id))
-    const scopedRelations = relationsForBoard.filter((relation) => scopeIds.has(relation.source_item_id) && scopeIds.has(relation.target_item_id))
+    const relationContexts = relationContextsFor(scopeItems, scopeLabel)
     const sourceText = [
       `Canvas: ${snapshot.board.name}`,
       `Scope: ${scopeLabel}`,
       "",
-      ...scopeItems.map((item, index) => `${index + 1}. [${item.item_type}] ${item.title}\n${item.summary || "No summary."}`),
-      "",
-      "Relations:",
-      ...(scopedRelations.length > 0
-        ? scopedRelations.map((relation) => `${itemById.get(relation.source_item_id)?.title ?? relation.source_item_id} --${relation.relation_type}--> ${itemById.get(relation.target_item_id)?.title ?? relation.target_item_id}${relation.label ? ` (${relation.label})` : ""}`)
-        : ["No explicit relations inside this scope."]),
+      "Knowledge cards:",
+      ...scopeItems.map((item, index) => `[K${index + 1}] [${item.item_type}] ${item.title}\n${item.summary || "No summary."}`),
     ].join("\n")
     const documentIds = scopeItems.flatMap((item) => {
       const metadataDocumentId = typeof item.metadata?.document_id === "string" ? item.metadata.document_id : ""
@@ -286,11 +295,37 @@ export default function KnowledgeBoardPanel({
     }
     navigate("/agent", {
       state: {
-        agentDraftPrompt: `Analyze this ${scopeLabel.toLowerCase()} as one bounded knowledge context. Compare the cards, use their explicit relations, identify agreements or conflicts, and suggest the most useful next knowledge action.`,
+        agentDraftPrompt: `Analyze this ${scopeLabel.toLowerCase()} as one bounded knowledge context. Explicit Canvas relations are user/AI-authored organizational context, not independent factual evidence. Use the relations to explain structure and conflicts, but rely on Evidence/Paper retrieval for factual claims. Refer to relation ids such as R1 when discussing the Canvas structure.`,
         autoSubmitAgentPrompt: false,
-        knowledgeAgentContext: { item: syntheticItem, writeback: null, sourceText, documentIds: [...new Set(documentIds)] },
+        knowledgeAgentContext: {
+          item: syntheticItem,
+          writeback: null,
+          sourceText,
+          documentIds: [...new Set(documentIds)],
+          relations: relationContexts,
+          canvas: {
+            boardId: snapshot.board.board_id,
+            boardName: snapshot.board.name,
+            scopeLabel,
+          },
+        },
       },
     })
+  }
+
+  function handleKnowledgeAction(action: KnowledgeAction) {
+    if (!selectedItem) return
+    if (action === "ask_agent") {
+      askAgentForItems([selectedItem], "Selected card")
+      return
+    }
+    if (workspaceContext) {
+      workspaceContext.runKnowledgeAction(action, selectedItem)
+      return
+    }
+    const request = dispatchKnowledgeAction(action, { item: selectedItem })
+    if (!request) return
+    setFallbackLastEvent(emitKnowledgeWorkspaceEvent(request))
   }
 
   if (library.itemsQuery.isPending || board.boardsQuery.isPending || (board.activeBoardId && board.boardQuery.isPending)) {
@@ -310,7 +345,7 @@ export default function KnowledgeBoardPanel({
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Visual knowledge canvas</p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <select value={board.activeBoardId ?? ""} onChange={(event) => { updateSelection([]); history.clear(); board.setActiveBoardId(event.target.value || null) }} className="max-w-xs truncate bg-transparent text-base font-semibold text-slate-950 outline-none">
+              <select value={board.activeBoardId ?? ""} onChange={(event) => { updateSelection([]); setSelectedRelationId(null); history.clear(); board.setActiveBoardId(event.target.value || null) }} className="max-w-xs truncate bg-transparent text-base font-semibold text-slate-950 outline-none">
                 {boards.map((candidate) => <option key={candidate.board_id} value={candidate.board_id}>{candidate.name}</option>)}
               </select>
               <span className="text-[10px] text-slate-400">{snapshot?.nodes.length ?? 0} cards · {relationsForBoard.length} relations</span>
@@ -319,7 +354,7 @@ export default function KnowledgeBoardPanel({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {snapshot?.nodes.length ? <Button variant="ghost" size="sm" onClick={() => askAgentForItems(snapshot.nodes.map((node) => itemById.get(node.item_id)).filter((item): item is KnowledgeItem => Boolean(item)), "Canvas") }><Bot size={14} />Ask canvas</Button> : null}
+          {snapshot?.nodes.length ? <Button variant="ghost" size="sm" onClick={() => askAgentForItems(snapshot.nodes.map((node) => itemById.get(node.item_id)).filter((item): item is KnowledgeItem => Boolean(item)), "Canvas")}><Bot size={14} />Ask canvas</Button> : null}
           {snapshot ? <Button variant="ghost" size="sm" onClick={() => setManageBoardOpen(true)}><Pencil size={13} />Manage</Button> : null}
           <Button size="sm" onClick={() => setCreateBoardOpen(true)}><Plus size={14} />New canvas</Button>
         </div>
@@ -357,7 +392,9 @@ export default function KnowledgeBoardPanel({
               nodes={snapshot.nodes}
               relations={relations}
               selectedItemIds={selectedItemIds}
+              selectedRelationId={selectedRelationId}
               onSelectionChange={updateSelection}
+              onRelationSelectionChange={setSelectedRelationId}
               onAddNode={addNode}
               onPersistNode={persistNode}
               onRemoveNode={removeNode}
@@ -375,17 +412,28 @@ export default function KnowledgeBoardPanel({
 
           <aside className="hidden min-h-0 border-l border-slate-100 bg-white p-3 xl:block">
             <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400">Knowledge inspector</p>
-            <KnowledgeInspector item={selectedItem} relationCount={selectedRelations.length} lastEventType={lastEvent?.item.item_id === selectedItem?.item_id ? lastEvent?.type ?? null : null} onAction={handleKnowledgeAction} relations={selectedRelations.length > 0 ? selectedRelations.map((relation) => (
-              <RelationRow key={relation.relation_id} relation={relation} itemById={itemById} deleting={board.deleteRelationMutation.isPending && board.deleteRelationMutation.variables === relation.relation_id} onEdit={() => setEditingRelation(relation)} onDelete={() => board.deleteRelationMutation.mutate(relation.relation_id)} />
-            )) : undefined} />
+            {selectedRelation ? (
+              <KnowledgeRelationInspector
+                relation={selectedRelation}
+                source={itemById.get(selectedRelation.source_item_id) ?? null}
+                target={itemById.get(selectedRelation.target_item_id) ?? null}
+                deleting={board.deleteRelationMutation.isPending && board.deleteRelationMutation.variables === selectedRelation.relation_id}
+                onEdit={() => setEditingRelation(selectedRelation)}
+                onDelete={() => board.deleteRelationMutation.mutate(selectedRelation.relation_id, { onSuccess: () => setSelectedRelationId(null) })}
+              />
+            ) : (
+              <KnowledgeInspector item={selectedItem} relationCount={selectedRelations.length} lastEventType={lastEvent?.item.item_id === selectedItem?.item_id ? lastEvent?.type ?? null : null} onAction={handleKnowledgeAction} relations={selectedRelations.length > 0 ? selectedRelations.map((relation) => (
+                <RelationRow key={relation.relation_id} relation={relation} itemById={itemById} deleting={board.deleteRelationMutation.isPending && board.deleteRelationMutation.variables === relation.relation_id} onEdit={() => setEditingRelation(relation)} onDelete={() => board.deleteRelationMutation.mutate(relation.relation_id, { onSuccess: () => { if (selectedRelationId === relation.relation_id) setSelectedRelationId(null) } })} />
+              )) : undefined} />
+            )}
           </aside>
         </div>
       ) : null}
 
-      <KnowledgeBoardCreateDialog open={createBoardOpen} creating={board.createBoardMutation.isPending} onClose={() => !board.createBoardMutation.isPending && setCreateBoardOpen(false)} onCreate={(payload) => board.createBoardMutation.mutate(payload, { onSuccess: () => { updateSelection([]); history.clear(); setCreateBoardOpen(false) } })} />
-      <KnowledgeBoardManageDialog board={manageBoardOpen ? snapshot?.board ?? null : null} saving={board.updateBoardMutation.isPending} deleting={board.deleteBoardMutation.isPending} onClose={() => !saving && setManageBoardOpen(false)} onSave={(payload) => snapshot && board.updateBoardMutation.mutate({ boardId: snapshot.board.board_id, payload }, { onSuccess: () => setManageBoardOpen(false) })} onDelete={() => snapshot && board.deleteBoardMutation.mutate(snapshot.board.board_id, { onSuccess: () => { updateSelection([]); history.clear(); setManageBoardOpen(false) } })} />
-      <KnowledgeRelationDialog source={relationPair?.source ?? null} target={relationPair?.target ?? null} creating={board.createRelationMutation.isPending} onClose={() => !board.createRelationMutation.isPending && setRelationPair(null)} onCreate={(payload) => board.createRelationMutation.mutate(payload, { onSuccess: () => setRelationPair(null) })} />
-      <KnowledgeRelationEditDialog relation={editingRelation} saving={board.updateRelationMutation.isPending} onClose={() => !board.updateRelationMutation.isPending && setEditingRelation(null)} onSave={(payload) => editingRelation && board.updateRelationMutation.mutate({ relationId: editingRelation.relation_id, payload }, { onSuccess: () => setEditingRelation(null) })} />
+      <KnowledgeBoardCreateDialog open={createBoardOpen} creating={board.createBoardMutation.isPending} onClose={() => !board.createBoardMutation.isPending && setCreateBoardOpen(false)} onCreate={(payload) => board.createBoardMutation.mutate(payload, { onSuccess: () => { updateSelection([]); setSelectedRelationId(null); history.clear(); setCreateBoardOpen(false) } })} />
+      <KnowledgeBoardManageDialog board={manageBoardOpen ? snapshot?.board ?? null : null} saving={board.updateBoardMutation.isPending} deleting={board.deleteBoardMutation.isPending} onClose={() => !saving && setManageBoardOpen(false)} onSave={(payload) => snapshot && board.updateBoardMutation.mutate({ boardId: snapshot.board.board_id, payload }, { onSuccess: () => setManageBoardOpen(false) })} onDelete={() => snapshot && board.deleteBoardMutation.mutate(snapshot.board.board_id, { onSuccess: () => { updateSelection([]); setSelectedRelationId(null); history.clear(); setManageBoardOpen(false) } })} />
+      <KnowledgeRelationDialog source={relationPair?.source ?? null} target={relationPair?.target ?? null} creating={board.createRelationMutation.isPending} onClose={() => !board.createRelationMutation.isPending && setRelationPair(null)} onCreate={(payload) => board.createRelationMutation.mutate(payload, { onSuccess: (relation) => { setRelationPair(null); updateSelection([]); setSelectedRelationId(relation.relation_id) } })} />
+      <KnowledgeRelationEditDialog relation={editingRelation} saving={board.updateRelationMutation.isPending} onClose={() => !board.updateRelationMutation.isPending && setEditingRelation(null)} onSave={(payload) => editingRelation && board.updateRelationMutation.mutate({ relationId: editingRelation.relation_id, payload }, { onSuccess: (relation) => { setEditingRelation(null); setSelectedRelationId(relation.relation_id) } })} />
     </section>
   )
 }
