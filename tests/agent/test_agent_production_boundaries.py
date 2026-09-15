@@ -191,4 +191,4 @@ def test_planner_payload_marks_untrusted_context_and_budget_metadata() -> None:
     assert policy["context_budget"]["used_chars"] <= 120
     assert policy["context_budget"]["truncated_fields"]
     assert call["system_prompt"]
-    assert planner.prompt_id == "agent.planner@1.1.0"
+    assert planner.prompt_id == "agent.planner@1.2.0"
