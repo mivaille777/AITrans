@@ -30,17 +30,18 @@ describe("Stage 9.4 Agent decision projection", () => {
     })
   })
 
-  it("keeps fallback reason structured instead of burying it in error text", () => {
+  it("keeps fallback reason and the triggering runtime error visible", () => {
     const decision = deriveAgentDecision({
       phase: "error",
       confirmationTool: "",
-      errorMessage: "Primary model failed.",
-      fallbackReason: "deterministic_translation",
+      errorMessage: "Agent planner returned an invalid structured plan.",
+      fallbackReason: "no_safe_fallback",
       activities: [],
     })
 
     expect(decision?.kind).toBe("fallback")
-    expect(decision?.detail).toContain("deterministic_translation")
+    expect(decision?.detail).toContain("invalid structured plan")
+    expect(decision?.detail).toContain("no_safe_fallback")
   })
 
   it("shows a terminal failure when no fallback is available", () => {
