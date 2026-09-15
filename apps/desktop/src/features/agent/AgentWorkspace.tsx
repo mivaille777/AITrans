@@ -10,6 +10,7 @@ import { AgentMessage } from "../companion/components/AgentMessage"
 import { AgentObservabilityPanel } from "../companion/components/AgentObservabilityPanel"
 import { ContextCard } from "../companion/components/ContextCard"
 import { agentWorkspaceAreas } from "./agent-workspace-layout"
+import { AgentContextObservabilityCard } from "./components/AgentContextObservabilityCard"
 import { AgentDecisionPanel } from "./components/AgentDecisionPanel"
 import { AgentTimeline } from "./components/AgentTimeline"
 import { MultiAgentTracePanel } from "./components/MultiAgentTracePanel"
@@ -191,6 +192,11 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
       </div>
 
       <AgentHeader phase={runtime.viewState.phase} uiMode={runtime.viewState.uiMode} />
+
+      <AgentContextObservabilityCard
+        context={resolvedKnowledgeContext?.knowledgeContext ?? null}
+        events={runtime.traceEvents}
+      />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]">
         <ContextCard
