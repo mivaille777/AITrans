@@ -1,4 +1,4 @@
-import type { AgentRunRequest } from "../../../api/agent"
+import type { AgentKnowledgeContext, AgentRunRequest } from "../../../api/agent"
 import type { ReadingContextFields } from "../../../api/types"
 import type { AgentContextMode } from "./agent-context-mode"
 
@@ -18,6 +18,7 @@ export interface BuildAgentRunRequestInput {
   confirmedWriteTools?: string[]
   knowledgeDocumentIds?: string[]
   researchSourceIds?: string[]
+  knowledgeContext?: AgentKnowledgeContext | null
 }
 
 export function buildAgentRunRequest({
@@ -36,6 +37,7 @@ export function buildAgentRunRequest({
   confirmedWriteTools = [],
   knowledgeDocumentIds = [],
   researchSourceIds = [],
+  knowledgeContext = null,
 }: BuildAgentRunRequestInput): AgentRunRequest {
   return {
     ...context,
@@ -55,6 +57,7 @@ export function buildAgentRunRequest({
     confirmed_write_tools: confirmedWriteTools,
     knowledge_document_ids: knowledgeDocumentIds,
     research_source_ids: researchSourceIds,
+    knowledge_context: knowledgeContext,
     request_id: requestId,
   }
 }
