@@ -117,6 +117,7 @@ class ProductAgentRuntimeAdapter:
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
             "research_source_ids": _scope_values(context.get("research_source_ids", ())),
+            "knowledge_context": _structured(context.get("knowledge_context")),
             "knowledge_item_id": str(context.get("knowledge_item_id", "") or "").strip(),
             "knowledge_writeback_type": str(context.get("knowledge_writeback_type", "") or "").strip(),
             "knowledge_writeback_operation": str(context.get("knowledge_writeback_operation", "") or "").strip(),
