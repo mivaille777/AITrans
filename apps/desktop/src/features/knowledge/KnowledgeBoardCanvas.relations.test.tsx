@@ -3,6 +3,7 @@
 import "@testing-library/jest-dom/vitest"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import type { ComponentProps } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import KnowledgeBoardCanvas from "./KnowledgeBoardCanvas"
@@ -52,8 +53,8 @@ const relation: KnowledgeRelation = {
   updated_at: now,
 }
 
-function renderCanvas(overrides: Partial<React.ComponentProps<typeof KnowledgeBoardCanvas>> = {}) {
-  const props: React.ComponentProps<typeof KnowledgeBoardCanvas> = {
+function renderCanvas(overrides: Partial<ComponentProps<typeof KnowledgeBoardCanvas>> = {}) {
+  const props: ComponentProps<typeof KnowledgeBoardCanvas> = {
     items: [source, target],
     nodes,
     relations: [],
