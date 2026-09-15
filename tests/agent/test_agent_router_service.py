@@ -64,6 +64,34 @@ def test_explicit_translation_target_is_parsed_deterministically() -> None:
     assert english.arguments == {"target_language": "ja"}
 
 
+def test_canvas_structure_inspection_routes_directly_without_planner() -> None:
+    router = AgentDeterministicRouterService()
+    route = router.route(
+        user_message=(
+            "List every explicit Canvas relation available in your current context. "
+            "For each relation, give relation id, source card title, target card title, "
+            "relation type, label, and origin. Do not infer missing relations."
+        ),
+        tools=TOOLS,
+    )
+
+    assert route.kind == "answer"
+    assert route.source == "deterministic"
+    assert route.intent == "answer"
+    assert route.tool_name == ""
+
+
+def test_canvas_factual_verification_stays_on_semantic_path() -> None:
+    router = AgentDeterministicRouterService()
+    route = router.route(
+        user_message="Verify whether the Canvas relations are factual scientific evidence.",
+        tools=TOOLS,
+    )
+
+    assert route.kind == "unresolved"
+    assert route.source == "none"
+
+
 def test_compound_requests_are_not_swallowed_by_fast_router() -> None:
     router = AgentDeterministicRouterService()
 
