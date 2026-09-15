@@ -19,8 +19,9 @@ import { useNavigate } from "react-router-dom"
 import { desktop } from "../../desktop"
 import { Badge } from "../../shared/ui/Badge"
 import { Button } from "../../shared/ui/Button"
+import PdfReaderSurface, { type PdfReaderSelection } from "../reading/PdfReaderSurface"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
-import { paperPageLabel } from "./paper-reader-state"
+import { paperPageLabel, type PaperReaderSelectionSource } from "./paper-reader-state"
 import type { KnowledgeItem } from "./knowledge-types"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
 import { usePaperReader } from "./usePaperReader"
@@ -28,10 +29,12 @@ import { usePaperReader } from "./usePaperReader"
 type InspectorTab = "overview" | "notes" | "ai" | "translation"
 type ReaderMode = "text" | "pdf"
 
-interface TextSelectionState {
+interface ReaderSelectionState {
+  source: PaperReaderSelectionSource
   text: string
   left: number
   top: number
+  pageNumber?: number | null
 }
 
 interface KnowledgePaperReaderPanelProps {
@@ -54,7 +57,7 @@ function KnowledgePaperReaderContent({
   const navigate = useNavigate()
   const reader = usePaperReader(paperItemId, library, workspace)
   const articleRef = useRef<HTMLDivElement | null>(null)
-  const [selection, setSelection] = useState<TextSelectionState | null>(null)
+  const [selection, setSelection] = useState<ReaderSelectionState | null>(null)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview")
   const [readerMode, setReaderMode] = useState<ReaderMode>("text")
   const [aiQuestion, setAiQuestion] = useState("")
@@ -83,6 +86,7 @@ function KnowledgePaperReaderContent({
       }
       const rect = range.getBoundingClientRect()
       setSelection({
+        source: "text",
         text,
         left: Math.min(window.innerWidth - 220, Math.max(220, rect.left + rect.width / 2)),
         top: Math.max(68, rect.top - 12),
@@ -95,10 +99,18 @@ function KnowledgePaperReaderContent({
     setSelection(null)
   }
 
+  function selectionTarget(current: ReaderSelectionState) {
+    return {
+      source: current.source,
+      text: current.text,
+      pageNumber: current.pageNumber,
+    }
+  }
+
   function createSelectionCard(itemType: "highlight" | "note" | "concept" | "evidence") {
     if (!selection) return
     reader.createDerivedMutation.mutate(
-      { itemType, text: selection.text },
+      { itemType, ...selectionTarget(selection) },
       {
         onSuccess: () => {
           setInspectorTab("notes")
@@ -110,17 +122,19 @@ function KnowledgePaperReaderContent({
 
   function askAi() {
     if (!selection) return
-    const selectedText = selection.text
+    const target = selectionTarget(selection)
     reader.createDerivedMutation.mutate(
-      { itemType: "evidence", text: selectedText },
+      { itemType: "evidence", ...target },
       {
         onSuccess: (evidence) => {
-          if (reader.attachSelectionToAgent(selectedText)) {
-            setAgentSourceItem(evidence)
-            setInspectorTab("ai")
-            setAiQuestion((current) => current || "Explain this evidence in the context of the paper.")
-          }
-          clearSelection()
+          void reader.attachSelectionToAgent(target).then((attached) => {
+            if (attached) {
+              setAgentSourceItem(evidence)
+              setInspectorTab("ai")
+              setAiQuestion((current) => current || "Explain this evidence in the context of the paper.")
+            }
+            clearSelection()
+          })
         },
       },
     )
@@ -181,7 +195,6 @@ function KnowledgePaperReaderContent({
 
   const canPreviewPdf = document.source_type === "pdf" && Boolean(reader.previewUrl)
   const pdfPage = reader.activeOutlineSection?.page_start ?? sectionQuery.data?.page_start ?? 1
-  const pdfPreviewUrl = canPreviewPdf ? `${reader.previewUrl}#page=${Math.max(1, pdfPage)}` : ""
 
   return (
     <section className="ait-surface overflow-hidden">
@@ -197,7 +210,7 @@ function KnowledgePaperReaderContent({
         <div className="flex flex-wrap items-center gap-2">
           {canPreviewPdf && (
             <div className="flex rounded-[10px] bg-slate-100 p-1" aria-label="Paper reader mode">
-              <button type="button" className={`flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5 text-[10px] font-semibold ${readerMode === "text" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setReaderMode("text")}><BookOpenCheck size={12} />Text</button>
+              <button type="button" className={`flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5 text-[10px] font-semibold ${readerMode === "text" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => { clearSelection(); setReaderMode("text") }}><BookOpenCheck size={12} />Text</button>
               <button type="button" className={`flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5 text-[10px] font-semibold ${readerMode === "pdf" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => { clearSelection(); setReaderMode("pdf") }}><FileText size={12} />PDF</button>
             </div>
           )}
@@ -244,18 +257,12 @@ function KnowledgePaperReaderContent({
 
         <main className="flex min-h-0 flex-col border-b border-slate-200/70 bg-white xl:border-b-0 xl:border-r">
           {readerMode === "pdf" && canPreviewPdf ? (
-            <>
-              <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2.5 text-[10px] text-slate-500">
-                <span>Visual PDF preview · page {Math.max(1, pdfPage)}</span>
-                <span>Switch to Text mode for Evidence, Highlight, Note, Translate, and Ask AI selection actions.</span>
-              </div>
-              <iframe
-                key={pdfPreviewUrl}
-                title={`PDF preview · ${paper.title}`}
-                src={pdfPreviewUrl}
-                className="min-h-0 flex-1 border-0 bg-slate-100"
-              />
-            </>
+            <PdfReaderSurface
+              url={reader.previewUrl}
+              title={paper.title}
+              initialPage={Math.max(1, pdfPage)}
+              onSelection={(pdfSelection: PdfReaderSelection | null) => setSelection(pdfSelection)}
+            />
           ) : sectionQuery.isPending ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-sm text-slate-500"><LoaderCircle size={15} className="animate-spin" />Loading section…</div>
           ) : sectionQuery.data ? (
@@ -304,8 +311,8 @@ function KnowledgePaperReaderContent({
         </aside>
       </div>
 
-      {selection && readerMode === "text" && (
-        <div className="fixed z-[70] -translate-x-1/2 -translate-y-full rounded-[13px] border border-slate-200 bg-white p-1.5 shadow-2xl" style={{ left: selection.left, top: selection.top }} role="toolbar" aria-label="Paper selection actions">
+      {selection && (
+        <div className="fixed z-[70] -translate-x-1/2 -translate-y-full rounded-[13px] border border-slate-200 bg-white p-1.5 shadow-2xl" style={{ left: selection.left, top: selection.top }} role="toolbar" aria-label={`${selection.source === "pdf" ? "PDF" : "Text"} selection actions`}>
           <div className="flex items-center gap-1">
             <SelectionAction icon={<BookOpenCheck size={13} />} label="Evidence" onClick={() => createSelectionCard("evidence")} />
             <SelectionAction icon={<Highlighter size={13} />} label="Highlight" onClick={() => createSelectionCard("highlight")} />
@@ -342,7 +349,7 @@ function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> 
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Reading note</p>
           {!reader.readingNote && (
-            <Button size="xs" disabled={reader.createDerivedMutation.isPending} onClick={() => reader.createDerivedMutation.mutate({ itemType: "note", text: "", relationType: "reading_note" })}><NotebookPen size={12} />Create</Button>
+            <Button size="xs" disabled={reader.createDerivedMutation.isPending} onClick={() => reader.createDerivedMutation.mutate({ itemType: "note", source: "text", text: "", relationType: "reading_note" })}><NotebookPen size={12} />Create</Button>
           )}
         </div>
         {reader.readingNote ? (
@@ -360,7 +367,7 @@ function NotesInspector({ reader }: { reader: ReturnType<typeof usePaperReader> 
       <section>
         <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Derived knowledge</p><span className="text-[9px] text-slate-400">{derived.length}</span></div>
         <div className="mt-3 space-y-2">
-          {derived.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in Text mode to create evidence, highlights, notes, or concept cards.</p> : derived.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty note."}</p></div>)}
+          {derived.length === 0 ? <p className="rounded-[12px] border border-dashed border-slate-200 p-3 text-xs leading-5 text-slate-500">Select text in Text or PDF mode to create evidence, highlights, notes, or concept cards.</p> : derived.map(({ relation, item }) => <div key={relation.relation_id} className="rounded-[12px] border border-slate-200 bg-white p-3"><div className="flex items-center gap-2"><Badge>{item.item_type}</Badge><span className="text-[9px] text-slate-400">{relation.relation_type.replaceAll("_", " ")}</span></div><p className="mt-2 text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 line-clamp-4 text-[11px] leading-5 text-slate-500">{item.summary || "Empty note."}</p></div>)}
         </div>
       </section>
     </div>
@@ -411,11 +418,11 @@ function AiInspector({
       <div className="rounded-[14px] border border-slate-200 bg-white p-3">
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><Bot size={14} />Reader context</div>
         <p className="mt-2 text-[11px] leading-5 text-slate-500">{attached ? "The current paper selection or section is frozen as Agent reading context." : "Select text and choose Ask AI, or attach the current section."}</p>
-        {attached && <p className="mt-2 line-clamp-6 whitespace-pre-wrap rounded-[10px] bg-slate-50 p-2 text-[10px] leading-5 text-slate-600">{workspace.academicReadingContext?.text}</p>}
+        {attached && <><p className="mt-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">{workspace.academicReadingContext?.section_heading}</p><p className="mt-1 line-clamp-6 whitespace-pre-wrap rounded-[10px] bg-slate-50 p-2 text-[10px] leading-5 text-slate-600">{workspace.academicReadingContext?.text}</p></>}
       </div>
       <label className="block text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">Question<textarea value={question} onChange={(event) => onQuestionChange(event.target.value)} className="mt-2 min-h-24 w-full resize-y rounded-[12px] border border-slate-200 bg-white p-3 text-xs font-normal leading-5 text-slate-700 outline-none focus:border-cyan-300" placeholder="What do you want the Agent to explain, compare, critique, or extract?" /></label>
       <Button variant="primary" size="sm" disabled={!attached || !question.trim()} onClick={() => onAsk(question)}><Sparkles size={14} />Ask in Agent</Button>
-      <p className="text-[9px] leading-4 text-slate-400">Selection-based Ask AI first stores a traceable Evidence card. The Agent can then save its result as a linked Insight after confirmation.</p>
+      <p className="text-[9px] leading-4 text-slate-400">Selection-based Ask AI first stores a traceable Evidence card. PDF selections retain their page and mapped section provenance.</p>
     </div>
   )
 }
@@ -428,7 +435,7 @@ function TranslationInspector({ reader }: { reader: ReturnType<typeof usePaperRe
     <div className="space-y-3">
       <div className="rounded-[14px] border border-slate-200 bg-white p-3">
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><Languages size={14} />Selection translation</div>
-        {mutation.isPending ? <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><LoaderCircle size={13} className="animate-spin" />Translating…</p> : mutation.data ? <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{mutation.data.translated_text}</p><div className="mt-3 border-t border-slate-100 pt-3"><Button size="xs" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ sourceText, translatedText: mutation.data.translated_text })}><StickyNote size={11} />{saveMutation.isPending ? "Saving…" : "Save as note"}</Button>{saveMutation.data && <span className="ml-2 text-[9px] text-emerald-600">Saved to knowledge cards.</span>}</div></> : <p className="mt-2 text-[11px] leading-5 text-slate-500">Select text in Text mode and choose Translate. The configured translation provider is reused in-place.</p>}
+        {mutation.isPending ? <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><LoaderCircle size={13} className="animate-spin" />Translating…</p> : mutation.data ? <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{mutation.data.translated_text}</p><div className="mt-3 border-t border-slate-100 pt-3"><Button size="xs" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ sourceText, translatedText: mutation.data.translated_text })}><StickyNote size={11} />{saveMutation.isPending ? "Saving…" : "Save as note"}</Button>{saveMutation.data && <span className="ml-2 text-[9px] text-emerald-600">Saved to knowledge cards.</span>}</div></> : <p className="mt-2 text-[11px] leading-5 text-slate-500">Select text in Text or PDF mode and choose Translate. The configured translation provider is reused in-place.</p>}
         {mutation.error && <p className="mt-2 text-xs text-rose-600">{mutation.error instanceof Error ? mutation.error.message : "Translation failed."}</p>}
         {saveMutation.error && <p className="mt-2 text-xs text-rose-600">{saveMutation.error instanceof Error ? saveMutation.error.message : "Unable to save translation note."}</p>}
       </div>
