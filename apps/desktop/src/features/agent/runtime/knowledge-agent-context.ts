@@ -1,3 +1,7 @@
+import type {
+  AgentKnowledgeContext,
+  AgentKnowledgeCardContext as ApiKnowledgeCardContext,
+} from "../../../api/agent"
 import type { ReadingContextFields } from "../../../api/types"
 import type { KnowledgeItem, KnowledgeRelationOrigin } from "../../knowledge/knowledge-types"
 import type { KnowledgeWritebackIntent } from "../../knowledge/knowledge-workspace-events"
@@ -14,6 +18,14 @@ export interface KnowledgeAgentRelationContext {
   confidence?: number | null
 }
 
+export interface KnowledgeAgentCardContext {
+  itemId: string
+  itemType: string
+  title: string
+  summary: string
+  documentId?: string | null
+}
+
 export interface KnowledgeAgentCanvasContext {
   boardId: string
   boardName: string
@@ -26,6 +38,7 @@ export interface KnowledgeAgentContext {
   sourceText?: string
   readingContext?: ReadingContextFields
   documentIds?: string[]
+  cards?: KnowledgeAgentCardContext[]
   relations?: KnowledgeAgentRelationContext[]
   canvas?: KnowledgeAgentCanvasContext
 }
@@ -36,6 +49,7 @@ export interface ResolvedKnowledgeAgentContext {
   documentIds: string[]
   relations: KnowledgeAgentRelationContext[]
   canvas: KnowledgeAgentCanvasContext | null
+  knowledgeContext: AgentKnowledgeContext
 }
 
 function metadataText(item: KnowledgeItem, key: string): string {
@@ -54,38 +68,57 @@ function buildKnowledgeResourceUrl(context: KnowledgeAgentContext): string {
   return `knowledge-item://${encodeURIComponent(context.item.item_id)}${query ? `?${query}` : ""}`
 }
 
-function relationContextText(
+function itemDocumentId(item: KnowledgeItem): string {
+  return item.resource_document_id?.trim() || metadataText(item, "document_id")
+}
+
+function fallbackCard(item: KnowledgeItem): KnowledgeAgentCardContext {
+  return {
+    itemId: item.item_id,
+    itemType: item.item_type,
+    title: item.title,
+    summary: item.summary,
+    documentId: itemDocumentId(item),
+  }
+}
+
+function apiCard(card: KnowledgeAgentCardContext): ApiKnowledgeCardContext {
+  return {
+    item_id: card.itemId,
+    item_type: card.itemType,
+    title: card.title,
+    summary: card.summary,
+    document_id: card.documentId?.trim() ?? "",
+  }
+}
+
+function buildStructuredKnowledgeContext(
+  context: KnowledgeAgentContext,
   relations: KnowledgeAgentRelationContext[],
   canvas: KnowledgeAgentCanvasContext | null,
-): string {
-  if (relations.length === 0 && !canvas) return ""
-
-  const lines = [
-    "Canvas relationship context:",
-    "- These relations describe user/AI knowledge organization, not independent factual evidence.",
-    "- origin=manual means the user explicitly authored or accepted the relation; it does not by itself prove the scientific claim.",
-    "- Use relations to navigate and compare cards. For factual conclusions, rely on linked Evidence/Paper content or retrieved document evidence.",
-  ]
-  if (canvas) {
-    lines.push(`- Canvas: ${canvas.boardName} (${canvas.scopeLabel}; id=${canvas.boardId})`)
+): AgentKnowledgeContext {
+  const cards = (context.cards?.length ? context.cards : [fallbackCard(context.item)]).slice(0, 60)
+  return {
+    canvas: canvas
+      ? {
+          board_id: canvas.boardId,
+          board_name: canvas.boardName,
+          scope_label: canvas.scopeLabel,
+        }
+      : null,
+    cards: cards.map(apiCard),
+    relations: relations.slice(0, 60).map((relation) => ({
+      relation_id: relation.relationId,
+      source_item_id: relation.sourceItemId,
+      source_title: relation.sourceTitle,
+      target_item_id: relation.targetItemId,
+      target_title: relation.targetTitle,
+      relation_type: relation.relationType,
+      label: relation.label?.trim() ?? "",
+      origin: relation.origin,
+      confidence: relation.confidence ?? null,
+    })),
   }
-  if (relations.length === 0) {
-    lines.push("- No explicit canonical relations are attached to this scope.")
-    return lines.join("\n")
-  }
-
-  lines.push("Canonical relations:")
-  relations.slice(0, 60).forEach((relation, index) => {
-    const details = [
-      `origin=${relation.origin}`,
-      relation.label?.trim() ? `label=${relation.label.trim()}` : "",
-      relation.confidence == null ? "" : `confidence=${relation.confidence}`,
-    ].filter(Boolean).join("; ")
-    lines.push(
-      `[R${index + 1}] ${relation.sourceTitle} (${relation.sourceItemId}) --${relation.relationType}--> ${relation.targetTitle} (${relation.targetItemId})${details ? ` | ${details}` : ""}`,
-    )
-  })
-  return lines.join("\n")
 }
 
 export function resolveKnowledgeAgentContext(
@@ -96,17 +129,16 @@ export function resolveKnowledgeAgentContext(
   const item = context.item
   const readingContext = context.readingContext
   const selectionText = metadataText(item, "selection_text")
-  const baseSourceText = context.sourceText?.trim()
+  const sourceText = context.sourceText?.trim()
     || selectionText
     || item.summary.trim()
     || item.title.trim()
   const relations = (context.relations ?? []).slice(0, 60)
   const canvas = context.canvas ?? null
-  const relationText = relationContextText(relations, canvas)
-  const sourceText = relationText ? `${baseSourceText}\n\n${relationText}` : baseSourceText
   const metadataDocumentId = metadataText(item, "document_id")
   const documentIds = [
     ...(context.documentIds ?? []),
+    ...(context.cards ?? []).map((card) => card.documentId?.trim() ?? ""),
     item.resource_document_id?.trim() ?? "",
     metadataDocumentId,
   ].filter(Boolean)
@@ -128,5 +160,6 @@ export function resolveKnowledgeAgentContext(
     documentIds: [...new Set(documentIds)],
     relations,
     canvas,
+    knowledgeContext: buildStructuredKnowledgeContext(context, relations, canvas),
   }
 }
