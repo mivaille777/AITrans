@@ -171,3 +171,27 @@ def test_canvas_context_reaches_final_model_prompt_without_reading_mode() -> Non
     assert payload["runtime_policy"]["knowledge_relation_trust"] == (
         "organizational_context_not_factual_evidence"
     )
+
+    knowledge_events = [
+        event for event in runtime.events
+        if event.event_type.value == "knowledge_context_ready"
+    ]
+    assert len(knowledge_events) == 1
+    diagnostics = knowledge_events[0].payload
+    assert diagnostics["binding"] == "knowledge_canvas"
+    assert diagnostics["canvas"]["board_name"] == "test1"
+    assert diagnostics["attached"] == {
+        "cards": 2,
+        "relations": 1,
+        "documents": 1,
+    }
+    assert diagnostics["visibility"] == {
+        "planner": True,
+        "react": True,
+        "synthesis": True,
+    }
+    assert diagnostics["stages"]["synthesis"]["relations_included"] == 1
+    # Telemetry is intentionally content-free: raw card/relation bodies remain in
+    # the request contract and never get duplicated into the observability event.
+    assert "cards" not in diagnostics
+    assert "relations" not in diagnostics
