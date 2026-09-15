@@ -318,6 +318,7 @@ class CompanionChatService:
         context_mode: str = "reading",
         tool_name: str = "",
         tool_context: str = "",
+        knowledge_context: dict[str, Any] | None = None,
     ) -> ChatRequest:
         _ = (source_language, target_language)
 
@@ -369,6 +370,7 @@ class CompanionChatService:
             request_id=request_id,
             tool_name=str(tool_name or "").strip(),
             tool_context=str(tool_context or ""),
+            knowledge_context=dict(knowledge_context or {}),
         )
 
     def send(self, **kwargs: Any) -> CompanionChatResult:
