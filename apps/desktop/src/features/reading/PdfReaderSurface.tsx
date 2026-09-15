@@ -100,6 +100,9 @@ export default function PdfReaderSurface({
   const hostRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const textLayerRef = useRef<HTMLDivElement | null>(null)
+  const onSelectionRef = useRef(onSelection)
+  onSelectionRef.current = onSelection
+
   const [pdfDocument, setPdfDocument] = useState<PdfDocumentProxy | null>(null)
   const [pdfjs, setPdfJs] = useState<PdfJsModule | null>(null)
   const [pageNumber, setPageNumber] = useState(Math.max(1, initialPage))
@@ -167,7 +170,7 @@ export default function PdfReaderSurface({
     let textLayerTask: PdfTextLayer | null = null
     setRendering(true)
     setError("")
-    onSelection(null)
+    onSelectionRef.current(null)
 
     void pdfDocument.getPage(pageNumber)
       .then(async (page) => {
@@ -214,11 +217,11 @@ export default function PdfReaderSurface({
       renderTask?.cancel()
       textLayerTask?.cancel()
     }
-  }, [hostWidth, onSelection, pageNumber, pdfDocument, pdfjs, zoom])
+  }, [hostWidth, pageNumber, pdfDocument, pdfjs, zoom])
 
   function clearNativeSelection() {
     window.getSelection()?.removeAllRanges()
-    onSelection(null)
+    onSelectionRef.current(null)
   }
 
   function changePage(nextPage: number) {
@@ -232,21 +235,21 @@ export default function PdfReaderSurface({
       const current = window.getSelection()
       const textLayer = textLayerRef.current
       if (!current || current.isCollapsed || current.rangeCount === 0 || !textLayer) {
-        onSelection(null)
+        onSelectionRef.current(null)
         return
       }
       const range = current.getRangeAt(0)
       if (!textLayer.contains(range.commonAncestorContainer)) {
-        onSelection(null)
+        onSelectionRef.current(null)
         return
       }
       const text = current.toString().replace(/\s+/g, " ").trim()
       if (!text) {
-        onSelection(null)
+        onSelectionRef.current(null)
         return
       }
       const rect = range.getBoundingClientRect()
-      onSelection({
+      onSelectionRef.current({
         source: "pdf",
         text,
         pageNumber,
@@ -285,7 +288,7 @@ export default function PdfReaderSurface({
           <div className="mx-auto mt-12 max-w-lg rounded-[16px] border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-800">
             <p className="font-semibold">Interactive PDF mode is unavailable.</p>
             <p className="mt-1">{error}</p>
-            <p className="mt-2 text-[10px] text-amber-700">Text mode remains available. PDF.js is loaded from a pinned CDN build in this batch.</p>
+            <p className="mt-2 text-[10px] text-amber-700">Text mode remains available. PDF.js is loaded from a pinned build for this interaction batch.</p>
           </div>
         ) : (
           <div className="relative mx-auto w-fit bg-white shadow-[0_12px_40px_rgba(15,23,42,0.12)]" onMouseUp={captureSelection} onKeyUp={captureSelection}>
