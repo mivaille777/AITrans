@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitrans.local/schemas/multi-agent-evaluation-case.schema.json",
+  "title": "AITrans Multi-Agent Evaluation Case",
+  "type": "object",
+  "required": ["case_id", "split", "stage", "category", "prompt", "hard_assertions", "score_dimensions"],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^T(0[1-9]|[12][0-9]|3[0-6])$"},
+    "split": {"enum": ["dev", "heldout"]},
+    "stage": {"type": "array", "items": {"type": "string", "pattern": "^MA(0[0-9]|10)$"}, "minItems": 1},
+    "category": {"type": "string", "minLength": 1},
+    "prompt": {"type": "string", "minLength": 1},
+    "fixture_refs": {"type": "array", "items": {"type": "string"}},
+    "hard_assertions": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+    "score_dimensions": {
+      "type": "array",
+      "items": {"enum": ["completion", "source_support", "scope_declaration", "numeric_unit_accuracy", "latency", "cost"]},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": false
+}

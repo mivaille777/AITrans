@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "workspaces": {
+    "workspace-a": {
+      "documents": ["paper-a", "paper-b", "paper-missing"],
+      "notes": ["note-a", "note-b"],
+      "items": ["concept-shared-a", "paper-item-a", "paper-item-b"]
+    },
+    "workspace-b": {
+      "documents": ["paper-private-b"],
+      "notes": ["note-private-b"],
+      "items": ["concept-shared-b", "workspace-b-private"]
+    },
+    "empty-workspace": {
+      "documents": [],
+      "notes": [],
+      "items": []
+    }
+  },
+  "papers": {
+    "paper-a": {
+      "title": "Adaptive Control on Dataset Alpha",
+      "sections": {
+        "abstract": "We evaluate Method A on Dataset Alpha and report accuracy of 91.0%.",
+        "method": "Method A uses a two-stage estimator with bounded adaptation.",
+        "experiments": "Accuracy is 91.0% on Dataset Alpha under split A1. Mean latency is 24 ms.",
+        "limitations": "The study evaluates one dataset and does not test domain shift."
+      },
+      "table": {
+        "page": 4,
+        "element_id": "table-a-1",
+        "caption": "Results on Dataset Alpha",
+        "columns": ["Method", "Accuracy (%)", "Latency (ms)"],
+        "rows": [["Method A", 91.0, 24], ["Baseline", 88.0, 18]],
+        "footnote": "Accuracy uses split A1; latency is mean CPU inference latency."
+      }
+    },
+    "paper-b": {
+      "title": "Robust Control on Dataset Beta",
+      "sections": {
+        "abstract": "We evaluate Method B on Dataset Beta and report accuracy of 94.0%.",
+        "method": "Method B combines a robust observer with constrained optimization.",
+        "experiments": "Accuracy is 94.0% on Dataset Beta under split B7. Energy is 1.8 J per episode.",
+        "limitations": "The protocol is not directly comparable with Dataset Alpha."
+      },
+      "table": {
+        "page": 5,
+        "element_id": "table-b-1",
+        "caption": "Results on Dataset Beta",
+        "columns": ["Method", "Accuracy (%)", "Energy (J/episode)"],
+        "rows": [["Method B", 94.0, 1.8]],
+        "footnote": "Dataset Beta uses split B7, which differs from Alpha/A1."
+      }
+    },
+    "paper-missing": {
+      "title": "Partial Paper Fixture",
+      "available_pages": [1, 2],
+      "unavailable_pages": [3, 4, 5, 6],
+      "sections": {
+        "abstract": "Only the abstract and introduction are available.",
+        "introduction": "The paper proposes a hypothetical controller."
+      }
+    },
+    "paper-private-b": {
+      "title": "Private Workspace B Paper",
+      "sections": {
+        "abstract": "workspace-b-private-marker must never appear in workspace A results."
+      }
+    }
+  },
+  "same_name_concepts": [
+    {
+      "workspace_id": "workspace-a",
+      "item_id": "concept-shared-a",
+      "title": "Adaptive control",
+      "summary": "Workspace A definition"
+    },
+    {
+      "workspace_id": "workspace-b",
+      "item_id": "concept-shared-b",
+      "title": "Adaptive control",
+      "summary": "Workspace B private definition"
+    }
+  ],
+  "notes": [
+    {
+      "note_id": "note-a",
+      "workspace_id": "workspace-a",
+      "document_id": "shared-source",
+      "quote": "A-scoped quote",
+      "ai_summary": "A-scoped AI summary",
+      "user_note": "Keep this user-authored text unchanged."
+    },
+    {
+      "note_id": "note-private-b",
+      "workspace_id": "workspace-b",
+      "document_id": "shared-source",
+      "quote": "B-private quote",
+      "ai_summary": "B-private AI summary",
+      "user_note": "B-private user note"
+    }
+  ],
+  "conflicting_evidence": [
+    {
+      "evidence_id": "conflict-1",
+      "statement": "Method X improves stability under nominal load.",
+      "condition": "nominal load",
+      "source": "paper-a"
+    },
+    {
+      "evidence_id": "conflict-2",
+      "statement": "Method X is less stable after domain shift.",
+      "condition": "domain-shifted load",
+      "source": "paper-b"
+    }
+  ],
+  "image_fixture": {
+    "document_id": "paper-a",
+    "page": 6,
+    "element_id": "figure-a-1",
+    "alt_text": "Block diagram with controller, plant, feedback path and saturation block.",
+    "ocr_available": true,
+    "raw_image_available": false
+  },
+  "manuscript": {
+    "project_id": "writing-project-a",
+    "version": 3,
+    "paragraphs": [
+      {"paragraph_id": "p1", "text": "Introduction paragraph one."},
+      {"paragraph_id": "p2", "text": "Introduction paragraph two to revise."},
+      {"paragraph_id": "p3", "text": "Introduction paragraph three."}
+    ]
+  },
+  "user_experiment": {
+    "source_category": "user_supplied",
+    "experiment_id": "exp-user-1",
+    "metrics": {
+      "iae": 12.4,
+      "settling_time_s": 8.1
+    },
+    "missing_fields": ["overshoot_pct"]
+  }
+}
