@@ -144,3 +144,28 @@ The repository-level CI conclusion is therefore red for a known pre-existing fai
 - Real paid/remote model quality run: not executed and not claimed.
 - Known limitation: this stage intentionally does not repair F01/F03/F04/F07/F09.
 - Next stage: MA01 typed tasks/artifacts/roles/state contracts; MA02 then closes the P0 scope/evidence gap before new expert behavior is enabled.
+
+## 10. MA01 contract verification — 2026-09-16
+
+MA01 is implemented by commits `17f959d` through `7fca71c`. It adds typed task,
+scope, result, evidence-reference, and research-artifact contracts; a validated role/tool
+registry; an acyclic task-plan validator; an attempt-aware task state machine; a
+deterministic result reducer; injectable orchestration ports; and versioned SQLite/in-memory
+artifact stores with conflict detection and revocation.
+
+Local verification after synchronizing `origin/WebReBuild`:
+
+```powershell
+conda run -n aitrans python -m pytest tests/multi_agent -q
+# 32 passed
+
+conda run -n aitrans python -m pytest tests/agent/test_multi_agent_stage5_6.py tests/agent/test_multi_agent_stage5_7.py tests/agent/test_multi_agent_stage5_8.py tests/agent/test_multi_agent_stage5_9.py tests/agent/test_agent_checkpoint_persistence.py tests/agent/test_agent_trace_event_contract.py -q
+# 92 passed
+
+conda run -n aitrans python -m pytest tests/agent/test_writing_tool_boundary.py tests/test_knowledge_relation_suggestions_stage15.py tests/api/test_knowledge_relation_suggestions_api_stage15.py tests/research/test_agent_literature_synthesis_review_gate_boundary.py -q
+# 10 passed
+```
+
+This verifies MA01's isolated contracts and compatibility baseline. It does not claim that
+the new contracts are already wired into the production root graph; that begins in MA03,
+after MA02 closes the scope/evidence boundary.
