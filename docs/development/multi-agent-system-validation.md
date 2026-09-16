@@ -204,3 +204,48 @@ changed-file Ruff and Python compileall                 passed
 
 No remote model, GPU model, or UI quality run was performed for MA02. No production
 database migration was required.
+
+## 12. MA03 serial root orchestration verification — 2026-09-16
+
+Implementation commit: `decaa74f8eb2f6164fd6f65a2c1cf4febe10696b`.
+
+The production ReadingAgentGraph now acquires durable conversation ownership before
+specialist execution. Its collaboration bridge can run the new validated orchestration
+service, which freezes one stable profile, authoritative ScopeContext, and MemoryPort
+snapshot for a run. It stores typed task-plan/results on AgentState and keeps
+`planned_action` only as a legacy projection. Specialist context is structured and no
+longer appended to the unrelated reading `context_before` field.
+
+Routing has three deterministic lanes: bounded translation/polish and ordinary canonical
+requests remain `fast`; one paper-analysis request becomes `single`; genuine cross-paper,
+writing, or curation work becomes `workflow`. `force` invokes the same router and does not
+expand scope or turn a fast translation into fake collaboration. Missing comparison inputs
+are reported explicitly. Provider-generated plans get one repair attempt and must pass the
+MA01 validator against the server-issued scope and role/tool registry.
+
+The first execution path is deliberately serial. Results are reduced by task ID, so two
+Document instances remain distinct. A specialist/tool may mark a complete bounded output
+for direct delivery, in which case the root graph skips a second ProductAgent generation.
+Legacy Document/Research adapters are marked partial until MA04 replaces them; unavailable
+Writer/Curator roles are blocked rather than fabricated.
+
+Checkpoint compatibility now records graph version `reading-agent-ma03-v1` and state schema
+v2. Pre-versioned state is migrated with a legacy marker. Unknown graph versions, future
+schemas, and unknown pending node names are rejected explicitly while the existing SQLite
+checkpoint database remains intact.
+
+Verification:
+
+```text
+tests/multi_agent                                      63 passed
+ReadingGraph/checkpoint/legacy collaboration           19 passed
+Agent API/runtime/observability                         28 passed
+full Python suite                       1126 passed, 2 skipped, 1 failed
+changed-file Ruff and Python compileall                 passed
+```
+
+The sole full-suite failure remains the pre-existing Knowledge V2 route-contract test
+(`_IncludedRouter` has no `.path`), identical to the MA00 baseline. An initially detected
+Qdrant lock regression was fixed by lazy-loading RAG only on the first actual evidence
+retrieval; the failing HTTP confirmation test then passed and the full suite returned to
+the single known failure.

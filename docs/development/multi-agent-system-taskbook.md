@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00–MA02 已完成并复验；MA03–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA03 已完成并复验；MA04–MA10 待实施。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -120,14 +120,14 @@
 
 任务：
 
-- [ ] 扩展既有路由为 fast/single/workflow：明确选区翻译/润色不经多角色规划；单文档理解选择 Document；独立多文档任务才拆解。
-- [ ] Supervisor 生成有依赖和产物要求的计划，执行前由 MA01 validator 验证；格式最多修复一次，无法确定目标则返回当前缺失信息。
-- [ ] 根图在专业调用前解析身份、取得会话所有权、冻结 scope 和 MemoryPacket；替代旧协作结果拼接 `context_before`。
-- [ ] 以串行拓扑执行连接专家接口；已完成工具输出满足用户目标时直接交付，不再默认额外生成最终全文。
-- [ ] 整合 AgentState、run/trace/status 和旧 planned_action 兼容投影，避免重复 route/plan 两套权威状态。
-- [ ] 定义 root graph_version/state schema_version；旧 checkpoint 保留兼容分发，节点映射未验证时明确拒绝，不能丢弃旧库。
-- [ ] 为旧 `multi_agent_mode=off/auto/force` 制定兼容语义，force 不扩大权限或启动无用角色。
-- [ ] 与记忆 M04 共用图接入和 source outbox；M04 未实施时保留可注入端口，不能悄悄写第二套记忆队列。
+- [x] 扩展既有路由为 fast/single/workflow：明确选区翻译/润色不经多角色规划；单文档理解选择 Document；独立多文档任务才拆解。
+- [x] Supervisor 生成有依赖和产物要求的计划，执行前由 MA01 validator 验证；格式最多修复一次，无法确定目标则返回当前缺失信息。
+- [x] 根图在专业调用前解析身份、取得会话所有权、冻结 scope 和 MemoryPacket；替代旧协作结果拼接 `context_before`。
+- [x] 以串行拓扑执行连接专家接口；已完成工具输出满足用户目标时直接交付，不再默认额外生成最终全文。
+- [x] 整合 AgentState、run/trace/status 和旧 planned_action 兼容投影，避免重复 route/plan 两套权威状态。
+- [x] 定义 root graph_version/state schema_version；旧 checkpoint 保留兼容分发，节点映射未验证时明确拒绝，不能丢弃旧库。
+- [x] 为旧 `multi_agent_mode=off/auto/force` 制定兼容语义，force 不扩大权限或启动无用角色。
+- [x] 与记忆 M04 共用图接入和 source outbox；M04 未实施时保留可注入端口，不能悄悄写第二套记忆队列。
 
 测试：`test_routing_policy.py`、`test_serial_workflow.py`、`test_conversation_ownership.py`、`test_legacy_request_compatibility.py`。
 
@@ -418,7 +418,7 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | MA00 | 基线与科研评估夹具 | verified | `1464581`、`a91f908`；2026-09-16 本地复验 |
 | MA01 | typed 任务、角色、状态、产物 | verified | `17f959d`–`7fca71c`；2026-09-16 本地复验 |
 | MA02 | scope 与统一证据 | verified | `196a2e1`；2026-09-16 本地复验 |
-| MA03 | 路由与串行根图集成 | not_started | 待实施 |
+| MA03 | 路由与串行根图集成 | verified | `decaa74`；2026-09-16 本地复验 |
 | MA04 | 论文理解与研究分析 | not_started | 待实施 |
 | MA05 | 学术写作与局部修订 | not_started | 待实施 |
 | MA06 | 并发、预算、恢复、实时事件 | not_started | 待实施 |
@@ -464,3 +464,15 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 结果：`47 passed`、`92 passed`、`10 passed`、`60 passed`、`53 passed`；Ruff/compileall 通过；无 failed/skipped。
 - 真实模型与 UI 验证、指标：未执行；本阶段验证确定性范围与来源契约，不声称真实模型质量收益。
 - 已知限制/阻塞及下一步：MA02 服务尚未由权威根图统一解析/注入；MA03 完成 fast/single/workflow 路由、串行 task DAG 与生产接入。
+
+### MA03 实施记录 — 2026-09-16
+
+- 状态：verified。
+- 起始 HEAD / 最终提交：`031d5f9` / `decaa74f8eb2f6164fd6f65a2c1cf4febe10696b`。
+- 实际改动与对应用户产物：新增 fast/single/workflow 路由、typed Supervisor planner（最多修复一次）、确定性串行 task DAG、生产 Bridge 接入、直接交付短路、根图先取得会话所有权、稳定 profile/scope/memory snapshot 冻结及旧 `planned_action` 投影。
+- 共享记忆阶段与接口版本：使用可注入 `MemoryPort` 和显式 `NullMemoryPort`；未创建第二套 outbox/记忆库，等待 M04 真实接入。
+- 数据/图/checkpoint/事件迁移与兼容影响：Agent graph version `reading-agent-ma03-v1`、state schema v2；无版本旧 state 自动标记并迁移，未知图/未来 schema/未知节点明确拒绝；SQLite checkpoint 库未删除或重建。
+- 测试命令：`pytest tests/multi_agent -q`；ReadingGraph/checkpoint/Stage5 兼容组；Agent API/observability 组；完整 `pytest -q`；changed-files Ruff 与 compileall。
+- 结果：`63 passed`、`19 passed`、`28 passed`；完整回归 `1126 passed, 2 skipped, 1 failed`，唯一失败仍为 MA00 已记录的 Knowledge V2 `_IncludedRouter.path` 既有测试缺陷；Ruff/compileall 通过。
+- 真实模型与 UI 验证、指标：未执行；本阶段是串行架构预览，不声称并行、真实专家质量或恢复到单个子任务。
+- 已知限制/阻塞及下一步：Document/Research 仍通过 legacy compatibility executor 返回 partial，Writer/Curator 明确 blocked；MA04 实现 typed Document/Research 专家，MA06 处理实时事件和子任务恢复。
