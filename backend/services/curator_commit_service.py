@@ -11,8 +11,10 @@ from typing import Any
 
 from backend.knowledge.domain import (
     AI_SUGGESTIBLE_RELATION_TYPES,
+    KnowledgeItem,
     KnowledgeItemType,
     KnowledgeRelationSuggestion,
+    utc_now,
 )
 from backend.models.agent_artifacts import (
     KnowledgeDraftArtifact,
@@ -133,6 +135,17 @@ class CuratorCommitService:
                     updated_at TEXT NOT NULL,
                     CHECK(status IN ('in_progress', 'completed', 'partial', 'failed'))
                 );
+                CREATE TABLE IF NOT EXISTS curator_commit_steps (
+                    operation_id TEXT NOT NULL,
+                    target_key TEXT NOT NULL,
+                    target_kind TEXT NOT NULL,
+                    payload_hash TEXT NOT NULL,
+                    object_id TEXT NOT NULL,
+                    committed_at TEXT NOT NULL,
+                    PRIMARY KEY(operation_id, target_key),
+                    FOREIGN KEY(operation_id) REFERENCES curator_commit_operations(operation_id)
+                        ON DELETE CASCADE
+                );
                 """
             )
 
@@ -158,11 +171,176 @@ class CuratorCommitService:
                 "SELECT receipt_json FROM curator_commit_operations WHERE operation_id = ?",
                 (str(operation_id).strip(),),
             ).fetchone()
-        return (
+            steps = connection.execute(
+                "SELECT * FROM curator_commit_steps WHERE operation_id = ? ORDER BY committed_at, target_key",
+                (str(operation_id).strip(),),
+            ).fetchall()
+        receipt = (
             CuratorCommitReceipt.model_validate_json(str(row["receipt_json"]))
             if row
             else None
         )
+        if receipt is None or not steps:
+            return receipt
+        results = {item.target_key: item for item in receipt.results}
+        for step in steps:
+            results[str(step["target_key"])] = CuratorCommitTargetResult(
+                target_key=str(step["target_key"]),
+                target_kind=str(step["target_kind"]),
+                status="committed",
+                object_id=str(step["object_id"]),
+            )
+        selected_count = len(receipt.results)
+        status = receipt.status
+        if (
+            status == "in_progress"
+            and selected_count
+            and len(results) >= selected_count
+        ):
+            status = "completed"
+        return receipt.model_copy(
+            update={"results": list(results.values()), "status": status}
+        )
+
+    @staticmethod
+    def _insert_item(connection: sqlite3.Connection, item: KnowledgeItem) -> None:
+        connection.execute(
+            """
+            INSERT INTO knowledge_items(
+                item_id, item_type, title, summary, resource_document_id,
+                source_uri, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(item_id) DO UPDATE SET
+                item_type=excluded.item_type,
+                title=excluded.title,
+                summary=excluded.summary,
+                resource_document_id=excluded.resource_document_id,
+                source_uri=excluded.source_uri,
+                metadata_json=excluded.metadata_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                item.item_id,
+                item.item_type.value,
+                item.title,
+                item.summary,
+                item.resource_document_id,
+                item.source_uri,
+                _json(item.metadata),
+                item.created_at.isoformat(),
+                item.updated_at.isoformat(),
+            ),
+        )
+
+    @staticmethod
+    def _insert_step(
+        connection: sqlite3.Connection,
+        *,
+        operation_id: str,
+        target_key: str,
+        target_kind: str,
+        payload_hash: str,
+        object_id: str,
+    ) -> None:
+        existing = connection.execute(
+            "SELECT payload_hash, object_id FROM curator_commit_steps WHERE operation_id = ? AND target_key = ?",
+            (operation_id, target_key),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["payload_hash"]) != payload_hash
+                or str(existing["object_id"]) != object_id
+            ):
+                raise CuratorCommitConflictError(
+                    "commit step was already used for different content"
+                )
+            return
+        connection.execute(
+            """
+            INSERT INTO curator_commit_steps(
+                operation_id, target_key, target_kind, payload_hash,
+                object_id, committed_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (operation_id, target_key, target_kind, payload_hash, object_id, _now()),
+        )
+
+    def _save_item_and_step(
+        self,
+        *,
+        item: KnowledgeItem,
+        operation_id: str,
+        target_key: str,
+        target_kind: str,
+        payload_hash: str,
+        result_object_id: str | None = None,
+    ) -> KnowledgeItem:
+        with self._lock, closing(self._connect()) as connection, connection:
+            self._insert_item(connection, item)
+            self._insert_step(
+                connection,
+                operation_id=operation_id,
+                target_key=target_key,
+                target_kind=target_kind,
+                payload_hash=payload_hash,
+                object_id=result_object_id or item.item_id,
+            )
+        stored = self._knowledge.get_item(item.item_id)
+        if stored is None:
+            raise RuntimeError("knowledge item was not persisted")
+        return stored
+
+    def _save_suggestion_and_step(
+        self,
+        *,
+        suggestion: KnowledgeRelationSuggestion,
+        operation_id: str,
+        target_key: str,
+        payload_hash: str,
+    ) -> KnowledgeRelationSuggestion:
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO knowledge_relation_suggestions(
+                    suggestion_id, focus_item_id, source_item_id, target_item_id,
+                    relation_type, label, rationale, confidence,
+                    evidence_item_ids_json, status, accepted_relation_id,
+                    metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(suggestion_id) DO UPDATE SET
+                    status=excluded.status,
+                    accepted_relation_id=excluded.accepted_relation_id,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    suggestion.suggestion_id,
+                    suggestion.focus_item_id,
+                    suggestion.source_item_id,
+                    suggestion.target_item_id,
+                    suggestion.relation_type,
+                    suggestion.label,
+                    suggestion.rationale,
+                    suggestion.confidence,
+                    _json(suggestion.evidence_item_ids),
+                    suggestion.status.value,
+                    suggestion.accepted_relation_id,
+                    _json(suggestion.metadata),
+                    suggestion.created_at.isoformat(),
+                    suggestion.updated_at.isoformat(),
+                ),
+            )
+            self._insert_step(
+                connection,
+                operation_id=operation_id,
+                target_key=target_key,
+                target_kind="relation_proposal",
+                payload_hash=payload_hash,
+                object_id=suggestion.suggestion_id,
+            )
+        stored = self._suggestions.get(suggestion.suggestion_id)
+        if stored is None:
+            raise RuntimeError("knowledge relation suggestion was not persisted")
+        return stored
 
     def _save_receipt(self, receipt: CuratorCommitReceipt) -> CuratorCommitReceipt:
         now = _now()
@@ -232,6 +410,7 @@ class CuratorCommitService:
         self,
         *,
         operation_id: str,
+        payload_hash: str,
         artifact: KnowledgeDraftArtifact,
         draft: NoteDraft,
         scope: ScopeContext,
@@ -280,7 +459,8 @@ class CuratorCommitService:
         item_id = self._stable_id("ki", operation_id, item_key)
         existing = self._knowledge.get_item(item_id)
         if existing is None:
-            self._knowledge.create_item(
+            now = utc_now()
+            item = KnowledgeItem(
                 item_id=item_id,
                 item_type=KnowledgeItemType.NOTE,
                 title=draft.resource_title
@@ -300,13 +480,34 @@ class CuratorCommitService:
                     "ai_content_hash": _hash(draft.ai_content),
                     "provenance": "knowledge_curator",
                 },
+                created_at=now,
+                updated_at=now,
             )
+            self._save_item_and_step(
+                item=item,
+                operation_id=operation_id,
+                target_key=f"note:{draft.draft_id}",
+                target_kind="note",
+                payload_hash=payload_hash,
+                result_object_id=note_id,
+            )
+        else:
+            with self._lock, closing(self._connect()) as connection, connection:
+                self._insert_step(
+                    connection,
+                    operation_id=operation_id,
+                    target_key=f"note:{draft.draft_id}",
+                    target_kind="note",
+                    payload_hash=payload_hash,
+                    object_id=note_id,
+                )
         return note_id, item_id
 
     def _commit_item(
         self,
         *,
         operation_id: str,
+        payload_hash: str,
         artifact: KnowledgeDraftArtifact,
         draft: KnowledgeItemDraft,
         scope: ScopeContext,
@@ -351,14 +552,21 @@ class CuratorCommitService:
                 raise CuratorCommitConflictError(
                     "knowledge item changed after the draft was prepared"
                 )
-            updated = self._knowledge.update_item(
-                current.item_id,
-                item_type=item_type,
-                title=draft.title,
-                summary=draft.summary,
-                metadata={**current.metadata, **metadata},
+            updated = self._save_item_and_step(
+                item=current.model_copy(
+                    update={
+                        "item_type": item_type,
+                        "title": draft.title,
+                        "summary": draft.summary,
+                        "metadata": {**current.metadata, **metadata},
+                        "updated_at": utc_now(),
+                    }
+                ),
+                operation_id=operation_id,
+                target_key=f"item:{draft.draft_id}",
+                target_kind="item",
+                payload_hash=payload_hash,
             )
-            assert updated is not None
             return updated.item_id
         if draft.expected_version != 0 or draft.expected_content_hash:
             raise CuratorCommitConflictError(
@@ -376,8 +584,18 @@ class CuratorCommitService:
                 raise CuratorCommitConflictError(
                     "stable item ID already contains different content"
                 )
+            with self._lock, closing(self._connect()) as connection, connection:
+                self._insert_step(
+                    connection,
+                    operation_id=operation_id,
+                    target_key=f"item:{draft.draft_id}",
+                    target_kind="item",
+                    payload_hash=payload_hash,
+                    object_id=existing.item_id,
+                )
             return existing.item_id
-        return self._knowledge.create_item(
+        now = utc_now()
+        item = KnowledgeItem(
             item_id=item_id,
             item_type=item_type,
             title=draft.title,
@@ -389,6 +607,15 @@ class CuratorCommitService:
                 else None
             ),
             metadata=metadata,
+            created_at=now,
+            updated_at=now,
+        )
+        return self._save_item_and_step(
+            item=item,
+            operation_id=operation_id,
+            target_key=f"item:{draft.draft_id}",
+            target_kind="item",
+            payload_hash=payload_hash,
         ).item_id
 
     def apply(
@@ -464,7 +691,11 @@ class CuratorCommitService:
                 continue
             try:
                 note_id, item_id = self._commit_note(
-                    operation_id=operation, artifact=artifact, draft=draft, scope=scope
+                    operation_id=operation,
+                    payload_hash=payload_hash,
+                    artifact=artifact,
+                    draft=draft,
+                    scope=scope,
                 )
                 draft_to_item[draft.draft_id] = item_id
                 results_by_key[key] = CuratorCommitTargetResult(
@@ -495,7 +726,11 @@ class CuratorCommitService:
                 continue
             try:
                 item_id = self._commit_item(
-                    operation_id=operation, artifact=artifact, draft=draft, scope=scope
+                    operation_id=operation,
+                    payload_hash=payload_hash,
+                    artifact=artifact,
+                    draft=draft,
+                    scope=scope,
                 )
                 draft_to_item[draft.draft_id] = item_id
                 results_by_key[key] = CuratorCommitTargetResult(
@@ -572,7 +807,22 @@ class CuratorCommitService:
                             "provenance": "knowledge_curator",
                         },
                     )
-                    existing = self._suggestions.save(suggestion)
+                    existing = self._save_suggestion_and_step(
+                        suggestion=suggestion,
+                        operation_id=operation,
+                        target_key=key,
+                        payload_hash=payload_hash,
+                    )
+                else:
+                    with self._lock, closing(self._connect()) as connection, connection:
+                        self._insert_step(
+                            connection,
+                            operation_id=operation,
+                            target_key=key,
+                            target_kind="relation_proposal",
+                            payload_hash=payload_hash,
+                            object_id=existing.suggestion_id,
+                        )
                 results_by_key[key] = CuratorCommitTargetResult(
                     target_key=key,
                     target_kind="relation_proposal",
