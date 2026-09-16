@@ -249,3 +249,47 @@ The sole full-suite failure remains the pre-existing Knowledge V2 route-contract
 Qdrant lock regression was fixed by lazy-loading RAG only on the first actual evidence
 retrieval; the failing HTTP confirmation test then passed and the full suite returned to
 the single known failure.
+
+## 13. MA04 paper analysis and research synthesis verification — 2026-09-16
+
+Implementation commit: `43d7a17`.
+
+The production orchestration registry now executes real LangGraph Document Analyst and
+Research Synthesizer subgraphs instead of the MA03 legacy previews. Each deterministic
+document plan is bound to explicit server-authorized source IDs. Document retrieval is
+limited to three scoped queries and records requested, visited, and unavailable documents,
+sections, pages, chunks, tables, images, and source versions. A provider cannot promote a
+prefix/top-k result to full-document coverage without a source-level coverage attestation.
+
+Reading cards expose research question, contribution, method, dataset, experiment,
+limitation, and open-question fields. Missing values remain unknown. Table/image evidence
+preserves page/element locators, units, footnotes, and visual availability; unavailable OCR
+or image capability produces an explicit partial result rather than an invented reading.
+
+Research synthesis consumes immutable DocumentAnalysisArtifact references and performs no
+additional retrieval. It rejects missing, wrong-type, hash-mismatched, or out-of-scope
+inputs, builds a complete document-by-dimension matrix, keeps experiment conditions next
+to values, and propagates partial input coverage. Formal Related Work/literature-review
+requests still require accepted Stage20 review evidence. Authorized memory hypotheses are
+bounded, separately typed, and never inserted into document-fact cells.
+
+Both subgraphs persist typed artifacts with VerificationReport and may directly deliver a
+leaf result. The serial executor refuses direct delivery from an intermediate task when a
+downstream leaf remains, preventing a Research result from bypassing a requested Writer.
+No artifact-store, checkpoint, AgentState, or event-schema migration was required.
+
+Verification:
+
+```text
+MA04 focused expert/coverage/visual/verification tests   12 passed
+tests/multi_agent                                        77 passed
+Agent/ReadingGraph/checkpoint/trace regression          118 passed
+Research/Knowledge/RAG regression                       452 passed, 2 skipped
+full Python suite                                      1142 passed, 2 skipped
+changed-file Ruff and Python compileall                  passed
+```
+
+The two skipped tests are the existing opt-in real Qwen3 embedding and reranker GPU
+integrations. No paid/remote model or UI quality run was performed. Unlike the MA03 run,
+the previously recorded Knowledge V2 route-contract test passed in this current full-suite
+run; no production code was changed solely to conceal or delete that historical failure.

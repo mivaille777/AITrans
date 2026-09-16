@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00–MA03 已完成并复验；MA04–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA04 已完成并复验；MA05–MA10 待实施。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -139,13 +139,13 @@
 
 任务：
 
-- [ ] 实现 Document Analyst 子图：问题/覆盖计划 → 定位读取 → 按需结构检索/图表读取 → 结构化分析 → 字段与来源验证。
-- [ ] 阅读卡覆盖研究问题、贡献、方法、数据、实验、局限、待核查项；每项允许 unknown，缺失材料时不捏造。
-- [ ] 文档覆盖记录 requested/visited/unavailable 的 section/page/element，长文不按前若干字符假定全读；在任务预算内标明未处理范围。
-- [ ] 实现 Research Synthesizer：从不同 Document artifacts、用户指定问题和授权研究记忆生成条件明确的比较矩阵及共识/分歧。
-- [ ] 复用已有 cross-document/evidence ledger 能力，限制额外检索次数；研究假设单独标记，不伪装原文结论。
-- [ ] 将确定性引用/类型/范围检查和必要的 claim-evidence 校验合并成 VerificationReport；partial/failed 不能输出“分析完成”而不提示缺口。
-- [ ] 对无 OCR/视觉模型/图表元数据的情况提供可验证降级，并允许用户沿源定位自行查看。
+- [x] 实现 Document Analyst 子图：问题/覆盖计划 → 定位读取 → 按需结构检索/图表读取 → 结构化分析 → 字段与来源验证。
+- [x] 阅读卡覆盖研究问题、贡献、方法、数据、实验、局限、待核查项；每项允许 unknown，缺失材料时不捏造。
+- [x] 文档覆盖记录 requested/visited/unavailable 的 section/page/element，长文不按前若干字符假定全读；在任务预算内标明未处理范围。
+- [x] 实现 Research Synthesizer：从不同 Document artifacts、用户指定问题和授权研究记忆生成条件明确的比较矩阵及共识/分歧。
+- [x] 复用已有 cross-document/evidence ledger 能力，限制额外检索次数；研究假设单独标记，不伪装原文结论。
+- [x] 将确定性引用/类型/范围检查和必要的 claim-evidence 校验合并成 VerificationReport；partial/failed 不能输出“分析完成”而不提示缺口。
+- [x] 对无 OCR/视觉模型/图表元数据的情况提供可验证降级，并允许用户沿源定位自行查看。
 
 测试：`test_document_analyst.py`、`test_document_coverage.py`、`test_table_image_analysis.py`、`test_research_synthesizer.py`、`test_artifact_verification.py`。
 
@@ -419,7 +419,7 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | MA01 | typed 任务、角色、状态、产物 | verified | `17f959d`–`7fca71c`；2026-09-16 本地复验 |
 | MA02 | scope 与统一证据 | verified | `196a2e1`；2026-09-16 本地复验 |
 | MA03 | 路由与串行根图集成 | verified | `decaa74`；2026-09-16 本地复验 |
-| MA04 | 论文理解与研究分析 | not_started | 待实施 |
+| MA04 | 论文理解与研究分析 | verified | `43d7a17`；2026-09-16 本地复验 |
 | MA05 | 学术写作与局部修订 | not_started | 待实施 |
 | MA06 | 并发、预算、恢复、实时事件 | not_started | 待实施 |
 | MA07 | 笔记、知识图谱与提交 | not_started | 待实施 |
@@ -476,3 +476,16 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 结果：`63 passed`、`19 passed`、`28 passed`；完整回归 `1126 passed, 2 skipped, 1 failed`，唯一失败仍为 MA00 已记录的 Knowledge V2 `_IncludedRouter.path` 既有测试缺陷；Ruff/compileall 通过。
 - 真实模型与 UI 验证、指标：未执行；本阶段是串行架构预览，不声称并行、真实专家质量或恢复到单个子任务。
 - 已知限制/阻塞及下一步：Document/Research 仍通过 legacy compatibility executor 返回 partial，Writer/Curator 明确 blocked；MA04 实现 typed Document/Research 专家，MA06 处理实时事件和子任务恢复。
+
+### MA04 实施记录 — 2026-09-16
+
+- 状态：verified。
+- 起始 HEAD / 实现提交：`5f7da73` / `43d7a17`。
+- 实际改动与对应用户产物：新增真实 LangGraph `DocumentAnalystGraph` 与 `ResearchSynthesizerGraph`，生产运行时替换 Document/Research legacy preview；生成带 claim/evidence、来源版本、requested/visited/unavailable 覆盖、图表定位和 `VerificationReport` 的阅读卡与条件化比较矩阵；末端 typed 产物直接交付，不再二次无依据生成。
+- 共享记忆阶段与接口版本：消费同一 run 冻结并已授权的 `MemoryPort` snapshot；研究设想单独存为 `ResearchHypothesis`，不进入文档事实单元。生产仍使用 MA03 `NullMemoryPort`，等待记忆 M04/MA08 接入，未新建记忆库或 outbox。
+- 数据/图/checkpoint/事件迁移与兼容影响：Artifact schema 以向后兼容默认字段增加 `VerificationReport`/`ResearchHypothesis`；artifact store schema 版本不变，无数据库迁移；根图/checkpoint/state/event 版本不变。TaskSpec 新增默认空的 `target_source_ids`，旧 payload 可继续解析。
+- 测试命令：MA04 五组定向测试；`pytest tests/multi_agent -q`；旧 Agent/ReadingGraph/checkpoint/trace 回归；Research/Knowledge/RAG 相关测试；完整 `pytest -q`；changed-files Ruff 与 compileall。
+- 结果：MA04 定向 `12 passed`；multi-agent `77 passed`；旧运行时回归 `118 passed`；Research/Knowledge/RAG `452 passed, 2 skipped`；完整回归 `1142 passed, 2 skipped`；Ruff/compileall 通过，0 failed。两个 skip 均为需 `AITRANS_RUN_RAG_GPU_TESTS=1` 的既有 Qwen3 embedding/reranker 真实 GPU 测试。
+- 真实模型与 UI 验证、指标：未调用付费/远程模型，未做 UI 人工质量评测；本阶段只声明确定性契约、来源和降级行为通过，不声称真实模型阅读质量收益。
+- 任务书调整与理由：测试文件按任务书固定为 `test_document_coverage.py` 与 `test_table_image_analysis.py`；增加来源层全文覆盖证明、不可变 artifact hash、scope/type 和非叶节点直接交付检查，防止模型自报完成或中间产物越过末端任务。
+- 已知限制/阻塞及下一步：无原图/视觉模型时仅交付 OCR/描述、单位、脚注和 locator 并明确 partial；语义质量由后续真实模型评测校准。MA05 实现 Academic Writer、WritingProject、版本化局部修订与导出。
