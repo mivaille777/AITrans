@@ -112,6 +112,9 @@ class SerialTaskGraphExecutor:
         outputs: dict[str, Any] = {}
         direct_output: Any = None
         direct_delivery = False
+        non_leaf_task_ids = {
+            dependency for task in plan.tasks for dependency in task.depends_on
+        }
 
         while pending:
             ready = [
@@ -177,7 +180,7 @@ class SerialTaskGraphExecutor:
                 results = reduce_task_results(results, [execution.result])
                 if execution.output is not None:
                     outputs[task.task_id] = execution.output
-                if execution.direct_delivery:
+                if execution.direct_delivery and task.task_id not in non_leaf_task_ids:
                     direct_output = execution.output
                     direct_delivery = True
                 pending.pop(task.task_id)

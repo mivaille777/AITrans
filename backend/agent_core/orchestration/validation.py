@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from backend.agent_core.orchestration.roles import RoleRegistry
-from backend.models.agent_tasks import ScopeContext, TaskSpec, ValidatedTaskPlan
+from backend.models.agent_tasks import (
+    ScopeContext,
+    TaskRole,
+    TaskSpec,
+    ValidatedTaskPlan,
+)
 
 
 class TaskPlanValidationError(ValueError):
@@ -26,6 +31,24 @@ def validate_task_plan(
             registry.require_tools(task.role, task.allowed_tools)
         except (KeyError, ValueError) as exc:
             raise TaskPlanValidationError(str(exc)) from exc
+        unknown_sources = set(task.target_source_ids) - (
+            set(scope.allowed_document_ids)
+            | set(scope.allowed_note_ids)
+            | set(scope.allowed_item_ids)
+        )
+        if unknown_sources:
+            raise TaskPlanValidationError(
+                f"task {task.task_id} targets sources outside scope: {sorted(unknown_sources)}"
+            )
+        if task.role is TaskRole.DOCUMENT:
+            non_documents = set(task.target_source_ids) - set(
+                scope.allowed_document_ids
+            )
+            if non_documents:
+                raise TaskPlanValidationError(
+                    f"document task {task.task_id} targets non-document sources: "
+                    f"{sorted(non_documents)}"
+                )
         _validate_inputs(task, tasks)
     return plan
 

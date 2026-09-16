@@ -99,6 +99,7 @@ class ValidatedSupervisorPlanner:
         revision: int,
         depends_on: list[TaskSpec] | None = None,
         required: bool = True,
+        target_source_ids: list[str] | None = None,
     ) -> TaskSpec:
         dependencies = list(depends_on or [])
         return TaskSpec(
@@ -121,6 +122,7 @@ class ValidatedSupervisorPlanner:
             scope_ref=scope.scope_ref,
             allowed_tools=list(_TOOLS_BY_ROLE[role]),
             plan_revision=revision,
+            target_source_ids=list(target_source_ids or []),
         )
 
     def _deterministic_plan(
@@ -140,6 +142,11 @@ class ValidatedSupervisorPlanner:
                     objective=objective,
                     scope=scope,
                     revision=plan_revision,
+                    target_source_ids=(
+                        list(scope.allowed_document_ids)
+                        if role is TaskRole.DOCUMENT
+                        else []
+                    ),
                 )
             ]
         else:
@@ -151,6 +158,7 @@ class ValidatedSupervisorPlanner:
                     objective=f"Analyze document {document_id} for: {objective}",
                     scope=scope,
                     revision=plan_revision,
+                    target_source_ids=[document_id],
                 )
                 for index, document_id in enumerate(document_ids, start=1)
             ]

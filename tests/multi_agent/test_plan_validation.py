@@ -37,6 +37,7 @@ def _doc(task_id: str, scope: ScopeContext, document_id: str) -> TaskSpec:
         allowed_tools=["inspect_reading_context"],
         budget_ref="budget-1",
         plan_revision=1,
+        target_source_ids=[document_id],
     )
 
 
@@ -207,3 +208,25 @@ def test_plan_cannot_carry_profile_workspace_or_model_authority() -> None:
                 "tasks": [_doc("doc-a", scope, "paper-a").model_dump(mode="json")],
             }
         )
+
+
+def test_document_task_cannot_target_an_in_scope_note_as_a_document() -> None:
+    scope = ScopeContext.issue(
+        profile_id="profile-1",
+        workspace_id="workspace-a",
+        scope_revision="mixed-sources",
+        allowed_document_ids=["paper-a"],
+        allowed_note_ids=["note-a"],
+    )
+    task = _doc("doc-a", scope, "paper-a").model_copy(
+        update={"target_source_ids": ["note-a"]}
+    )
+    plan = ValidatedTaskPlan(
+        plan_id="note-as-document",
+        scope_ref=scope.scope_ref,
+        budget_ref="budget-1",
+        tasks=[task],
+    )
+
+    with pytest.raises(TaskPlanValidationError, match="non-document"):
+        validate_task_plan(plan, scope=scope)

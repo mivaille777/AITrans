@@ -8,6 +8,7 @@ from backend.agent_core.context import ReadingContextProvider
 from backend.agent_core.orchestration import (
     AuthoritativeScopeResolver,
     ScopedEvidenceService,
+    build_artifact_store,
 )
 from backend.agent_core.orchestration.serial_executor import (
     LegacySpecialistExecutor,
@@ -15,7 +16,9 @@ from backend.agent_core.orchestration.serial_executor import (
 )
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
+from backend.agent_graph.document_analyst_graph import DocumentAnalystGraph
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.research_synthesizer_graph import ResearchSynthesizerGraph
 from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
 from backend.api.agent_observability_dependencies import get_agent_trace_store_service
 from backend.api.dependencies import (
@@ -28,6 +31,7 @@ from backend.api.dependencies import (
     get_retrieval_service,
     get_translation_service,
 )
+from backend.api.evidence_review_dependencies import get_evidence_review_service
 from backend.api.knowledge_board_dependencies import get_knowledge_board_service
 from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
 from backend.models.agent_tasks import TaskRole
@@ -82,6 +86,14 @@ class _LazyRetrievalService:
     @staticmethod
     def retrieve(*args, **kwargs):
         return get_retrieval_service().retrieve(*args, **kwargs)
+
+
+class _LazyEvidenceReviewService:
+    @staticmethod
+    def snapshot(*args, **kwargs):
+        return get_evidence_review_service().snapshot(*args, **kwargs)
+
+
 AgentTraceStoreDependency = Annotated[
     AgentTraceStoreService | None,
     Depends(get_agent_trace_store_service),
@@ -157,12 +169,21 @@ def get_agent_runtime(
         collaboration_service.registry,
         evidence_service=evidence_service,
     )
+    artifact_store = build_artifact_store()
+    document_analyst = DocumentAnalystGraph(
+        evidence_service=evidence_service,
+        artifact_store=artifact_store,
+    )
+    research_synthesizer = ResearchSynthesizerGraph(
+        artifact_store=artifact_store,
+        evidence_review_service=_LazyEvidenceReviewService(),
+    )
     orchestration_service = ResearchOrchestrationService(
         scope_resolver=scope_resolver,
         executor=SerialTaskGraphExecutor(
             {
-                TaskRole.DOCUMENT: compatibility_executor,
-                TaskRole.RESEARCH: compatibility_executor,
+                TaskRole.DOCUMENT: document_analyst,
+                TaskRole.RESEARCH: research_synthesizer,
                 TaskRole.WRITER: compatibility_executor,
                 TaskRole.CURATOR: compatibility_executor,
             }

@@ -45,7 +45,7 @@ def _json_safe(value: Any, *, path: str = "content") -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                raise ValueError(f"{path} keys must be strings")
+                raise TypeError(f"{path} keys must be strings")
             result[key] = _json_safe(item, path=f"{path}.{key}")
         return result
     raise ValueError(
@@ -89,6 +89,22 @@ class SourceCoverage(ArtifactModel):
     notes: list[str] = Field(default_factory=list, max_length=128)
 
 
+class VerificationIssue(ArtifactModel):
+    code: str = Field(min_length=1, max_length=128)
+    severity: Literal["info", "warning", "error"] = "warning"
+    message: str = Field(min_length=1, max_length=4000)
+    field: str = Field(default="", max_length=256)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=128)
+
+
+class VerificationReport(ArtifactModel):
+    status: VerificationStatus = VerificationStatus.UNVERIFIED
+    checked_fields: list[str] = Field(default_factory=list, max_length=256)
+    source_ids: list[str] = Field(default_factory=list, max_length=512)
+    citation_count: int = Field(default=0, ge=0)
+    issues: list[VerificationIssue] = Field(default_factory=list, max_length=512)
+
+
 class Artifact(ArtifactModel):
     artifact_id: str = Field(min_length=1, max_length=256)
     version: int = Field(default=1, ge=1)
@@ -102,6 +118,7 @@ class Artifact(ArtifactModel):
     lineage: list[ArtifactRef] = Field(default_factory=list, max_length=256)
     source_coverage: SourceCoverage = Field(default_factory=SourceCoverage)
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
+    verification_report: VerificationReport = Field(default_factory=VerificationReport)
     content_hash: str = Field(default="", max_length=128)
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -127,7 +144,7 @@ class Artifact(ArtifactModel):
         return hashlib.sha256(encoded).hexdigest()
 
     @model_validator(mode="after")
-    def bind_content_hash(self) -> "Artifact":
+    def bind_content_hash(self) -> Artifact:
         expected = self.computed_hash()
         if self.content_hash and self.content_hash != expected:
             raise ValueError("artifact content_hash does not match normalized payload")
@@ -165,6 +182,12 @@ class ComparisonCell(ArtifactModel):
     unknown: bool = False
 
 
+class ResearchHypothesis(ArtifactModel):
+    statement: str = Field(min_length=1, max_length=20_000)
+    basis_ids: list[str] = Field(default_factory=list, max_length=128)
+    status: Literal["hypothesis"] = "hypothesis"
+
+
 class ComparisonArtifact(Artifact):
     kind: Literal[ArtifactKind.COMPARISON] = ArtifactKind.COMPARISON
     dimensions: list[str] = Field(default_factory=list, max_length=128)
@@ -173,6 +196,9 @@ class ComparisonArtifact(Artifact):
     conflicts: list[str] = Field(default_factory=list, max_length=128)
     supported_limitations: list[str] = Field(default_factory=list, max_length=128)
     research_directions: list[str] = Field(default_factory=list, max_length=128)
+    research_hypotheses: list[ResearchHypothesis] = Field(
+        default_factory=list, max_length=128
+    )
 
 
 class OutlineSection(ArtifactModel):
@@ -277,9 +303,12 @@ __all__ = [
     "ManuscriptSectionArtifact",
     "OutlineArtifact",
     "OutlineSection",
+    "ResearchHypothesis",
     "RevisionArtifact",
     "RevisionChange",
     "SourceCoverage",
+    "VerificationIssue",
+    "VerificationReport",
     "VerificationStatus",
     "artifact_from_payload",
 ]

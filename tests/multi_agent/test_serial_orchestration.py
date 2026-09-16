@@ -85,3 +85,36 @@ def test_completed_specialist_output_can_be_marked_for_direct_delivery() -> None
 
     assert run.direct_delivery is True
     assert run.direct_output == "output:document-1"
+
+
+def test_intermediate_direct_output_never_bypasses_requested_leaf_task() -> None:
+    scope = ScopeContext.issue(
+        scope_revision="writer-workflow",
+        allowed_document_ids=["doc-a", "doc-b"],
+    )
+    plan = ValidatedSupervisorPlanner().plan(
+        route=OrchestrationRoute(
+            lane=OrchestrationLane.WORKFLOW,
+            primary_role=TaskRole.WRITER,
+            reason_code="test",
+        ),
+        objective="draft a section",
+        scope=scope,
+    )
+    calls: list[str] = []
+
+    run = SerialTaskGraphExecutor(
+        {
+            TaskRole.DOCUMENT: Executor(calls, direct=True),
+            TaskRole.RESEARCH: Executor(calls, direct=True),
+            TaskRole.WRITER: Executor(calls, direct=False),
+        }
+    ).execute(
+        plan=plan,
+        scope=scope,
+        memory_snapshot={"snapshot_id": "memory-1"},
+    )
+
+    assert calls == ["document-1", "document-2", "research-1", "writer-1"]
+    assert run.direct_delivery is False
+    assert run.direct_output is None

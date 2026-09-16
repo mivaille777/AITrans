@@ -210,8 +210,15 @@ class TaskSpec(TaskModel):
     allowed_tools: list[str] = Field(default_factory=list, max_length=128)
     budget_ref: str = Field(default="", max_length=256)
     plan_revision: int = Field(default=1, ge=1)
+    target_source_ids: list[str] = Field(default_factory=list, max_length=512)
 
-    @field_validator("depends_on", "allowed_tools", "acceptance_criteria", mode="before")
+    @field_validator(
+        "depends_on",
+        "allowed_tools",
+        "acceptance_criteria",
+        "target_source_ids",
+        mode="before",
+    )
     @classmethod
     def normalize_list_fields(cls, value: Any) -> list[str]:
         return _dedupe_strings(list(value or []))
