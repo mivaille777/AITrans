@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00–MA04 已完成并复验；MA05–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA05 已完成并复验；MA06–MA10 待实施。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -157,14 +157,14 @@
 
 任务：
 
-- [ ] 增加 Academic Writer 注册和 gateway/prompt 角色配置，复用现有 provider allowlist，构造服务时不要求立刻有 API key。
-- [ ] 实现 OutlineArtifact、ManuscriptSectionArtifact、RevisionArtifact：写作目标、章节/段落 ID、版本、证据映射、建议与事实区分、待补项。
-- [ ] 建 WritingProject 最小管理服务：工作区绑定、大纲/章节版本、草稿保存、按 expected_version 应用局部修订、Markdown 导出及源清单；初版可使用 artifact store 专用表，禁止改造论文原文件。
-- [ ] 接入既有综述服务生成 review-gated Related Work；一般引言/讨论按授权证据生成，实验章节只使用 user_supplied 数据，未提供结果则保持占位。
-- [ ] 简单润色/翻译继续通过已有 tools；Writer 只对实际需要组织文章或局部修订的任务执行。翻译段落后检查数字/单位/引用映射。
-- [ ] 校验参考文献字段来源；未知 DOI/作者/年份保留缺失提示，禁止模型编造。每次草稿变更重检相关 claims。
-- [ ] 前端提供最小大纲/章节草稿预览、修改范围与 diff、应用/取消、版本冲突、复制/导出；入口从研究工作区进入，不建设新 Office 编辑器。
-- [ ] 明确草稿生成不等于已应用到用户稿件，应用操作经现有写入策略和稳定 operation ID 执行。
+- [x] 增加 Academic Writer 注册和 gateway/prompt 角色配置，复用现有 provider allowlist，构造服务时不要求立刻有 API key。
+- [x] 实现 OutlineArtifact、ManuscriptSectionArtifact、RevisionArtifact：写作目标、章节/段落 ID、版本、证据映射、建议与事实区分、待补项。
+- [x] 建 WritingProject 最小管理服务：工作区绑定、大纲/章节版本、草稿保存、按 expected_version 应用局部修订、Markdown 导出及源清单；初版可使用 artifact store 专用表，禁止改造论文原文件。
+- [x] 接入既有综述服务生成 review-gated Related Work；一般引言/讨论按授权证据生成，实验章节只使用 user_supplied 数据，未提供结果则保持占位。
+- [x] 简单润色/翻译继续通过已有 tools；Writer 只对实际需要组织文章或局部修订的任务执行。翻译段落后检查数字/单位/引用映射。
+- [x] 校验参考文献字段来源；未知 DOI/作者/年份保留缺失提示，禁止模型编造。每次草稿变更重检相关 claims。
+- [x] 前端提供最小大纲/章节草稿预览、修改范围与 diff、应用/取消、版本冲突、复制/导出；入口从研究工作区进入，不建设新 Office 编辑器。
+- [x] 明确草稿生成不等于已应用到用户稿件，应用操作经现有写入策略和稳定 operation ID 执行。
 
 测试：`test_academic_writer.py`、`test_writing_projects.py`、`test_manuscript_revision.py`、`test_writer_review_gate.py`、`test_writing_export.py`；前端 `WritingDraftPanel.test.tsx`。
 
@@ -420,7 +420,7 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | MA02 | scope 与统一证据 | verified | `196a2e1`；2026-09-16 本地复验 |
 | MA03 | 路由与串行根图集成 | verified | `decaa74`；2026-09-16 本地复验 |
 | MA04 | 论文理解与研究分析 | verified | `43d7a17`；2026-09-16 本地复验 |
-| MA05 | 学术写作与局部修订 | not_started | 待实施 |
+| MA05 | 学术写作与局部修订 | verified | `25390a9`；2026-09-16 本地复验 |
 | MA06 | 并发、预算、恢复、实时事件 | not_started | 待实施 |
 | MA07 | 笔记、知识图谱与提交 | not_started | 待实施 |
 | MA08 | 真实记忆与跨会话研究 | not_started | 待实施 |
@@ -489,3 +489,16 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 真实模型与 UI 验证、指标：未调用付费/远程模型，未做 UI 人工质量评测；本阶段只声明确定性契约、来源和降级行为通过，不声称真实模型阅读质量收益。
 - 任务书调整与理由：测试文件按任务书固定为 `test_document_coverage.py` 与 `test_table_image_analysis.py`；增加来源层全文覆盖证明、不可变 artifact hash、scope/type 和非叶节点直接交付检查，防止模型自报完成或中间产物越过末端任务。
 - 已知限制/阻塞及下一步：无原图/视觉模型时仅交付 OCR/描述、单位、脚注和 locator 并明确 partial；语义质量由后续真实模型评测校准。MA05 实现 Academic Writer、WritingProject、版本化局部修订与导出。
+
+### MA05 实施记录 — 2026-09-16
+
+- 状态：verified。
+- 起始 HEAD / 实现提交：`9f2145736109f15b61865da21bb9ebf9a46af91a` / `25390a92b89a3fe9d5c7b5d6f996452d1fd266ef`。
+- 实际改动与对应用户产物：生产角色注册真实 `AcademicWriterGraph`，输出有写作目标、稳定章节/段落 ID、事实/解释/建议/用户材料分类、证据映射和待补项的 typed 大纲、章节与修订；正式 Related Work 只消费既有 Stage20 accepted Review Gate，实验/结果仅消费显式 `user_supplied` 材料，否则输出可见占位；新增本地 `WritingProjectService`、REST API 和研究工作区 `WritingDraftPanel`，支持大纲/章节版本、局部 diff、取消、显式应用、冲突提示、复制及 Markdown/来源清单导出，不修改原论文文件。
+- 共享记忆阶段与接口版本：继续消费 MA03 冻结的 `MemoryPort` snapshot；仅将显式 `user_supplied` 项作为用户实验材料，生产仍为 `NullMemoryPort`，未创建第二套记忆存储。
+- 数据/图/checkpoint/事件迁移与兼容影响：在 `agent_artifacts.sqlite3` 增加独立 writing schema v1（project/section-version/operation receipt 表）；artifact DTO 只增加有默认值的 reference/revision 字段；根图、checkpoint、AgentState 和事件 schema 未变。应用使用 `expected_version`、段落 hash 和稳定 `operation_id`，重复同请求返回 replay receipt，不同内容复用 ID 或陈旧版本返回冲突。
+- 测试命令：MA05 五组专项测试、写作 API 与 planner/output-guard 回归；`pytest tests/multi_agent -q`；完整 `pytest -q`；`npm --prefix apps/desktop test`、lint、build；changed-file Ruff 与 Python compileall。
+- 结果：专项后端 `58 passed`；multi-agent `93 passed`；完整 Python `1160 passed, 2 skipped`；桌面端 `64 files / 266 tests passed`（新增面板 `3 passed`）；typecheck/build/Ruff/compileall 通过，lint 仅保留 5 条既有 Reading/PDF warning，0 failed。两个 skip 为需 `AITRANS_RUN_RAG_GPU_TESTS=1` 的既有 Qwen3 embedding/reranker 真实 GPU 测试。
+- 真实模型与 UI 验证、指标：未调用付费/远程模型，未做人工 UI/语义质量评测；确定性 fallback、契约、来源真实性、版本冲突和用户确认路径已自动验证，不声称达到最终写作质量指标。
+- 任务书调整与理由：无降低验收标准；增加写作 API 路由测试和前端 409 冲突测试，明确“预览草稿不等于应用”。
+- 已知限制/阻塞及下一步：首版是 Markdown 草稿管理而非 Office 编辑器；Agent artifact 通过 ID/版本附加到写作项目，真实语义质量留到 MA10 固定评估集。MA06 实现有界并发、子任务 checkpoint/lease、共享预算、取消 fence 与实时事件。

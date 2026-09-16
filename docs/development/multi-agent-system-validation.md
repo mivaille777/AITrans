@@ -293,3 +293,52 @@ The two skipped tests are the existing opt-in real Qwen3 embedding and reranker 
 integrations. No paid/remote model or UI quality run was performed. Unlike the MA03 run,
 the previously recorded Knowledge V2 route-contract test passed in this current full-suite
 run; no production code was changed solely to conceal or delete that historical failure.
+
+## 14. MA05 academic writing and local revision verification — 2026-09-16
+
+Implementation commit: `25390a92b89a3fe9d5c7b5d6f996452d1fd266ef`.
+
+The production Writer role now runs a real LangGraph Academic Writer subgraph. Its lazy
+gateway uses the existing provider allowlist and does not require credentials at service
+construction. Provider output is parsed into versioned Outline, Manuscript Section, or
+Revision artifacts and then checked against the authoritative scope, dependency hashes,
+allowed evidence IDs, paragraph IDs, and claim categories before persistence. Missing
+material remains an explicit placeholder or partial result.
+
+Formal Related Work bypasses generic generation and calls the existing Stage20 literature
+synthesis service, so rejected, unreviewed, stale, or unsupported ledger entries remain
+outside the writing artifact. Experiment/results facts must be linked to explicit
+`user_supplied` evidence. Reference title, author, year, and DOI values are derived only
+from source metadata; absent fields remain listed as missing rather than inferred.
+
+Writing projects use dedicated schema-v1 tables in the existing local artifact SQLite
+database. They bind to a Research Workspace and retain outline/section versions without
+editing an original paper. Local revision preview records paragraph hashes and authorized
+paragraph IDs. Explicit apply rechecks the current version, paragraph hash, and evidence,
+then stores an operation receipt keyed by a stable ID. Safe retries replay the receipt;
+stale versions or operation-ID payload changes return a conflict.
+
+The Research Workspace now includes a minimal writing panel for project creation, Agent
+artifact attachment, section/paragraph selection, before/after diff, cancel, explicit
+apply, conflict display, copy, and Markdown export. Translation/polish remain on their
+existing direct paths; their output guard now rejects loss of source citations, numbers,
+or units.
+
+Verification:
+
+```text
+MA05 focused backend/API/language-guard tests             58 passed
+tests/multi_agent                                         93 passed
+full Python suite                         1160 passed, 2 skipped
+desktop Vitest/typecheck                   64 files, 266 tests passed
+WritingDraftPanel focused tests                             3 passed
+desktop lint                          passed with 5 pre-existing warnings
+desktop production build, Ruff, compileall                 passed
+```
+
+The two skipped tests are opt-in real Qwen3 embedding and reranker GPU integrations.
+No remote paid model or manual UI quality evaluation was run, so this verification covers
+deterministic contracts, provenance, persistence, idempotency, conflict handling, and build
+integrity rather than final prose quality. Checkpoint/event schemas are unchanged; MA06
+adds bounded parallel execution, task-level recovery, budgets, cancellation fencing, and
+real-time task events.
