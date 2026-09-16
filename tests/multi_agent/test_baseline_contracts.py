@@ -3,7 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from backend.agent_core.multi_agent.base_agent import AgentResult
-from backend.agent_core.multi_agent.context import AgentMemoryAdapter, KnowledgeInjector, SharedAgentContext
+from backend.agent_core.multi_agent.context import (
+    AgentMemoryAdapter,
+    KnowledgeInjector,
+    SharedAgentContext,
+)
 from backend.agent_core.multi_agent.orchestration.planner import AgentPlanner
 from backend.agent_core.state import AgentState
 from backend.services.multi_agent_runtime_bridge import MultiAgentRuntimeBridge
@@ -18,7 +22,7 @@ def test_characterization_f01_keyword_planner_sends_same_task_to_every_selected_
     assert [item["task"] for item in plan] == [task, task, task]
 
 
-def test_characterization_f03_scope_metadata_does_not_reach_knowledge_runtime() -> None:
+def test_target_f03_scoped_request_never_calls_scope_blind_knowledge_runtime() -> None:
     observed: list[tuple[str, int]] = []
 
     class ScopeBlindRuntime:
@@ -46,11 +50,10 @@ def test_characterization_f03_scope_metadata_does_not_reach_knowledge_runtime() 
 
     KnowledgeInjector(ScopeBlindRuntime()).inject(context.query, context)
 
-    # Characterization of the current P0 gap: the injector passes only query/top_k,
-    # so scope metadata cannot constrain the runtime call and B reaches final context.
-    assert observed == [("unrelated", 5)]
-    assert "workspace-b-private" in context.knowledge_context
-    assert context.citations[0]["id"] == "workspace-b-private"
+    assert observed == []
+    assert context.knowledge_context == ""
+    assert context.citations == []
+    assert context.memory["knowledge_retrieval_status"] == "scoped_runtime_unavailable"
 
 
 def test_characterization_f04_same_role_result_overwrites_previous_instance() -> None:

@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.agent_core.multi_agent.agent_registry import AgentRegistry
-from backend.agent_core.multi_agent.agents import ReadingAgent, ResearchAgent, TranslationAgent
+from backend.agent_core.multi_agent.agents import (
+    ReadingAgent,
+    ResearchAgent,
+    TranslationAgent,
+)
 from backend.agent_core.multi_agent.base_agent import AgentResult
 from backend.agent_core.multi_agent.context import (
     AgentMemoryAdapter,
@@ -13,7 +17,10 @@ from backend.agent_core.multi_agent.context import (
     SharedContextManager,
 )
 from backend.agent_core.multi_agent.orchestration import AgentExecutor, AgentPlanner
-from backend.agent_core.multi_agent.trace import MultiAgentTraceCollector, MultiAgentTraceEvent
+from backend.agent_core.multi_agent.trace import (
+    MultiAgentTraceCollector,
+    MultiAgentTraceEvent,
+)
 from backend.services.agent_knowledge_runtime import AgentKnowledgeRuntime
 
 
@@ -39,6 +46,7 @@ class MultiAgentWorkspaceService:
         context_manager: SharedContextManager | None = None,
         knowledge_injector: KnowledgeInjector | None = None,
         memory_adapter: AgentMemoryAdapter | None = None,
+        evidence_service: Any | None = None,
         research_service: Any | None = None,
         translation_service: Any | None = None,
     ) -> None:
@@ -48,7 +56,10 @@ class MultiAgentWorkspaceService:
         )
         self.planner = planner or AgentPlanner()
         self.context_manager = context_manager or SharedContextManager()
-        self.knowledge_injector = knowledge_injector or KnowledgeInjector(AgentKnowledgeRuntime())
+        self.knowledge_injector = knowledge_injector or KnowledgeInjector(
+            AgentKnowledgeRuntime(),
+            evidence_service=evidence_service,
+        )
         self.memory_adapter = memory_adapter or AgentMemoryAdapter()
 
     @staticmethod

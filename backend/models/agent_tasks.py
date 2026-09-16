@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backend.models.agent_artifacts import ArtifactKind, ArtifactRef, EvidenceRef
 
-
 MAX_TASKS_PER_PLAN = 32
 
 
@@ -27,6 +26,21 @@ class TaskRole(str, Enum):
     RESEARCH = "research"
     WRITER = "writer"
     CURATOR = "curator"
+
+
+class ScopeMode(str, Enum):
+    """Whether an empty allow-list means global policy or no access."""
+
+    UNSCOPED_GLOBAL = "unscoped_global"
+    RESTRICTED = "restricted"
+
+
+class ScopeKind(str, Enum):
+    GLOBAL = "global"
+    RESEARCH_WORKSPACE = "research_workspace"
+    KNOWLEDGE_BOARD = "knowledge_board"
+    KNOWLEDGE_COLLECTION = "knowledge_collection"
+    EXPLICIT_SELECTION = "explicit_selection"
 
 
 class TaskStatus(str, Enum):
@@ -68,6 +82,9 @@ def _dedupe_strings(values: list[str]) -> list[str]:
 
 class ScopeContext(TaskModel):
     scope_ref: str = Field(min_length=1, max_length=256)
+    mode: ScopeMode = ScopeMode.RESTRICTED
+    scope_kind: ScopeKind = ScopeKind.EXPLICIT_SELECTION
+    scope_id: str = Field(default="", max_length=256)
     profile_id: str = Field(default="", max_length=256)
     workspace_id: str = Field(default="", max_length=256)
     scope_revision: str = Field(min_length=1, max_length=256)
@@ -75,6 +92,7 @@ class ScopeContext(TaskModel):
     allowed_note_ids: list[str] = Field(default_factory=list, max_length=5000)
     allowed_item_ids: list[str] = Field(default_factory=list, max_length=5000)
     explicit_current_source_refs: list[str] = Field(default_factory=list, max_length=1024)
+    source_versions: dict[str, str] = Field(default_factory=dict)
     memory_policy_revision: str = Field(default="", max_length=256)
 
     @field_validator(
@@ -89,22 +107,62 @@ class ScopeContext(TaskModel):
         values = list(value or [])
         return sorted(_dedupe_strings(values))
 
+    @field_validator("source_versions", mode="before")
+    @classmethod
+    def normalize_source_versions(cls, value: Any) -> dict[str, str]:
+        return {
+            str(key).strip(): str(version).strip()
+            for key, version in dict(value or {}).items()
+            if str(key).strip()
+        }
+
     @classmethod
     def issue(
         cls,
         *,
         profile_id: str = "",
         workspace_id: str = "",
+        mode: ScopeMode | str | None = None,
+        scope_kind: ScopeKind | str | None = None,
+        scope_id: str = "",
         scope_revision: str,
         allowed_document_ids: list[str] | None = None,
         allowed_note_ids: list[str] | None = None,
         allowed_item_ids: list[str] | None = None,
         explicit_current_source_refs: list[str] | None = None,
+        source_versions: dict[str, str] | None = None,
         memory_policy_revision: str = "",
-    ) -> "ScopeContext":
+    ) -> ScopeContext:
+        normalized_workspace_id = str(workspace_id or "").strip()
+        normalized_scope_id = str(scope_id or normalized_workspace_id or "").strip()
+        resolved_mode = ScopeMode(
+            mode
+            or (
+                ScopeMode.RESTRICTED
+                if normalized_scope_id
+                or allowed_document_ids
+                or allowed_note_ids
+                or allowed_item_ids
+                or explicit_current_source_refs
+                else ScopeMode.UNSCOPED_GLOBAL
+            )
+        )
+        resolved_kind = ScopeKind(
+            scope_kind
+            or (
+                ScopeKind.RESEARCH_WORKSPACE
+                if normalized_workspace_id
+                else ScopeKind.GLOBAL
+                if resolved_mode is ScopeMode.UNSCOPED_GLOBAL
+                else ScopeKind.EXPLICIT_SELECTION
+            )
+        )
         payload = {
+            "mode": resolved_mode,
+            "scope_kind": resolved_kind,
+            "scope_id": normalized_scope_id,
             "profile_id": str(profile_id or "").strip(),
-            "workspace_id": str(workspace_id or "").strip(),
+            "workspace_id": normalized_workspace_id,
             "scope_revision": str(scope_revision or "").strip(),
             "allowed_document_ids": sorted(_dedupe_strings(list(allowed_document_ids or []))),
             "allowed_note_ids": sorted(_dedupe_strings(list(allowed_note_ids or []))),
@@ -112,6 +170,11 @@ class ScopeContext(TaskModel):
             "explicit_current_source_refs": sorted(
                 _dedupe_strings(list(explicit_current_source_refs or []))
             ),
+            "source_versions": {
+                str(key).strip(): str(version).strip()
+                for key, version in sorted(dict(source_versions or {}).items())
+                if str(key).strip()
+            },
             "memory_policy_revision": str(memory_policy_revision or "").strip(),
         }
         if not payload["scope_revision"]:
@@ -154,7 +217,7 @@ class TaskSpec(TaskModel):
         return _dedupe_strings(list(value or []))
 
     @model_validator(mode="after")
-    def validate_self_dependency(self) -> "TaskSpec":
+    def validate_self_dependency(self) -> TaskSpec:
         if self.task_id in self.depends_on:
             raise ValueError("task cannot depend on itself")
         return self
@@ -168,7 +231,7 @@ class ValidatedTaskPlan(TaskModel):
     tasks: list[TaskSpec] = Field(min_length=1, max_length=MAX_TASKS_PER_PLAN)
 
     @model_validator(mode="after")
-    def validate_graph_shape(self) -> "ValidatedTaskPlan":
+    def validate_graph_shape(self) -> ValidatedTaskPlan:
         ids = [task.task_id for task in self.tasks]
         if len(ids) != len(set(ids)):
             raise ValueError("task ids must be unique")
@@ -242,7 +305,7 @@ class TaskResult(TaskModel):
     content_hash: str = Field(default="", max_length=128)
 
     @model_validator(mode="after")
-    def validate_and_hash(self) -> "TaskResult":
+    def validate_and_hash(self) -> TaskResult:
         if self.status not in TERMINAL_TASK_STATUSES:
             raise ValueError("TaskResult requires a terminal task status")
         payload = self.model_dump(
@@ -303,6 +366,8 @@ __all__ = [
     "TERMINAL_TASK_STATUSES",
     "ResourceUsage",
     "ScopeContext",
+    "ScopeKind",
+    "ScopeMode",
     "TaskAttemptRecord",
     "TaskExecutionState",
     "TaskInputRef",

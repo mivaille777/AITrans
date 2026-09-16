@@ -26,12 +26,21 @@ class AgentKnowledgeRetriever:
     def __init__(self, repository: KnowledgeGraphRepository | None = None):
         self.repository = repository or KnowledgeGraphRepository()
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        allowed_node_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         graph = self.repository.get_graph()
         query_terms = set(query.lower().split())
         scored: list[KnowledgeEvidence] = []
 
         for node in graph.get("nodes", []):
+            node_id = str(node.get("id", "") or "")
+            if allowed_node_ids is not None and node_id not in allowed_node_ids:
+                continue
             text = " ".join(
                 [
                     str(node.get("title", "")),
@@ -40,7 +49,15 @@ class AgentKnowledgeRetriever:
                 ]
             ).lower()
             overlap = len(query_terms.intersection(set(text.split())))
-            relation_bonus = self._relation_bonus(node.get("id"), graph)
+            # Relations may strengthen an actual match, but graph degree alone is
+            # not factual evidence and must never introduce an unrelated node.
+            if overlap <= 0:
+                continue
+            relation_bonus = self._relation_bonus(
+                node_id,
+                graph,
+                allowed_node_ids=allowed_node_ids,
+            )
             score = min(1.0, overlap * 0.2 + relation_bonus)
             if score > 0:
                 scored.append(
@@ -57,11 +74,23 @@ class AgentKnowledgeRetriever:
         return [item.__dict__ for item in scored[:top_k]]
 
     @staticmethod
-    def _relation_bonus(node_id: str, graph: dict[str, Any]) -> float:
+    def _relation_bonus(
+        node_id: str,
+        graph: dict[str, Any],
+        *,
+        allowed_node_ids: set[str] | None = None,
+    ) -> float:
         count = sum(
             1
             for edge in graph.get("edges", [])
-            if edge.get("source") == node_id or edge.get("target") == node_id
+            if (edge.get("source") == node_id or edge.get("target") == node_id)
+            and (
+                allowed_node_ids is None
+                or (
+                    edge.get("source") in allowed_node_ids
+                    and edge.get("target") in allowed_node_ids
+                )
+            )
         )
         return min(0.4, count * 0.05)
 

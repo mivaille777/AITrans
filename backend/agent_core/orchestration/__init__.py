@@ -5,6 +5,10 @@ from backend.agent_core.orchestration.artifact_store import (
     SQLiteArtifactStore,
     build_artifact_store,
 )
+from backend.agent_core.orchestration.evidence_service import (
+    ScopedEvidenceCache,
+    ScopedEvidenceService,
+)
 from backend.agent_core.orchestration.ports import (
     ArtifactPort,
     BudgetPort,
@@ -17,6 +21,10 @@ from backend.agent_core.orchestration.reducer import (
     reduce_task_results,
 )
 from backend.agent_core.orchestration.roles import RoleRegistry
+from backend.agent_core.orchestration.scope_resolver import (
+    AuthoritativeScopeResolver,
+    ScopeResolutionError,
+)
 from backend.agent_core.orchestration.task_state import (
     InvalidTaskTransitionError,
     finish_attempt,
@@ -34,6 +42,7 @@ __all__ = [
     "ARTIFACT_STORE_SCHEMA_VERSION",
     "ArtifactConflictError",
     "ArtifactPort",
+    "AuthoritativeScopeResolver",
     "BudgetPort",
     "EvidencePort",
     "InMemoryArtifactStore",
@@ -41,6 +50,9 @@ __all__ = [
     "MemoryPort",
     "RoleRegistry",
     "SQLiteArtifactStore",
+    "ScopeResolutionError",
+    "ScopedEvidenceCache",
+    "ScopedEvidenceService",
     "TaskPlanValidationError",
     "TaskResultConflictError",
     "ToolRuntimePort",
