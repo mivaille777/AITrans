@@ -3,8 +3,9 @@
 > Stage: MA00 — production baseline, research scenarios, and evaluation set  
 > Baseline branch: `WebReBuild`  
 > Baseline commit: `ad27691d18b49a4e180c641d1a6a12773cbf1ddd`  
+> MA00 implementation commit: `1464581a7f6a33427557746e67f8529e2135b612`  
 > Recorded: 2026-09-16  
-> Status: implementation complete; CI verification pending for this commit
+> Status: **verified** for MA00 scope; full repository CI remains red because of one pre-existing Knowledge V2 contract failure documented below.
 
 ## 1. Purpose and release boundary
 
@@ -52,7 +53,7 @@ The mature `ReadingAgentGraph` remains the authority for final tool execution, e
 | F03 | `KnowledgeInjector.inject()` calls `build_context(query, top_k=...)` only. Workspace/document scope stored in shared runtime metadata is not passed to the knowledge runtime. | `test_characterization_f03_scope_metadata_does_not_reach_knowledge_runtime` |
 | F04 | `SharedAgentContext.intermediate_results` is keyed by `agent_name`; a second instance of the same role overwrites the first. | `test_characterization_f04_same_role_result_overwrites_previous_instance` |
 | F07 | `MultiAgentRuntimeBridge.run_with_events()` waits for synchronous `service.run()` to return and only then forwards the collected events. | `test_characterization_f07_bridge_forwards_events_only_after_service_returns` |
-| F09 | A default `AgentMemoryAdapter` owns a new `InMemoryAgentMemoryStore`; reconstructing the adapter loses prior values. The bridge also currently passes `session_id` as the collaboration `user_id`. | `test_characterization_f09_default_memory_is_lost_when_adapter_is_reconstructed` |
+| F09 | A default `AgentMemoryAdapter` owns a new `InMemoryAgentMemoryStore`; reconstructing the adapter loses prior values. The bridge also currently passes `session_id` as collaboration `user_id`. | `test_characterization_f09_default_memory_is_lost_when_adapter_is_reconstructed` |
 
 These are intentionally current-behavior assertions. When MA01/MA02/MA06/M08 repairs a behavior, the relevant characterization must be replaced by the target contract in the same change. A passing characterization is never evidence that the target architecture is complete.
 
@@ -63,10 +64,10 @@ MA00 chooses the following ownership model for later Curator work. This prevents
 | Data/operation | Current owner | MA00 decision for target architecture |
 | --- | --- | --- |
 | Canonical knowledge items, relations, collections, tags | `backend/knowledge/service.py:KnowledgeWorkspaceService` and `backend/knowledge/domain.py` | **Authoritative Curator write target** for knowledge items and confirmed relations. Reuse current item/relation validation. |
-| Relation proposals/review | `backend/services/knowledge_relation_suggestion_service.py` | Reuse proposal lifecycle, but MA02/MA07 must supply an explicit scoped candidate-ID set before Agent use. AI proposals remain pending until existing review/accept flow changes state. |
+| Relation proposals/review | `backend/services/knowledge_relation_suggestion_service.py` | Reuse proposal lifecycle, but MA02/MA07 must supply an explicit scoped candidate-ID set before Agent use. AI proposals remain pending until the existing review/accept flow changes state. |
 | Research notes | `backend/services/research_note_service.py` | Remain authoritative for research-note body/source fields. Curator must not copy a second editable note body into canonical knowledge. |
-| Canonical note/item association | currently not a single explicit durable mapping contract | MA07 must create/reuse one stable association key. Preferred rule: canonical NOTE item references `research_note_id` in metadata; if reverse lookup is required, add a dedicated mapping/index rather than duplicate note text. Verify actual repository constraints before migration. |
-| Knowledge V2 card/graph service | `backend/knowledge/v2_service.py` | Compatibility/projection path, not a new Curator source of truth unless later code audit proves an existing canonical delegation. |
+| Canonical note/item association | currently not a single explicit durable mapping contract | MA07 must create/reuse one stable association key. Preferred rule: canonical NOTE item references `research_note_id` in metadata; if reverse lookup is required, add a dedicated mapping/index rather than duplicate note text. Verify repository constraints before migration. |
+| Knowledge V2 card/graph service | `backend/knowledge/v2_service.py` | Compatibility/projection path, not a new Curator source of truth unless a later audit proves an existing canonical delegation. |
 | Legacy graph snapshot | `backend/services/knowledge_graph_repository.py` | Compatibility/read projection only; do not use whole-snapshot injection as scoped evidence. |
 | Stage20 evidence review + literature synthesis | review service + `backend/services/agent_literature_synthesis_service.py` | Remains authoritative gate for formal literature synthesis/Related Work. Accepted reviewed statements may be synthesized; raw Research Memory excerpts cannot silently bypass review. |
 | Research Memory freshness/source state | existing Research Memory services | Reuse for source existence/fresh/stale/detached checks. It is not a replacement for the review ledger. |
@@ -79,55 +80,29 @@ The exact persistence mechanism is deliberately deferred to MA07 because MA00 is
 
 ## 5. Evidence and review boundary
 
-`AgentLiteratureSynthesisService` documents and enforces an important existing boundary: it builds synthesis evidence from review-gated ledger statements, resolves Research Memory only to confirm provenance/freshness, and deliberately does not expose raw memory excerpts to the model as substitute facts. The new Research Synthesizer and Academic Writer must preserve this boundary for formal literature-review output.
+`AgentLiteratureSynthesisService` enforces an important existing boundary: it builds synthesis evidence from review-gated ledger statements, resolves Research Memory only to confirm provenance/freshness, and deliberately does not expose raw memory excerpts to the model as substitute facts. The new Research Synthesizer and Academic Writer must preserve this boundary for formal literature-review output.
 
 General document Q&A may use scoped original-document evidence. Formal review-gated synthesis may use only accepted/usable reviewed evidence. User-supplied experiments are a separate source category and must never be represented as published literature.
 
 ## 6. Isolated MA evaluation assets
 
-`tests/multi_agent/conftest.py` provides:
+`tests/multi_agent/conftest.py` provides a disposable per-test data root, explicit disposable SQLite/artifact and Qdrant paths, a fake clock, deterministic provider/tool doubles with call accounting, and default external-network blocking for `tests/multi_agent`.
 
-- a disposable per-test data root;
-- explicit disposable SQLite/artifact and Qdrant paths;
-- a fake clock;
-- deterministic provider/tool doubles with call accounting;
-- default external-network blocking for `tests/multi_agent`.
-
-`tests/multi_agent/fixtures/research_workspace.json` contains synthetic, non-user data for:
-
-- papers A/B evaluated on different datasets/splits;
-- table/footnote/unit data and a degraded image fixture;
-- a partial/missing-pages document;
-- contradictory evidence under different conditions;
-- same-name concepts in different workspaces;
-- notes from the same source but different workspace scopes;
-- a manuscript with stable paragraph IDs;
-- user-supplied experimental metrics with an intentionally missing field.
+`tests/multi_agent/fixtures/research_workspace.json` contains synthetic, non-user data for papers A/B on different datasets/splits, table/footnote/unit data, a degraded image fixture, a partial document, contradictory evidence, same-name concepts in different workspaces, same-source notes in different scopes, a manuscript with stable paragraph IDs, and user-supplied experiment data with a deliberately missing field.
 
 No MA test may point at the user's normal data root. Real provider tests must be separately and explicitly enabled; deterministic tests must not silently fall through to a remote model.
 
 ## 7. Fixed development and held-out evaluation set
 
-The canonical MA evaluation case schema is `tests/multi_agent/evaluation_schema.json`; the frozen case list is `tests/multi_agent/evaluation_cases.json`.
+The canonical case schema is `tests/multi_agent/evaluation_schema.json`; the frozen case list is `tests/multi_agent/evaluation_cases.json` and covers T01-T36. Each case fixes its `dev`/`heldout` split, owning stage, fixture references, hard assertions, and scoring dimensions.
 
-The list covers T01-T36 from the staged taskbook and fixes each case's split (`dev`/`heldout`), owning MA stage, fixture references, hard assertions, and score dimensions. Held-out cases must not be rewritten merely to accommodate an implementation. If a fixture has a genuine defect, change it with a recorded reason and preserve prior results.
+For reading/comparison quality, score completion, source support, scope/coverage declaration, and numeric/unit correctness separately. Record model/tool attempts, token usage when available (`unknown` otherwise), retrieval duplication, cold/warm latency, cancellation timing, and degraded/failure reason codes separately.
 
-### 7.1 Scoring and measurements
-
-For reading/comparison quality, score these dimensions separately on 0-2 scales where applicable:
-
-1. completion against the requested deliverable;
-2. source support for factual units;
-3. honest scope/coverage declaration;
-4. numeric and unit correctness.
-
-Operational measurements are recorded separately: model/tool attempts, token usage when available (otherwise `unknown`, never zero by assumption), retrieval duplication, elapsed/cold/warm latency, cancellation timing, and degraded/failure reason codes.
-
-Hard safety/data-integrity assertions (scope, no fabricated experiments/references, note preservation, revocation, idempotent writes, temporary-mode persistence) are binary release gates and cannot be averaged away by a quality score.
+Scope, fabricated experiments/references, note preservation, revocation, idempotent writes, and temporary-mode persistence are binary release gates and cannot be averaged away by a quality score.
 
 ## 8. Baseline tests and reproducibility
 
-Historical baseline recorded by the supplied taskbook before MA00 implementation:
+Historical targeted baseline recorded before this MA00 change:
 
 ```powershell
 conda run -n aitrans python -m pytest tests/agent/test_multi_agent_stage5_6.py tests/agent/test_multi_agent_stage5_7.py tests/agent/test_multi_agent_stage5_8.py tests/agent/test_multi_agent_stage5_9.py tests/agent/test_agent_checkpoint_persistence.py tests/agent/test_agent_trace_event_contract.py -q
@@ -137,21 +112,35 @@ conda run -n aitrans python -m pytest tests/agent/test_writing_tool_boundary.py 
 # recorded result: 10 passed
 ```
 
-MA00 additions:
+### 8.1 Full-CI comparison around MA00
 
-```powershell
-conda run -n aitrans python -m pytest tests/multi_agent -q
-```
+Pre-MA00 CI run `34973222564` on baseline commit `ad27691d...`:
 
-Repository CI is configured to run on pushes to `WebReBuild` and includes the Python suite, research/evidence regressions, frontend lint/test/build, and the Tauri build. The MA00 implementation record must be updated with the actual workflow result; historical `92 + 10` is not relabeled as a post-change run.
+- Python: **1 failed, 1064 passed, 2 skipped**.
+- Existing failure: `tests/api/test_knowledge_v2_api_contract.py::test_knowledge_v2_routes_are_registered_on_application` because an `_IncludedRouter` entry in `app.routes` has no `.path` attribute.
+- React lint/test/build: passed.
+- Tauri shell build: passed.
+
+MA00 CI run `35060705843` on implementation commit `1464581a...`:
+
+- Python: **1 failed, 1069 passed, 2 skipped**.
+- The only failure is the exact same pre-existing Knowledge V2 API-contract failure above.
+- The +5 passing tests are the five new MA00 characterization contracts; no new Python failure was introduced.
+- React lint/test/build: passed.
+- GPU Qwen3 embedding/reranker integration tests were skipped by the existing opt-in policy.
+- Tauri job was still running when this MA00 verification record was finalized; MA00 changed no Rust/frontend/production runtime code, and the pre-MA00 Tauri baseline was green.
+
+The repository-level CI conclusion is therefore red for a known pre-existing failure, but MA00 itself is verified as **no-new-regression** in its changed Python/test surface. The Knowledge V2 test defect is not relabeled as a multi-agent defect and must be handled separately rather than hidden or deleted.
 
 ## 9. MA00 implementation record — 2026-09-16
 
-- Status: `in_progress` until the post-commit CI run is inspected.
+- Status: `verified` (MA00 scope; known unrelated full-CI failure retained).
 - Starting HEAD: `ad27691d18b49a4e180c641d1a6a12773cbf1ddd`.
+- Implementation commit: `1464581a7f6a33427557746e67f8529e2135b612`.
 - Production code changes: none.
 - Added: validation record, isolated MA test harness, five characterization contracts, synthetic research fixture, fixed evaluation schema/cases.
 - Shared-memory dependency: none; current in-memory loss is characterized only.
 - Data/checkpoint migration: none.
-- Known limitations: MA00 does not repair F01/F03/F04/F07/F09; no new multi-agent quality claim is made; no paid/remote model quality run is part of this baseline commit.
-- Next stage after MA00 verification: MA01 typed tasks/artifacts/roles/state contracts, followed by MA02 scope/evidence correction before new expert behavior.
+- Real paid/remote model quality run: not executed and not claimed.
+- Known limitation: this stage intentionally does not repair F01/F03/F04/F07/F09.
+- Next stage: MA01 typed tasks/artifacts/roles/state contracts; MA02 then closes the P0 scope/evidence gap before new expert behavior is enabled.
