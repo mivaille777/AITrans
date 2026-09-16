@@ -169,3 +169,38 @@ conda run -n aitrans python -m pytest tests/agent/test_writing_tool_boundary.py 
 This verifies MA01's isolated contracts and compatibility baseline. It does not claim that
 the new contracts are already wired into the production root graph; that begins in MA03,
 after MA02 closes the scope/evidence boundary.
+
+## 11. MA02 scoped evidence verification — 2026-09-16
+
+Implementation commit: `196a2e127b29d620db73716ee63e5a490b2b6c8b`.
+
+MA02 introduces a server-owned resolver for Research Workspace, Knowledge Board,
+Knowledge Collection, explicit-selection, and product-global scopes. `ScopeContext`
+now differentiates `unscoped_global` from `restricted`, so an empty restricted
+workspace is a hard empty result rather than a fallback to all local data.
+
+The new `ScopedEvidenceService` reuses the existing RAG, Research Note, Knowledge
+Workspace, Research Memory reliability, Stage20 Review Gate, and citation services.
+It emits typed packets containing source/version/status and page/chunk/element/table/image
+locators. Cache keys bind scope revision, source versions, query/filters, and model
+version. Knowledge graph relations can annotate an in-scope lexical hit but cannot
+create evidence from graph degree alone. Relation-suggestion candidates can also be
+bound to the authoritative item set.
+
+F03 is no longer only characterized: scoped calls either use typed scoped evidence or
+disable the scope-blind legacy graph path. The production root graph does not yet issue
+the new authoritative scope on every request; MA03 owns that integration boundary.
+
+Local verification:
+
+```text
+tests/multi_agent                                      47 passed
+existing multi-agent/checkpoint/trace baseline         92 passed
+writing/relation-suggestion/review-gate boundary        10 passed
+Research Workspace/Memory/Evidence Review regression   60 passed
+Knowledge Workspace/Board/RAG regression               53 passed
+changed-file Ruff and Python compileall                 passed
+```
+
+No remote model, GPU model, or UI quality run was performed for MA02. No production
+database migration was required.

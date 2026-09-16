@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00、MA01 已完成并复验；MA02–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA02 已完成并复验；MA03–MA10 待实施。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -101,14 +101,14 @@
 
 任务：
 
-- [ ] 建立服务端 scope resolver，区分 research workspace、board、collection，按持久成员/明确当前选区解析文档、笔记、卡片范围。
-- [ ] ScopeContext 显式区分 `unscoped_global` 与 `restricted(empty)`。无工作区只在产品既有允许范围搜索；空工作区返回空，不能退回全库。
-- [ ] 将 KnowledgeInjector/旧 AgentKnowledgeRuntime 的协作调用接到统一 Evidence Service，或先禁用不具 scope 能力的旧路径；禁止携带 raw 全图进入专家。
-- [ ] 图关系只能在授权集合内扩展候选；相关性为零时不能仅靠度数成为证据。中文关键词语义召回复用既有 RAG，并保留 fallback。
-- [ ] 对 Research Note 实施确切 note IDs 校验，不能仅按某个来源过滤后读取同来源其他工作区笔记。
-- [ ] 规范 EvidencePacket：源 ID/版本、引用范围、来源类别、page/element/table/image locator、status；事实引用由既有 citation service 生成。
-- [ ] 缓存与重复检索合并的键包含 scope_revision、源版本、查询/过滤条件、模型版本；不同范围不得共享结果。
-- [ ] 复用 Research Memory 新鲜度和 Stage20 Review Gate；机器核查不得改变人工 accepted 状态。
+- [x] 建立服务端 scope resolver，区分 research workspace、board、collection，按持久成员/明确当前选区解析文档、笔记、卡片范围。
+- [x] ScopeContext 显式区分 `unscoped_global` 与 `restricted(empty)`。无工作区只在产品既有允许范围搜索；空工作区返回空，不能退回全库。
+- [x] 将 KnowledgeInjector/旧 AgentKnowledgeRuntime 的协作调用接到统一 Evidence Service，或先禁用不具 scope 能力的旧路径；禁止携带 raw 全图进入专家。
+- [x] 图关系只能在授权集合内扩展候选；相关性为零时不能仅靠度数成为证据。中文关键词语义召回复用既有 RAG，并保留 fallback。
+- [x] 对 Research Note 实施确切 note IDs 校验，不能仅按某个来源过滤后读取同来源其他工作区笔记。
+- [x] 规范 EvidencePacket：源 ID/版本、引用范围、来源类别、page/element/table/image locator、status；事实引用由既有 citation service 生成。
+- [x] 缓存与重复检索合并的键包含 scope_revision、源版本、查询/过滤条件、模型版本；不同范围不得共享结果。
+- [x] 复用 Research Memory 新鲜度和 Stage20 Review Gate；机器核查不得改变人工 accepted 状态。
 
 测试：`test_evidence_scope.py`、`test_graph_retrieval_boundary.py`、`test_evidence_provenance.py`、`test_evidence_cache_scope.py`。
 
@@ -417,7 +417,7 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | --- | --- | --- | --- |
 | MA00 | 基线与科研评估夹具 | verified | `1464581`、`a91f908`；2026-09-16 本地复验 |
 | MA01 | typed 任务、角色、状态、产物 | verified | `17f959d`–`7fca71c`；2026-09-16 本地复验 |
-| MA02 | scope 与统一证据 | not_started | 待实施 |
+| MA02 | scope 与统一证据 | verified | `196a2e1`；2026-09-16 本地复验 |
 | MA03 | 路由与串行根图集成 | not_started | 待实施 |
 | MA04 | 论文理解与研究分析 | not_started | 待实施 |
 | MA05 | 学术写作与局部修订 | not_started | 待实施 |
@@ -452,3 +452,15 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 结果：`32 passed`、`92 passed`、`10 passed`；无 skipped/failed。
 - 真实模型与 UI 验证、指标：纯契约阶段，不适用。
 - 已知限制/阻塞及下一步：产物/任务契约尚未进入生产执行；MA02 先建立服务端 scope resolver 和统一 Evidence Service。
+
+### MA02 实施记录 — 2026-09-16
+
+- 状态：verified。
+- 起始 HEAD / 最终提交：`c3bf7e5` / `196a2e127b29d620db73716ee63e5a490b2b6c8b`。
+- 实际改动与对应用户产物：新增服务端 `AuthoritativeScopeResolver`、显式 global/restricted scope、统一 `ScopedEvidenceService`/`EvidencePacket`、精确 note/文档/知识条目过滤、RAG 表图定位、CitationService 适配、来源新鲜度/Review Gate 接入和 scope-aware 关系建议候选。
+- 共享记忆阶段与接口版本：复用现有 Research Memory reliability，只读来源状态；未创建新记忆库。
+- 数据/图/checkpoint/事件迁移与兼容影响：无 schema 迁移；旧 scoped Knowledge Runtime 在无可信 Evidence Service 时安全停用，全局兼容路径保留；F03 转为目标行为断言。
+- 测试命令：`pytest tests/multi_agent -q`；第 4 节 92/10 项回归；Research Workspace/Memory/Evidence Review 组；Knowledge/RAG 组；changed-files Ruff 与 compileall。
+- 结果：`47 passed`、`92 passed`、`10 passed`、`60 passed`、`53 passed`；Ruff/compileall 通过；无 failed/skipped。
+- 真实模型与 UI 验证、指标：未执行；本阶段验证确定性范围与来源契约，不声称真实模型质量收益。
+- 已知限制/阻塞及下一步：MA02 服务尚未由权威根图统一解析/注入；MA03 完成 fast/single/workflow 路由、串行 task DAG 与生产接入。
