@@ -7,6 +7,7 @@ import KnowledgeResearchBridgePanel from "./KnowledgeResearchBridgePanel"
 import ResearchProjectPanel from "./ResearchProjectPanel"
 import ResearchScopePanel from "./ResearchScopePanel"
 import ResearchWorkspace from "./ResearchWorkspace"
+import WritingDraftPanel from "./WritingDraftPanel"
 
 type BackendState = "checking" | "connected" | "offline"
 
@@ -50,6 +51,7 @@ export default function ResearchRoute({
       <EvidenceReviewPanel workspace={workspace} />
       <KnowledgeResearchBridgePanel workspace={workspace} />
       <ResearchScopePanel workspace={workspace} />
+      <WritingDraftPanel workspaceId={workspace.activeResearchWorkspaceId} />
       <ResearchWorkspace />
     </div>
   )

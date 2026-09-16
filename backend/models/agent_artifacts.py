@@ -188,6 +188,16 @@ class ResearchHypothesis(ArtifactModel):
     status: Literal["hypothesis"] = "hypothesis"
 
 
+class ReferenceRecord(ArtifactModel):
+    source_id: str = Field(min_length=1, max_length=256)
+    title: str = Field(default="", max_length=2000)
+    authors: list[str] = Field(default_factory=list, max_length=128)
+    year: str = Field(default="", max_length=16)
+    doi: str = Field(default="", max_length=512)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=512)
+    missing_fields: list[str] = Field(default_factory=list, max_length=32)
+
+
 class ComparisonArtifact(Artifact):
     kind: Literal[ArtifactKind.COMPARISON] = ArtifactKind.COMPARISON
     dimensions: list[str] = Field(default_factory=list, max_length=128)
@@ -213,6 +223,7 @@ class OutlineArtifact(Artifact):
     title: str = Field(default="", max_length=1000)
     writing_goal: str = Field(default="", max_length=20_000)
     sections: list[OutlineSection] = Field(default_factory=list, max_length=256)
+    references: list[ReferenceRecord] = Field(default_factory=list, max_length=512)
     missing_inputs: list[str] = Field(default_factory=list, max_length=128)
 
 
@@ -223,6 +234,7 @@ class ManuscriptSectionArtifact(Artifact):
     markdown: str = Field(default="", max_length=200_000)
     paragraph_ids: list[str] = Field(default_factory=list, max_length=2048)
     claim_source_map: dict[str, list[str]] = Field(default_factory=dict)
+    references: list[ReferenceRecord] = Field(default_factory=list, max_length=512)
     missing_inputs: list[str] = Field(default_factory=list, max_length=128)
 
     @field_validator("claim_source_map", mode="before")
@@ -237,6 +249,10 @@ class RevisionChange(ArtifactModel):
     before_hash: str = Field(default="", max_length=128)
     replacement_markdown: str = Field(default="", max_length=100_000)
     rationale: str = Field(default="", max_length=20_000)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=128)
+    category: Literal["fact", "interpretation", "suggestion", "user_supplied"] = (
+        "suggestion"
+    )
 
 
 class RevisionArtifact(Artifact):
@@ -303,6 +319,7 @@ __all__ = [
     "ManuscriptSectionArtifact",
     "OutlineArtifact",
     "OutlineSection",
+    "ReferenceRecord",
     "ResearchHypothesis",
     "RevisionArtifact",
     "RevisionChange",

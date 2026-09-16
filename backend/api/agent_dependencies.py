@@ -16,6 +16,10 @@ from backend.agent_core.orchestration.serial_executor import (
 )
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
+from backend.agent_graph.academic_writer_graph import (
+    AcademicWriterGraph,
+    FallbackAcademicWriterProvider,
+)
 from backend.agent_graph.document_analyst_graph import DocumentAnalystGraph
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
 from backend.agent_graph.research_synthesizer_graph import ResearchSynthesizerGraph
@@ -31,10 +35,15 @@ from backend.api.dependencies import (
     get_retrieval_service,
     get_translation_service,
 )
-from backend.api.evidence_review_dependencies import get_evidence_review_service
+from backend.api.evidence_review_dependencies import (
+    get_agent_literature_synthesis_service,
+    get_evidence_review_service,
+)
 from backend.api.knowledge_board_dependencies import get_knowledge_board_service
 from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
+from backend.api.llm_dependencies import get_llm_gateway
 from backend.models.agent_tasks import TaskRole
+from backend.services.academic_writer_service import AcademicWriterService
 from backend.services.agent_checkpoint_service import AgentCheckpointService
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.agent_trace_store_service import AgentTraceStoreService
@@ -92,6 +101,12 @@ class _LazyEvidenceReviewService:
     @staticmethod
     def snapshot(*args, **kwargs):
         return get_evidence_review_service().snapshot(*args, **kwargs)
+
+
+class _LazyLiteratureSynthesisService:
+    @staticmethod
+    def generate(*args, **kwargs):
+        return get_agent_literature_synthesis_service().generate(*args, **kwargs)
 
 
 AgentTraceStoreDependency = Annotated[
@@ -178,13 +193,22 @@ def get_agent_runtime(
         artifact_store=artifact_store,
         evidence_review_service=_LazyEvidenceReviewService(),
     )
+    writer = AcademicWriterGraph(
+        artifact_store=artifact_store,
+        provider=FallbackAcademicWriterProvider(
+            AcademicWriterService(
+                text_service=get_llm_gateway().create_text_service("academic_writer")
+            )
+        ),
+        literature_synthesis_service=_LazyLiteratureSynthesisService(),
+    )
     orchestration_service = ResearchOrchestrationService(
         scope_resolver=scope_resolver,
         executor=SerialTaskGraphExecutor(
             {
                 TaskRole.DOCUMENT: document_analyst,
                 TaskRole.RESEARCH: research_synthesizer,
-                TaskRole.WRITER: compatibility_executor,
+                TaskRole.WRITER: writer,
                 TaskRole.CURATOR: compatibility_executor,
             }
         ),

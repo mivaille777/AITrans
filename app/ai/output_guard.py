@@ -7,12 +7,12 @@ request payload echoes or otherwise fail the application contract.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import re
+from collections import Counter
+from dataclasses import dataclass
 
 from app.ai.models import AITextAction
-
 
 JSON_PAYLOAD_KEYS = frozenset(
     {
@@ -41,6 +41,12 @@ _PREFIX_RE = re.compile(
 )
 _FENCE_OPEN_RE = re.compile(r"^```(?:text|plain|plaintext|markdown|json)?\s*", re.IGNORECASE)
 _FENCE_CLOSE_RE = re.compile(r"\s*```$", re.IGNORECASE)
+_CITATION_RE = re.compile(r"\[(?:\d+(?:\s*[-,]\s*\d+)*)\]")
+_NUMBER_RE = re.compile(r"(?<![\w.])[-+]?\d+(?:[.,]\d+)?%?")
+_UNIT_RE = re.compile(
+    r"(?<!\w)(?:ms|s|kg|g|mg|km|cm|mm|°c|k|pa|kpa|mpa|hz|khz|mhz|j|w|kw|v|mv|a|ma)(?!\w)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +102,19 @@ def _normalized_for_comparison(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+def _missing_protected_tokens(source_text: str, output_text: str) -> str:
+    for reason, pattern in (
+        ("citation_mapping_changed", _CITATION_RE),
+        ("numeric_value_changed", _NUMBER_RE),
+        ("unit_mapping_changed", _UNIT_RE),
+    ):
+        source = Counter(item.casefold() for item in pattern.findall(source_text))
+        output = Counter(item.casefold() for item in pattern.findall(output_text))
+        if any(output[token] < count for token, count in source.items()):
+            return reason
+    return ""
+
+
 def validate_model_output(
     content: object,
     *,
@@ -133,6 +152,10 @@ def validate_model_output(
             f'"{field}"' in lowered for field in ("task", "source_text", "target_language")
         ):
             return OutputValidation("", False, "request_payload_echo")
+
+    protected_failure = _missing_protected_tokens(source_text, normalized)
+    if protected_failure:
+        return OutputValidation("", False, protected_failure)
 
     return OutputValidation(normalized, True)
 

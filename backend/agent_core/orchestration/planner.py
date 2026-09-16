@@ -27,6 +27,20 @@ _OUTPUT_BY_ROLE = {
     TaskRole.CURATOR: ArtifactKind.KNOWLEDGE_DRAFT,
 }
 
+_OUTLINE_TERMS = ("outline", "大纲")
+_REVISION_TERMS = ("revise", "revision", "修改", "修订", "只改")
+
+
+def _expected_output(role: TaskRole, objective: str) -> ArtifactKind:
+    if role is not TaskRole.WRITER:
+        return _OUTPUT_BY_ROLE[role]
+    lowered = str(objective).casefold()
+    if any(term in lowered for term in _OUTLINE_TERMS):
+        return ArtifactKind.OUTLINE
+    if any(term in lowered for term in _REVISION_TERMS):
+        return ArtifactKind.REVISION
+    return ArtifactKind.MANUSCRIPT_SECTION
+
 _TOOLS_BY_ROLE = {
     TaskRole.DOCUMENT: ["inspect_reading_context", "search_knowledge_base"],
     TaskRole.RESEARCH: ["analyze_cross_document_research", "search_knowledge_base"],
@@ -117,7 +131,7 @@ class ValidatedSupervisorPlanner:
                 )
                 for item in dependencies
             ],
-            expected_output_kind=_OUTPUT_BY_ROLE[role],
+            expected_output_kind=_expected_output(role, objective),
             acceptance_criteria=["scoped_sources_only", "typed_artifact_or_explicit_partial"],
             scope_ref=scope.scope_ref,
             allowed_tools=list(_TOOLS_BY_ROLE[role]),

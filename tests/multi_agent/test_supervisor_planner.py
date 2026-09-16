@@ -104,3 +104,29 @@ def test_provider_plan_fails_after_one_repair_attempt() -> None:
         )
 
     assert calls == 2
+
+
+@pytest.mark.parametrize(
+    ("objective", "expected"),
+    [
+        ("Create a paper outline", ArtifactKind.OUTLINE),
+        ("Draft the discussion section", ArtifactKind.MANUSCRIPT_SECTION),
+        ("Revise only the second paragraph", ArtifactKind.REVISION),
+    ],
+)
+def test_writer_plan_declares_the_requested_typed_artifact(
+    objective: str,
+    expected: ArtifactKind,
+) -> None:
+    plan = ValidatedSupervisorPlanner().plan(
+        route=OrchestrationRoute(
+            lane=OrchestrationLane.WORKFLOW,
+            primary_role=TaskRole.WRITER,
+            reason_code="test",
+        ),
+        objective=objective,
+        scope=_scope(),
+    )
+
+    assert plan is not None
+    assert plan.task_map()["writer-1"].expected_output_kind is expected

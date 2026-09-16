@@ -38,6 +38,7 @@ from backend.api.research_memory import router as research_memory_router
 from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
+from backend.api.writing import router as writing_router
 from backend.core.middleware import RequestLoggingMiddleware
 
 DEV_ORIGINS = [
@@ -109,6 +110,7 @@ def create_app():
         companion_router,
         companion_stream_router,
         conversations_router,
+        writing_router,
     ]:
         app.include_router(router)
 

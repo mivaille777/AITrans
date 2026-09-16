@@ -44,6 +44,7 @@ _DEFAULT_MODELS = {
     "planner": "deepseek-v4-flash",
     "agent_synthesis": "deepseek-v4-pro",
     "reading": "deepseek-v4-pro",
+    "academic_writer": "deepseek-v4-pro",
     "translation_ai": DEFAULT_DEEPSEEK_MODEL,
     "polish": DEFAULT_DEEPSEEK_MODEL,
 }
@@ -51,6 +52,7 @@ _ENV_BY_ROLE = {
     "planner": "AITRANS_MODEL_PLANNER",
     "agent_synthesis": "AITRANS_MODEL_AGENT_SYNTHESIS",
     "reading": "AITRANS_MODEL_READING",
+    "academic_writer": "AITRANS_MODEL_ACADEMIC_WRITER",
     "translation_ai": "AITRANS_MODEL_TRANSLATION_AI",
     "polish": "AITRANS_MODEL_POLISH",
 }
