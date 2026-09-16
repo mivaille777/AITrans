@@ -16,6 +16,18 @@ def test_selected_translation_stays_fast_even_in_force_mode() -> None:
     assert route.primary_role is None
 
 
+def test_explicit_save_keeps_existing_write_confirmation_path() -> None:
+    route = ResearchTaskRouter().route(
+        "Save this passage.",
+        {"source_text": "Gaussian process"},
+        mode="force",
+    )
+
+    assert route.lane is OrchestrationLane.FAST
+    assert route.primary_role is None
+    assert route.reason_code == "confirmed_product_write"
+
+
 def test_single_document_understanding_uses_one_document_specialist() -> None:
     route = ResearchTaskRouter().route(
         "总结这篇论文的方法",

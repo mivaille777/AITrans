@@ -5,6 +5,8 @@ from collections.abc import Callable
 from typing import Any
 
 from backend.agent_core.events import AgentEventType
+from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
+from backend.agent_core.orchestration.parallel_executor import TaskRunLeaseError
 from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.state import AgentState
 from backend.models.agent_orchestration import OrchestrationLane
@@ -26,6 +28,23 @@ _EVENT_MAP: dict[str, AgentEventType] = {
     "agent_failed": AgentEventType.MULTI_AGENT_SPECIALIST_FAILED,
     "agent_skipped": AgentEventType.MULTI_AGENT_SPECIALIST_SKIPPED,
     "workflow_completed": AgentEventType.MULTI_AGENT_COMPLETED,
+    "task_planned": AgentEventType.TASK_PLANNED,
+    "task_ready": AgentEventType.TASK_READY,
+    "task_started": AgentEventType.TASK_STARTED,
+    "task_progress": AgentEventType.TASK_PROGRESS,
+    "task_completed": AgentEventType.TASK_COMPLETED,
+    "task_partial": AgentEventType.TASK_PARTIAL,
+    "task_failed": AgentEventType.TASK_FAILED,
+    "task_blocked": AgentEventType.TASK_BLOCKED,
+    "task_cancelled": AgentEventType.TASK_CANCELLED,
+    "task_skipped": AgentEventType.TASK_SKIPPED,
+    "task_retrying": AgentEventType.TASK_RETRYING,
+    "plan_revised": AgentEventType.PLAN_REVISED,
+    "budget_exhausted": AgentEventType.BUDGET_EXHAUSTED,
+    "artifact_verified": AgentEventType.ARTIFACT_VERIFIED,
+    "artifact_rejected": AgentEventType.ARTIFACT_REJECTED,
+    "workflow_partial": AgentEventType.WORKFLOW_PARTIAL,
+    "workflow_resumed": AgentEventType.WORKFLOW_RESUMED,
 }
 
 
@@ -79,18 +98,22 @@ class MultiAgentRuntimeBridge:
     @staticmethod
     def _forward_events(run: Any, emit: CoreEventSink) -> None:
         for event in run.events:
-            core_type = _EVENT_MAP.get(event.event_type)
-            if core_type is None:
-                continue
-            payload = dict(event.payload or {})
-            payload.update(
-                {
-                    "actor": event.actor,
-                    "status": event.status,
-                    "multi_agent_event_type": event.event_type,
-                }
-            )
-            emit(core_type, payload)
+            MultiAgentRuntimeBridge._forward_event(event, emit)
+
+    @staticmethod
+    def _forward_event(event: Any, emit: CoreEventSink) -> None:
+        core_type = _EVENT_MAP.get(event.event_type)
+        if core_type is None:
+            return
+        payload = dict(event.payload or {})
+        payload.update(
+            {
+                "actor": event.actor,
+                "status": event.status,
+                "multi_agent_event_type": event.event_type,
+            }
+        )
+        emit(core_type, payload)
 
     @staticmethod
     def _specialist_output(result: Any) -> dict[str, Any]:
@@ -237,6 +260,8 @@ class MultiAgentRuntimeBridge:
                     run_id=state.run_id,
                     trace_id=state.trace_id,
                     runtime_context=self._runtime_context(state),
+                    event_sink=lambda event: self._forward_event(event, emit),
+                    control=control,
                 )
             else:
                 if self.service is None:
@@ -248,6 +273,8 @@ class MultiAgentRuntimeBridge:
                     trace_id=state.trace_id,
                     runtime_context=self._runtime_context(state),
                 )
+        except (AgentCancelledError, AgentBudgetExceededError, TaskRunLeaseError):
+            raise
         except Exception as exc:  # noqa: BLE001 - advisory workflow must fall back
             emit(
                 AgentEventType.MULTI_AGENT_COMPLETED,
@@ -261,7 +288,8 @@ class MultiAgentRuntimeBridge:
             )
             return state
 
-        self._forward_events(run, emit)
+        if self.orchestrator is None:
+            self._forward_events(run, emit)
 
         collaboration = self._context_payload(run)
         context = dict(state.browser_context)

@@ -7,6 +7,7 @@ from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.agent_core.orchestration.runtime_budget import reserve_runtime_resource
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
 from backend.models.agent_artifacts import (
     ClaimRecord,
@@ -156,6 +157,8 @@ class DocumentAnalystGraph:
         )
         packets: dict[str, EvidencePacket] = {}
         for query in state["queries"]:
+            reserve_runtime_resource("retrievals")
+            reserve_runtime_resource("tool_calls")
             for packet in self._evidence.retrieve_packets(
                 query=query,
                 scope=scope,

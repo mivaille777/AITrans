@@ -10,9 +10,12 @@ from backend.agent_core.orchestration import (
     ScopedEvidenceService,
     build_artifact_store,
 )
+from backend.agent_core.orchestration.parallel_executor import (
+    ParallelTaskGraphExecutor,
+    SQLiteTaskCheckpointStore,
+)
 from backend.agent_core.orchestration.serial_executor import (
     LegacySpecialistExecutor,
-    SerialTaskGraphExecutor,
 )
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
@@ -204,13 +207,19 @@ def get_agent_runtime(
     )
     orchestration_service = ResearchOrchestrationService(
         scope_resolver=scope_resolver,
-        executor=SerialTaskGraphExecutor(
+        executor=ParallelTaskGraphExecutor(
             {
                 TaskRole.DOCUMENT: document_analyst,
                 TaskRole.RESEARCH: research_synthesizer,
                 TaskRole.WRITER: writer,
                 TaskRole.CURATOR: compatibility_executor,
-            }
+            },
+            checkpoint_store=(
+                SQLiteTaskCheckpointStore(checkpoint_service.storage_path)
+                if checkpoint_service is not None
+                else None
+            ),
+            artifact_store=artifact_store,
         ),
     )
     collaboration_adapter = MultiAgentRuntimeBridge(
@@ -230,6 +239,7 @@ def get_agent_runtime(
     return AgentRuntime(
         workflow_adapter=graph,
         run_recorder=trace_store.record if trace_store is not None else None,
+        event_recorder=trace_store.append_event if trace_store is not None else None,
     )
 
 

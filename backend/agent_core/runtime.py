@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEvent, AgentEventType
@@ -14,6 +15,7 @@ from backend.agent_core.state import AgentState
 
 AgentEventSink = Callable[[AgentEvent], None]
 AgentRunRecorder = Callable[[AgentState, tuple[AgentEvent, ...]], None]
+AgentEventRecorder = Callable[[AgentState, AgentEvent, int], None]
 
 
 def _fallback_reason(exc: Exception) -> str:
@@ -49,6 +51,7 @@ class AgentRuntime:
         collaboration_adapter: Any | None = None,
         workflow_adapter: Callable[[AgentState], AgentState] | None = None,
         run_recorder: AgentRunRecorder | None = None,
+        event_recorder: AgentEventRecorder | None = None,
     ) -> None:
         self.context_provider = context_provider
         self.planner = planner
@@ -56,6 +59,7 @@ class AgentRuntime:
         self.collaboration_adapter = collaboration_adapter
         self.workflow_adapter = workflow_adapter
         self.run_recorder = run_recorder
+        self.event_recorder = event_recorder
         self.events: list[AgentEvent] = []
         self._event_sink: AgentEventSink | None = None
         self._active_state: AgentState | None = None
@@ -78,10 +82,16 @@ class AgentRuntime:
             elapsed_ms=control.elapsed_ms if control is not None else 0,
         )
         self.events.append(event)
+        if self.event_recorder is not None and state is not None:
+            try:
+                self.event_recorder(state, event, len(self.events) - 1)
+            except Exception:  # noqa: BLE001,S110 - observer is best effort
+                # Live trace durability is observational and cannot fail the run.
+                pass
         if self._event_sink is not None:
             try:
                 self._event_sink(event)
-            except Exception:
+            except Exception:  # noqa: BLE001,S110 - transport is best effort
                 # Observability/transport is deliberately best-effort. A closed
                 # WebSocket or broken debug sink must not change Agent behavior.
                 pass
@@ -312,7 +322,7 @@ class AgentRuntime:
             if self.run_recorder is not None:
                 try:
                     self.run_recorder(state, tuple(self.events))
-                except Exception:
+                except Exception:  # noqa: BLE001,S110 - persistence is best effort
                     # Persistence is diagnostic only. Disk/SQLite failures must
                     # not change Agent success, failure, cancellation or safety.
                     pass

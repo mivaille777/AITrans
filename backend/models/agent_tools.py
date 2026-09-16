@@ -32,6 +32,23 @@ AgentTraceEventType = Literal[
     "multi_agent_specialist_failed",
     "multi_agent_specialist_skipped",
     "multi_agent_completed",
+    "task_planned",
+    "task_ready",
+    "task_started",
+    "task_progress",
+    "task_completed",
+    "task_partial",
+    "task_failed",
+    "task_blocked",
+    "task_cancelled",
+    "task_skipped",
+    "task_retrying",
+    "plan_revised",
+    "budget_exhausted",
+    "artifact_verified",
+    "artifact_rejected",
+    "workflow_partial",
+    "workflow_resumed",
     "plan_ready",
     "react_started",
     "decision_ready",
@@ -131,7 +148,7 @@ class AgentPlan(BaseModel):
     arguments: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_tool_action(self) -> "AgentPlan":
+    def validate_tool_action(self) -> AgentPlan:
         if self.action == "tool" and not self.tool_name.strip():
             raise ValueError("Agent tool plan requires tool_name.")
         if self.action == "answer":

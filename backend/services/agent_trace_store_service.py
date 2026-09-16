@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from contextlib import closing
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import Iterable
 
 from app.infrastructure.paths import writable_config_dir
 from backend.agent_core.events import AgentEvent
@@ -78,7 +78,7 @@ class AgentObservabilitySummary:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _safe_int(value: object) -> int:
@@ -102,6 +102,46 @@ def _percentile_95(values: list[int]) -> int:
 
 _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "agent_start": frozenset({"budget_ms", "resumed"}),
+    **{
+        event_type: frozenset(
+            {
+                "event_id",
+                "run_id",
+                "trace_id",
+                "sequence",
+                "status",
+                "timestamp",
+                "actor",
+                "multi_agent_event_type",
+                "task_id",
+                "parent_task_id",
+                "attempt",
+                "plan_revision",
+                "reason_code",
+                "usage",
+                "task_count",
+            }
+        )
+        for event_type in (
+            "task_planned",
+            "task_ready",
+            "task_started",
+            "task_progress",
+            "task_completed",
+            "task_partial",
+            "task_failed",
+            "task_blocked",
+            "task_cancelled",
+            "task_skipped",
+            "task_retrying",
+            "plan_revised",
+            "budget_exhausted",
+            "artifact_verified",
+            "artifact_rejected",
+            "workflow_partial",
+            "workflow_resumed",
+        )
+    },
     "context_ready": frozenset({"source_kind"}),
     "plan_ready": frozenset(
         {
@@ -330,10 +370,8 @@ class AgentTraceStoreService:
         )
 
     def _initialize(self) -> None:
-        with self._lock:
-            with closing(self._connect()) as connection:
-                with connection:
-                    self._ensure_schema(connection)
+        with self._lock, closing(self._connect()) as connection, connection:
+            self._ensure_schema(connection)
 
     @staticmethod
     def _derive_run(state: AgentState, events: tuple[AgentEvent, ...]) -> StoredAgentRun:
@@ -401,19 +439,45 @@ class AgentTraceStoreService:
     def record(self, state: AgentState, events: Iterable[AgentEvent]) -> StoredAgentRun:
         frozen_events = tuple(events)
         run = self._derive_run(state, frozen_events)
-        with self._lock:
+        with self._lock:  # noqa: SIM117 - keep transaction scopes explicit
             with closing(self._connect()) as connection:
                 with connection:
                     self._ensure_schema(connection)
+                    existing_event_count = int(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM agent_events WHERE run_id = ?",
+                            (run.run_id,),
+                        ).fetchone()[0]
+                    )
+                    if existing_event_count:
+                        run = replace(run, event_count=existing_event_count)
                     connection.execute(
                         """
-                        INSERT OR REPLACE INTO agent_runs(
+                        INSERT INTO agent_runs(
                             run_id, trace_id, session_id, created_at, status, intent,
                             ui_mode, tool_name, provider, model, total_duration_ms,
                             planning_duration_ms, tool_duration_ms,
                             synthesis_duration_ms, retry_count, failure_count,
                             timeout_count, fallback_reason, event_count
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(run_id) DO UPDATE SET
+                            trace_id = excluded.trace_id,
+                            session_id = excluded.session_id,
+                            status = excluded.status,
+                            intent = excluded.intent,
+                            ui_mode = excluded.ui_mode,
+                            tool_name = excluded.tool_name,
+                            provider = excluded.provider,
+                            model = excluded.model,
+                            total_duration_ms = excluded.total_duration_ms,
+                            planning_duration_ms = excluded.planning_duration_ms,
+                            tool_duration_ms = excluded.tool_duration_ms,
+                            synthesis_duration_ms = excluded.synthesis_duration_ms,
+                            retry_count = excluded.retry_count,
+                            failure_count = excluded.failure_count,
+                            timeout_count = excluded.timeout_count,
+                            fallback_reason = excluded.fallback_reason,
+                            event_count = excluded.event_count
                         """,
                         (
                             run.run_id,
@@ -437,26 +501,82 @@ class AgentTraceStoreService:
                             run.event_count,
                         ),
                     )
-                    connection.execute("DELETE FROM agent_events WHERE run_id = ?", (run.run_id,))
-                    connection.executemany(
-                        """
-                        INSERT INTO agent_events(
-                            run_id, sequence, event_type, timestamp, elapsed_ms, payload_json
-                        ) VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        [
-                            (
-                                run.run_id,
-                                sequence,
-                                event.event_type.value,
-                                event.timestamp,
-                                event.elapsed_ms,
-                                json.dumps(_redacted_payload(event), ensure_ascii=False),
-                            )
-                            for sequence, event in enumerate(frozen_events)
-                        ],
-                    )
+                    if not existing_event_count:
+                        connection.executemany(
+                            """
+                            INSERT INTO agent_events(
+                                run_id, sequence, event_type, timestamp,
+                                elapsed_ms, payload_json
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            [
+                                (
+                                    run.run_id,
+                                    sequence,
+                                    event.event_type.value,
+                                    event.timestamp,
+                                    event.elapsed_ms,
+                                    json.dumps(_redacted_payload(event), ensure_ascii=False),
+                                )
+                                for sequence, event in enumerate(frozen_events)
+                            ],
+                        )
         return run
+
+    def append_event(
+        self,
+        state: AgentState,
+        event: AgentEvent,
+        sequence: int,
+    ) -> None:
+        """Persist one redacted event immediately for crash-safe replay."""
+
+        del sequence  # Database sequence is monotonic across resumed runtime instances.
+        with self._lock, closing(self._connect()) as connection, connection:
+            self._ensure_schema(connection)
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO agent_runs(
+                    run_id, trace_id, session_id, created_at, status, intent, ui_mode
+                ) VALUES (?, ?, ?, ?, 'running', ?, ?)
+                """,
+                (
+                    state.run_id,
+                    state.trace_id,
+                    state.session_id,
+                    event.timestamp,
+                    str(state.intent or ""),
+                    str(state.ui_mode or "assistant"),
+                ),
+            )
+            next_sequence = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(MAX(sequence), -1) + 1 FROM agent_events
+                    WHERE run_id = ?
+                    """,
+                    (state.run_id,),
+                ).fetchone()[0]
+            )
+            connection.execute(
+                """
+                INSERT INTO agent_events(
+                    run_id, sequence, event_type, timestamp, elapsed_ms, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.run_id,
+                    next_sequence,
+                    event.event_type.value,
+                    event.timestamp,
+                    event.elapsed_ms,
+                    json.dumps(_redacted_payload(event), ensure_ascii=False),
+                ),
+            )
+            connection.execute(
+                "UPDATE agent_runs SET event_count = ? WHERE run_id = ?",
+                (next_sequence + 1, state.run_id),
+            )
 
     @staticmethod
     def _run_from_row(row: sqlite3.Row) -> StoredAgentRun:
@@ -484,26 +604,24 @@ class AgentTraceStoreService:
 
     def list_recent(self, *, limit: int = 30) -> tuple[StoredAgentRun, ...]:
         bounded = max(1, min(int(limit), 500))
-        with self._lock:
-            with closing(self._connect()) as connection:
-                self._ensure_schema(connection)
-                rows = connection.execute(
-                    "SELECT * FROM agent_runs ORDER BY created_at DESC LIMIT ?",
-                    (bounded,),
-                ).fetchall()
-                return tuple(self._run_from_row(row) for row in rows)
+        with self._lock, closing(self._connect()) as connection:
+            self._ensure_schema(connection)
+            rows = connection.execute(
+                "SELECT * FROM agent_runs ORDER BY created_at DESC LIMIT ?",
+                (bounded,),
+            ).fetchall()
+            return tuple(self._run_from_row(row) for row in rows)
 
     def get_run(self, run_id: str) -> StoredAgentRun | None:
         candidate = str(run_id or "").strip()
         if not candidate:
             return None
-        with self._lock:
-            with closing(self._connect()) as connection:
-                self._ensure_schema(connection)
-                row = connection.execute(
-                    "SELECT * FROM agent_runs WHERE run_id = ?", (candidate,)
-                ).fetchone()
-                return self._run_from_row(row) if row is not None else None
+        with self._lock, closing(self._connect()) as connection:
+            self._ensure_schema(connection)
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (candidate,)
+            ).fetchone()
+            return self._run_from_row(row) if row is not None else None
 
     def summary(self, *, limit: int = 100) -> AgentObservabilitySummary:
         runs = list(self.list_recent(limit=limit))
@@ -553,18 +671,17 @@ class AgentTraceStoreService:
         candidate = str(run_id or "").strip()
         if not candidate:
             return ()
-        with self._lock:
-            with closing(self._connect()) as connection:
-                self._ensure_schema(connection)
-                rows = connection.execute(
-                    """
+        with self._lock, closing(self._connect()) as connection:
+            self._ensure_schema(connection)
+            rows = connection.execute(
+                """
                     SELECT sequence, event_type, timestamp, elapsed_ms, payload_json
                     FROM agent_events
                     WHERE run_id = ?
                     ORDER BY sequence ASC
                     """,
-                    (candidate,),
-                ).fetchall()
+                (candidate,),
+            ).fetchall()
         return tuple(
             StoredAgentEvent(
                 sequence=int(row["sequence"]),
@@ -582,8 +699,8 @@ class AgentTraceStoreService:
 
 
 __all__ = [
-    "AgentTraceStoreService",
-    "StoredAgentRun",
-    "StoredAgentEvent",
     "AgentObservabilitySummary",
+    "AgentTraceStoreService",
+    "StoredAgentEvent",
+    "StoredAgentRun",
 ]

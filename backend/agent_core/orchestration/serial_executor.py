@@ -105,7 +105,11 @@ class SerialTaskGraphExecutor:
         plan: ValidatedTaskPlan,
         scope: ScopeContext,
         memory_snapshot: Mapping[str, Any] | None = None,
+        run_id: str = "",
+        collector: Any | None = None,
+        control: Any | None = None,
     ) -> SerialExecution:
+        del run_id, collector, control
         pending = plan.task_map()
         results: list[TaskResult] = []
         by_id: dict[str, TaskResult] = {}

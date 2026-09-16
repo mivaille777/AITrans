@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +12,7 @@ from backend.agent_core.orchestration.memory import NullMemoryPort
 from backend.agent_core.orchestration.planner import ValidatedSupervisorPlanner
 from backend.agent_core.orchestration.router import ResearchTaskRouter
 from backend.agent_core.orchestration.scope_resolver import AuthoritativeScopeResolver
-from backend.agent_core.orchestration.serial_executor import SerialTaskGraphExecutor
+from backend.agent_core.reliability import AgentRunControl
 from backend.models.agent_orchestration import OrchestrationLane, OrchestrationRoute
 from backend.models.agent_tasks import (
     ScopeContext,
@@ -56,7 +57,7 @@ class ResearchOrchestrationService:
         self,
         *,
         scope_resolver: AuthoritativeScopeResolver,
-        executor: SerialTaskGraphExecutor,
+        executor: Any,
         router: ResearchTaskRouter | None = None,
         planner: ValidatedSupervisorPlanner | None = None,
         memory_port: Any | None = None,
@@ -109,6 +110,8 @@ class ResearchOrchestrationService:
         run_id: str | None = None,
         trace_id: str | None = None,
         runtime_context: dict[str, Any] | None = None,
+        event_sink: Callable[[MultiAgentTraceEvent], None] | None = None,
+        control: AgentRunControl | None = None,
     ) -> ResearchOrchestrationRun:
         context = dict(runtime_context or {})
         route = self.route(user_input, context, mode=mode)
@@ -125,7 +128,11 @@ class ResearchOrchestrationService:
         memory_snapshot = dict(
             self.memory_port.load_snapshot(profile_id=profile_id, scope=scope)
         )
-        collector = MultiAgentTraceCollector(run_id=run_id, trace_id=trace_id)
+        collector = MultiAgentTraceCollector(
+            run_id=run_id,
+            trace_id=trace_id,
+            event_sink=event_sink,
+        )
         collector.emit(
             "supervisor_started",
             actor="supervisor",
@@ -143,6 +150,31 @@ class ResearchOrchestrationService:
                 "agents": [task.role.value for task in task_plan.tasks] if task_plan else [],
             },
         )
+        if task_plan is not None:
+            if task_plan.plan_revision > 1:
+                collector.emit(
+                    "plan_revised",
+                    actor="supervisor",
+                    status="complete",
+                    payload={
+                        "plan_revision": task_plan.plan_revision,
+                        "reason_code": "validated_repair_or_evidence_supplement",
+                    },
+                )
+            for task in task_plan.tasks:
+                collector.emit(
+                    "task_planned",
+                    actor=task.role.value,
+                    status="pending",
+                    payload={
+                        "task_id": task.task_id,
+                        "parent_task_id": "",
+                        "attempt": 0,
+                        "plan_revision": task.plan_revision,
+                        "reason_code": "",
+                        "usage": {},
+                    },
+                )
         if route.lane is OrchestrationLane.FAST or task_plan is None:
             execution_results: tuple[TaskResult, ...] = ()
             outputs: dict[str, Any] = {}
@@ -153,6 +185,9 @@ class ResearchOrchestrationService:
                 plan=task_plan,
                 scope=scope,
                 memory_snapshot=memory_snapshot,
+                run_id=collector.run_id,
+                collector=collector,
+                control=control,
             )
             execution_results = execution.results
             outputs = execution.outputs
@@ -165,6 +200,20 @@ class ResearchOrchestrationService:
                     status=result.status.value,
                     payload={"task_id": result.task_id, "error_code": result.error_code},
                 )
+        partial = any(
+            item.status.value not in {"succeeded", "skipped"}
+            for item in execution_results
+        )
+        if partial:
+            collector.emit(
+                "workflow_partial",
+                actor="supervisor",
+                status="partial",
+                payload={
+                    "reason_code": "one_or_more_tasks_incomplete",
+                    "task_count": len(execution_results),
+                },
+            )
         collector.emit(
             "workflow_completed",
             actor="supervisor",

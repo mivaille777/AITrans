@@ -36,6 +36,23 @@ export const agentTimelineStageDefinitions = [
 ] as const
 
 const eventStage: Partial<Record<AgentTraceEventType, AgentTimelineStageId>> = {
+  task_planned: "decision",
+  task_ready: "decision",
+  plan_revised: "decision",
+  task_started: "tool",
+  task_progress: "tool",
+  task_retrying: "tool",
+  task_completed: "observation",
+  task_partial: "observation",
+  artifact_verified: "observation",
+  artifact_rejected: "observation",
+  task_failed: "result",
+  task_blocked: "result",
+  task_cancelled: "result",
+  task_skipped: "result",
+  budget_exhausted: "result",
+  workflow_partial: "result",
+  workflow_resumed: "decision",
   plan_ready: "decision",
   react_started: "decision",
   decision_ready: "decision",
@@ -61,6 +78,8 @@ const eventStage: Partial<Record<AgentTraceEventType, AgentTimelineStageId>> = {
 const terminalEventTypes = new Set<AgentTraceEventType>([
   "failure",
   "cancelled",
+  "task_cancelled",
+  "workflow_partial",
   "agent_end",
 ])
 

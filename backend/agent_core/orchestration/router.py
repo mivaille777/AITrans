@@ -10,6 +10,7 @@ _COMPARE_TERMS = ("比较", "对比", "compare", "contrast", "综述", "review",
 _WRITING_TERMS = ("撰写", "写作", "起草", "大纲", "章节", "draft", "outline", "write", "revise")
 _CURATION_TERMS = ("笔记", "知识图谱", "知识卡", "整理", "note", "knowledge graph", "curate")
 _DOCUMENT_TERMS = ("论文", "文档", "总结", "方法", "实验", "图表", "table", "figure", "paper", "summarize", "analyze")
+_DIRECT_WRITE_TERMS = ("save", "保存", "存为", "添加到笔记", "add to notes")
 
 
 def _contains(text: str, terms: tuple[str, ...]) -> bool:
@@ -51,6 +52,15 @@ class ResearchTaskRouter:
                 lane=OrchestrationLane.FAST,
                 reason_code="bounded_language_action",
                 user_visible_reason="The selected text can use the existing direct language tool.",
+            )
+
+        if selected_text and _contains(text, _DIRECT_WRITE_TERMS):
+            return OrchestrationRoute(
+                lane=OrchestrationLane.FAST,
+                reason_code="confirmed_product_write",
+                user_visible_reason=(
+                    "The existing product write tool owns confirmation and persistence."
+                ),
             )
 
         role: TaskRole | None = None
