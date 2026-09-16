@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.ai.chat.models import ChatContext, ReadingContext
@@ -213,7 +213,8 @@ class ResearchNoteService:
         workspace = str(workspace_id or "").strip()
         service = self._workspace_service
         if workspace and service is not None:
-            if not service.attach_note(workspace, result.note.note_id):
+            attached = service.attach_note(workspace, result.note.note_id)
+            if not attached and service.get(workspace) is None:
                 raise ValueError("Research workspace not found.")
             conversation = str(conversation_id or "").strip()
             if conversation:

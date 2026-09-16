@@ -47,6 +47,7 @@ class KnowledgeWorkspaceService:
     def create_item(
         self,
         *,
+        item_id: str | None = None,
         item_type: KnowledgeItemType,
         title: str,
         summary: str = "",
@@ -55,7 +56,7 @@ class KnowledgeWorkspaceService:
         metadata: dict[str, Any] | None = None,
     ) -> KnowledgeItem:
         item = KnowledgeItem(
-            item_id=_new_id("ki"),
+            item_id=str(item_id or "").strip() or _new_id("ki"),
             item_type=item_type,
             title=title.strip(),
             summary=summary,

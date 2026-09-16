@@ -270,6 +270,35 @@ class KnowledgeItemDraft(ArtifactModel):
     summary: str = Field(default="", max_length=50_000)
     source_ids: list[str] = Field(default_factory=list, max_length=128)
     duplicate_candidate_ids: list[str] = Field(default_factory=list, max_length=128)
+    subtype: str = Field(default="", max_length=128)
+    source_quote: str = Field(default="", max_length=50_000)
+    ai_content: str = Field(default="", max_length=50_000)
+    user_note: str = Field(default="", max_length=20_000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    existing_item_id: str = Field(default="", max_length=256)
+    expected_version: int = Field(default=0, ge=0)
+    expected_content_hash: str = Field(default="", max_length=128)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def validate_metadata(cls, value: Any) -> dict[str, Any]:
+        return dict(_json_safe(value or {}, path="knowledge_item.metadata"))
+
+
+class NoteDraft(ArtifactModel):
+    """A reviewable Research Note change with source and authorship separated."""
+
+    draft_id: str = Field(min_length=1, max_length=256)
+    source_id: str = Field(min_length=1, max_length=256)
+    source_quote: str = Field(min_length=1, max_length=20_000)
+    ai_content: str = Field(default="", max_length=30_000)
+    user_note: str = Field(default="", max_length=20_000)
+    resource_uri: str = Field(default="", max_length=8192)
+    resource_title: str = Field(default="", max_length=1024)
+    section_heading: str = Field(default="", max_length=1024)
+    existing_note_id: str = Field(default="", max_length=256)
+    expected_version: int = Field(default=0, ge=0)
+    expected_content_hash: str = Field(default="", max_length=128)
 
 
 class KnowledgeRelationDraft(ArtifactModel):
@@ -280,11 +309,19 @@ class KnowledgeRelationDraft(ArtifactModel):
     evidence_ids: list[str] = Field(default_factory=list, max_length=128)
 
 
+class RelationProposal(KnowledgeRelationDraft):
+    proposal_id: str = Field(min_length=1, max_length=256)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    status: Literal["pending"] = "pending"
+
+
 class KnowledgeDraftArtifact(Artifact):
     kind: Literal[ArtifactKind.KNOWLEDGE_DRAFT] = ArtifactKind.KNOWLEDGE_DRAFT
     workspace_id: str = Field(min_length=1, max_length=256)
+    notes: list[NoteDraft] = Field(default_factory=list, max_length=512)
     items: list[KnowledgeItemDraft] = Field(default_factory=list, max_length=512)
     relations: list[KnowledgeRelationDraft] = Field(default_factory=list, max_length=1024)
+    relation_proposals: list[RelationProposal] = Field(default_factory=list, max_length=1024)
     warnings: list[str] = Field(default_factory=list, max_length=128)
 
 
@@ -317,9 +354,11 @@ __all__ = [
     "KnowledgeItemDraft",
     "KnowledgeRelationDraft",
     "ManuscriptSectionArtifact",
+    "NoteDraft",
     "OutlineArtifact",
     "OutlineSection",
     "ReferenceRecord",
+    "RelationProposal",
     "ResearchHypothesis",
     "RevisionArtifact",
     "RevisionChange",

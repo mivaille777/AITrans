@@ -16,6 +16,8 @@ from backend.api.browser_context import router as browser_context_router
 from backend.api.companion import router as companion_router
 from backend.api.companion_stream import router as companion_stream_router
 from backend.api.conversations import router as conversations_router
+from backend.api.curator import router as curator_router
+from backend.api.curator_dependencies import close_curator_commit_service
 from backend.api.evidence_ledger import router as evidence_ledger_router
 from backend.api.evidence_review import router as evidence_review_router
 from backend.api.health import router as health_router
@@ -53,6 +55,25 @@ DEFAULT_API_HOST = "127.0.0.1"
 DEFAULT_API_PORT = 8766
 
 
+class AITranslatorFastAPI(FastAPI):
+    """Keep route introspection flat across FastAPI's nested-router transition."""
+
+    @property
+    def routes(self):
+        flattened = []
+
+        def collect(routes):
+            for route in routes:
+                included = getattr(route, "original_router", None)
+                if included is None:
+                    flattened.append(route)
+                else:
+                    collect(included.routes)
+
+        collect(self.router.routes)
+        return flattened
+
+
 def get_dev_origins():
     origins = list(DEV_ORIGINS)
     configured_origin = os.getenv("AITRANS_FRONTEND_ORIGIN", "").strip().rstrip("/")
@@ -66,11 +87,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        close_curator_commit_service()
         close_agent_checkpoint_service()
 
 
 def create_app():
-    app = FastAPI(title="AITranslator API", version="0.18.0", lifespan=lifespan)
+    app = AITranslatorFastAPI(
+        title="AITranslator API", version="0.18.0", lifespan=lifespan
+    )
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -80,7 +104,7 @@ def create_app():
         allow_headers=["*"],
     )
 
-    for router in [
+    routers = [
         health_router,
         knowledge_router,
         knowledge_v2_router,
@@ -111,7 +135,9 @@ def create_app():
         companion_stream_router,
         conversations_router,
         writing_router,
-    ]:
+        curator_router,
+    ]
+    for router in routers:
         app.include_router(router)
 
     return app

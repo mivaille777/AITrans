@@ -323,6 +323,15 @@ class KnowledgeRelationSuggestionService:
         suggestion = self.get(suggestion_id)
         if suggestion is None:
             raise ValueError("knowledge relation suggestion does not exist")
+        if suggestion.status is KnowledgeRelationSuggestionStatus.ACCEPTED:
+            relation = (
+                self._workspace.get_relation(suggestion.accepted_relation_id)
+                if suggestion.accepted_relation_id
+                else None
+            )
+            if relation is None:
+                raise ValueError("accepted knowledge relation no longer exists")
+            return suggestion, relation
         if suggestion.status is not KnowledgeRelationSuggestionStatus.PENDING:
             raise ValueError("knowledge relation suggestion is no longer pending")
 
@@ -378,6 +387,8 @@ class KnowledgeRelationSuggestionService:
         suggestion = self.get(suggestion_id)
         if suggestion is None:
             raise ValueError("knowledge relation suggestion does not exist")
+        if suggestion.status is KnowledgeRelationSuggestionStatus.REJECTED:
+            return suggestion
         if suggestion.status is not KnowledgeRelationSuggestionStatus.PENDING:
             raise ValueError("knowledge relation suggestion is no longer pending")
         rejected = suggestion.model_copy(

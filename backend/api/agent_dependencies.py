@@ -14,9 +14,6 @@ from backend.agent_core.orchestration.parallel_executor import (
     ParallelTaskGraphExecutor,
     SQLiteTaskCheckpointStore,
 )
-from backend.agent_core.orchestration.serial_executor import (
-    LegacySpecialistExecutor,
-)
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_graph.academic_writer_graph import (
@@ -24,6 +21,7 @@ from backend.agent_graph.academic_writer_graph import (
     FallbackAcademicWriterProvider,
 )
 from backend.agent_graph.document_analyst_graph import DocumentAnalystGraph
+from backend.agent_graph.knowledge_curator_graph import KnowledgeCuratorGraph
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
 from backend.agent_graph.research_synthesizer_graph import ResearchSynthesizerGraph
 from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
@@ -183,10 +181,6 @@ def get_agent_runtime(
         research_notes=research_service,
         knowledge_workspace=knowledge_workspace,
     )
-    compatibility_executor = LegacySpecialistExecutor(
-        collaboration_service.registry,
-        evidence_service=evidence_service,
-    )
     artifact_store = build_artifact_store()
     document_analyst = DocumentAnalystGraph(
         evidence_service=evidence_service,
@@ -205,6 +199,10 @@ def get_agent_runtime(
         ),
         literature_synthesis_service=_LazyLiteratureSynthesisService(),
     )
+    curator = KnowledgeCuratorGraph(
+        artifact_store=artifact_store,
+        knowledge_workspace=knowledge_workspace,
+    )
     orchestration_service = ResearchOrchestrationService(
         scope_resolver=scope_resolver,
         executor=ParallelTaskGraphExecutor(
@@ -212,7 +210,7 @@ def get_agent_runtime(
                 TaskRole.DOCUMENT: document_analyst,
                 TaskRole.RESEARCH: research_synthesizer,
                 TaskRole.WRITER: writer,
-                TaskRole.CURATOR: compatibility_executor,
+                TaskRole.CURATOR: curator,
             },
             checkpoint_store=(
                 SQLiteTaskCheckpointStore(checkpoint_service.storage_path)
