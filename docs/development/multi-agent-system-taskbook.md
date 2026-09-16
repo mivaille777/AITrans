@@ -197,15 +197,15 @@
 
 任务：
 
-- [ ] 实现 Knowledge Curator：根据用户目标生成 NoteDraft/ItemDraft/RelationProposal，而不是将最终回答整段塞进所有数据库。
-- [ ] 采用 MA00 确认的 canonical item/note 关联规则；AI 整理、原文引用、user_note 分离，修订使用 expected_version/内容哈希。
-- [ ] 在当前授权文档中提取 paper/concept/evidence/insight/question 等候选；方法/数据集优先用 concept subtype，扩展 enum 时完成 API/UI 迁移。
-- [ ] 实体归一/去重保留 source_id 和 scope；同名跨工作区实体不自动合并，合并只生成可查看建议。
-- [ ] 复用 KnowledgeRelationSuggestionService 和 suggestion repository，但先限制候选 ID 集合。边必须有允许类型、有效端点和证据依据，不能因两个节点共现直接判定 supports。
-- [ ] 生成图谱建议与接受/拒绝/保存分别追踪；复用现有 proposal review 行为，AI 不自行 accepted。
-- [ ] Commit 节点统一 note/item/relation/manuscript apply 的授权与回执；业务库内变更和 operation receipt 原子提交，跨库使用显式分步状态而非假事务。
-- [ ] 批量保存支持部分失败报告和安全重试；operation_id 绑定 payload hash/目标/版本，同键不同内容返回冲突。
-- [ ] 保存后的来源变更、工作区成员移除和对象删除会令产物可引用状态失效，不能依靠旧 artifact 绕过检查。
+- [x] 实现 Knowledge Curator：根据用户目标生成 NoteDraft/ItemDraft/RelationProposal，而不是将最终回答整段塞进所有数据库。
+- [x] 采用 MA00 确认的 canonical item/note 关联规则；AI 整理、原文引用、user_note 分离，修订使用 expected_version/内容哈希。
+- [x] 在当前授权文档中提取 paper/concept/evidence/insight/question 等候选；方法/数据集优先用 concept subtype，扩展 enum 时完成 API/UI 迁移。
+- [x] 实体归一/去重保留 source_id 和 scope；同名跨工作区实体不自动合并，合并只生成可查看建议。
+- [x] 复用 KnowledgeRelationSuggestionService 和 suggestion repository，但先限制候选 ID 集合。边必须有允许类型、有效端点和证据依据，不能因两个节点共现直接判定 supports。
+- [x] 生成图谱建议与接受/拒绝/保存分别追踪；复用现有 proposal review 行为，AI 不自行 accepted。
+- [x] Commit 节点统一 note/item/relation/manuscript apply 的授权与回执；业务库内变更和 operation receipt 原子提交，跨库使用显式分步状态而非假事务。
+- [x] 批量保存支持部分失败报告和安全重试；operation_id 绑定 payload hash/目标/版本，同键不同内容返回冲突。
+- [x] 保存后的来源变更、工作区成员移除和对象删除会令产物可引用状态失效，不能依靠旧 artifact 绕过检查。
 
 测试：`test_knowledge_curator.py`、`test_note_preservation.py`、`test_graph_proposals.py`、`test_entity_scope.py`、`test_commit_idempotency.py`、`test_multi_store_commit.py`。
 
@@ -515,3 +515,17 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 真实模型与 UI 验证、指标：未调用远程模型；barrier 证明两个独立专家同时进入执行，事件测试证明 `task_started` 在任务结束前到达 sink。未做真实 provider 延迟/成本基准，MA10 再报告 p95 与质量成本对照。
 - 任务书调整与理由：无降低验收标准；补充显式保存选区继续走既有写工具确认的回归，避免多 Agent 直接交付绕过副作用确认。
 - 已知限制/阻塞及下一步：Python 无法强杀已进入第三方阻塞调用的线程，取消后该调用仍占全局许可和 lease，完成后迟到 artifact 被撤销；这是有意的安全 fence。MA07 实现 Curator、typed note/item/relation proposal 与幂等业务提交。
+
+### MA07 实施记录 — 2026-09-17
+
+- 状态：verified。
+- 起始 HEAD / 实现提交：`eff5cb671d016d07c18d4977d47d5c37532ddae8` / `544ebfc`（同库原子 step receipt 加固 `4070400`）。
+- 实际改动与对应用户产物：生产运行时用真实 `KnowledgeCuratorGraph` 替换 Curator compatibility executor；从已验证依赖产物生成 typed `NoteDraft`、`KnowledgeItemDraft` 与 pending `RelationProposal`，不复制整段最终回答。新增统一 `CuratorCommitService` 与 `/api/curator/commit`、operation receipt 查询接口；保存结果可由既有 Research Notes 与 canonical KnowledgeWorkspace 读取。
+- 笔记与知识对象规则：Research Note 保持原文引用、AI 整理、`user_note` 三者分离，AI 草稿不能写 `user_note`；canonical note item 通过 `metadata.research_note_id`、`workspace_id`、来源及内容哈希稳定关联。已有 note/item 修改同时检查 `expected_version=1` 与内容哈希，新建对象要求版本 0；方法和数据集使用 `concept + metadata.subtype`，未扩展公开 enum。
+- 图谱与 scope：去重只扫描当前 `allowed_item_ids`；跨工作区同名对象不自动合并。关系端点必须来自当前 scoped 候选或本次新建对象，类型限制为既有 AI allowlist，`supports` 必须有 artifact 内真实 evidence ID。保存只产生 pending suggestion；接受/拒绝保持独立并改为幂等，重复接受不会产生第二条关系。
+- 写入、恢复与撤销：`operation_id` 绑定 artifact ref、scope ref、workspace 与选中 draft IDs；不同 payload 复用 ID 返回冲突。跨 Research Notes/Knowledge SQLite 写入按 target 持久记录 `in_progress/completed/partial/failed`，对象 ID、note fingerprint 和 suggestion ID 均稳定，业务写成功但父 checkpoint 未前进时可先查询回执并安全重放。Commit 前重新核对 artifact scope、工作区存在性、来源授权、对象存在性和版本/哈希；旧 artifact 不能绕过来源或成员变化。
+- 数据/图/checkpoint/事件迁移与兼容影响：canonical knowledge SQLite 新增 `curator_commit_operations` 与 `curator_commit_steps` 表；Knowledge item/suggestion 变更与对应 step receipt 在同一连接事务提交，聚合回执落后时可由 step 重建。Research Note、Knowledge item/relation/suggestion 原表不重建。Artifact DTO 只增加带默认值的 notes/proposals 与版本字段，旧 payload 可继续解析。修复重复附加同一 note 到 Research Workspace 被误报不存在；FastAPI 0.141 嵌套路由仅增加平坦只读 `app.routes` 兼容视图，请求分发与 dependency override 保持框架原实现。
+- 测试命令：任务书六组 MA07 专项测试；`pytest tests/multi_agent ...` Research/Knowledge/API 关键回归；完整 `pytest -q`；桌面端 test/typecheck/lint/build；changed-file Ruff、compileall 与 `git diff --check`。
+- 结果：MA07 专项 `13 passed`；multi-agent 与 Research/Knowledge 关键回归 `167 passed`；最终完整 Python `1239 passed, 2 skipped`；桌面端 `64 files / 267 tests passed`；typecheck/build/Ruff/compileall 通过，lint 仅保留 5 条既有 Reading/PDF warning，0 failed。两个 skip 为需 `AITRANS_RUN_RAG_GPU_TESTS=1` 的既有 Qwen3 embedding/reranker 真实 GPU 测试。
+- 真实模型与 UI 验证、指标：未调用远程模型，未做人工 UI 端到端演示；确定性 fallback、typed provider 边界、持久化和安全约束已自动验证。Graph Proposal 的专用审阅 UI 属于 MA09，不在本阶段声称完成。
+- 已知限制/阻塞及下一步：当前 Research Note 历史 schema 没有递增版本列，因此已有 note 的版本契约固定为 1，并以内容哈希/updated_at 组合检测并发修改；跨库不宣称单 SQLite 事务，而以逐项回执和稳定键恢复。MA08 接入真实 MemoryCoordinator、临时模式、删除撤销和跨会话科研连续性。
