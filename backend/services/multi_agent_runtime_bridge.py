@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from backend.agent_core.events import AgentEventType
 from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.state import AgentState
+from backend.models.agent_orchestration import OrchestrationLane
 from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceService
 
 CoreEventSink = Callable[[AgentEventType, dict[str, Any]], None]
@@ -36,16 +38,34 @@ class MultiAgentRuntimeBridge:
     back to the canonical workflow rather than failing the user's request.
     """
 
-    def __init__(self, service: MultiAgentWorkspaceService | None = None) -> None:
-        self.service = service or MultiAgentWorkspaceService()
+    def __init__(
+        self,
+        service: MultiAgentWorkspaceService | None = None,
+        *,
+        orchestrator: Any | None = None,
+    ) -> None:
+        self.service = service or (
+            None if orchestrator is not None else MultiAgentWorkspaceService()
+        )
+        self.orchestrator = orchestrator
 
     def _plan(self, state: AgentState) -> list[dict[str, Any]]:
+        if self.service is None:
+            return []
         return self.service.planner.create_plan(state.user_input, None)
 
     def should_run(self, state: AgentState) -> bool:
         mode = str(state.browser_context.get("multi_agent_mode", "auto") or "auto").strip().lower()
         if mode == "off":
             return False
+        if self.orchestrator is not None:
+            route = self.orchestrator.route(
+                state.user_input,
+                self._runtime_context(state),
+                mode=mode,
+            )
+            # Force requests the new router, not extra permissions or useless roles.
+            return route.lane is not OrchestrationLane.FAST
         if mode == "force":
             return True
         plan = self._plan(state)
@@ -84,6 +104,38 @@ class MultiAgentRuntimeBridge:
 
     @classmethod
     def _context_payload(cls, run: Any) -> dict[str, Any]:
+        if hasattr(run, "task_plan"):
+            plan = [dict(item) for item in run.plan]
+            outputs = dict(getattr(run, "outputs", {}) or {})
+            results = list(getattr(run, "results", ()) or ())
+            return {
+                "run_id": run.run_id,
+                "trace_id": run.trace_id,
+                "lane": run.route.lane.value,
+                "route": run.route.model_dump(mode="json"),
+                "scope_ref": run.scope.scope_ref,
+                "plan": plan,
+                "agents": [item["agent"] for item in plan],
+                "task_results": [item.model_dump(mode="json") for item in results],
+                "specialists": [
+                    {
+                        "task_id": item.task_id,
+                        "agent_name": next(
+                            (
+                                task["agent"]
+                                for task in plan
+                                if task.get("task_id") == item.task_id
+                            ),
+                            "",
+                        ),
+                        "output": outputs.get(item.task_id),
+                        "status": item.status.value,
+                    }
+                    for item in results
+                ],
+                "specialist_result_count": len(results),
+                "total_duration_ms": run.total_duration_ms,
+            }
         context = run.context
         plan = [
             {
@@ -144,8 +196,17 @@ class MultiAgentRuntimeBridge:
             "resource_url": str(context.get("resource_url", "") or ""),
             "resource_title": str(context.get("resource_title", "") or ""),
             "section_heading": str(context.get("section_heading", "") or ""),
+            "workspace_id": str(context.get("workspace_id", "") or "").strip(),
+            "knowledge_board_id": str(
+                context.get("knowledge_board_id", "") or ""
+            ).strip(),
+            "knowledge_collection_id": str(
+                context.get("knowledge_collection_id", "") or ""
+            ).strip(),
             "research_source_ids": list(context.get("research_source_ids", ()) or ()),
+            "research_note_ids": list(context.get("research_note_ids", ()) or ()),
             "knowledge_document_ids": list(context.get("knowledge_document_ids", ()) or ()),
+            "knowledge_item_ids": list(context.get("knowledge_item_ids", ()) or ()),
         }
 
     def run_with_events(
@@ -162,14 +223,32 @@ class MultiAgentRuntimeBridge:
             control.checkpoint("multi_agent_collaboration")
 
         try:
-            run = self.service.run(
-                state.user_input,
-                user_id=state.session_id,
-                run_id=state.run_id,
-                trace_id=state.trace_id,
-                runtime_context=self._runtime_context(state),
-            )
-        except Exception as exc:
+            if self.orchestrator is not None:
+                run = self.orchestrator.run(
+                    state.user_input,
+                    profile_id=str(
+                        state.browser_context.get("profile_id", "local-default")
+                        or "local-default"
+                    ).strip(),
+                    mode=str(
+                        state.browser_context.get("multi_agent_mode", "auto")
+                        or "auto"
+                    ),
+                    run_id=state.run_id,
+                    trace_id=state.trace_id,
+                    runtime_context=self._runtime_context(state),
+                )
+            else:
+                if self.service is None:
+                    return state
+                run = self.service.run(
+                    state.user_input,
+                    user_id=state.session_id,
+                    run_id=state.run_id,
+                    trace_id=state.trace_id,
+                    runtime_context=self._runtime_context(state),
+                )
+        except Exception as exc:  # noqa: BLE001 - advisory workflow must fall back
             emit(
                 AgentEventType.MULTI_AGENT_COMPLETED,
                 {
@@ -188,6 +267,56 @@ class MultiAgentRuntimeBridge:
         context = dict(state.browser_context)
         context["multi_agent_context"] = collaboration
         context["multi_agent_active"] = True
+
+        if self.orchestrator is not None:
+            snapshot_id = str(
+                getattr(run, "memory_snapshot", {}).get("snapshot_id", "") or ""
+            )
+            task_plan = (
+                run.task_plan.model_dump(mode="json")
+                if run.task_plan is not None
+                else None
+            )
+            state.apply_orchestration(
+                lane=run.route.lane.value,
+                status=(
+                    "blocked"
+                    if run.route.missing_information
+                    else
+                    "completed"
+                    if all(
+                        item.status.value in {"succeeded", "partial", "skipped"}
+                        for item in run.results
+                    )
+                    else "partial"
+                ),
+                scope=run.scope.model_dump(mode="json"),
+                plan=task_plan,
+                results=[item.model_dump(mode="json") for item in run.results],
+                memory_snapshot_ref=snapshot_id,
+            )
+            context["orchestration_context"] = collaboration
+            if run.direct_delivery and run.direct_output is not None:
+                output_text = (
+                    run.direct_output
+                    if isinstance(run.direct_output, str)
+                    else json.dumps(run.direct_output, ensure_ascii=False, default=str)
+                )
+                state.apply_response(
+                    {
+                        "status": "completed",
+                        "output_text": output_text,
+                        "provider": "orchestration-tool",
+                        "model": "",
+                        "request_id": state.execution.request_id,
+                    }
+                )
+                context["orchestration_direct_delivery"] = True
+            state.browser_context = context
+            state.sync_contract()
+            if control is not None:
+                control.checkpoint("multi_agent_collaboration_ready")
+            return state
 
         advisory = self._advisory_prompt_context(collaboration)
         if advisory:

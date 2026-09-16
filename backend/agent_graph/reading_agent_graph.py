@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, Callable, TypedDict
+from typing import Any, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -17,7 +18,7 @@ from backend.agent_core.reliability import (
     AgentRunControl,
     run_react_decision_with_timeout,
 )
-from backend.agent_core.state import AgentState
+from backend.agent_core.state import AgentState, migrate_agent_state_payload
 from backend.models.agent_react import (
     AgentEvidenceGateAssessment,
     AgentObservation,
@@ -56,7 +57,7 @@ class ReadingAgentRuntimeContext(TypedDict, total=False):
 def _coerce_agent_state(value: AgentState | dict[str, Any]) -> AgentState:
     if isinstance(value, AgentState):
         return value
-    return AgentState.model_validate(value)
+    return AgentState.model_validate(migrate_agent_state_payload(value))
 
 
 def _dump_agent_state(state: AgentState) -> dict[str, Any]:
@@ -115,7 +116,7 @@ def _run_local_fingerprint(state: AgentState, payload: object) -> str:
         separators=(",", ":"),
         default=str,
     )
-    material = f"{state.run_id}\0{canonical}".encode("utf-8")
+    material = f"{state.run_id}\0{canonical}".encode()
     return hashlib.sha256(material).hexdigest()[:20]
 
 
@@ -187,7 +188,7 @@ def _cumulative_knowledge_evidence(state: AgentState) -> list[AgentEvidenceItem]
                     if isinstance(raw, AgentEvidenceItem)
                     else AgentEvidenceItem.model_validate(raw)
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001,S112 - discard malformed legacy evidence
                 continue
             if item.evidence_id and item.evidence_id not in seen:
                 evidence.append(item)
@@ -289,13 +290,19 @@ class ReadingAgentGraph:
         builder.add_node("finalize_conversation", self._finalize_conversation)
 
         builder.add_edge(START, "resolve_context")
-        builder.add_edge("resolve_context", "run_collaboration")
-        builder.add_edge("run_collaboration", "prepare_conversation")
-        builder.add_edge("prepare_conversation", "route_request")
+        # Acquire durable conversation ownership before specialists read scope or
+        # memory, so two windows cannot launch competing task graphs.
+        builder.add_edge("resolve_context", "prepare_conversation")
+        builder.add_edge("prepare_conversation", "run_collaboration")
+        builder.add_edge("run_collaboration", "route_request")
         builder.add_conditional_edges(
             "route_request",
             self._route_branch,
-            {"complex": "start_react", "direct": "execute_direct"},
+            {
+                "complex": "start_react",
+                "direct": "execute_direct",
+                "completed": "finalize_conversation",
+            },
         )
         builder.add_edge("execute_direct", "finalize_conversation")
         builder.add_edge("start_react", "decide_react")
@@ -353,6 +360,13 @@ class ReadingAgentGraph:
         if self._checkpointer is None or not normalized_run_id:
             return None
         snapshot = self._compiled.get_state(self._checkpoint_config(normalized_run_id))
+        unknown_nodes = sorted(set(snapshot.next) - set(self.node_names))
+        if unknown_nodes:
+            raise AgentRuntimeError(
+                f"Checkpoint references unsupported graph nodes: {unknown_nodes}",
+                stage="checkpoint",
+                fallback_reason="checkpoint_graph_version_unsupported",
+            )
         payload = snapshot.values.get("agent_state") if snapshot.values else None
         if not isinstance(payload, dict):
             return None
@@ -524,6 +538,22 @@ class ReadingAgentGraph:
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         _, control = self._runtime(runtime)
+        if (
+            state.browser_context.get("orchestration_direct_delivery")
+            and state.response_state.status == "completed"
+        ):
+            route = AgentRouteDecision(
+                kind="answer",
+                source="deterministic",
+                intent="orchestration_direct_delivery",
+                user_visible_reason="A completed bounded task result already satisfies the request.",
+            )
+            state.apply_route(route)
+            return {
+                "agent_state": _dump_agent_state(state),
+                "route": route.model_dump(mode="json"),
+                "route_metadata": {"direct_delivery": True},
+            }
         try:
             route, metadata = self._adapter.resolve_route(state, control=control)
         except Exception as exc:
@@ -537,6 +567,12 @@ class ReadingAgentGraph:
 
     @staticmethod
     def _route_branch(graph_state: ReadingAgentGraphState) -> str:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        if (
+            state.browser_context.get("orchestration_direct_delivery")
+            and state.response_state.status == "completed"
+        ):
+            return "completed"
         route = AgentRouteDecision.model_validate(graph_state.get("route", {}))
         return "complex" if route.kind == "complex" else "direct"
 

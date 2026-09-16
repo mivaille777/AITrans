@@ -25,6 +25,33 @@ from backend.models.agent_runtime import (
     AgentRouteDecision,
 )
 
+CURRENT_AGENT_GRAPH_VERSION = "reading-agent-ma03-v1"
+CURRENT_AGENT_STATE_SCHEMA_VERSION = 2
+LEGACY_AGENT_GRAPH_VERSION = "reading-agent-v1"
+SUPPORTED_AGENT_GRAPH_VERSIONS = frozenset(
+    {LEGACY_AGENT_GRAPH_VERSION, CURRENT_AGENT_GRAPH_VERSION}
+)
+
+
+def migrate_agent_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade pre-MA03 checkpoints without accepting an unknown node graph."""
+
+    migrated = dict(payload)
+    graph_version = str(migrated.get("graph_version", "") or "").strip()
+    if not graph_version:
+        graph_version = LEGACY_AGENT_GRAPH_VERSION
+    if graph_version not in SUPPORTED_AGENT_GRAPH_VERSIONS:
+        raise ValueError(f"unsupported Agent graph_version: {graph_version}")
+    schema_version = int(migrated.get("state_schema_version", 1) or 1)
+    if schema_version > CURRENT_AGENT_STATE_SCHEMA_VERSION:
+        raise ValueError(f"unsupported Agent state schema version: {schema_version}")
+    migrated["checkpoint_source_graph_version"] = (
+        graph_version if graph_version != CURRENT_AGENT_GRAPH_VERSION else ""
+    )
+    migrated["graph_version"] = CURRENT_AGENT_GRAPH_VERSION
+    migrated["state_schema_version"] = CURRENT_AGENT_STATE_SCHEMA_VERSION
+    return migrated
+
 
 def _run_id() -> str:
     return f"run-{uuid4().hex}"
@@ -85,6 +112,15 @@ class AgentState(BaseModel):
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     response: dict[str, Any] = Field(default_factory=dict)
     ui_mode: str = "assistant"
+    graph_version: str = CURRENT_AGENT_GRAPH_VERSION
+    state_schema_version: int = CURRENT_AGENT_STATE_SCHEMA_VERSION
+    checkpoint_source_graph_version: str = ""
+    orchestration_lane: str = "fast"
+    orchestration_status: str = "idle"
+    orchestration_scope: dict[str, Any] = Field(default_factory=dict)
+    orchestration_plan: dict[str, Any] = Field(default_factory=dict)
+    orchestration_results: list[dict[str, Any]] = Field(default_factory=list)
+    memory_snapshot_ref: str = ""
 
     execution: AgentExecutionContext = Field(default_factory=AgentExecutionContext)
     conversation: AgentConversationContext = Field(default_factory=AgentConversationContext)
@@ -98,10 +134,10 @@ class AgentState(BaseModel):
     response_state: AgentResponseContext = Field(default_factory=AgentResponseContext)
 
     @model_validator(mode="after")
-    def initialize_contracts(self) -> "AgentState":
+    def initialize_contracts(self) -> AgentState:
         return self.sync_contract()
 
-    def sync_contract(self) -> "AgentState":
+    def sync_contract(self) -> AgentState:
         context = dict(self.browser_context)
         request_id = _safe_request_id(
             self.response.get("request_id", context.get("request_id", 0))
@@ -228,7 +264,7 @@ class AgentState(BaseModel):
         )
         return self
 
-    def apply_reading_context(self, context: dict[str, Any]) -> "AgentState":
+    def apply_reading_context(self, context: dict[str, Any]) -> AgentState:
         self.browser_context = dict(context)
         if "source_text" in context:
             self.selected_text = str(context.get("source_text", "") or "")
@@ -242,7 +278,7 @@ class AgentState(BaseModel):
         user_message_id: str = "",
         assistant_message_id: str = "",
         context_mode: str = "reading",
-    ) -> "AgentState":
+    ) -> AgentState:
         context = dict(self.browser_context)
         context["conversation_id"] = str(conversation_id or "").strip()
         context["conversation_history"] = [
@@ -260,7 +296,7 @@ class AgentState(BaseModel):
         self.browser_context = context
         return self.sync_contract()
 
-    def apply_plan(self, plan: dict[str, Any]) -> "AgentState":
+    def apply_plan(self, plan: dict[str, Any]) -> AgentState:
         self.planned_action = dict(plan)
         action = str(self.planned_action.get("action", "") or "")
         tool_name = str(self.planned_action.get("tool_name", "") or "")
@@ -270,7 +306,7 @@ class AgentState(BaseModel):
     def apply_multi_step_plan(
         self,
         plan: AgentPlanContext | dict[str, Any],
-    ) -> "AgentState":
+    ) -> AgentState:
         self.plan = (
             plan
             if isinstance(plan, AgentPlanContext)
@@ -287,7 +323,39 @@ class AgentState(BaseModel):
         self.intent = "complex"
         return self.sync_contract()
 
-    def mark_plan_step(self, step_id: str, status: str) -> "AgentState":
+    def apply_orchestration(
+        self,
+        *,
+        lane: str,
+        status: str,
+        scope: dict[str, Any],
+        plan: dict[str, Any] | None,
+        results: list[dict[str, Any]],
+        memory_snapshot_ref: str = "",
+    ) -> AgentState:
+        self.graph_version = CURRENT_AGENT_GRAPH_VERSION
+        self.state_schema_version = CURRENT_AGENT_STATE_SCHEMA_VERSION
+        self.orchestration_lane = str(lane or "fast")
+        self.orchestration_status = str(status or "idle")
+        self.orchestration_scope = dict(scope)
+        self.orchestration_plan = dict(plan or {})
+        self.orchestration_results = [dict(item) for item in results]
+        self.memory_snapshot_ref = str(memory_snapshot_ref or "")
+        if self.orchestration_plan:
+            self.planned_action = {
+                "action": "answer",
+                "tool_name": "",
+                "user_visible_reason": "Execute the validated research task plan.",
+                "arguments": {
+                    "orchestration_plan_id": str(
+                        self.orchestration_plan.get("plan_id", "") or ""
+                    )
+                },
+            }
+            self.intent = "complex"
+        return self.sync_contract()
+
+    def mark_plan_step(self, step_id: str, status: str) -> AgentState:
         valid = {"pending", "running", "completed", "failed", "skipped"}
         if status not in valid:
             raise ValueError(f"Unsupported plan step status: {status}")
@@ -318,7 +386,7 @@ class AgentState(BaseModel):
     def apply_route(
         self,
         route: AgentRouteDecision | dict[str, Any],
-    ) -> "AgentState":
+    ) -> AgentState:
         self.route = (
             route
             if isinstance(route, AgentRouteDecision)
@@ -334,7 +402,7 @@ class AgentState(BaseModel):
             self.intent = "complex"
         return self.sync_contract()
 
-    def start_react(self) -> "AgentState":
+    def start_react(self) -> AgentState:
         """Start a fresh ReAct context without affecting existing plan execution."""
 
         self.react = AgentReActContext(status="running")
@@ -343,7 +411,7 @@ class AgentState(BaseModel):
     def record_react_decision(
         self,
         decision: AgentReActDecision | dict[str, Any],
-    ) -> "AgentState":
+    ) -> AgentState:
         item = (
             decision
             if isinstance(decision, AgentReActDecision)
@@ -365,7 +433,7 @@ class AgentState(BaseModel):
     def record_react_observation(
         self,
         observation: AgentObservation | dict[str, Any],
-    ) -> "AgentState":
+    ) -> AgentState:
         item = (
             observation
             if isinstance(observation, AgentObservation)
@@ -384,21 +452,28 @@ class AgentState(BaseModel):
         self.react = self.react.model_copy(update={"observations": observations})
         return self.sync_contract()
 
-    def mark_react_status(self, status: AgentReActStatus) -> "AgentState":
+    def mark_react_status(self, status: AgentReActStatus) -> AgentState:
         self.react = self.react.model_copy(update={"status": status})
         return self.sync_contract()
 
-    def record_tool_call(self, call: dict[str, Any]) -> "AgentState":
+    def record_tool_call(self, call: dict[str, Any]) -> AgentState:
         self.tool_calls.append(dict(call))
         return self.sync_contract()
 
-    def record_tool_result(self, result: dict[str, Any]) -> "AgentState":
+    def record_tool_result(self, result: dict[str, Any]) -> AgentState:
         self.tool_results.append(dict(result))
         return self.sync_contract()
 
-    def apply_response(self, response: dict[str, Any]) -> "AgentState":
+    def apply_response(self, response: dict[str, Any]) -> AgentState:
         self.response = dict(response)
         return self.sync_contract()
 
 
-__all__ = ["AgentState"]
+__all__ = [
+    "CURRENT_AGENT_GRAPH_VERSION",
+    "CURRENT_AGENT_STATE_SCHEMA_VERSION",
+    "LEGACY_AGENT_GRAPH_VERSION",
+    "SUPPORTED_AGENT_GRAPH_VERSIONS",
+    "AgentState",
+    "migrate_agent_state_payload",
+]

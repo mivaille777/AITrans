@@ -9,6 +9,11 @@ from backend.agent_core.orchestration.evidence_service import (
     ScopedEvidenceCache,
     ScopedEvidenceService,
 )
+from backend.agent_core.orchestration.memory import NullMemoryPort
+from backend.agent_core.orchestration.planner import (
+    SupervisorPlanningError,
+    ValidatedSupervisorPlanner,
+)
 from backend.agent_core.orchestration.ports import (
     ArtifactPort,
     BudgetPort,
@@ -21,9 +26,17 @@ from backend.agent_core.orchestration.reducer import (
     reduce_task_results,
 )
 from backend.agent_core.orchestration.roles import RoleRegistry
+from backend.agent_core.orchestration.router import ResearchTaskRouter
 from backend.agent_core.orchestration.scope_resolver import (
     AuthoritativeScopeResolver,
     ScopeResolutionError,
+)
+from backend.agent_core.orchestration.serial_executor import (
+    LegacySpecialistExecutor,
+    SerialExecution,
+    SerialTaskGraphExecutor,
+    SpecialistExecution,
+    SpecialistExecutor,
 )
 from backend.agent_core.orchestration.task_state import (
     InvalidTaskTransitionError,
@@ -47,15 +60,24 @@ __all__ = [
     "EvidencePort",
     "InMemoryArtifactStore",
     "InvalidTaskTransitionError",
+    "LegacySpecialistExecutor",
     "MemoryPort",
+    "NullMemoryPort",
+    "ResearchTaskRouter",
     "RoleRegistry",
     "SQLiteArtifactStore",
     "ScopeResolutionError",
     "ScopedEvidenceCache",
     "ScopedEvidenceService",
+    "SerialExecution",
+    "SerialTaskGraphExecutor",
+    "SpecialistExecution",
+    "SpecialistExecutor",
+    "SupervisorPlanningError",
     "TaskPlanValidationError",
     "TaskResultConflictError",
     "ToolRuntimePort",
+    "ValidatedSupervisorPlanner",
     "build_artifact_store",
     "finish_attempt",
     "is_terminal",
