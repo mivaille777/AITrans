@@ -342,3 +342,62 @@ deterministic contracts, provenance, persistence, idempotency, conflict handling
 integrity rather than final prose quality. Checkpoint/event schemas are unchanged; MA06
 adds bounded parallel execution, task-level recovery, budgets, cancellation fencing, and
 real-time task events.
+
+## 15. MA06 bounded parallel execution and recovery verification — 2026-09-17
+
+Implementation commit: `98ca7e1fae6bc12dc4161b344f04fdff4e8ed4b3`.
+
+The production task executor now runs independent typed specialist subgraphs through a
+bounded fan-out/fan-in scheduler. Each invocation retains its own task ID, dependency
+results, immutable scope, memory-snapshot copy, attempt number, and output slot. At most
+two specialist/LLM tasks run concurrently across the process; GPU-marked work is further
+serialized through one global permit. Dependencies are dispatched only after their
+parents reach a terminal state.
+
+A thread-safe run budget reserves model dispatches before execution and retrieval/tool
+calls immediately before Document Analyst retrieval. Existing plan validation and one
+repair limit remain authoritative; task retries are limited to one interrupted attempt,
+and the root `AgentRunControl` enforces the total deadline. Budget exhaustion blocks or
+skips undispatched work instead of issuing another request.
+
+Task progress uses dedicated tables in the existing WAL-backed LangGraph checkpoint
+SQLite file. Rows bind a run ID to a plan hash and store task attempt/result/output after
+each terminal merge. A lease prevents two windows from resuming the same run. On resume,
+completed results are restored without specialist calls and only an interrupted task gets
+a second attempt. Normal failures preserve successful independent branches and block only
+dependent work.
+
+Cancellation stops new dispatch. Python cannot forcibly terminate a provider thread, so a
+running external call continues to hold its process permit and run lease. Its eventual
+result cannot enter the reducer; any returned artifact reference is revoked with
+`cancelled_attempt_fence`, and only then is the lease released. This prevents both false
+cancellation reports and late writes becoming current results.
+
+Seventeen task/workflow events were added end-to-end: `task_planned`, `task_ready`,
+`task_started`, `task_progress`, `task_completed`, `task_partial`, `task_failed`,
+`task_blocked`, `task_cancelled`, `task_skipped`, `task_retrying`, `plan_revised`,
+`budget_exhausted`, `artifact_verified`, `artifact_rejected`, `workflow_partial`, and
+`workflow_resumed`. Each has a stable event/run/trace/sequence identity, task/parent,
+attempt, plan revision, status, timestamp, usage, and reason-code fields. The collector is
+thread-safe, forwards events at creation time, and the trace store appends only redacted
+allowed fields before run completion. Reopened stores continue sequence numbering for
+replay and final run recording no longer deletes live events.
+
+Verification:
+
+```text
+MA06 focused scheduler/checkpoint/lease/budget/cancel/event tests   31 passed
+tests/multi_agent                                                 125 passed
+checkpoint/trace/observability/product-write regression           129 passed
+full Python suite                                 1226 passed, 2 skipped
+desktop Vitest/typecheck                            64 files, 267 tests passed
+desktop lint                                 passed with 5 pre-existing warnings
+desktop production build, changed-file Ruff, compileall           passed
+```
+
+The concurrency test uses a barrier rather than elapsed-time inference. Recovery tests
+reopen SQLite and prove task A is not called after A completed and B was left running.
+Lease, deadline, budget, branch isolation, live delivery, redaction, monotonic replay, GPU
+serialization, and delayed cancellation cleanup each have deterministic tests. The two
+skips remain the opt-in real Qwen3 embedding/reranker GPU integrations. No paid-provider
+latency or quality benchmark was run; MA10 owns those measurements.

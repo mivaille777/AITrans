@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00–MA05 已完成并复验；MA06–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA06 已完成并复验；MA07–MA10 待实施。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -176,14 +176,14 @@
 
 任务：
 
-- [ ] 将专家执行边界实现为当前 LangGraph 版本支持的节点/子图；为多 Document 实例分配独立 invocation namespace，配置 typed reducer。
-- [ ] 使用有界 fan-out/fan-in；默认同 run 最多 2 个专家，LLM 并发 2、GPU 作业 1，包含跨 run 限额；相关依赖维持串行。
-- [ ] 实现进程级资源许可、run 内预算预留/结算、总截止时间、计划/检索/重试上限；provider 和工具在每次调用前领取额度。
-- [ ] run lease 防止同一任务双重恢复；使用真实 SQLite saver 测试子任务 checkpoint/pending writes，串行 saver 与图 API 匹配。
-- [ ] cooperative cancel + attempt fence：取消停止调度，迟到结果不能更新终态/持久产物；未结束外部调用仍占资源，不靠不断创建线程规避限流。
-- [ ] 区分 succeeded/partial/failed/blocked/cancelled/skipped，保留成功子任务；计划最多补证据一次，不能无限递归委派。
-- [ ] 事件产生时实时送出，包含 event_id、run/task/parent_task、attempt、plan_revision、sequence、status、时间、usage 和原因码；正文默认不进 trace。
-- [ ] 同步更新 AgentEventType、后端 AgentTraceEventType、前端 union/parser、持久化和回放。每个新增事件独立测试，旧事件继续可读。
+- [x] 将专家执行边界实现为当前 LangGraph 版本支持的节点/子图；为多 Document 实例分配独立 invocation namespace，配置 typed reducer。
+- [x] 使用有界 fan-out/fan-in；默认同 run 最多 2 个专家，LLM 并发 2、GPU 作业 1，包含跨 run 限额；相关依赖维持串行。
+- [x] 实现进程级资源许可、run 内预算预留/结算、总截止时间、计划/检索/重试上限；provider 和工具在每次调用前领取额度。
+- [x] run lease 防止同一任务双重恢复；使用真实 SQLite saver 测试子任务 checkpoint/pending writes，串行 saver 与图 API 匹配。
+- [x] cooperative cancel + attempt fence：取消停止调度，迟到结果不能更新终态/持久产物；未结束外部调用仍占资源，不靠不断创建线程规避限流。
+- [x] 区分 succeeded/partial/failed/blocked/cancelled/skipped，保留成功子任务；计划最多补证据一次，不能无限递归委派。
+- [x] 事件产生时实时送出，包含 event_id、run/task/parent_task、attempt、plan_revision、sequence、status、时间、usage 和原因码；正文默认不进 trace。
+- [x] 同步更新 AgentEventType、后端 AgentTraceEventType、前端 union/parser、持久化和回放。每个新增事件独立测试，旧事件继续可读。
 
 至少新增/明确映射：`task_planned`、`task_ready`、`task_started`、`task_progress`、`task_completed`、`task_partial`、`task_failed`、`task_blocked`、`task_cancelled`、`task_skipped`、`task_retrying`、`plan_revised`、`budget_exhausted`、`artifact_verified`、`artifact_rejected`、`workflow_partial`、`workflow_resumed`。已有根终态继续复用 agent_end，不伪造第二个最终回答。sequence 由统一 event sink 分配，重连可去重。
 
@@ -421,7 +421,7 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | MA03 | 路由与串行根图集成 | verified | `decaa74`；2026-09-16 本地复验 |
 | MA04 | 论文理解与研究分析 | verified | `43d7a17`；2026-09-16 本地复验 |
 | MA05 | 学术写作与局部修订 | verified | `25390a9`；2026-09-16 本地复验 |
-| MA06 | 并发、预算、恢复、实时事件 | not_started | 待实施 |
+| MA06 | 并发、预算、恢复、实时事件 | verified | `98ca7e1`；2026-09-17 本地复验 |
 | MA07 | 笔记、知识图谱与提交 | not_started | 待实施 |
 | MA08 | 真实记忆与跨会话研究 | not_started | 待实施 |
 | MA09 | 科研工作区 UI | not_started | 待实施 |
@@ -502,3 +502,16 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 真实模型与 UI 验证、指标：未调用付费/远程模型，未做人工 UI/语义质量评测；确定性 fallback、契约、来源真实性、版本冲突和用户确认路径已自动验证，不声称达到最终写作质量指标。
 - 任务书调整与理由：无降低验收标准；增加写作 API 路由测试和前端 409 冲突测试，明确“预览草稿不等于应用”。
 - 已知限制/阻塞及下一步：首版是 Markdown 草稿管理而非 Office 编辑器；Agent artifact 通过 ID/版本附加到写作项目，真实语义质量留到 MA10 固定评估集。MA06 实现有界并发、子任务 checkpoint/lease、共享预算、取消 fence 与实时事件。
+
+### MA06 实施记录 — 2026-09-17
+
+- 状态：verified。
+- 起始 HEAD / 实现提交：`8fc8378b73fd97265d3e26f2da2b31fba7d16369` / `98ca7e1fae6bc12dc4161b344f04fdff4e8ed4b3`。
+- 实际改动与对应用户产物：生产编排由串行执行器切换为 typed `ParallelTaskGraphExecutor`，独立 frontier 最多同时执行 2 个专家，依赖任务保持 fan-in 后串行；同角色结果继续按 task ID reducer 合并。增加进程级 LLM 2/GPU 1 许可、run 级模型/工具/检索/重试/总期限预算、SQLite task checkpoint 与单 owner lease、已完成任务恢复、cooperative cancel 和迟到 artifact 撤销 fence。明确保留 succeeded/partial/failed/blocked/cancelled/skipped，失败只阻塞其依赖分支。
+- 共享记忆阶段与接口版本：仍使用同一冻结 `MemoryPort` snapshot；并发 worker 获得副本，不能更新共享可变记忆。未新增记忆数据库。
+- 数据/图/checkpoint/事件迁移与兼容影响：在既有 `agent_checkpoints.sqlite3` 增加独立 `multi_agent_task_runs`/`multi_agent_task_checkpoints` 表，不修改 LangGraph 原表；任务 checkpoint 绑定 plan hash，运行租约带过期时间，恢复只重跑 interrupted attempt。Agent graph/state schema 不变。新增 17 个任务/工作流事件，同步到后端 enum/Literal、前端 union/时间线和脱敏观测存储；事件产生即转发并追加持久化，resume sequence 单调递增，旧事件仍可解析。
+- 测试命令：任务书六组 MA06 专项测试；`pytest tests/multi_agent -q`；旧 Agent checkpoint/trace/observability/产品写入确认回归；完整 `pytest -q`；`npm --prefix apps/desktop test`、lint、build；changed-file Ruff 与 compileall。
+- 结果：MA06 专项 `31 passed`；multi-agent `125 passed`；checkpoint/trace/产品边界回归 `129 passed`；完整 Python `1226 passed, 2 skipped`；桌面端 `64 files / 267 tests passed`；typecheck/build/Ruff/compileall 通过，lint 仅保留 5 条既有 Reading/PDF warning，0 failed。两个 skip 为需 `AITRANS_RUN_RAG_GPU_TESTS=1` 的既有 Qwen3 embedding/reranker 真实 GPU 测试。
+- 真实模型与 UI 验证、指标：未调用远程模型；barrier 证明两个独立专家同时进入执行，事件测试证明 `task_started` 在任务结束前到达 sink。未做真实 provider 延迟/成本基准，MA10 再报告 p95 与质量成本对照。
+- 任务书调整与理由：无降低验收标准；补充显式保存选区继续走既有写工具确认的回归，避免多 Agent 直接交付绕过副作用确认。
+- 已知限制/阻塞及下一步：Python 无法强杀已进入第三方阻塞调用的线程，取消后该调用仍占全局许可和 lease，完成后迟到 artifact 被撤销；这是有意的安全 fence。MA07 实现 Curator、typed note/item/relation proposal 与幂等业务提交。
