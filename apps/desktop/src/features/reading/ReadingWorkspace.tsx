@@ -52,7 +52,7 @@ export default function ReadingWorkspace({ workspace }: { workspace: Translation
   return (
     <div
       ref={rootRef}
-      className="ait-reading-workspace relative h-full min-h-0 overflow-hidden"
+      className={`ait-reading-workspace relative h-full min-h-0 overflow-hidden ${textReaderActive ? "is-text-reader" : "is-pdf-reader"}`}
       style={readingStyle}
     >
       <UnifiedReadingWorkspace workspace={workspace} />
