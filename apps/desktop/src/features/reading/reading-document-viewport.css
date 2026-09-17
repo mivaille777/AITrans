@@ -55,10 +55,9 @@
   z-index: 45;
 }
 
-/* The Reading grid must be constrained to the viewport. Without an explicit
-   minmax(0, 1fr) row, a tall PDF page can enlarge the implicit grid row. That
-   pushes the Trash footer, Outline scroll area, and PDF zoom controls below
-   the visible application window. */
+/* The Reading grid must stay constrained to the visible app viewport. A tall
+   PDF canvas must never enlarge the implicit grid row, otherwise the Trash
+   footer, Outline scroller, and PDF zoom controls are pushed below the window. */
 .ait-reading-workspace > section,
 .ait-reading-workspace > section > div.grid {
   height: 100%;
@@ -77,15 +76,29 @@
   overflow: hidden;
 }
 
-/* All Documents and Outline own their own vertical scrolling. Keeping their
-   scroll regions constrained also guarantees the fixed footer actions (Trash
-   and Live Reading) remain visible at every window height. */
+/* All Documents and Outline own independent vertical scrolling. Their bottom
+   actions remain fixed and visible while only the list/tree body scrolls. */
 .ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel,
 .ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel {
   min-height: 0 !important;
   overflow-y: scroll !important;
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
+  scrollbar-color: #b8b8b8 transparent;
+}
+
+.ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel::-webkit-scrollbar,
+.ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel::-webkit-scrollbar-thumb,
+.ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #b8b8b8;
+  background-clip: padding-box;
 }
 
 .ait-reading-workspace > section > div.grid > aside:first-child > div:last-child,
@@ -147,8 +160,54 @@
   display: flex !important;
 }
 
+/* Evidence & Actions uses the same collapsible rail language as All Documents
+   and Outline. The expanded collapse affordance sits inside its header area. */
+.ait-reading-workspace .ait-reading-evidence-collapse {
+  position: absolute;
+  top: 16px;
+  right: 8px;
+  z-index: 92;
+}
+
+.ait-reading-workspace .ait-reading-evidence-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 48px;
+  z-index: 95;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid > aside:last-child {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* UnifiedReadingWorkspace currently computes the first two track widths inline.
+   When the right rail collapses, override only this state and preserve all four
+   combinations of the existing All Documents / Outline collapsed states. */
+.ait-reading-workspace.evidence-collapsed > section > div.grid {
+  grid-template-columns: 290px 250px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid:has(> aside:first-child button[aria-label="Expand All Documents"]) {
+  grid-template-columns: 48px 250px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid:has(> aside:nth-child(2) button[aria-label="Expand Outline"]) {
+  grid-template-columns: 290px 48px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid:has(> aside:first-child button[aria-label="Expand All Documents"]):has(> aside:nth-child(2) button[aria-label="Expand Outline"]) {
+  grid-template-columns: 48px 48px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed .ait-reading-document-zoom {
+  right: 68px;
+}
+
 @media (max-width: 1180px) {
-  .ait-reading-workspace .ait-reading-document-zoom {
+  .ait-reading-workspace.evidence-expanded .ait-reading-document-zoom {
     right: 332px;
   }
 }
