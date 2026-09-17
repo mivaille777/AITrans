@@ -1,4 +1,11 @@
-import { Minus, Plus, RotateCcw } from "lucide-react"
+import {
+  BookOpenCheck,
+  ChevronLeft,
+  ChevronRight,
+  Minus,
+  Plus,
+  RotateCcw,
+} from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
@@ -24,6 +31,7 @@ export default function ReadingWorkspace({ workspace }: { workspace: Translation
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [documentZoom, setDocumentZoom] = useState(readDocumentZoom)
   const [textReaderActive, setTextReaderActive] = useState(false)
+  const [evidenceCollapsed, setEvidenceCollapsed] = useState(false)
 
   useEffect(() => {
     const root = rootRef.current
@@ -52,10 +60,50 @@ export default function ReadingWorkspace({ workspace }: { workspace: Translation
   return (
     <div
       ref={rootRef}
-      className={`ait-reading-workspace relative h-full min-h-0 overflow-hidden ${textReaderActive ? "is-text-reader" : "is-pdf-reader"}`}
+      className={`ait-reading-workspace relative h-full min-h-0 overflow-hidden ${
+        textReaderActive ? "is-text-reader" : "is-pdf-reader"
+      } ${evidenceCollapsed ? "evidence-collapsed" : "evidence-expanded"}`}
       style={readingStyle}
     >
       <UnifiedReadingWorkspace workspace={workspace} />
+
+      {!evidenceCollapsed && (
+        <button
+          type="button"
+          aria-label="Collapse Evidence & Actions"
+          title="Collapse Evidence & Actions"
+          onClick={() => setEvidenceCollapsed(true)}
+          className="ait-reading-evidence-collapse flex h-8 w-8 items-center justify-center rounded-[7px] text-[#555] transition hover:bg-[#f0f0f0]"
+        >
+          <ChevronRight size={15} />
+        </button>
+      )}
+
+      {evidenceCollapsed && (
+        <div className="ait-reading-evidence-rail flex min-h-0 flex-col items-center border-l border-[#e6e6e6] bg-white py-3">
+          <button
+            type="button"
+            aria-label="Expand Evidence & Actions"
+            title="Expand Evidence & Actions"
+            onClick={() => setEvidenceCollapsed(false)}
+            className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[#3f3f3f] hover:bg-[#eeeeee]"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <div
+            className="mt-3 flex h-9 w-9 items-center justify-center rounded-[7px] text-[#555]"
+            title="Evidence & Actions"
+          >
+            <BookOpenCheck size={17} />
+          </div>
+          <span
+            className="mt-3 select-none text-[9px] font-medium tracking-[0.08em] text-[#777] [writing-mode:vertical-rl]"
+            title="Evidence & Actions"
+          >
+            Evidence &amp; Actions
+          </span>
+        </div>
+      )}
 
       {textReaderActive && (
         <div
