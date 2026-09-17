@@ -1,6 +1,7 @@
-import { useState } from "react"
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Search } from "lucide-react"
+import { Archive, ChevronRight, Copy, Eye, FolderOpen, GitBranch, ListFilter, Pencil, Pin, Plus, Search, Share2, Trash2 } from "lucide-react"
+import { createPortal } from "react-dom"
 
 import {
   deleteConversation,
@@ -9,6 +10,7 @@ import {
 } from "../../api/conversations"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
 import { Button } from "../../shared/ui/Button"
+import type { ConversationSummary } from "../../api/types"
 import { companionLayoutClassNames } from "./companion-layout"
 import {
   filterConversationHistory,
@@ -16,6 +18,13 @@ import {
 } from "./conversation-history"
 
 const HISTORY_LIMIT = 50
+
+type ConversationContextMenuState = {
+  conversationId: string
+  title: string
+  x: number
+  y: number
+}
 
 function formatConversationTime(value: string): string {
   const date = new Date(value)
@@ -42,6 +51,10 @@ export default function ConversationHistoryPanel({
   const [search, setSearch] = useState("")
   const [editingId, setEditingId] = useState("")
   const [editingTitle, setEditingTitle] = useState("")
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<Set<string>>(() => new Set())
+  const [unreadConversationIds, setUnreadConversationIds] = useState<Set<string>>(() => new Set())
+  const [contextMenu, setContextMenu] = useState<ConversationContextMenuState | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const conversationsQuery = useQuery({
     queryKey: queryKeys.conversations.list(HISTORY_LIMIT),
     queryFn: () => getConversations(HISTORY_LIMIT),
@@ -70,7 +83,39 @@ export default function ConversationHistoryPanel({
 
   const conversations = conversationsQuery.data?.conversations ?? []
   const filtered = filterConversationHistory(conversations, search)
-  const groups = groupConversationHistory(filtered)
+  const groups = groupConversationHistory(filtered).map((group) => ({
+    ...group,
+    conversations: [...group.conversations].sort((left, right) => {
+      const leftPinned = pinnedConversationIds.has(left.conversation_id) ? 1 : 0
+      const rightPinned = pinnedConversationIds.has(right.conversation_id) ? 1 : 0
+      return rightPinned - leftPinned
+    }),
+  }))
+
+  useEffect(() => {
+    if (!contextMenu) return
+    function handleOutsidePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) return
+      setContextMenu(null)
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setContextMenu(null)
+    }
+    function handleViewportChange() {
+      setContextMenu(null)
+    }
+    window.addEventListener("pointerdown", handleOutsidePointerDown)
+    window.addEventListener("keydown", handleEscape)
+    window.addEventListener("resize", handleViewportChange)
+    window.addEventListener("scroll", handleViewportChange, true)
+    return () => {
+      window.removeEventListener("pointerdown", handleOutsidePointerDown)
+      window.removeEventListener("keydown", handleEscape)
+      window.removeEventListener("resize", handleViewportChange)
+      window.removeEventListener("scroll", handleViewportChange, true)
+    }
+  }, [contextMenu])
 
   function beginRename(conversationId: string, title: string) {
     setEditingId(conversationId)
@@ -86,6 +131,60 @@ export default function ConversationHistoryPanel({
   function remove(conversationId: string, title: string) {
     if (!window.confirm(`Delete “${title}”?`)) return
     deleteMutation.mutate(conversationId)
+  }
+
+  function openContextMenu(event: ReactMouseEvent, conversation: ConversationSummary) {
+    event.preventDefault()
+    const menuWidth = 286
+    const menuHeight = 430
+    setContextMenu({
+      conversationId: conversation.conversation_id,
+      title: conversation.title,
+      x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
+      y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
+    })
+  }
+
+  function togglePinned(conversationId: string) {
+    setPinnedConversationIds((current) => {
+      const next = new Set(current)
+      if (next.has(conversationId)) next.delete(conversationId)
+      else next.add(conversationId)
+      return next
+    })
+  }
+
+  function toggleUnread(conversationId: string) {
+    setUnreadConversationIds((current) => {
+      const next = new Set(current)
+      if (next.has(conversationId)) next.delete(conversationId)
+      else next.add(conversationId)
+      return next
+    })
+  }
+
+  async function copyConversationLink(conversationId: string) {
+    try {
+      const currentHash = window.location.hash || "#/chat"
+      const [hashPath, rawQuery = ""] = currentHash.split("?")
+      const query = new URLSearchParams(rawQuery)
+      query.set("conversation", conversationId)
+      await navigator.clipboard.writeText(
+        `${window.location.origin}${window.location.pathname}${hashPath}?${query.toString()}`,
+      )
+    } catch {
+      // Clipboard access can be unavailable during a dev reload.
+    }
+    setContextMenu(null)
+  }
+
+  async function copyConversationTitle(title: string) {
+    try {
+      await navigator.clipboard.writeText(title)
+    } catch {
+      // Clipboard access can be unavailable during a dev reload.
+    }
+    setContextMenu(null)
   }
 
   return (
@@ -151,7 +250,8 @@ export default function ConversationHistoryPanel({
                   return (
                     <div
                       key={conversation.conversation_id}
-                      className={`ait-conversation-item ait-chat-conversation-item group ${active ? "is-active" : ""}`}
+                      className={`ait-conversation-item ait-chat-conversation-item ${active ? "is-active" : ""} ${unreadConversationIds.has(conversation.conversation_id) ? "is-unread" : ""}`}
+                      onContextMenu={(event) => openContextMenu(event, conversation)}
                     >
                       {editing ? (
                         <div>
@@ -194,7 +294,10 @@ export default function ConversationHistoryPanel({
                           <button
                             type="button"
                             className="ait-chat-conversation-main"
-                            onClick={() => onOpen(conversation.conversation_id)}
+                            onClick={() => {
+                              setContextMenu(null)
+                              onOpen(conversation.conversation_id)
+                            }}
                           >
                             <div className="ait-chat-conversation-title-row">
                               <p className="ait-chat-conversation-title">
@@ -209,34 +312,7 @@ export default function ConversationHistoryPanel({
                                 conversation.context_mode === "reading" ? "Continue from reading context…" : "Start a new conversation…"
                               )}
                             </p>
-                            <div className="ait-chat-conversation-meta">
-                              <span className="ait-chat-history-pill">
-                                {conversation.context_mode === "reading" ? "Reading" : "General"}
-                              </span>
-                              {conversation.model && (
-                                <span className="ait-chat-history-pill">{conversation.model}</span>
-                              )}
-                              {conversation.section_heading && (
-                                <span className="ait-chat-conversation-source">{conversation.source_kind || "Context"}</span>
-                              )}
-                            </div>
                           </button>
-                          <div className={`ait-chat-conversation-actions ${active ? "is-visible" : ""}`}>
-                            <button
-                              type="button"
-                              className="ait-chat-small-action"
-                              onClick={() => beginRename(conversation.conversation_id, conversation.title)}
-                            >
-                              Rename
-                            </button>
-                            <button
-                              type="button"
-                              className="ait-chat-small-action is-danger"
-                              onClick={() => remove(conversation.conversation_id, conversation.title)}
-                            >
-                              Delete
-                            </button>
-                          </div>
                         </>
                       )}
                     </div>
@@ -247,6 +323,113 @@ export default function ConversationHistoryPanel({
           ))}
         </div>
       </div>
+      {contextMenu && createPortal(
+        <div
+          ref={contextMenuRef}
+          className="ait-chat-conversation-menu-panel"
+          role="menu"
+          aria-label={`Actions for ${contextMenu.title}`}
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <ConversationContextMenuItem
+            icon={<Pencil size={17} />}
+            label="Rename"
+            shortcut="Alt+Ctrl+R"
+            onClick={() => {
+              beginRename(contextMenu.conversationId, contextMenu.title)
+              setContextMenu(null)
+            }}
+          />
+          <ConversationContextMenuItem
+            icon={<Pin size={17} />}
+            label={pinnedConversationIds.has(contextMenu.conversationId) ? "Unpin" : "Pin"}
+            shortcut="Alt+Ctrl+P"
+            onClick={() => {
+              togglePinned(contextMenu.conversationId)
+              setContextMenu(null)
+            }}
+          />
+          <ConversationContextMenuItem
+            icon={<Eye size={17} />}
+            label={unreadConversationIds.has(contextMenu.conversationId) ? "Mark as read" : "Mark as unread"}
+            shortcut="Ctrl+Shift+U"
+            onClick={() => {
+              toggleUnread(contextMenu.conversationId)
+              setContextMenu(null)
+            }}
+          />
+          <ConversationContextMenuItem
+            icon={<Archive size={17} />}
+            label="Archive"
+            shortcut="Ctrl+Shift+A"
+            disabled
+          />
+          <ConversationContextMenuItem
+            icon={<Trash2 size={17} />}
+            label="Permanently delete"
+            danger
+            onClick={() => {
+              remove(contextMenu.conversationId, contextMenu.title)
+              setContextMenu(null)
+            }}
+          />
+
+          <div className="ait-chat-context-menu-divider" />
+          <ConversationContextMenuItem icon={<FolderOpen size={17} />} label="Project" trailing={<ChevronRight size={16} />} disabled />
+          <ConversationContextMenuItem icon={<ListFilter size={17} />} label="Section" trailing={<ChevronRight size={16} />} disabled />
+
+          <div className="ait-chat-context-menu-divider" />
+          <ConversationContextMenuItem
+            icon={<Share2 size={17} />}
+            label="Share"
+            onClick={() => void copyConversationLink(contextMenu.conversationId)}
+          />
+          <ConversationContextMenuItem
+            icon={<Copy size={17} />}
+            label="Copy title"
+            trailing={<ChevronRight size={16} />}
+            onClick={() => void copyConversationTitle(contextMenu.title)}
+          />
+
+          <div className="ait-chat-context-menu-divider" />
+          <ConversationContextMenuItem icon={<GitBranch size={17} />} label="Branch" trailing={<ChevronRight size={16} />} disabled />
+        </div>,
+        document.body,
+      )}
     </aside>
+  )
+}
+
+function ConversationContextMenuItem({
+  icon,
+  label,
+  shortcut,
+  trailing,
+  danger = false,
+  disabled = false,
+  onClick,
+}: {
+  icon: ReactNode
+  label: string
+  shortcut?: string
+  trailing?: ReactNode
+  danger?: boolean
+  disabled?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className={`ait-chat-context-menu-item ${danger ? "is-danger" : ""}`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <span className="ait-chat-context-menu-icon">{icon}</span>
+      <span className="ait-chat-context-menu-label">{label}</span>
+      {shortcut && <kbd>{shortcut}</kbd>}
+      {trailing && <span className="ait-chat-context-menu-trailing">{trailing}</span>}
+    </button>
   )
 }
