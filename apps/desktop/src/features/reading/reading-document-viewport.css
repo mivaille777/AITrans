@@ -1,0 +1,52 @@
+.ait-reading-workspace main > .ait-scroll-panel {
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto !important;
+  overflow-y: scroll !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
+.ait-reading-workspace main > .ait-scroll-panel > div {
+  box-sizing: border-box;
+  width: min(820px, calc(100% - 40px)) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 100%;
+  margin-inline: auto;
+  margin-bottom: 72px;
+  zoom: var(--ait-reading-document-zoom, 1);
+}
+
+.ait-reading-workspace main > .ait-scroll-panel h3,
+.ait-reading-workspace main > .ait-scroll-panel article {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ait-reading-workspace main > .ait-scroll-panel article {
+  white-space: pre-wrap;
+}
+
+.ait-reading-workspace main > .ait-scroll-panel pre,
+.ait-reading-workspace main > .ait-scroll-panel code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ait-reading-workspace .ait-reading-document-zoom {
+  position: absolute;
+  right: 340px;
+  bottom: 16px;
+  z-index: 45;
+}
+
+@media (max-width: 1180px) {
+  .ait-reading-workspace .ait-reading-document-zoom {
+    right: 332px;
+  }
+}
