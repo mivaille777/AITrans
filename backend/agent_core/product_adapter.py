@@ -86,6 +86,9 @@ class ProductAgentRuntimeAdapter:
     @staticmethod
     def build_payload(state: AgentState) -> dict[str, Any]:
         context = state.browser_context
+        derived_language_input = str(
+            context.get("derived_language_input", "") or ""
+        ).strip()
         confirmed = context.get("confirmed_write_tools", ())
         if not isinstance(confirmed, (list, tuple, set, frozenset)):
             confirmed = ()
@@ -100,7 +103,7 @@ class ProductAgentRuntimeAdapter:
             "trace_id": state.trace_id,
             "user_message": state.user_input,
             "context_mode": str(context.get("context_mode", "reading") or "reading"),
-            "source_text": state.selected_text,
+            "source_text": derived_language_input or state.selected_text,
             "translated_text": str(context.get("translated_text", "") or ""),
             "source_language": str(context.get("source_language", "auto") or "auto"),
             "target_language": str(context.get("target_language", "zh-CN") or "zh-CN"),

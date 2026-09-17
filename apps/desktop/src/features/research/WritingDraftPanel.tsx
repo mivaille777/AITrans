@@ -103,14 +103,18 @@ export default function WritingDraftPanel({ workspaceId }: { workspaceId: string
   })
   const exportMutation = useMutation({
     mutationFn: () => exportWritingProject(project!.project_id),
-    onSuccess: (result) => downloadMarkdown(`${safeName(project!.title)}.md`, result.markdown),
+    onSuccess: (result) => {
+      downloadMarkdown(`${safeName(project!.title)}.md`, result.markdown)
+      setMessage(exportStatusMessage(result.verification_status, result.warnings))
+    },
   })
   const copyMutation = useMutation({
     mutationFn: async () => {
       const result = await exportWritingProject(project!.project_id)
       await navigator.clipboard.writeText(result.markdown)
+      return result
     },
-    onSuccess: () => setMessage("Markdown copied."),
+    onSuccess: (result) => setMessage(`Markdown copied. ${exportStatusMessage(result.verification_status, result.warnings)}`),
   })
 
   const diff = useMemo(() => preview ? preview.before.map((before, index) => ({ before, after: preview.after[index] })) : [], [preview])
@@ -190,6 +194,14 @@ function newOperationId(): string {
 
 function safeName(value: string): string {
   return value.replace(/[<>:"/\\|?*]+/g, "-").trim() || "manuscript"
+}
+
+function exportStatusMessage(status: string, warnings: string[]): string {
+  return status === "requires_revalidation"
+    ? `Exported with ${warnings.length} stale or unavailable source warning${warnings.length === 1 ? "" : "s"}. Revalidate before reuse.`
+    : status === "current"
+      ? "Exported with current source verification."
+      : "Exported; some source versions are unknown and should be reviewed."
 }
 
 function downloadMarkdown(filename: string, markdown: string): void {

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from backend.evaluation.multi_agent_benchmark import (
     BenchmarkObservation,
@@ -26,6 +26,11 @@ def _mean(values: list[float]) -> float:
 
 def _pstdev(values: list[float]) -> float:
     return statistics.pstdev(values) if len(values) > 1 else 0.0
+
+
+def _complete_samples(values: Iterable[int | None], expected: int) -> list[float] | None:
+    samples = [float(value) for value in values if value is not None]
+    return samples if len(samples) == expected else None
 
 
 def _version_key(version: BenchmarkVersionInfo) -> tuple[str, ...]:
@@ -72,9 +77,24 @@ def aggregate_repeated_observations(
             {assertion for item in items for assertion in item.observation.hard_assertion_results}
         )
         latency_samples = [float(item.observation.latency_ms) for item in items]
-        token_samples = [float(item.observation.total_tokens) for item in items]
-        prompt_samples = [float(item.observation.prompt_tokens) for item in items]
-        completion_samples = [float(item.observation.completion_tokens) for item in items]
+        token_samples = _complete_samples(
+            (item.observation.total_tokens for item in items), len(items)
+        )
+        prompt_samples = _complete_samples(
+            (item.observation.prompt_tokens for item in items), len(items)
+        )
+        completion_samples = _complete_samples(
+            (item.observation.completion_tokens for item in items), len(items)
+        )
+        model_call_samples = _complete_samples(
+            (item.observation.model_calls for item in items), len(items)
+        )
+        tool_call_samples = _complete_samples(
+            (item.observation.tool_calls for item in items), len(items)
+        )
+        retrieval_call_samples = _complete_samples(
+            (item.observation.retrieval_calls for item in items), len(items)
+        )
         coverage_samples = [
             float(item.observation.source_coverage)
             for item in items
@@ -124,12 +144,26 @@ def aggregate_repeated_observations(
             source_coverage=(
                 _mean(coverage_samples) if len(coverage_samples) == len(items) else None
             ),
-            prompt_tokens=round(_mean(prompt_samples)),
-            completion_tokens=round(_mean(completion_samples)),
-            model_calls=round(_mean([float(item.observation.model_calls) for item in items])),
-            tool_calls=round(_mean([float(item.observation.tool_calls) for item in items])),
-            retrieval_calls=round(
-                _mean([float(item.observation.retrieval_calls) for item in items])
+            prompt_tokens=round(_mean(prompt_samples)) if prompt_samples is not None else None,
+            completion_tokens=(
+                round(_mean(completion_samples))
+                if completion_samples is not None
+                else None
+            ),
+            model_calls=(
+                round(_mean(model_call_samples))
+                if model_call_samples is not None
+                else None
+            ),
+            tool_calls=(
+                round(_mean(tool_call_samples))
+                if tool_call_samples is not None
+                else None
+            ),
+            retrieval_calls=(
+                round(_mean(retrieval_call_samples))
+                if retrieval_call_samples is not None
+                else None
             ),
             latency_ms=_mean(latency_samples),
             degraded=any(item.observation.degraded for item in items),
@@ -143,7 +177,9 @@ def aggregate_repeated_observations(
                 "latency_ms_samples": latency_samples,
                 "latency_ms_pstdev": _pstdev(latency_samples),
                 "total_token_samples": token_samples,
-                "total_token_pstdev": _pstdev(token_samples),
+                "total_token_pstdev": (
+                    _pstdev(token_samples) if token_samples is not None else None
+                ),
                 "dimension_score_pstdev": {
                     dimension: _pstdev(samples)
                     for dimension, samples in dimension_samples.items()

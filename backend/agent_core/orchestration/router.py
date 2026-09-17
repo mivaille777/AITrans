@@ -6,6 +6,7 @@ from backend.models.agent_orchestration import OrchestrationLane, OrchestrationR
 from backend.models.agent_tasks import TaskRole
 
 _TRANSLATION_TERMS = ("翻译", "translate", "润色", "polish", "改写", "rewrite")
+_SUMMARY_TERMS = ("总结", "摘要", "概括", "summarize", "summary", "abstract")
 _COMPARE_TERMS = ("比较", "对比", "compare", "contrast", "综述", "review", "综合", "synthesis")
 _WRITING_TERMS = ("撰写", "写作", "起草", "大纲", "章节", "draft", "outline", "write", "revise")
 _CURATION_TERMS = ("笔记", "知识图谱", "知识卡", "整理", "note", "knowledge graph", "curate")
@@ -84,6 +85,7 @@ class ResearchTaskRouter:
             _contains(text, _COMPARE_TERMS)
             or _contains(text, _WRITING_TERMS)
             or _contains(text, _CURATION_TERMS)
+            or _contains(text, _SUMMARY_TERMS)
         ):
             return OrchestrationRoute(
                 lane=OrchestrationLane.FAST,

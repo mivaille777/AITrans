@@ -72,6 +72,9 @@ export interface WritingExport {
   references: ReferenceRecord[]
   outline_version: number
   section_versions: Record<string, number>
+  source_statuses: Record<string, string>
+  verification_status: string
+  warnings: string[]
 }
 
 export function listWritingProjects(workspaceId: string): Promise<{ total: number; projects: WritingProjectSnapshot[] }> {

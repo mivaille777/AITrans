@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, Literal, Mapping, Protocol, Sequence
+from typing import Literal, Protocol
 
 BenchmarkStrategy = Literal["single_agent", "legacy_collaboration", "multi_agent"]
 BenchmarkEnvironment = Literal["deterministic", "qwen3_local", "configured_llm", "manual_ui"]
@@ -68,11 +69,11 @@ class BenchmarkObservation:
     dimension_scores: Mapping[str, float] = field(default_factory=dict)
     hard_assertion_results: Mapping[str, bool] = field(default_factory=dict)
     source_coverage: float | None = None
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    model_calls: int = 0
-    tool_calls: int = 0
-    retrieval_calls: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    model_calls: int | None = None
+    tool_calls: int | None = None
+    retrieval_calls: int | None = None
     latency_ms: float = 0.0
     degraded: bool = False
     degradation_reasons: tuple[str, ...] = ()
@@ -83,7 +84,8 @@ class BenchmarkObservation:
 
     def __post_init__(self) -> None:
         for name in ("prompt_tokens", "completion_tokens", "model_calls", "tool_calls", "retrieval_calls"):
-            if int(getattr(self, name)) < 0:
+            value = getattr(self, name)
+            if value is not None and int(value) < 0:
                 raise ValueError(f"{name} must be >= 0")
         if self.latency_ms < 0:
             raise ValueError("latency_ms must be >= 0")
@@ -93,7 +95,9 @@ class BenchmarkObservation:
             raise ValueError("dimension scores must be between 0 and 1")
 
     @property
-    def total_tokens(self) -> int:
+    def total_tokens(self) -> int | None:
+        if self.prompt_tokens is None or self.completion_tokens is None:
+            return None
         return self.prompt_tokens + self.completion_tokens
 
 
@@ -121,12 +125,12 @@ class BenchmarkTaskResult:
     dimension_scores: Mapping[str, float]
     hard_assertion_results: Mapping[str, bool]
     source_coverage: float | None
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    model_calls: int
-    tool_calls: int
-    retrieval_calls: int
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    model_calls: int | None
+    tool_calls: int | None
+    retrieval_calls: int | None
     latency_ms: float
     degraded: bool
     degradation_reasons: tuple[str, ...]
@@ -149,10 +153,10 @@ class BenchmarkStrategySummary:
     degraded_count: int
     release_blocker_count: int
     mean_source_coverage: float | None
-    mean_total_tokens: float
-    mean_model_calls: float
-    mean_tool_calls: float
-    mean_retrieval_calls: float
+    mean_total_tokens: float | None
+    mean_model_calls: float | None
+    mean_tool_calls: float | None
+    mean_retrieval_calls: float | None
     mean_latency_ms: float
     mean_dimension_scores: Mapping[str, float]
 
@@ -191,12 +195,12 @@ def _json_safe(value: object) -> object:
 def load_multi_agent_evaluation_cases(path: str | Path) -> tuple[MultiAgentBenchmarkCase, ...]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError("multi-agent evaluation cases must be a JSON array")
+        raise TypeError("multi-agent evaluation cases must be a JSON array")
     result: list[MultiAgentBenchmarkCase] = []
     seen: set[str] = set()
     for raw in payload:
         if not isinstance(raw, dict):
-            raise ValueError("each multi-agent evaluation case must be an object")
+            raise TypeError("each multi-agent evaluation case must be an object")
         case_id = str(raw.get("case_id", "") or "").strip()
         if not case_id or case_id in seen:
             raise ValueError(f"missing or duplicate case_id: {case_id!r}")
@@ -223,10 +227,10 @@ def load_multi_agent_evaluation_cases(path: str | Path) -> tuple[MultiAgentBench
 
 def _budget_violations(observation: BenchmarkObservation, budget: BenchmarkBudget) -> tuple[str, ...]:
     checks = (
-        (budget.token_limit and observation.total_tokens > budget.token_limit, "token_budget_exceeded"),
-        (budget.model_call_limit and observation.model_calls > budget.model_call_limit, "model_call_budget_exceeded"),
-        (budget.tool_call_limit and observation.tool_calls > budget.tool_call_limit, "tool_call_budget_exceeded"),
-        (budget.retrieval_call_limit and observation.retrieval_calls > budget.retrieval_call_limit, "retrieval_budget_exceeded"),
+        (budget.token_limit and observation.total_tokens is not None and observation.total_tokens > budget.token_limit, "token_budget_exceeded"),
+        (budget.model_call_limit and observation.model_calls is not None and observation.model_calls > budget.model_call_limit, "model_call_budget_exceeded"),
+        (budget.tool_call_limit and observation.tool_calls is not None and observation.tool_calls > budget.tool_call_limit, "tool_call_budget_exceeded"),
+        (budget.retrieval_call_limit and observation.retrieval_calls is not None and observation.retrieval_calls > budget.retrieval_call_limit, "retrieval_budget_exceeded"),
         (budget.deadline_ms and observation.latency_ms > budget.deadline_ms, "deadline_exceeded"),
     )
     return tuple(code for violated, code in checks if violated)
@@ -258,6 +262,11 @@ def _mean(values: Iterable[float]) -> float:
     return round(sum(frozen) / len(frozen), 6) if frozen else 0.0
 
 
+def _known_mean(values: Iterable[int | None]) -> float | None:
+    known = [float(value) for value in values if value is not None]
+    return _mean(known) if known else None
+
+
 def _summaries(tasks: Sequence[BenchmarkTaskResult]) -> tuple[BenchmarkStrategySummary, ...]:
     groups: dict[tuple[str, str, str], list[BenchmarkTaskResult]] = {}
     for task in tasks:
@@ -273,10 +282,10 @@ def _summaries(tasks: Sequence[BenchmarkTaskResult]) -> tuple[BenchmarkStrategyS
                 passed_count=sum(v.passed for v in items), degraded_count=sum(v.degraded for v in items),
                 release_blocker_count=sum(bool(v.release_blockers) for v in items),
                 mean_source_coverage=_mean(coverages) if coverages else None,
-                mean_total_tokens=_mean(float(v.total_tokens) for v in items),
-                mean_model_calls=_mean(float(v.model_calls) for v in items),
-                mean_tool_calls=_mean(float(v.tool_calls) for v in items),
-                mean_retrieval_calls=_mean(float(v.retrieval_calls) for v in items),
+                mean_total_tokens=_known_mean(v.total_tokens for v in items),
+                mean_model_calls=_known_mean(v.model_calls for v in items),
+                mean_tool_calls=_known_mean(v.tool_calls for v in items),
+                mean_retrieval_calls=_known_mean(v.retrieval_calls for v in items),
                 mean_latency_ms=_mean(v.latency_ms for v in items),
                 mean_dimension_scores={d: _mean(v.dimension_scores[d] for v in items if d in v.dimension_scores) for d in dimensions},
             )
@@ -330,9 +339,19 @@ def write_multi_agent_benchmark_report(report: MultiAgentBenchmarkReport, path: 
 
 
 __all__ = [
-    "BenchmarkBudget", "BenchmarkBudgetMode", "BenchmarkEnvironment", "BenchmarkObservation",
-    "BenchmarkStrategy", "BenchmarkStrategyRunner", "BenchmarkTaskResult", "BenchmarkVersionInfo",
-    "BenchmarkStrategySummary", "MultiAgentBenchmarkCase", "MultiAgentBenchmarkReport",
-    "RELEASE_BLOCKER_CODES", "load_multi_agent_evaluation_cases", "run_multi_agent_benchmark",
+    "RELEASE_BLOCKER_CODES",
+    "BenchmarkBudget",
+    "BenchmarkBudgetMode",
+    "BenchmarkEnvironment",
+    "BenchmarkObservation",
+    "BenchmarkStrategy",
+    "BenchmarkStrategyRunner",
+    "BenchmarkStrategySummary",
+    "BenchmarkTaskResult",
+    "BenchmarkVersionInfo",
+    "MultiAgentBenchmarkCase",
+    "MultiAgentBenchmarkReport",
+    "load_multi_agent_evaluation_cases",
+    "run_multi_agent_benchmark",
     "write_multi_agent_benchmark_report",
 ]

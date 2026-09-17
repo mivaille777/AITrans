@@ -16,6 +16,16 @@ def test_selected_translation_stays_fast_even_in_force_mode() -> None:
     assert route.primary_role is None
 
 
+def test_summary_then_translation_uses_document_artifact_before_language_tool() -> None:
+    route = ResearchTaskRouter().route(
+        "先总结这篇论文，再把摘要翻译成英文",
+        {"source_text": "full raw paper text"},
+    )
+
+    assert route.lane is OrchestrationLane.SINGLE
+    assert route.primary_role is TaskRole.DOCUMENT
+
+
 def test_explicit_save_keeps_existing_write_confirmation_path() -> None:
     route = ResearchTaskRouter().route(
         "Save this passage.",

@@ -98,6 +98,9 @@ class WritingExportResponse(WritingProjectModel):
     references: list[ReferenceRecord] = Field(default_factory=list, max_length=2048)
     outline_version: int = Field(default=0, ge=0)
     section_versions: dict[str, int] = Field(default_factory=dict)
+    source_statuses: dict[str, str] = Field(default_factory=dict)
+    verification_status: str = Field(default="unverified_currentness", max_length=64)
+    warnings: list[str] = Field(default_factory=list, max_length=2048)
 
 
 __all__ = [

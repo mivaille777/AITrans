@@ -72,6 +72,8 @@ class WritingProjectService:
         database_path: str | Path | None = None,
         workspace_service: Any | None = None,
         memory_coordinator: Any | None = None,
+        knowledge_library: Any | None = None,
+        research_memory: Any | None = None,
     ) -> None:
         inferred = getattr(artifact_store, "database_path", None)
         if database_path is None and inferred is None:
@@ -83,6 +85,8 @@ class WritingProjectService:
         self._artifacts = artifact_store
         self._workspaces = workspace_service
         self._memory = memory_coordinator
+        self._knowledge_library = knowledge_library
+        self._research_memory = research_memory
         self._lock = RLock()
         self._initialize()
 
@@ -794,6 +798,7 @@ class WritingProjectService:
                     f"- {item.title}: {item.objective}" for item in outline.sections
                 )
         references: dict[str, ReferenceRecord] = {}
+        evidence_by_source: dict[str, list[Any]] = {}
         for section in project.sections:
             chunks.extend(
                 ["", f"## {section.title or section.section_id}", "", section.markdown]
@@ -810,6 +815,36 @@ class WritingProjectService:
                             )
                         }
                     )
+            artifact = self._artifacts.get(
+                section.artifact_ref.artifact_id, section.artifact_ref.version
+            )
+            if isinstance(artifact, ManuscriptSectionArtifact):
+                for evidence in artifact.evidence_refs:
+                    evidence_by_source.setdefault(evidence.source_id, []).append(evidence)
+        source_statuses = {
+            source_id: self._current_source_status(
+                project.workspace_id,
+                source_id,
+                evidence_by_source.get(source_id, []),
+            )
+            for source_id in references
+        }
+        unsafe_sources = {
+            source_id: source_status
+            for source_id, source_status in source_statuses.items()
+            if source_status in {"stale", "detached", "orphaned"}
+        }
+        warnings = [
+            f"Source {source_id} is {source_status}; revalidate affected claims before reuse."
+            for source_id, source_status in sorted(unsafe_sources.items())
+        ]
+        verification_status = (
+            "requires_revalidation"
+            if unsafe_sources
+            else "current"
+            if source_statuses and set(source_statuses.values()) == {"fresh"}
+            else "unverified_currentness"
+        )
         if references:
             chunks.extend(["", "## Sources"])
             for index, reference in enumerate(references.values(), start=1):
@@ -824,8 +859,13 @@ class WritingProjectService:
                     if item
                 )
                 chunks.append(
-                    f"{index}. {title}" + (f" — {details}" if details else "")
+                    f"{index}. {title}"
+                    + (f" — {details}" if details else "")
+                    + f" [source status: {source_statuses[reference.source_id]}]"
                 )
+        if warnings:
+            chunks.extend(["", "## Revalidation required"])
+            chunks.extend(f"- {warning}" for warning in warnings)
         return WritingExportResponse(
             project_id=project.project_id,
             markdown="\n".join(chunks).strip() + "\n",
@@ -834,7 +874,48 @@ class WritingProjectService:
             section_versions={
                 item.section_id: item.version for item in project.sections
             },
+            source_statuses=source_statuses,
+            verification_status=verification_status,
+            warnings=warnings,
         )
+
+    def _current_source_status(
+        self,
+        workspace_id: str,
+        source_id: str,
+        evidence_refs: list[Any],
+    ) -> str:
+        workspace = self._workspaces.get(workspace_id) if self._workspaces else None
+        note_ids = set(getattr(workspace, "note_ids", ()) or ())
+        document_ids = set(getattr(workspace, "document_ids", ()) or ())
+
+        if source_id in note_ids and self._research_memory is not None:
+            return str(
+                self._research_memory.source_status(
+                    workspace_id=workspace_id,
+                    note_id=source_id,
+                )
+            )
+
+        record = (
+            self._knowledge_library.get_document(source_id)
+            if self._knowledge_library is not None
+            else None
+        )
+        if record is not None:
+            current_hash = str(getattr(record, "content_hash", "") or "")
+            captured = {
+                str(getattr(item, "source_hash", "") or "")
+                for item in evidence_refs
+                if str(getattr(item, "source_hash", "") or "")
+            }
+            if captured and current_hash and captured != {current_hash}:
+                return "stale"
+            return "fresh" if captured and current_hash else "legacy_unknown"
+
+        if workspace is not None and source_id not in note_ids | document_ids:
+            return "detached"
+        return "legacy_unknown"
 
 
 __all__ = [

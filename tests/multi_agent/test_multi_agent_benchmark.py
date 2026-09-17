@@ -15,7 +15,6 @@ from backend.evaluation.multi_agent_benchmark import (
     write_multi_agent_benchmark_report,
 )
 
-
 PRODUCTION_BUDGETS = {
     "single_agent": BenchmarkBudget(mode="production", token_limit=600, model_call_limit=2, tool_call_limit=4, retrieval_call_limit=2, deadline_ms=5000),
     "legacy_collaboration": BenchmarkBudget(mode="production", token_limit=900, model_call_limit=4, tool_call_limit=6, retrieval_call_limit=3, deadline_ms=5000),
@@ -178,3 +177,27 @@ def test_equal_token_mode_requires_a_positive_shared_cap() -> None:
             production_budgets=PRODUCTION_BUDGETS,
             equal_token_limit=0,
         )
+
+
+def test_unknown_usage_is_serialized_as_null_not_zero(tmp_path: Path) -> None:
+    def contract_only(case, **_kwargs):
+        return BenchmarkObservation(
+            completed=True,
+            hard_assertion_results={assertion: True for assertion in case.hard_assertions},
+            metadata={"usage_measurement": "unavailable"},
+        )
+
+    report = run_multi_agent_benchmark(
+        [_case()],
+        runner=contract_only,
+        environment="deterministic",
+        production_budgets=PRODUCTION_BUDGETS,
+        equal_token_limit=300,
+        strategies=("multi_agent",),
+        budget_modes=("production",),
+    )
+    payload = json.loads(report.to_json())
+
+    assert payload["tasks"][0]["total_tokens"] is None
+    assert payload["tasks"][0]["model_calls"] is None
+    assert payload["summaries"][0]["mean_total_tokens"] is None

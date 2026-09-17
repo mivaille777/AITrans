@@ -15,6 +15,8 @@ from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceSe
 CoreEventSink = Callable[[AgentEventType, dict[str, Any]], None]
 _MAX_COLLAB_CONTEXT_CHARS = 6000
 _MAX_SPECIALIST_OUTPUT_CHARS = 1500
+_LANGUAGE_TERMS = ("翻译", "translate", "润色", "polish", "改写", "rewrite")
+_SUMMARY_TERMS = ("总结", "摘要", "概括", "summarize", "summary", "abstract")
 
 _EVENT_MAP: dict[str, AgentEventType] = {
     "supervisor_started": AgentEventType.MULTI_AGENT_STARTED,
@@ -62,11 +64,13 @@ class MultiAgentRuntimeBridge:
         service: MultiAgentWorkspaceService | None = None,
         *,
         orchestrator: Any | None = None,
+        maximum_lane: OrchestrationLane = OrchestrationLane.WORKFLOW,
     ) -> None:
         self.service = service or (
             None if orchestrator is not None else MultiAgentWorkspaceService()
         )
         self.orchestrator = orchestrator
+        self.maximum_lane = maximum_lane
 
     def _plan(self, state: AgentState) -> list[dict[str, Any]]:
         if self.service is None:
@@ -88,7 +92,12 @@ class MultiAgentRuntimeBridge:
                 mode=mode,
             )
             # Force requests the new router, not extra permissions or useless roles.
-            return route.lane is not OrchestrationLane.FAST
+            if route.lane is OrchestrationLane.FAST:
+                return False
+            return not (
+                self.maximum_lane is OrchestrationLane.SINGLE
+                and route.lane is OrchestrationLane.WORKFLOW
+            )
         if mode == "force":
             return True
         plan = self._plan(state)
@@ -128,6 +137,48 @@ class MultiAgentRuntimeBridge:
             "output": output,
             "metadata": dict(metadata) if isinstance(metadata, dict) else {},
         }
+
+    @staticmethod
+    def _artifact_language_input(
+        user_input: str, output: Any
+    ) -> tuple[str, dict[str, Any]] | None:
+        normalized = " ".join(str(user_input or "").casefold().split())
+        if not (
+            any(term in normalized for term in _LANGUAGE_TERMS)
+            and any(term in normalized for term in _SUMMARY_TERMS)
+        ):
+            return None
+        if not isinstance(output, dict) or str(output.get("kind", "")) != "document_analysis":
+            return None
+        content = output.get("content", {})
+        reading_card = content.get("reading_card", {}) if isinstance(content, dict) else {}
+        if not isinstance(reading_card, dict):
+            return None
+        labels = (
+            ("Research questions", "research_questions"),
+            ("Contributions", "contributions"),
+            ("Methods", "methods"),
+            ("Datasets", "datasets"),
+            ("Experiments", "experiments"),
+            ("Limitations", "limitations"),
+            ("Open questions", "open_questions"),
+        )
+        lines: list[str] = []
+        for label, field in labels:
+            raw = reading_card.get(field, output.get(field, ()))
+            values = raw if isinstance(raw, list) else [raw]
+            cleaned = [str(item).strip() for item in values if str(item).strip()]
+            if cleaned:
+                lines.append(f"{label}: {'; '.join(cleaned)}")
+        text = "\n".join(lines).strip()
+        if not text:
+            return None
+        artifact_ref = {
+            key: output.get(key)
+            for key in ("artifact_id", "version", "content_hash", "kind")
+            if output.get(key) not in {None, ""}
+        }
+        return text, artifact_ref
 
     @classmethod
     def _context_payload(cls, run: Any) -> dict[str, Any]:
@@ -368,7 +419,15 @@ class MultiAgentRuntimeBridge:
                 memory_snapshot_ref=snapshot_id,
             )
             context["orchestration_context"] = collaboration
-            if run.direct_delivery and run.direct_output is not None:
+            language_handoff = self._artifact_language_input(
+                state.user_input, run.direct_output
+            )
+            if language_handoff is not None:
+                language_input, artifact_ref = language_handoff
+                context["derived_language_input"] = language_input
+                context["derived_language_input_artifact"] = artifact_ref
+                context["orchestration_direct_delivery"] = False
+            elif run.direct_delivery and run.direct_output is not None:
                 output_text = (
                     run.direct_output
                     if isinstance(run.direct_output, str)

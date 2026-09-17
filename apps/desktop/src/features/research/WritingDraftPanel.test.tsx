@@ -147,4 +147,25 @@ describe("WritingDraftPanel", () => {
     expect(evidence.textContent).toContain("已保存 v1")
     expect(screen.getByRole("link", { name: "ev-writing-1" }).getAttribute("href")).toContain("evidence-ev-writing-1")
   })
+
+  it("warns when an exported draft uses a stale source", async () => {
+    api.listWritingProjects.mockResolvedValue({ total: 1, projects: [project()] })
+    api.exportWritingProject.mockResolvedValue({
+      project_id: "project-1",
+      markdown: "# Grounded manuscript\n",
+      references: [],
+      outline_version: 0,
+      section_versions: { introduction: 1 },
+      source_statuses: { "paper-a": "stale" },
+      verification_status: "requires_revalidation",
+      warnings: ["Source paper-a is stale; revalidate affected claims before reuse."],
+    })
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:writing-export")
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined)
+    renderPanel()
+
+    await userEvent.click(await screen.findByRole("button", { name: "Export" }))
+
+    expect(await screen.findByText(/Exported with 1 stale or unavailable source warning/)).not.toBeNull()
+  })
 })

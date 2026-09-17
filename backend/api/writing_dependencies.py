@@ -17,11 +17,18 @@ def get_writing_project_service() -> WritingProjectService:
         return _service
     with _service_lock:
         if _service is None:
+            from backend.api.knowledge_dependencies import get_knowledge_library_service
+            from backend.api.research_memory_dependencies import (
+                get_research_memory_service,
+            )
+
             store = build_artifact_store()
             _service = WritingProjectService(
                 artifact_store=store,
                 workspace_service=get_research_workspace_service(),
                 memory_coordinator=get_memory_coordinator(),
+                knowledge_library=get_knowledge_library_service(),
+                research_memory=get_research_memory_service(),
             )
         return _service
 
