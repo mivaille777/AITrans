@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCcw } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type WheelEvent } from "react"
 
 import { Button } from "../../shared/ui/Button"
 import { createLocalPdfDocumentSource, loadPdfJs } from "./pdfjs-runtime"
@@ -223,6 +223,12 @@ export default function PdfReaderSurface({
     setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(nextZoom.toFixed(2)))))
   }
 
+  function handleZoomWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!event.ctrlKey || event.deltaY === 0 || Boolean(error)) return
+    event.preventDefault()
+    changeZoom(zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP))
+  }
+
   function captureSelection() {
     window.setTimeout(() => {
       const current = window.getSelection()
@@ -257,18 +263,53 @@ export default function PdfReaderSurface({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-[#f5f5f5]">
-      <div className="grid min-h-[48px] shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 py-2 text-[10px] text-[#777]">
-        <div className="flex items-center gap-1.5 justify-self-start">
+      <div className="grid min-h-[48px] shrink-0 grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-[#e5e5e5] bg-white px-4 py-2 text-[10px] text-[#777]">
+        <div className="flex min-w-0 items-center gap-1.5 justify-self-start">
           <Button aria-label="Previous PDF page" size="xs" variant="ghost" disabled={!pdfDocument || pageNumber <= 1} onClick={() => changePage(pageNumber - 1)}><ChevronLeft size={12} /></Button>
           <span className="min-w-20 text-center font-medium text-[#555]">Page {pageNumber}{pageCount ? ` / ${pageCount}` : ""}</span>
           <Button aria-label="Next PDF page" size="xs" variant="ghost" disabled={!pdfDocument || pageNumber >= pageCount} onClick={() => changePage(pageNumber + 1)}><ChevronRight size={12} /></Button>
+          <span className="mx-1 h-5 w-px shrink-0 bg-[#e1e1e1]" />
+          <div className="flex shrink-0 items-center gap-0.5" aria-label="Document zoom controls">
+            <button
+              type="button"
+              aria-label="Zoom PDF out"
+              title="Zoom out"
+              disabled={zoom <= MIN_ZOOM || Boolean(error)}
+              onClick={() => changeZoom(zoom - ZOOM_STEP)}
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#555] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+            >
+              <Minus size={13} />
+            </button>
+            <button
+              type="button"
+              aria-label="Reset PDF zoom"
+              title="Reset zoom"
+              disabled={Boolean(error)}
+              onClick={() => changeZoom(1)}
+              className="flex h-7 min-w-[50px] items-center justify-center gap-1 rounded-[6px] px-1.5 text-[10px] font-medium text-[#555] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+            >
+              <RotateCcw size={10} />
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              aria-label="Zoom PDF in"
+              title="Zoom in"
+              disabled={zoom >= MAX_ZOOM || Boolean(error)}
+              onClick={() => changeZoom(zoom + ZOOM_STEP)}
+              className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#555] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+            >
+              <Plus size={13} />
+            </button>
+          </div>
         </div>
-        <span className="hidden text-[#999] lg:inline">Select text to create knowledge or ask AI.</span>
+        <span className="hidden truncate text-center text-[#999] lg:inline">Select text to create knowledge or ask AI.</span>
         <span className="justify-self-end text-[#aaa]">PDF</span>
       </div>
 
       <div
         ref={hostRef}
+        onWheel={handleZoomWheel}
         className="ait-scroll-panel ait-pdf-scroll-surface relative min-h-0 flex-1 overflow-scroll overscroll-contain p-6 pb-20"
         style={{ scrollbarGutter: "stable both-edges" }}
         aria-label={`Interactive PDF · ${title}`}
@@ -298,43 +339,6 @@ export default function PdfReaderSurface({
             <div ref={textLayerRef} className="ait-pdf-text-layer textLayer" />
           </div>
         )}
-      </div>
-
-      <div
-        className="absolute bottom-4 right-4 z-40 flex items-center gap-1 rounded-[9px] border border-[#d9d9d9] bg-white/95 p-1 shadow-[0_8px_24px_rgba(0,0,0,.10)] backdrop-blur-sm"
-        aria-label="Document zoom controls"
-      >
-        <button
-          type="button"
-          aria-label="Zoom PDF out"
-          title="Zoom out"
-          disabled={zoom <= MIN_ZOOM || Boolean(error)}
-          onClick={() => changeZoom(zoom - ZOOM_STEP)}
-          className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#444] transition hover:bg-[#f1f1f1] disabled:opacity-30"
-        >
-          <Minus size={14} />
-        </button>
-        <button
-          type="button"
-          aria-label="Reset PDF zoom"
-          title="Reset zoom"
-          disabled={Boolean(error)}
-          onClick={() => changeZoom(1)}
-          className="flex h-8 min-w-[54px] items-center justify-center gap-1 rounded-[7px] px-2 text-[10.5px] font-medium text-[#555] transition hover:bg-[#f1f1f1] disabled:opacity-30"
-        >
-          <RotateCcw size={11} />
-          {Math.round(zoom * 100)}%
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom PDF in"
-          title="Zoom in"
-          disabled={zoom >= MAX_ZOOM || Boolean(error)}
-          onClick={() => changeZoom(zoom + ZOOM_STEP)}
-          className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#444] transition hover:bg-[#f1f1f1] disabled:opacity-30"
-        >
-          <Plus size={14} />
-        </button>
       </div>
     </div>
   )
