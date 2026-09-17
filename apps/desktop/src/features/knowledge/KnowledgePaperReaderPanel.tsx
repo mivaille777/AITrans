@@ -246,16 +246,17 @@ function KnowledgePaperReaderContent({
     return <ReaderMessage title="No indexed source attached" description="This paper card does not have a local indexed document yet." onBack={onBack} />
   }
 
-  const canPreviewPdf = document.source_type === "pdf" && Boolean(reader.previewUrl)
+  const activePaper = paper
+  const activeDocument = document
+  const canPreviewPdf = activeDocument.source_type === "pdf" && Boolean(reader.previewUrl)
   const pageCount = reader.outlineQuery.data?.page_count ?? 0
   const activePage = selection?.pageNumber
     ?? reader.activeOutlineSection?.page_start
     ?? sectionQuery.data?.page_start
     ?? 1
   const activeIndex = reader.sections.findIndex((section) => section.section_id === reader.activeSectionId)
-  const currentTags = Array.isArray(paper.metadata.tags) ? paper.metadata.tags : []
-  const bookmarked = bookmarkOverride ?? Boolean(paper.metadata.bookmarked)
-  const nearbyContext = buildNearbyContext(sectionQuery.data?.text ?? "", selection?.text ?? "")
+  const currentTags = Array.isArray(activePaper.metadata.tags) ? activePaper.metadata.tags : []
+  const bookmarked = bookmarkOverride ?? Boolean(activePaper.metadata.bookmarked)
   const currentPassage = selection?.text ?? "Select a passage in the document to capture evidence and context."
   const currentSection = sectionQuery.data?.heading || reader.activeOutlineSection?.heading || "Document section"
   const currentPageLabel = pageCount ? `${Math.max(1, activePage)} / ${pageCount}` : String(Math.max(1, activePage))
@@ -267,8 +268,8 @@ function KnowledgePaperReaderContent({
     const next = !bookmarked
     setBookmarkOverride(next)
     library.updateItemMutation.mutate({
-      itemId: paper.item_id,
-      payload: { metadata: { ...paper.metadata, bookmarked: next } },
+      itemId: activePaper.item_id,
+      payload: { metadata: { ...activePaper.metadata, bookmarked: next } },
     })
   }
 
@@ -279,22 +280,22 @@ function KnowledgePaperReaderContent({
       return
     }
     library.updateItemMutation.mutate({
-      itemId: paper.item_id,
-      payload: { metadata: { ...paper.metadata, tags: [...currentTags, normalized] } },
+      itemId: activePaper.item_id,
+      payload: { metadata: { ...activePaper.metadata, tags: [...currentTags, normalized] } },
     })
     setTagDraft("")
   }
 
   function removeTag(tag: string) {
     library.updateItemMutation.mutate({
-      itemId: paper.item_id,
-      payload: { metadata: { ...paper.metadata, tags: currentTags.filter((candidate) => candidate !== tag) } },
+      itemId: activePaper.item_id,
+      payload: { metadata: { ...activePaper.metadata, tags: currentTags.filter((candidate) => candidate !== tag) } },
     })
   }
 
   function openSourceExternally() {
     setOpenError("")
-    void desktop.files.openEvidenceSource(document.source_uri).catch((error: unknown) => {
+    void desktop.files.openEvidenceSource(activeDocument.source_uri).catch((error: unknown) => {
       setOpenError(error instanceof Error ? error.message : "Unable to open source.")
     })
   }
@@ -319,7 +320,7 @@ function KnowledgePaperReaderContent({
           <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
             <div className="space-y-1">
               {filteredRecentPapers.map((candidate) => {
-                const active = candidate.item_id === paper.item_id
+                const active = candidate.item_id === activePaper.item_id
                 const candidateDocument = candidate.resource_document_id ? documentsById.get(candidate.resource_document_id) : undefined
                 return (
                   <button
@@ -379,8 +380,8 @@ function KnowledgePaperReaderContent({
         <main className="flex min-h-0 min-w-0 flex-col bg-[#fafafa]">
           <header className="relative flex h-[68px] shrink-0 items-center justify-between gap-4 border-b border-[#e6e6e6] bg-white px-5">
             <div className="min-w-0">
-              <h1 className="truncate text-[19px] font-semibold leading-6 tracking-[-0.025em] text-[#151515]">{paper.title}</h1>
-              <p className="mt-0.5 truncate text-[11.5px] text-[#777]">{paperByline(paper, document)}</p>
+              <h1 className="truncate text-[19px] font-semibold leading-6 tracking-[-0.025em] text-[#151515]">{activePaper.title}</h1>
+              <p className="mt-0.5 truncate text-[11.5px] text-[#777]">{paperByline(activePaper, activeDocument)}</p>
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
@@ -437,7 +438,7 @@ function KnowledgePaperReaderContent({
             <div className="min-h-0 flex-1">
               <PdfReaderSurface
                 url={reader.previewUrl}
-                title={paper.title}
+                title={activePaper.title}
                 initialPage={Math.max(1, activePage)}
                 onSelection={usePdfSelection}
               />
@@ -449,8 +450,8 @@ function KnowledgePaperReaderContent({
               ) : sectionQuery.data ? (
                 <div className="mx-auto min-h-[calc(100%-12px)] max-w-[880px] rounded-[7px] border border-[#e3e3e3] bg-white px-[7.2%] pb-8 pt-10 shadow-[0_1px_2px_rgba(0,0,0,.025)]">
                   <div className="flex items-center justify-between border-b border-[#777] pb-2 font-serif text-[11px] text-[#343434]">
-                    <span className="truncate pr-4">{paper.title}</span>
-                    <span className="shrink-0">{compactSourceLabel(paper.source_uri, document.source_type)}</span>
+                    <span className="truncate pr-4">{activePaper.title}</span>
+                    <span className="shrink-0">{compactSourceLabel(activePaper.source_uri, activeDocument.source_type)}</span>
                   </div>
 
                   <div className="pt-9">
@@ -496,9 +497,9 @@ function KnowledgePaperReaderContent({
                   <FileText size={20} strokeWidth={1.55} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-[13px] font-semibold text-[#242424]">{paper.title}</h3>
-                  <p className="mt-1 truncate text-[12px] text-[#777]">{paperSubtitle(paper, document)}</p>
-                  <p className="mt-1 truncate text-[11px] text-[#8a8a8a]">{compactSourceLabel(paper.source_uri, document.source_type)}</p>
+                  <h3 className="truncate text-[13px] font-semibold text-[#242424]">{activePaper.title}</h3>
+                  <p className="mt-1 truncate text-[12px] text-[#777]">{paperSubtitle(activePaper, activeDocument)}</p>
+                  <p className="mt-1 truncate text-[11px] text-[#8a8a8a]">{compactSourceLabel(activePaper.source_uri, activeDocument.source_type)}</p>
                   <div className="mt-2.5 flex items-center gap-2">
                     <button type="button" className="h-8 rounded-[7px] border border-[#e2e2e2] px-3 text-[11px] font-medium text-[#444] hover:bg-[#f7f7f7]" onClick={() => navigate("/knowledge?view=library")}>View in Library</button>
                     <button type="button" aria-label="Open source externally" className="flex h-8 w-8 items-center justify-center rounded-[7px] border border-[#e2e2e2] text-[#444] hover:bg-[#f7f7f7]" onClick={openSourceExternally}><ExternalLink size={15} /></button>
@@ -521,21 +522,12 @@ function KnowledgePaperReaderContent({
               </div>
             </ContextSection>
 
-            <ContextSection
-              title="Nearby Context"
-              action={<CopyButton disabled={!nearbyContext} onClick={() => copyText(nearbyContext, "Nearby context copied.")} />}
-            >
-              <div className="rounded-[8px] bg-[#f2f2f2] px-3.5 py-3 text-[12px] leading-[1.48] text-[#4b4b4b]">
-                {nearbyContext || "Nearby section context will appear after the section is loaded."}
-              </div>
-            </ContextSection>
-
             <ContextSection title="Quick Actions">
               <div className="grid grid-cols-2 gap-2">
                 <QuickAction icon={<StickyNote size={15} />} label="Add Note" disabled={!selection} onClick={() => createSelectionCard("note")} />
                 <QuickAction icon={<Sparkles size={15} />} label="Explain with AI" disabled={!selection} onClick={explainWithAi} />
                 <QuickAction icon={<Link2 size={15} />} label="Find Related" onClick={() => navigate("/knowledge?view=graph")} />
-                <QuickAction icon={<Quote size={15} />} label="Create Citation" onClick={() => copyText(buildCitation(paper, document), "Citation copied.")} />
+                <QuickAction icon={<Quote size={15} />} label="Create Citation" onClick={() => copyText(buildCitation(activePaper, activeDocument), "Citation copied.")} />
                 <QuickAction icon={<Highlighter size={15} />} label="Highlight" disabled={!selection} onClick={() => createSelectionCard("highlight")} />
                 <QuickAction icon={<Languages size={15} />} label="Translate" disabled={!selection} onClick={translateSelection} />
                 <QuickAction icon={<Lightbulb size={15} />} label="Save Concept" disabled={!selection} onClick={() => createSelectionCard("concept")} />
@@ -781,19 +773,6 @@ function compactSourceLabel(sourceUri: string, fallback: string): string {
     }
   }
   return fallback.toUpperCase()
-}
-
-function buildNearbyContext(sectionText: string, selectedText: string): string {
-  const normalizedSection = sectionText.replace(/\s+/g, " ").trim()
-  if (!normalizedSection) return ""
-  const normalizedSelection = selectedText.replace(/\s+/g, " ").trim()
-  if (!normalizedSelection) return normalizedSection.slice(0, 520)
-  const index = normalizedSection.toLowerCase().indexOf(normalizedSelection.toLowerCase())
-  if (index < 0) return normalizedSection.slice(0, 520)
-  const before = Math.max(0, index - 230)
-  const after = Math.min(normalizedSection.length, index + normalizedSelection.length + 230)
-  const context = normalizedSection.slice(before, index) + normalizedSection.slice(index + normalizedSelection.length, after)
-  return `${before > 0 ? "…" : ""}${context.trim()}${after < normalizedSection.length ? "…" : ""}`
 }
 
 function buildCitation(paper: KnowledgeItem, document: KnowledgeDocument): string {
