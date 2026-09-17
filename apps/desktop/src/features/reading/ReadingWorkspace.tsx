@@ -6,7 +6,13 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react"
-import { useEffect, useRef, useState, type CSSProperties } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type WheelEvent,
+} from "react"
 
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import UnifiedReadingWorkspace from "./UnifiedReadingWorkspace"
@@ -53,6 +59,18 @@ export default function ReadingWorkspace({ workspace }: { workspace: Translation
     window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(value))
   }
 
+  function handleReaderWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!textReaderActive || !event.ctrlKey || event.deltaY === 0) return
+    if (!(event.target instanceof Element)) return
+    const scroller = event.target.closest(".ait-scroll-panel")
+    if (!scroller || scroller.parentElement?.tagName !== "MAIN") return
+
+    event.preventDefault()
+    changeZoom(
+      documentZoom + (event.deltaY < 0 ? DOCUMENT_ZOOM_STEP : -DOCUMENT_ZOOM_STEP),
+    )
+  }
+
   const readingStyle = {
     "--ait-reading-document-zoom": documentZoom,
   } as CSSProperties
@@ -60,6 +78,7 @@ export default function ReadingWorkspace({ workspace }: { workspace: Translation
   return (
     <div
       ref={rootRef}
+      onWheelCapture={handleReaderWheel}
       className={`ait-reading-workspace relative h-full min-h-0 overflow-hidden ${
         textReaderActive ? "is-text-reader" : "is-pdf-reader"
       } ${evidenceCollapsed ? "evidence-collapsed" : "evidence-expanded"}`}
