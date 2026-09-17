@@ -20,15 +20,17 @@ const actions: Array<{
 export function ResearchWorkflowActions({
   available,
   compact = false,
+  variant = "panel",
 }: {
   available?: Array<Exclude<AgentWorkflowAction, "">>
   compact?: boolean
+  variant?: "panel" | "inline"
 }) {
   const navigate = useNavigate()
   const visible = available ? actions.filter((action) => available.includes(action.id)) : actions
 
   return (
-    <section className="ait-surface p-4" aria-label="Research Agent actions">
+    <section className={variant === "panel" ? "ait-surface p-4" : ""} aria-label="Research Agent actions">
       {!compact ? (
         <div className="mb-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Research Agent</p>

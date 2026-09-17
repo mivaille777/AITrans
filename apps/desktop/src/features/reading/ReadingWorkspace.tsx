@@ -46,7 +46,6 @@ export default function ReadingWorkspace({
 
   return (
     <div className="space-y-4">
-      <ResearchWorkflowActions available={["quick_read", "analyze_visuals"]} compact />
       <ReadingLibraryLanding
         library={library}
         onOpenPaper={(itemId) => setSearchParams(buildOpenReadingPaperParams(searchParams, itemId))}
@@ -135,6 +134,10 @@ function ReadingLibraryLanding({
           <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
             Reading is the canonical document-reading surface. Open an indexed paper here for structured outline navigation, Text/PDF modes, Evidence, Highlight, Note, Concept, Translate, and Ask AI actions. Knowledge remains the place to organize and manage those artifacts.
           </p>
+          <div className="mt-4 max-w-2xl border-t border-slate-100 pt-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Start from the current paper</p>
+            <ResearchWorkflowActions available={["quick_read", "analyze_visuals"]} compact variant="inline" />
+          </div>
         </div>
         <Button variant="ghost" size="sm" onClick={onManageLibrary}><LibraryBig size={14} />Manage Knowledge Library</Button>
       </header>
