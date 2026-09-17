@@ -10,6 +10,7 @@ export type WorkspaceRoutePath =
 export interface WorkspaceRouteMeta {
   path: WorkspaceRoutePath
   label: string
+  sidebarLabel?: string
   description: string
 }
 
@@ -17,11 +18,13 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
     path: "/chat",
     label: "AI Chat",
+    sidebarLabel: "Chat",
     description: "Continue reasoning from a frozen reading or research context.",
   },
   {
     path: "/agent",
     label: "Agent Workspace",
+    sidebarLabel: "Agent",
     description: "Run Agent tasks with visible context, execution trace, tool activity, and results.",
   },
   {
@@ -50,6 +53,20 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
     description: "Configure native overlay placement and interaction behavior.",
   },
 ] as const
+
+const sidebarRouteOrder: readonly WorkspaceRoutePath[] = [
+  "/chat",
+  "/reading",
+  "/research",
+  "/knowledge",
+  "/agent",
+]
+
+export const workspaceSidebarRoutes: readonly WorkspaceRouteMeta[] = sidebarRouteOrder.map((path) => {
+  const route = workspaceRoutes.find((candidate) => candidate.path === path)
+  if (!route) throw new Error(`Missing workspace sidebar route: ${path}`)
+  return route
+})
 
 const fallbackRoute = workspaceRoutes[0]
 

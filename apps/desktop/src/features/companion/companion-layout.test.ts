@@ -10,8 +10,8 @@ describe("AI Chat nested scroll layout", () => {
   })
 
   it("uses a two-column intermediate desktop layout before the full inspector layout", () => {
-    expect(companionLayoutClassNames.shell).toContain("min-[960px]:grid-cols-[200px_minmax(0,1fr)]")
-    expect(companionLayoutClassNames.shell).toContain("xl:grid-cols-[220px_minmax(0,1fr)_280px]")
+    expect(companionLayoutClassNames.shell).toContain("min-[960px]:grid-cols-[288px_minmax(0,1fr)]")
+    expect(companionLayoutClassNames.shell).toContain("xl:grid-cols-[300px_minmax(0,1fr)_320px]")
     expect(companionLayoutClassNames.contextPanel).toContain("min-[960px]:col-span-2")
   })
 
@@ -25,7 +25,7 @@ describe("AI Chat nested scroll layout", () => {
   })
 
   it("keeps the composer in a dedicated chat grid row", () => {
-    expect(companionLayoutClassNames.chatColumn).toContain("grid-rows-[minmax(0,1fr)_auto]")
+    expect(companionLayoutClassNames.chatColumn).toContain("grid-rows-[auto_minmax(0,1fr)_auto]")
     expect(companionLayoutClassNames.composer).toContain("shrink-0")
     expect(companionLayoutClassNames.composer).toContain("sticky")
     expect(companionLayoutClassNames.composer).toContain("xl:static")

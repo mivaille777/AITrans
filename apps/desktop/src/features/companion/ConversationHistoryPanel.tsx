@@ -8,7 +8,6 @@ import {
   renameConversation,
 } from "../../api/conversations"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
-import { Badge } from "../../shared/ui/Badge"
 import { Button } from "../../shared/ui/Button"
 import { companionLayoutClassNames } from "./companion-layout"
 import {
@@ -17,6 +16,12 @@ import {
 } from "./conversation-history"
 
 const HISTORY_LIMIT = 50
+
+function formatConversationTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+}
 
 export default function ConversationHistoryPanel({
   activeConversationId,
@@ -85,72 +90,74 @@ export default function ConversationHistoryPanel({
 
   return (
     <aside className={companionLayoutClassNames.historyPanel}>
-      <div className="shrink-0 px-1 py-1">
-        <Button className="w-full justify-center" size="xs" onClick={onNewGeneralConversation}>
-          <Plus size={13} />
-          New chat
+      <div className="ait-chat-history-header shrink-0">
+        <h2 className="ait-chat-history-title">Chat</h2>
+        <Button
+          className="ait-chat-new-button"
+          size="xs"
+          aria-label="New chat"
+          title="New chat"
+          onClick={onNewGeneralConversation}
+        >
+          <Plus size={18} strokeWidth={2.2} />
         </Button>
-
-        {hasCurrentReading && (
-          <button
-            type="button"
-            className="ait-control-motion mt-2.5 w-full rounded-[11px] border border-blue-200/70 bg-blue-50/70 px-3 py-2.5 text-left text-xs font-medium text-blue-700 hover:bg-blue-50"
-            onClick={onUseCurrentReading}
-          >
-            Use current reading context
-          </button>
-        )}
-
-        <label className="mt-2.5 flex items-center gap-2 rounded-[11px] border border-slate-200/80 bg-white px-3 py-2.5 transition-colors focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100">
-          <Search size={13} className="shrink-0 text-slate-400" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"
-            value={search}
-            placeholder="Search conversations"
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
       </div>
+
+      {hasCurrentReading && (
+        <button
+          type="button"
+          className="ait-chat-reading-shortcut ait-control-motion"
+          onClick={onUseCurrentReading}
+        >
+          Use current reading context
+        </button>
+      )}
+
+      <label className="ait-chat-search">
+        <Search size={17} className="shrink-0" />
+        <input
+          className="min-w-0 flex-1 bg-transparent outline-none"
+          value={search}
+          placeholder="Search conversations…"
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
 
       <div className={companionLayoutClassNames.historyScroller}>
         {conversationsQuery.isLoading && (
-          <p className="px-2 py-3 text-xs text-slate-400">Loading conversations…</p>
+          <p className="ait-chat-history-empty">Loading conversations…</p>
         )}
         {!conversationsQuery.isLoading && conversations.length === 0 && (
-          <p className="px-2 py-3 text-xs leading-5 text-slate-400">
+          <p className="ait-chat-history-empty">
             No saved conversations yet. Start a General Chat or open the current reading context.
           </p>
         )}
         {!conversationsQuery.isLoading && conversations.length > 0 && filtered.length === 0 && (
-          <p className="px-2 py-3 text-xs leading-5 text-slate-400">
+          <p className="ait-chat-history-empty">
             No conversations match “{search.trim()}”.
           </p>
         )}
 
-        <div className="space-y-4 pt-2">
+        <div className="ait-chat-history-groups">
           {groups.map((group) => (
             <section key={group.label}>
-              <p className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-slate-400">
-                {group.label}
+              <p className="ait-chat-history-group-label">
+                {group.label === "Previous 7 days" ? "This week" : group.label}
               </p>
-              <div className="space-y-1">
+              <div className="ait-chat-history-items">
                 {group.conversations.map((conversation) => {
                   const active = conversation.conversation_id === activeConversationId
                   const editing = conversation.conversation_id === editingId
                   return (
                     <div
                       key={conversation.conversation_id}
-                      className={`ait-conversation-item group rounded-[11px] border p-2.5 ${
-                        active
-                          ? "border-blue-200/70 bg-blue-50/75 shadow-sm"
-                          : "border-transparent hover:border-slate-200/80 hover:bg-white"
-                      }`}
+                      className={`ait-conversation-item ait-chat-conversation-item group ${active ? "is-active" : ""}`}
                     >
                       {editing ? (
                         <div>
                           <input
                             autoFocus
-                            className="w-full rounded-[9px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-800 outline-none focus:border-blue-300"
+                            className="ait-chat-conversation-edit-input"
                             value={editingTitle}
                             onChange={(event) => setEditingTitle(event.target.value)}
                             onKeyDown={(event) => {
@@ -161,10 +168,10 @@ export default function ConversationHistoryPanel({
                               }
                             }}
                           />
-                          <div className="mt-2 flex gap-1">
+                          <div className="ait-chat-conversation-edit-actions">
                             <button
                               type="button"
-                              className="rounded-[8px] bg-slate-900 px-2 py-1 text-[10px] text-white"
+                              className="ait-chat-small-action is-primary"
                               disabled={renameMutation.isPending}
                               onClick={() => commitRename(conversation.conversation_id)}
                             >
@@ -172,7 +179,7 @@ export default function ConversationHistoryPanel({
                             </button>
                             <button
                               type="button"
-                              className="rounded-[8px] px-2 py-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                              className="ait-chat-small-action"
                               onClick={() => {
                                 setEditingId("")
                                 setEditingTitle("")
@@ -186,35 +193,45 @@ export default function ConversationHistoryPanel({
                         <>
                           <button
                             type="button"
-                            className="block w-full text-left"
+                            className="ait-chat-conversation-main"
                             onClick={() => onOpen(conversation.conversation_id)}
                           >
-                            <p className="line-clamp-2 text-xs font-medium leading-5 text-slate-700">
-                              {conversation.title}
+                            <div className="ait-chat-conversation-title-row">
+                              <p className="ait-chat-conversation-title">
+                                {conversation.title}
+                              </p>
+                              <span className="ait-chat-conversation-time">
+                                {formatConversationTime(conversation.updated_at)}
+                              </span>
+                            </div>
+                            <p className="ait-chat-conversation-snippet">
+                              {conversation.section_heading || conversation.resource_title || (
+                                conversation.context_mode === "reading" ? "Continue from reading context…" : "Start a new conversation…"
+                              )}
                             </p>
-                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                              <Badge tone={conversation.context_mode === "reading" ? "info" : "neutral"}>
+                            <div className="ait-chat-conversation-meta">
+                              <span className="ait-chat-history-pill">
                                 {conversation.context_mode === "reading" ? "Reading" : "General"}
-                              </Badge>
-                              {conversation.model && <Badge tone="neutral">{conversation.model}</Badge>}
+                              </span>
+                              {conversation.model && (
+                                <span className="ait-chat-history-pill">{conversation.model}</span>
+                              )}
                               {conversation.section_heading && (
-                                <span className="line-clamp-1 text-[10px] text-slate-400">
-                                  {conversation.section_heading}
-                                </span>
+                                <span className="ait-chat-conversation-source">{conversation.source_kind || "Context"}</span>
                               )}
                             </div>
                           </button>
-                          <div className={`mt-2 flex gap-1 transition-opacity ${active ? "opacity-70" : "opacity-0 group-hover:opacity-70"}`}>
+                          <div className={`ait-chat-conversation-actions ${active ? "is-visible" : ""}`}>
                             <button
                               type="button"
-                              className="rounded-[7px] px-1.5 py-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                              className="ait-chat-small-action"
                               onClick={() => beginRename(conversation.conversation_id, conversation.title)}
                             >
                               Rename
                             </button>
                             <button
                               type="button"
-                              className="rounded-[7px] px-1.5 py-1 text-[10px] text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                              className="ait-chat-small-action is-danger"
                               onClick={() => remove(conversation.conversation_id, conversation.title)}
                             >
                               Delete

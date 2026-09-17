@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   getWorkspaceRouteMeta,
   workspaceRoutes,
+  workspaceSidebarRoutes,
   workspaceRouteUsesFixedHeight,
 } from "./workspace-navigation"
 
@@ -23,6 +24,17 @@ describe("workspace navigation", () => {
 
   it("returns metadata for a known route", () => {
     expect(getWorkspaceRouteMeta("/chat").label).toBe("AI Chat")
+  })
+
+  it("keeps Translation available as a route but out of the global sidebar", () => {
+    expect(workspaceSidebarRoutes.map((route) => route.path)).toEqual([
+      "/chat",
+      "/reading",
+      "/research",
+      "/knowledge",
+      "/agent",
+    ])
+    expect(workspaceSidebarRoutes.some((route) => route.path === "/translation")).toBe(false)
   })
 
   it("falls back to AI Chat for unknown routes", () => {

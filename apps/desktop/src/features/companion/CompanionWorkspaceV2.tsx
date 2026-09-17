@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { BookOpen, ChevronDown, ChevronRight, FileText, MoreHorizontal, Paperclip, Share2 } from "lucide-react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import {
@@ -225,6 +226,9 @@ export default function CompanionWorkspaceV2() {
     : runtime.context.resource_title || runtime.context.section_heading || "Reading context"
   const canAttachSaved = Boolean(runtime.context.source_text)
   const branchBusy = Boolean(branchingMessageId) || runtime.activeRequestId !== null
+  const activeModel = [...runtime.messages]
+    .reverse()
+    .find((message) => message.model)?.model || "Llama 3.1 8B (Local)"
   const showingHandoff = Boolean(
     readingHandoff &&
       !runtime.conversationId &&
@@ -248,33 +252,35 @@ export default function CompanionWorkspaceV2() {
       />
 
       <aside className={companionLayoutClassNames.contextPanel}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              Chat context
-            </p>
-            <h2 className="mt-2 truncate text-sm font-semibold text-slate-900">
-              {contextTitle}
-            </h2>
+        <div className="ait-chat-context-header">
+          <div className="ait-chat-context-heading">
+            <span className="ait-chat-context-icon"><BookOpen size={19} /></span>
+            <div className="min-w-0">
+              <p className="ait-chat-section-eyebrow">
+                {runtime.contextMode === "reading" ? "Reading context" : "Chat context"}
+              </p>
+              <h2 className="ait-chat-context-title">
+                {contextTitle}
+              </h2>
+              <p className="ait-chat-context-count">
+                {runtime.contextMode === "reading" ? "Current evidence" : "No sources attached"}
+              </p>
+            </div>
           </div>
-          <Badge tone={runtime.contextMode === "reading" ? "info" : "neutral"}>
-            {runtime.contextMode === "reading"
-              ? isKnowledgeContext ? "Knowledge-grounded" : "Reading-grounded"
-              : "General"}
-          </Badge>
+          <ChevronRight size={18} className="ait-chat-context-chevron" aria-hidden="true" />
         </div>
 
-        <div className="relative mt-4 grid grid-cols-2 overflow-hidden rounded-[14px] bg-slate-200/70 p-1">
+        <div className="ait-chat-context-tabs">
           <span
             aria-hidden="true"
-            className={`ait-segment-indicator absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-[11px] bg-white shadow-sm ${
+            className={`ait-chat-context-tab-indicator ${
               runtime.contextMode === "reading" ? "translate-x-full" : "translate-x-0"
             }`}
           />
           <button
             type="button"
             disabled={runtime.contextUpdating || runtime.activeRequestId !== null}
-            className={`relative z-10 rounded-[11px] px-2 py-2 text-xs font-medium ${
+            className={`ait-chat-context-tab ${
               runtime.contextMode === "general" ? "text-slate-900" : "text-slate-500"
             }`}
             onClick={() => void runtime.detachReadingContext()}
@@ -288,7 +294,7 @@ export default function CompanionWorkspaceV2() {
               runtime.activeRequestId !== null ||
               (!canAttachSaved && !readingHandoff)
             }
-            className={`relative z-10 rounded-[11px] px-2 py-2 text-xs font-medium disabled:opacity-40 ${
+            className={`ait-chat-context-tab disabled:opacity-40 ${
               runtime.contextMode === "reading" ? "text-slate-900" : "text-slate-500"
             }`}
             onClick={() => void (
@@ -301,11 +307,36 @@ export default function CompanionWorkspaceV2() {
           </button>
         </div>
 
+        <section className="ait-chat-reading-context-section">
+          <div className="ait-chat-inspector-section-heading">
+            <div className="ait-chat-inspector-section-title">
+              <FileText size={18} />
+              <div>
+                <h3>Reading context</h3>
+                <p>{runtime.context.source_text ? "1 source in context" : "No sources in context"}</p>
+              </div>
+            </div>
+            <ChevronRight size={17} />
+          </div>
+          {runtime.context.source_text ? (
+            <div className="ait-chat-source-item">
+              <span className="ait-chat-source-icon"><FileText size={17} /></span>
+              <span className="ait-chat-source-copy">
+                <strong>{contextTitle}</strong>
+                <small>{isKnowledgeContext ? "Knowledge source" : "Current selection"}</small>
+              </span>
+              <ChevronRight size={16} />
+            </div>
+          ) : (
+            <p className="ait-chat-inspector-empty">Attach a reading selection to see its source here.</p>
+          )}
+        </section>
+
         <div key={runtime.contextMode} className="ait-context-panel-enter">
           {runtime.contextMode === "general" ? (
-            <div className="mt-4 rounded-[16px] border border-slate-200/70 bg-white/85 p-3.5">
-              <p className="text-xs font-medium text-slate-700">No reading context attached.</p>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
+            <div className="ait-chat-context-empty">
+              <p className="ait-chat-context-empty-title">No reading context attached.</p>
+              <p className="ait-chat-context-empty-copy">
                 Conversation history remains available. Attach the latest reading evidence whenever you need grounded analysis.
               </p>
               {readingHandoff && (
@@ -333,27 +364,27 @@ export default function CompanionWorkspaceV2() {
                 </Button>
               )}
               {runtime.context.ai_content && (
-                <div className="mt-3 rounded-[16px] border border-cyan-100 bg-cyan-50/70 p-3.5">
+                <div className="ait-chat-insight-card">
                   <div className="flex items-center gap-2">
-                    <Badge tone="info">{isKnowledgeContext ? "Knowledge Insight" : "Quick Action"}</Badge>
+                    <span className="ait-chat-neutral-badge">{isKnowledgeContext ? "Knowledge Insight" : "Quick Action"}</span>
                     {runtime.context.ai_action && (
-                      <span className="text-[10px] text-cyan-700/70">
+                      <span className="ait-chat-context-action-label">
                         {runtime.context.ai_action}
                       </span>
                     )}
                   </div>
-                  <p className="mt-2 line-clamp-8 whitespace-pre-wrap text-xs leading-5 text-slate-700">
+                  <p className="ait-chat-insight-copy">
                     {runtime.context.ai_content}
                   </p>
                 </div>
               )}
               {runtime.conversationId && (
                 isKnowledgeContext ? (
-                  <div className="mt-4 rounded-[13px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[10px] leading-5 text-slate-500">
+                  <div className="ait-chat-context-note">
                     This context already lives in canonical Knowledge. Continue the conversation here; use Agent Workspace when you want to save another linked Insight.
                   </div>
                 ) : (
-                  <div className="mt-4">
+                  <div className="ait-chat-save-note">
                     <Button
                       size="xs"
                       disabled={saveNoteMutation.isPending}
@@ -362,7 +393,7 @@ export default function CompanionWorkspaceV2() {
                       {saveNoteMutation.isPending ? "Saving…" : "Save linked note"}
                     </Button>
                     {saveNoteMutation.isSuccess && (
-                      <p className="mt-2 text-[10px] text-emerald-600">
+                      <p className="ait-chat-success-note">
                         Research Note linked to this conversation.
                       </p>
                     )}
@@ -371,7 +402,7 @@ export default function CompanionWorkspaceV2() {
               )}
             </>
           ) : (
-            <p className="mt-4 text-xs leading-5 text-slate-500">
+            <p className="ait-chat-context-helper">
               Attach the current reading selection to use grounded chat.
             </p>
           )}
@@ -395,9 +426,43 @@ export default function CompanionWorkspaceV2() {
           onEnabledChange={runtime.setKnowledgeEnabled}
           onScopeChange={runtime.setKnowledgeDocumentIds}
         />
+
+        <section className="ait-chat-related-section">
+          <div className="ait-chat-inspector-section-heading">
+            <div className="ait-chat-inspector-section-title">
+              <Share2 size={18} />
+              <div>
+                <h3>Related</h3>
+                <p>Continue the research workflow</p>
+              </div>
+            </div>
+          </div>
+          <div className="ait-chat-related-links">
+            <Link to="/research">Find similar papers</Link>
+            <Link to="/research">Summarize this collection</Link>
+            <Link to="/research">Extract key claims</Link>
+            <Link to="/knowledge">Map the debate</Link>
+          </div>
+        </section>
       </aside>
 
       <div className={companionLayoutClassNames.chatColumn}>
+        <header className={companionLayoutClassNames.conversationHeader}>
+          <div className="ait-chat-conversation-heading">
+            <h1 className="ait-chat-conversation-name">
+              {contextTitle === "General Chat" ? "New conversation" : contextTitle}
+            </h1>
+            <p className="ait-chat-conversation-meta-line">
+              {runtime.contextMode === "reading" ? "Reading context" : "Local workspace"}
+              <span aria-hidden="true">·</span>
+              {runtime.contextMode === "reading" ? "Today" : "Ready to chat"}
+            </p>
+          </div>
+          <button type="button" className="ait-chat-conversation-menu" aria-label="Conversation actions">
+            <MoreHorizontal size={19} />
+          </button>
+        </header>
+
         <div className={companionLayoutClassNames.messageScroller}>
           {runtime.messages.length === 0 && (
             <EmptyState
@@ -433,14 +498,12 @@ export default function CompanionWorkspaceV2() {
               return (
                 <div
                   key={message.id}
-                  className={`ait-chat-message-enter ${message.role === "user"
-                    ? "ml-auto max-w-[78%] rounded-[20px] bg-slate-950 px-4 py-3 text-sm leading-6 text-white shadow-sm"
-                    : "max-w-[88%] rounded-[20px] border border-slate-100 bg-slate-50/85 px-4 py-3 text-sm leading-6 text-slate-700"}`}
+                  className={`ait-chat-message-enter ait-chat-message ${message.role === "user" ? "is-user" : "is-assistant"}`}
                 >
                   {message.role === "assistant" ? (
                     <>
                       {message.content ? (
-                        <div className="max-w-none">
+                        <div className="ait-chat-answer max-w-none">
                           {(message.citations?.length ?? 0) > 0 ? (
                             <CitedAnswer
                               content={message.content}
@@ -461,17 +524,17 @@ export default function CompanionWorkspaceV2() {
                           {message.status === "cancelled" ? "Generation stopped." : "No response content."}
                         </p>
                       )}
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {message.status === "streaming" && <Badge tone="info">Streaming</Badge>}
-                        {message.status === "cancelled" && <Badge tone="warning">Stopped</Badge>}
-                        {message.status === "error" && <Badge tone="danger">Failed</Badge>}
+                      <div className="ait-chat-message-meta">
+                        {message.status === "streaming" && <Badge className="ait-chat-message-badge" tone="info">Streaming</Badge>}
+                        {message.status === "cancelled" && <Badge className="ait-chat-message-badge" tone="warning">Stopped</Badge>}
+                        {message.status === "error" && <Badge className="ait-chat-message-badge" tone="danger">Failed</Badge>}
                         {message.status === "complete" && message.provider && (
-                          <Badge tone="success">
+                          <Badge className="ait-chat-message-badge" tone="success">
                             {message.provider}{message.model ? ` · ${message.model}` : ""}
                           </Badge>
                         )}
                         {message.status === "complete" && message.knowledgeEnabled && (
-                          <Badge tone={(message.evidence?.length ?? 0) > 0 ? "info" : "warning"}>
+                          <Badge className="ait-chat-message-badge" tone={(message.evidence?.length ?? 0) > 0 ? "info" : "warning"}>
                             {(message.evidence?.length ?? 0) > 0
                               ? `Knowledge · ${message.evidence?.length} sources`
                               : "General answer · No knowledge sources"}
@@ -481,7 +544,7 @@ export default function CompanionWorkspaceV2() {
                           <button
                             type="button"
                             disabled={branchBusy}
-                            className="text-[10px] font-medium text-slate-400 hover:text-slate-700 disabled:opacity-40"
+                            className="ait-chat-message-action disabled:opacity-40"
                             onClick={() => void rewriteFromUser(userBefore, userBefore.content)}
                           >
                             {message.status === "complete" ? "Regenerate" : "Retry"}
@@ -522,11 +585,11 @@ export default function CompanionWorkspaceV2() {
                     <>
                       <p className="whitespace-pre-wrap">{message.content}</p>
                       {userServerId && !userServerId.startsWith("user-local-") && (
-                        <div className="mt-2 text-right">
+                        <div className="ait-chat-user-action-row">
                           <button
                             type="button"
                             disabled={branchBusy}
-                            className="text-[10px] text-slate-400 hover:text-white disabled:opacity-40"
+                            className="ait-chat-message-action is-user-action disabled:opacity-40"
                             onClick={() => {
                               setEditingMessageId(message.id)
                               setEditingText(message.content)
@@ -543,7 +606,7 @@ export default function CompanionWorkspaceV2() {
             })}
 
             {runtime.errorMessage && (
-              <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <p className="ait-chat-error-message">
                 {runtime.errorMessage}
               </p>
             )}
@@ -555,44 +618,50 @@ export default function CompanionWorkspaceV2() {
           onSubmit={handleSubmit}
         >
           {!runtime.chatAvailable && runtime.chatStatusLoaded && (
-            <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+            <p className="ait-chat-unavailable-message">
               AI Chat 未配置：{runtime.chatStatusDetail}
             </p>
           )}
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            <Badge tone={runtime.contextMode === "reading" ? "info" : "neutral"}>
-              {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge Card" : "Reading" : "General"}
-            </Badge>
-            {runtime.knowledgeEnabled && (
-              <Badge tone="info">
-                Knowledge · {runtime.knowledgeDocumentIds.length > 0
-                  ? `${runtime.knowledgeDocumentIds.length} selected`
-                  : "All"}
-              </Badge>
-            )}
+          <div className="ait-chat-composer-controls">
+            <span className="ait-chat-composer-control">
+              <span>{runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge" : "Reading" : "Research"}</span>
+              <ChevronDown size={14} />
+            </span>
+            <span className="ait-chat-composer-control">
+              <span>{activeModel}</span>
+              <ChevronDown size={14} />
+            </span>
+            <span className={`ait-chat-composer-knowledge ${runtime.knowledgeEnabled ? "is-on" : ""}`}>
+              <span className="ait-chat-composer-knowledge-dot" />
+              Knowledge {runtime.knowledgeEnabled ? "on" : "off"}
+            </span>
           </div>
-          <div className="flex items-end gap-2">
-            <textarea
-              className="max-h-36 min-h-12 flex-1 resize-none rounded-[16px] border border-slate-200/80 bg-slate-50/85 px-3.5 py-2.5 text-sm leading-6 outline-none transition focus:border-slate-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-              placeholder={runtime.activeRequestId === null
-                ? runtime.contextMode === "general" ? "Ask anything…" : "继续问这段内容…"
-                : "当前回复仍在生成，可先编辑下一条消息…"}
-              value={runtime.draft}
-              disabled={runtime.openingConversation}
-              onChange={(event) => runtime.setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault()
-                  event.currentTarget.form?.requestSubmit()
-                }
-              }}
-            />
+          <div className="ait-chat-composer-row">
+            <label className="ait-chat-composer-field">
+              <Paperclip size={19} className="ait-chat-composer-attach" />
+              <textarea
+                className="ait-chat-composer-input"
+                placeholder={runtime.activeRequestId === null
+                  ? runtime.contextMode === "general" ? "Ask anything, or type '/' for commands…" : "Ask a question, or type '/' for commands…"
+                  : "当前回复仍在生成，可先编辑下一条消息…"}
+                value={runtime.draft}
+                disabled={runtime.openingConversation}
+                onChange={(event) => runtime.setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }}
+              />
+            </label>
             {runtime.activeRequestId !== null ? (
-              <Button type="button" variant="danger" size="md" onClick={runtime.cancelStream}>
-                停止
+              <Button className="ait-chat-send-button" type="button" variant="danger" size="md" onClick={runtime.cancelStream}>
+                Stop
               </Button>
             ) : (
               <Button
+                className="ait-chat-send-button"
                 type="submit"
                 variant="primary"
                 size="md"
@@ -603,12 +672,12 @@ export default function CompanionWorkspaceV2() {
                   Boolean(branchingMessageId)
                 }
               >
-                发送
+                Send
               </Button>
             )}
           </div>
-          <p className="mt-2 text-[10px] text-slate-400">
-            Enter 发送 · Shift+Enter 换行 · {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge context" : "Reading context" : "General"}{runtime.knowledgeEnabled ? " · Knowledge ON" : ""} · Shared Companion Runtime
+          <p className="ait-chat-composer-helper">
+            Enter to send · Shift+Enter for a new line · {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge context" : "Reading context" : "General"}{runtime.knowledgeEnabled ? " · Knowledge on" : ""}
           </p>
         </form>
       </div>
@@ -619,21 +688,21 @@ export default function CompanionWorkspaceV2() {
 function ContextPreview({ context }: { context: CompanionContextSnapshot }) {
   const knowledgeContext = context.source_kind.startsWith("knowledge_")
   return (
-    <div className="mt-4 space-y-3">
-      <div className="rounded-[16px] border border-slate-200/70 bg-white/85 p-3.5">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+    <div className="ait-chat-context-preview">
+      <div className="ait-chat-context-card">
+        <p className="ait-chat-card-eyebrow">
           {knowledgeContext ? "Knowledge card" : "Selection"}
         </p>
-        <p className="mt-2 line-clamp-8 text-xs leading-5 text-slate-700">
+        <p className="ait-chat-context-card-copy">
           {context.source_text}
         </p>
       </div>
       {context.translated_text && (
-        <div className="rounded-[16px] border border-slate-200/70 bg-white/85 p-3.5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+        <div className="ait-chat-context-card">
+          <p className="ait-chat-card-eyebrow">
             Translation
           </p>
-          <p className="mt-2 line-clamp-7 text-xs leading-5 text-slate-600">
+          <p className="ait-chat-context-card-copy is-muted">
             {context.translated_text}
           </p>
         </div>
