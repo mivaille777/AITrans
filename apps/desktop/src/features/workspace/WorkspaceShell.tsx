@@ -17,24 +17,33 @@ export default function WorkspaceShell({ children, llmStatus }: {
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const location = useLocation()
+  const routeMeta = getWorkspaceRouteMeta(location.pathname)
+  const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
+  const shellColumns = sidebarCollapsed
+    ? "grid-cols-[72px_minmax(0,1fr)]"
+    : "grid-cols-[240px_minmax(0,1fr)]"
+  const toggleSidebar = () => setSidebarCollapsed((value) => !value)
 
   if (location.pathname === "/reading") {
     return (
       <WindowFrame>
-        <div className="h-full min-h-0 overflow-hidden bg-white text-slate-950">
-          {children}
+        <div className={`ait-app-shell grid h-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-transparent text-slate-950 ${shellColumns}`}>
+          <WorkspaceSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
+
+          <div className="min-h-0 min-w-0 overflow-hidden p-3 pl-0">
+            <div className="h-full min-h-0 overflow-hidden rounded-[22px] border border-slate-200/70 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.08)]">
+              {children}
+            </div>
+          </div>
         </div>
       </WindowFrame>
     )
   }
 
-  const routeMeta = getWorkspaceRouteMeta(location.pathname)
-  const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
-
   return (
     <WindowFrame>
-      <div className={`ait-app-shell grid h-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-transparent text-slate-950 ${sidebarCollapsed ? "md:grid-cols-[72px_minmax(0,1fr)]" : "md:grid-cols-[240px_minmax(0,1fr)]"}`}>
-        <WorkspaceSidebar collapsed={sidebarCollapsed} onToggleCollapsed={() => setSidebarCollapsed((value) => !value)} />
+      <div className={`ait-app-shell grid h-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-transparent text-slate-950 ${shellColumns}`}>
+        <WorkspaceSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
 
         <div className="min-h-0 min-w-0 overflow-hidden p-3">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[22px] border border-slate-200/70 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.08)]">
