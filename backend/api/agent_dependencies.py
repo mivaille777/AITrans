@@ -11,6 +11,7 @@ from backend.agent_core.orchestration import (
     ScopedEvidenceService,
     build_artifact_store,
 )
+from backend.agent_core.orchestration.migration import build_migration_bridge
 from backend.agent_core.orchestration.parallel_executor import (
     ParallelTaskGraphExecutor,
     SQLiteTaskCheckpointStore,
@@ -54,7 +55,6 @@ from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
 from backend.services.conversation_store_service import ConversationStoreService
-from backend.services.multi_agent_runtime_bridge import MultiAgentRuntimeBridge
 from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceService
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
@@ -157,11 +157,10 @@ def get_agent_runtime(
 ) -> AgentRuntime:
     """Build one request-scoped canonical Agent Runtime.
 
-    Multi-agent collaboration is an advisory pre-workflow stage inside the same
-    reliability/telemetry boundary. Stage 5.9 backs Research and Translation
-    specialists with the existing production services, while Reading consumes
-    the frozen document/knowledge context. ReadingAgentGraph remains authoritative
-    for tools, confirmation, ReAct, evidence, grounding, synthesis, and response.
+    `AITRANS_MULTI_AGENT_ENGINE` is the MA10 migration switch. `typed` keeps the
+    new task-DAG orchestration, `legacy` retains the historical collaboration
+    bridge, and `off` disables collaboration while leaving the canonical
+    ReadingAgentGraph/direct language and tool paths intact.
     """
 
     adapter = ProductAgentRuntimeAdapter(
@@ -253,7 +252,7 @@ def get_agent_runtime(
         memory_port=memory_port,
         temporary_executor=temporary_executor,
     )
-    collaboration_adapter = MultiAgentRuntimeBridge(
+    collaboration_adapter = build_migration_bridge(
         collaboration_service,
         orchestrator=orchestration_service,
     )
