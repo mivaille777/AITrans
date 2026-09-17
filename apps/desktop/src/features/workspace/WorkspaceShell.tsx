@@ -17,6 +17,17 @@ export default function WorkspaceShell({ children, llmStatus }: {
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const location = useLocation()
+
+  if (location.pathname === "/reading") {
+    return (
+      <WindowFrame>
+        <div className="h-full min-h-0 overflow-hidden bg-white text-slate-950">
+          {children}
+        </div>
+      </WindowFrame>
+    )
+  }
+
   const routeMeta = getWorkspaceRouteMeta(location.pathname)
   const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
 
