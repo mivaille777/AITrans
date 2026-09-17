@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00–MA06 已完成并复验；MA07–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA08 已完成并复验；MA09–MA10 待实施。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -219,12 +219,12 @@
 
 任务：
 
-- [ ] MemoryPort 接真实 MemoryCoordinator，使用稳定 profile；检索只在当前 workspace 和允许全局偏好中进行。
-- [ ] 为 Document/Research/Writer/Curator 定义最小记忆投影：阅读目标、研究决定、写作风格/术语、整理偏好；共享 snapshot ID，不复制整份聊天历史。
-- [ ] 只有完成且验证过的产物生成 memory candidates；用户笔记/实验事实与模型建议分开，source outbox 复用记忆 M04。
-- [ ] checkpoint/恢复引用记忆版本；删除/禁用/成员撤销检查贯通专家、Writer、Curator 和 commit 前的再验证。
-- [ ] temporary 模式贯通专家私有 state、artifact store、写作草稿、trace、jobs、前端缓存；未被用户显式保存的正文不落盘。
-- [ ] 文稿和研究项目跨会话引用由持久对象 ID/版本解析，不能靠“最近一次输出”猜测应继续哪篇论文。
+- [x] MemoryPort 接真实 MemoryCoordinator，使用稳定 profile；检索只在当前 workspace 和允许全局偏好中进行。
+- [x] 为 Document/Research/Writer/Curator 定义最小记忆投影：阅读目标、研究决定、写作风格/术语、整理偏好；共享 snapshot ID，不复制整份聊天历史。
+- [x] 只有完成且验证过的产物生成 memory candidates；用户笔记/实验事实与模型建议分开，source outbox 复用记忆 M04。
+- [x] checkpoint/恢复引用记忆版本；删除/禁用/成员撤销检查贯通专家、Writer、Curator 和 commit 前的再验证。
+- [x] temporary 模式贯通专家私有 state、artifact store、写作草稿、trace、jobs、前端缓存；未被用户显式保存的正文不落盘。
+- [x] 文稿和研究项目跨会话引用由持久对象 ID/版本解析，不能靠“最近一次输出”猜测应继续哪篇论文。
 
 测试：`test_memory_port_integration.py`、`test_research_continuity.py`、`test_temporary_workflow.py`、`test_memory_revocation_resume.py`。
 
@@ -422,8 +422,8 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | MA04 | 论文理解与研究分析 | verified | `43d7a17`；2026-09-16 本地复验 |
 | MA05 | 学术写作与局部修订 | verified | `25390a9`；2026-09-16 本地复验 |
 | MA06 | 并发、预算、恢复、实时事件 | verified | `98ca7e1`；2026-09-17 本地复验 |
-| MA07 | 笔记、知识图谱与提交 | not_started | 待实施 |
-| MA08 | 真实记忆与跨会话研究 | not_started | 待实施 |
+| MA07 | 笔记、知识图谱与提交 | verified | `544ebfc`、`4070400`；2026-09-17 本地复验 |
+| MA08 | 真实记忆与跨会话研究 | verified | `4d0b09e6`；2026-09-17 本地复验 |
 | MA09 | 科研工作区 UI | not_started | 待实施 |
 | MA10 | A/B 验证、迁移与交付 | not_started | 待实施 |
 
@@ -529,3 +529,20 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 结果：MA07 专项 `13 passed`；multi-agent 与 Research/Knowledge 关键回归 `167 passed`；最终完整 Python `1239 passed, 2 skipped`；桌面端 `64 files / 267 tests passed`；typecheck/build/Ruff/compileall 通过，lint 仅保留 5 条既有 Reading/PDF warning，0 failed。两个 skip 为需 `AITRANS_RUN_RAG_GPU_TESTS=1` 的既有 Qwen3 embedding/reranker 真实 GPU 测试。
 - 真实模型与 UI 验证、指标：未调用远程模型，未做人工 UI 端到端演示；确定性 fallback、typed provider 边界、持久化和安全约束已自动验证。Graph Proposal 的专用审阅 UI 属于 MA09，不在本阶段声称完成。
 - 已知限制/阻塞及下一步：当前 Research Note 历史 schema 没有递增版本列，因此已有 note 的版本契约固定为 1，并以内容哈希/updated_at 组合检测并发修改；跨库不宣称单 SQLite 事务，而以逐项回执和稳定键恢复。MA08 接入真实 MemoryCoordinator、临时模式、删除撤销和跨会话科研连续性。
+
+### MA08 实施记录 — 2026-09-17
+
+- 状态：verified。
+- 起始 HEAD / 实现提交：`237321b549c9fef8138e4afceeda95b507c492c7` / `4d0b09e6`。
+- 实际改动与对应用户产物：新增 canonical 本地 MemoryRepository/MemoryCoordinator、显式记忆 CRUD/候选激活/遗忘 API，以及 Document、Research、Writer、Curator 的有界记忆投影。四类专家与 Language 能力读取同一 run snapshot；跨会话项目通过持久 `PROJECT_REFERENCE` 的对象 ID/版本恢复，不使用“最近输出”猜测。
+- 共享记忆阶段与接口版本：落地 MA08 所需的 M01–M07 对应接口子集，包括稳定 `local-default` profile、workspace/全局偏好 scope、不可变版本、run snapshot、候选、job、撤销与乐观版本冲突；memory SQLite schema v1。该记录不宣称独立 `memory-system-taskbook.md` 的 M00–M09 已全部完成。
+- 候选与 outbox：只有 verified artifact 可在 artifact 事务内写入 memory outbox；artifact store schema 升级到 v2。投递可重放、幂等并按精确 `scope_ref` 过滤，`user_supplied` 声明不会被当作模型记忆候选，避免跨工作区排空或事实/建议混写。
+- 恢复、撤销与提交：checkpoint 保存 snapshot/版本引用，同一 run 恢复保持冻结视图；记忆删除、禁用或 scope revision 变化会使旧 snapshot 失效。Research 恢复、Writer 与 Curator 在业务持久化前重新验证引用，失效或越界记忆不能继续注入或提交。
+- 临时模式：临时运行使用无 checkpointer 的 ReadingGraph、内存 artifact/executor，跳过会话、trace/event、memory snapshot/jobs 和前端 pending-run localStorage；仅用户确认后的显式业务保存允许持久化。FAST lane 仍不伪装为多 Agent 活动。
+- 共享语言能力：术语偏好在路由判断前进入运行状态；Translation 与 Writer 使用同一 memory item/version。存在术语约束时翻译自动进入可遵守 glossary 的 AI 路径，避免 Web provider 静默忽略术语。
+- 数据/图/checkpoint/事件迁移与兼容影响：新增 memory SQLite schema v1；artifact SQLite 原位升级到 schema v2 并增加事务 outbox，原 artifact 数据与 API payload 保持兼容。`AgentRunRequest`/桌面请求仅新增默认关闭的 `temporary` 字段。
+- 测试命令：四组 MA08 专项测试及 `tests/api/test_memory_api.py`；相关 Agent/AI 回归；完整 `python -m pytest -q`；桌面端 `npm test`、`npm run lint`、`npm run build`；changed-file Ruff、compileall 与 `git diff --check`。
+- 结果：MA08 所在 multi-agent/API 集合 `154 passed`；相关 Agent/AI 回归 `66 passed`；完整 Python `1258 passed, 2 skipped`；桌面端 `64 files / 269 tests passed`，测试 TypeScript 类型检查与 build 通过；Ruff/compileall/diff-check 通过。lint 仅保留 5 条既有 Reader/PDF warning，0 failed；两个 skip 为需显式启用的 Qwen3 embedding/reranker GPU 集成测试。
+- 真实模型与 UI 验证、指标：未调用远程模型，未做人工 UI 演示；跨会话、scope 隔离、删除恢复、术语一致性、outbox 崩溃重放与临时模式持久化边界均由确定性自动测试验证。
+- 任务书调整与理由：同步修正 MA07 状态表的陈旧 `not_started`；MA08 只按多 Agent 接入所需接口验收，不扩大为完整记忆系统阶段声明。
+- 已知限制/阻塞及下一步：本地稳定 profile 目前固定为单用户 `local-default`，未来多用户部署需由身份层提供 profile。MA09 完成科研工作区 UI、产物来源/版本/状态展示及断线恢复反馈。
