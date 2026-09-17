@@ -5,9 +5,9 @@ import { Button } from "../../shared/ui/Button"
 import { createLocalPdfDocumentSource, loadPdfJs } from "./pdfjs-runtime"
 import type { LocalPdfDocumentSource } from "./pdfjs-runtime"
 
-const MIN_ZOOM = 0.7
-const MAX_ZOOM = 2.2
-const ZOOM_STEP = 0.15
+const MIN_ZOOM = 0.75
+const MAX_ZOOM = 1.6
+const ZOOM_STEP = 0.1
 
 export interface PdfReaderSelection {
   source: "pdf"
@@ -163,7 +163,7 @@ export default function PdfReaderSurface({
       .then(async (page) => {
         if (disposed) return
         const baseViewport = page.getViewport({ scale: 1 })
-        const fitScale = Math.max(0.45, (hostWidth - 48) / Math.max(1, baseViewport.width))
+        const fitScale = Math.max(0.45, (hostWidth - 64) / Math.max(1, baseViewport.width))
         const viewport = page.getViewport({ scale: fitScale * zoom })
         const pixelRatio = Math.max(1, window.devicePixelRatio || 1)
         const context = canvas.getContext("2d", { alpha: false })
@@ -215,6 +215,12 @@ export default function PdfReaderSurface({
     if (!pdfDocument) return
     clearNativeSelection()
     setPageNumber(clampPdfPage(nextPage, pdfDocument.numPages))
+    hostRef.current?.scrollTo({ top: 0, left: 0 })
+  }
+
+  function changeZoom(nextZoom: number) {
+    clearNativeSelection()
+    setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(nextZoom.toFixed(2)))))
   }
 
   function captureSelection() {
@@ -250,48 +256,85 @@ export default function PdfReaderSurface({
   const nativePreviewUrl = `${url}#page=${Math.max(1, pageNumber)}`
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-slate-100/75">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2.5 text-[10px] text-slate-500">
-        <div className="flex items-center gap-1.5">
+    <div className="relative flex min-h-0 flex-1 flex-col bg-[#f5f5f5]">
+      <div className="grid min-h-[48px] shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 py-2 text-[10px] text-[#777]">
+        <div className="flex items-center gap-1.5 justify-self-start">
           <Button aria-label="Previous PDF page" size="xs" variant="ghost" disabled={!pdfDocument || pageNumber <= 1} onClick={() => changePage(pageNumber - 1)}><ChevronLeft size={12} /></Button>
-          <span className="min-w-20 text-center font-medium text-slate-600">Page {pageNumber}{pageCount ? ` / ${pageCount}` : ""}</span>
+          <span className="min-w-20 text-center font-medium text-[#555]">Page {pageNumber}{pageCount ? ` / ${pageCount}` : ""}</span>
           <Button aria-label="Next PDF page" size="xs" variant="ghost" disabled={!pdfDocument || pageNumber >= pageCount} onClick={() => changePage(pageNumber + 1)}><ChevronRight size={12} /></Button>
         </div>
-        <span className="hidden text-slate-400 lg:inline">Select PDF text to create knowledge or ask AI.</span>
-        <div className="flex items-center gap-1.5">
-          <Button aria-label="Zoom PDF out" size="xs" variant="ghost" disabled={zoom <= MIN_ZOOM || Boolean(error)} onClick={() => { clearNativeSelection(); setZoom((value) => Math.max(MIN_ZOOM, value - ZOOM_STEP)) }}><Minus size={12} /></Button>
-          <span className="w-10 text-center">{Math.round(zoom * 100)}%</span>
-          <Button aria-label="Zoom PDF in" size="xs" variant="ghost" disabled={zoom >= MAX_ZOOM || Boolean(error)} onClick={() => { clearNativeSelection(); setZoom((value) => Math.min(MAX_ZOOM, value + ZOOM_STEP)) }}><Plus size={12} /></Button>
-          <Button aria-label="Reset PDF zoom" size="xs" variant="ghost" disabled={zoom === 1 || Boolean(error)} onClick={() => { clearNativeSelection(); setZoom(1) }}><RotateCcw size={12} /></Button>
-        </div>
+        <span className="hidden text-[#999] lg:inline">Select text to create knowledge or ask AI.</span>
+        <span className="justify-self-end text-[#aaa]">PDF</span>
       </div>
 
-      <div ref={hostRef} className="ait-scroll-panel relative min-h-0 flex-1 overflow-auto overscroll-contain p-6" aria-label={`Interactive PDF · ${title}`}>
+      <div
+        ref={hostRef}
+        className="ait-scroll-panel ait-pdf-scroll-surface relative min-h-0 flex-1 overflow-scroll overscroll-contain p-6 pb-20"
+        style={{ scrollbarGutter: "stable both-edges" }}
+        aria-label={`Interactive PDF · ${title}`}
+      >
         {(loading || rendering) && (
-          <div className="pointer-events-none sticky top-2 z-20 mx-auto flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-1.5 text-[10px] text-slate-500 shadow-sm">
+          <div className="pointer-events-none sticky top-2 z-20 mx-auto flex w-fit items-center gap-2 rounded-full border border-[#dddddd] bg-white/95 px-3 py-1.5 text-[10px] text-[#666] shadow-sm">
             <LoaderCircle size={12} className="animate-spin" />{loading ? "Loading PDF…" : "Rendering page…"}
           </div>
         )}
         {error ? (
           <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-3">
-            <div className="shrink-0 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-              <p className="font-semibold">Interactive selection is unavailable; showing the native PDF preview instead.</p>
+            <div className="shrink-0 rounded-[12px] border border-[#dddddd] bg-white px-4 py-3 text-xs leading-5 text-[#555]">
+              <p className="font-semibold text-[#333]">Interactive selection is unavailable; showing the native PDF preview instead.</p>
               <p className="mt-1">{error}</p>
-              <p className="mt-1 text-[10px] text-amber-700">Text mode and the native preview remain available. Selection actions require the interactive PDF layer.</p>
+              <p className="mt-1 text-[10px] text-[#777]">Text mode and the native preview remain available. Selection actions require the interactive PDF layer.</p>
             </div>
             <iframe
               key={nativePreviewUrl}
               title={`Native PDF fallback · ${title}`}
               src={nativePreviewUrl}
-              className="min-h-[560px] flex-1 rounded-[12px] border border-slate-200 bg-white"
+              className="min-h-[560px] flex-1 rounded-[12px] border border-[#dddddd] bg-white"
             />
           </div>
         ) : (
-          <div className="relative mx-auto w-fit bg-white shadow-[0_12px_40px_rgba(15,23,42,0.12)]" onMouseUp={captureSelection} onKeyUp={captureSelection}>
+          <div className="relative mx-auto mb-4 w-fit bg-white shadow-[0_12px_40px_rgba(0,0,0,0.10)]" onMouseUp={captureSelection} onKeyUp={captureSelection}>
             <canvas ref={canvasRef} className="block" aria-label={`PDF page ${pageNumber}`} />
             <div ref={textLayerRef} className="ait-pdf-text-layer textLayer" />
           </div>
         )}
+      </div>
+
+      <div
+        className="absolute bottom-4 right-4 z-40 flex items-center gap-1 rounded-[9px] border border-[#d9d9d9] bg-white/95 p-1 shadow-[0_8px_24px_rgba(0,0,0,.10)] backdrop-blur-sm"
+        aria-label="Document zoom controls"
+      >
+        <button
+          type="button"
+          aria-label="Zoom PDF out"
+          title="Zoom out"
+          disabled={zoom <= MIN_ZOOM || Boolean(error)}
+          onClick={() => changeZoom(zoom - ZOOM_STEP)}
+          className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#444] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+        >
+          <Minus size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Reset PDF zoom"
+          title="Reset zoom"
+          disabled={Boolean(error)}
+          onClick={() => changeZoom(1)}
+          className="flex h-8 min-w-[54px] items-center justify-center gap-1 rounded-[7px] px-2 text-[10.5px] font-medium text-[#555] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+        >
+          <RotateCcw size={11} />
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom PDF in"
+          title="Zoom in"
+          disabled={zoom >= MAX_ZOOM || Boolean(error)}
+          onClick={() => changeZoom(zoom + ZOOM_STEP)}
+          className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#444] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+        >
+          <Plus size={14} />
+        </button>
       </div>
     </div>
   )
