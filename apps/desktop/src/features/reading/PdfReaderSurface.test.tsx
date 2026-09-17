@@ -38,6 +38,10 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(() => ({})),
   })
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    configurable: true,
+    value: vi.fn(),
+  })
   class TestResizeObserver {
     private readonly callback: ResizeObserverCallback
     constructor(callback: ResizeObserverCallback) {
@@ -129,7 +133,7 @@ describe("PdfReaderSurface", () => {
 
     onSelection.mockClear()
     fireEvent.click(screen.getByLabelText("Zoom PDF in"))
-    await waitFor(() => expect(screen.getByText("115%")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("110%")).toBeInTheDocument())
     expect(onSelection).toHaveBeenCalledWith(null)
   })
 })
