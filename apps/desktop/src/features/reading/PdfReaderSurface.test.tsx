@@ -136,4 +136,17 @@ describe("PdfReaderSurface", () => {
     await waitFor(() => expect(screen.getByText("110%")).toBeInTheDocument())
     expect(onSelection).toHaveBeenCalledWith(null)
   })
+
+  it("zooms with ctrl plus mouse wheel over the PDF surface", async () => {
+    render(<PdfReaderSurface url="http://127.0.0.1:8000/paper.pdf" title="Paper" initialPage={1} onSelection={vi.fn()} />)
+    await screen.findByLabelText("PDF page 1")
+    await waitFor(() => expect(getPage).toHaveBeenCalledWith(1))
+
+    const surface = screen.getByLabelText("Interactive PDF · Paper")
+    fireEvent.wheel(surface, { ctrlKey: true, deltaY: -100 })
+    await waitFor(() => expect(screen.getByText("110%")).toBeInTheDocument())
+
+    fireEvent.wheel(surface, { ctrlKey: true, deltaY: 100 })
+    await waitFor(() => expect(screen.getByText("100%")).toBeInTheDocument())
+  })
 })
