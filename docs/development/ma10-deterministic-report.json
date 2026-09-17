@@ -1,0 +1,2187 @@
+{
+  "budget_modes": [
+    "production"
+  ],
+  "case_count": 36,
+  "environment": "deterministic",
+  "metadata": {
+    "candidate_hard_gate_passed": true,
+    "evidence_schema": "ma10-contract-evidence-v1",
+    "usage_values": "null means unavailable; zero is never imputed",
+    "working_tree_dirty": false
+  },
+  "release_blockers": [],
+  "release_ready": false,
+  "schema_version": "ma10-benchmark-v1",
+  "strategies": [
+    "multi_agent"
+  ],
+  "summaries": [
+    {
+      "budget_mode": "production",
+      "case_count": 36,
+      "completed_count": 36,
+      "degraded_count": 0,
+      "environment": "deterministic",
+      "mean_dimension_scores": {
+        "completion": 1.0,
+        "numeric_unit_accuracy": 1.0,
+        "scope_declaration": 1.0,
+        "source_support": 1.0
+      },
+      "mean_latency_ms": 205.035889,
+      "mean_model_calls": null,
+      "mean_retrieval_calls": null,
+      "mean_source_coverage": 1.0,
+      "mean_tool_calls": null,
+      "mean_total_tokens": null,
+      "passed_count": 36,
+      "release_blocker_count": 0,
+      "strategy": "multi_agent"
+    }
+  ],
+  "tasks": [
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T01",
+      "category": "routing",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no duplicate final translation": true,
+        "no unrelated research role": true,
+        "one language call": true
+      },
+      "latency_ms": 0.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_orchestration_routing.py::test_selected_translation_stays_fast_even_in_force_mode"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T02",
+      "category": "document_reading",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "scope_declaration": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "each factual field has source": true,
+        "seven reading fields": true,
+        "unknown allowed": true
+      },
+      "latency_ms": 13.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_document_analyst.py::test_document_analyst_builds_source_bound_reading_card_with_bounded_queries"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T03",
+      "category": "coverage",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "scope_declaration": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no invented method or experiment detail": true,
+        "partial coverage declared": true
+      },
+      "latency_ms": 36.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_document_analyst.py::test_provider_cannot_turn_partial_retrieval_into_full_document_coverage",
+          "tests/multi_agent/test_document_coverage.py::test_partial_document_coverage_records_requested_visited_and_unavailable"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T04",
+      "category": "table_image",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "numeric_unit_accuracy": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "numbers and units preserved": true,
+        "page and element locator preserved": true,
+        "visual limitation declared when raw image unavailable": true
+      },
+      "latency_ms": 19.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_table_image_analysis.py::test_table_values_units_footnote_and_locator_remain_source_bound",
+          "tests/multi_agent/test_table_image_analysis.py::test_missing_visual_capability_is_an_explicit_partial_result"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T05",
+      "category": "comparison",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "numeric_unit_accuracy": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "91 and 94 not ranked as directly comparable": true,
+        "dataset conditions shown": true
+      },
+      "latency_ms": 11.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_research_synthesizer.py::test_research_synthesizer_compares_conditions_without_extra_retrieval"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T06",
+      "category": "dependency",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "translation depends on summary artifact": true,
+        "translation does not consume raw full paper by default": true
+      },
+      "latency_ms": 1.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_artifact_language_handoff.py::test_compound_summary_translation_uses_versioned_artifact_not_raw_paper"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T07",
+      "category": "parallelism",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "barrier proves overlapping execution": true,
+        "both results retained by task id": true
+      },
+      "latency_ms": 2.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_parallel_scheduler.py::test_independent_tasks_enter_specialists_concurrently",
+          "tests/multi_agent/test_result_reducer.py::test_two_instances_of_same_role_are_preserved_by_task_id"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T08",
+      "category": "partial_failure",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "scope_declaration": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "A result retained": true,
+        "comparison partial or blocked": true,
+        "no claim of complete comparison": true
+      },
+      "latency_ms": 13.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_parallel_scheduler.py::test_failure_blocks_only_its_dependents_and_preserves_other_results",
+          "tests/multi_agent/test_research_synthesizer.py::test_partial_document_input_cannot_be_reported_as_complete_comparison"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T09",
+      "category": "scope",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no workspace-b citation": true,
+        "no workspace-b content in packet": true,
+        "no workspace-b content in specialist context": true
+      },
+      "latency_ms": 2.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_evidence_scope.py::test_injector_uses_scoped_evidence_packets_instead_of_legacy_graph",
+          "tests/multi_agent/test_graph_retrieval_boundary.py::test_scoped_knowledge_relations_never_expand_outside_allowed_items"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T10",
+      "category": "scope",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "empty result": true,
+        "no fallback to global data": true
+      },
+      "latency_ms": 0.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_evidence_scope.py::test_restricted_empty_scope_returns_no_evidence_and_does_not_query_backends"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T11",
+      "category": "note_scope",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "only allowed note ids used": true,
+        "shared document id does not widen scope": true
+      },
+      "latency_ms": 1.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_evidence_scope.py::test_exact_note_ids_are_rechecked_after_repository_search"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T12",
+      "category": "conflict",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "both conditions retained": true,
+        "no majority-vote truth resolution": true
+      },
+      "latency_ms": 21.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_research_synthesizer.py::test_research_synthesizer_compares_conditions_without_extra_retrieval",
+          "tests/multi_agent/test_research_synthesizer.py::test_authorized_memory_hypothesis_is_marked_and_never_becomes_document_fact"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T13",
+      "category": "writing",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "Stage20 review gate preserved": true,
+        "paragraph claims traceable": true,
+        "unreviewed facts excluded": true
+      },
+      "latency_ms": 24.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_writer_review_gate.py::test_related_work_uses_only_stage20_reviewed_synthesis",
+          "tests/multi_agent/test_research_synthesizer.py::test_formal_literature_synthesis_requires_stage20_accepted_evidence"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T14",
+      "category": "writing_missing_data",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no invented numeric results or datasets": true,
+        "structure and placeholders allowed": true
+      },
+      "latency_ms": 24.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_academic_writer.py::test_experiment_section_requires_user_supplied_results"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T15",
+      "category": "scoped_edit",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "p1 and p3 hashes unchanged": true,
+        "reject leaves original unchanged": true
+      },
+      "latency_ms": 182.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_manuscript_revision.py::test_local_revision_preview_and_apply_preserve_unselected_paragraphs"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T16",
+      "category": "version_conflict",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "expected_version conflict reported": true,
+        "no silent overwrite": true
+      },
+      "latency_ms": 156.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_manuscript_revision.py::test_revision_rejects_stale_version_and_unauthorized_paragraph"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T17",
+      "category": "reference_integrity",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "missing metadata shown": true,
+        "no fabricated DOI or year": true
+      },
+      "latency_ms": 184.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_academic_writer.py::test_academic_writer_builds_evidence_mapped_section_without_fake_metadata",
+          "tests/multi_agent/test_writing_export.py::test_markdown_export_uses_selected_versions_and_source_metadata"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T18",
+      "category": "notes",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "quote AI summary and user note separated": true,
+        "user_note unchanged": true
+      },
+      "latency_ms": 626.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_note_preservation.py::test_curator_updates_ai_content_without_overwriting_user_note",
+          "tests/multi_agent/test_note_preservation.py::test_ai_draft_cannot_write_user_note"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T19",
+      "category": "graph_proposal",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no accepted semantic relation created": true,
+        "proposal visible": true
+      },
+      "latency_ms": 394.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_graph_proposals.py::test_relation_proposal_stays_pending_until_idempotent_accept"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T20",
+      "category": "graph_scope_idempotency",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no cross-workspace auto merge": true,
+        "one relation only after duplicate accept": true
+      },
+      "latency_ms": 651.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_entity_scope.py::test_same_name_entity_outside_workspace_is_not_an_auto_merge_candidate",
+          "tests/multi_agent/test_graph_proposals.py::test_relation_proposal_stays_pending_until_idempotent_accept"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T21",
+      "category": "graph_validation",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "proposal or commit rejected": true,
+        "reason code present": true
+      },
+      "latency_ms": 594.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_graph_proposals.py::test_supports_proposal_without_evidence_is_not_committed",
+          "tests/multi_agent/test_knowledge_curator.py::test_curator_rejects_unscoped_relation_endpoint"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T22",
+      "category": "commit_recovery",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no duplicate object or relation": true,
+        "receipt checked on resume": true
+      },
+      "latency_ms": 634.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_multi_store_commit.py::test_same_store_step_receipt_recovers_after_aggregate_receipt_gap",
+          "tests/multi_agent/test_commit_idempotency.py::test_repeated_commit_replays_one_canonical_item"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T23",
+      "category": "task_recovery",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "A not rerun": true,
+        "only missing task resumes": true
+      },
+      "latency_ms": 163.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_subgraph_checkpoint.py::test_resume_reuses_completed_task_and_retries_only_interrupted_task"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T24",
+      "category": "run_lease",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "only one executor performs work": true,
+        "single lease owner": true
+      },
+      "latency_ms": 54.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_run_lease.py::test_only_one_owner_can_hold_a_live_run_lease"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T25",
+      "category": "cancellation",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "late result cannot overwrite terminal state": true,
+        "no late business commit": true,
+        "no new task dispatch": true
+      },
+      "latency_ms": 178.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_cancellation_fencing.py::test_cancelled_attempt_cannot_publish_a_late_artifact"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T26",
+      "category": "budget",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "budget and partial/failure visible": true,
+        "no request after exhaustion": true
+      },
+      "latency_ms": 55.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_shared_budget.py::test_exhausted_budget_blocks_new_dispatch_and_emits_event",
+          "tests/multi_agent/test_shared_budget.py::test_total_deadline_stops_dispatching_new_tasks"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T27",
+      "category": "events",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {},
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "consumer receives started before completion": true
+      },
+      "latency_ms": 1.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_task_events.py::test_task_started_reaches_sink_before_specialist_finishes"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T28",
+      "category": "event_replay",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "events deduplicated": true,
+        "run snapshot is authoritative": true,
+        "state never regresses": true
+      },
+      "latency_ms": 2108.292,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/api/test_task_api_contract.py::test_run_snapshot_is_authoritative_and_exposes_retryable_tasks"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": [
+          "src/features/agent/runtime/agent-event-replay.test.ts"
+        ]
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T29",
+      "category": "compatibility",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "compatibly interpreted or explicit incompatibility": true,
+        "no data deletion": true,
+        "no repeated external write": true
+      },
+      "latency_ms": 0.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_ma10_compatibility.py::test_legacy_checkpoint_migration_preserves_business_results",
+          "tests/multi_agent/test_ma10_compatibility.py::test_legacy_multi_agent_trace_event_remains_parseable"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T30",
+      "category": "continuity",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "correct project and version resolved": true,
+        "other project results not guessed": true
+      },
+      "latency_ms": 146.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_research_continuity.py::test_new_session_resolves_explicit_project_reference_and_writer_preferences"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T31",
+      "category": "revocation",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "invalid conclusion not saved": true,
+        "revoked context not injected": true
+      },
+      "latency_ms": 341.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_memory_revocation_resume.py::test_disabled_or_deleted_memory_cannot_reappear_from_old_snapshot",
+          "tests/multi_agent/test_multi_store_commit.py::test_stale_scope_cannot_replay_old_artifact"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T32",
+      "category": "temporary_mode",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "unsaved marker absent from checkpoint artifact trace jobs and cache": true
+      },
+      "latency_ms": 44.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_temporary_workflow.py::test_temporary_orchestration_does_not_create_memory_jobs_or_snapshots",
+          "tests/multi_agent/test_temporary_workflow.py::test_temporary_runtime_skips_trace_recorders"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T33",
+      "category": "prompt_injection",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "content treated as evidence text or illegal call rejected": true,
+        "scope unchanged": true,
+        "tool permissions unchanged": true
+      },
+      "latency_ms": 2.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_supervisor_planner.py::test_document_prompt_injection_cannot_change_scope_or_tool_permissions",
+          "tests/multi_agent/test_plan_validation.py::test_role_tool_escalation_is_rejected"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T34",
+      "category": "feature_flag",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "existing chat works": true,
+        "knowledge browsing works": true,
+        "saved artifacts remain readable": true,
+        "selection translation works": true
+      },
+      "latency_ms": 543.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_migration_switch.py::test_simple_rollout_keeps_canonical_single_agent_path",
+          "tests/agent/test_agent_api_runtime.py::test_agent_run_api_preserves_existing_response_contract_through_runtime",
+          "tests/test_backend_companion.py::test_companion_chat_api_passes_history_and_reading_context_to_service",
+          "tests/api/test_knowledge_v2_api_contract.py::test_knowledge_v2_routes_project_canonical_cards",
+          "tests/test_research_workspace.py::test_research_workspace_api_supports_source_profile_detail_edit_and_delete"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": null,
+      "split": "dev",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T35",
+      "category": "ab_evaluation",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "no benefit claim based on role count": true,
+        "quality cost latency all reported": true
+      },
+      "latency_ms": 5.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_multi_agent_benchmark.py::test_runs_three_strategies_under_production_and_equal_token_budgets",
+          "tests/multi_agent/test_multi_agent_benchmark_protocol.py::test_schedule_is_reproducible_and_interleaves_all_strategies",
+          "tests/multi_agent/test_multi_agent_benchmark_repeats.py::test_three_repeats_are_aggregated_with_fluctuation_metadata"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    },
+    {
+      "budget": {
+        "deadline_ms": 120000,
+        "mode": "production",
+        "model_call_limit": 0,
+        "retrieval_call_limit": 0,
+        "token_limit": 0,
+        "tool_call_limit": 0
+      },
+      "budget_violations": [],
+      "case_id": "T36",
+      "category": "source_change",
+      "completed": true,
+      "completion_tokens": null,
+      "degradation_reasons": [],
+      "degraded": false,
+      "dimension_scores": {
+        "completion": 1.0,
+        "source_support": 1.0
+      },
+      "environment": "deterministic",
+      "failure_code": "",
+      "hard_assertion_results": {
+        "old verification not presented as current without recheck": true,
+        "source status visible": true
+      },
+      "latency_ms": 153.0,
+      "metadata": {
+        "cost_score_measurement": "not_measured",
+        "measurement_scope": "deterministic_contract",
+        "production_latency_measurement": "not_measured",
+        "pytest_selectors": [
+          "tests/multi_agent/test_writing_export.py::test_export_marks_changed_source_stale_and_requires_revalidation"
+        ],
+        "semantic_quality_measurement": "not_measured",
+        "usage_measurement": "not_applicable_no_model",
+        "vitest_files": []
+      },
+      "model_calls": null,
+      "passed": true,
+      "prompt_tokens": null,
+      "release_blockers": [],
+      "retrieval_calls": null,
+      "safety_violations": [],
+      "source_coverage": 1.0,
+      "split": "heldout",
+      "strategy": "multi_agent",
+      "tool_calls": null,
+      "total_tokens": null,
+      "versions": {
+        "git_commit": "41638453cd257f3318bc392adb2c22f82f159de0",
+        "graph_version": "reading-agent-ma03-v1",
+        "model_name": "no-model",
+        "model_provider": "deterministic-contract",
+        "model_version": "not-applicable",
+        "retrieval_version": "test-fixtures-v1",
+        "schema_version": "2"
+      }
+    }
+  ],
+  "unverified_surfaces": [
+    "qwen3_local",
+    "configured_llm",
+    "manual_ui",
+    "semantic_quality_ab"
+  ]
+}

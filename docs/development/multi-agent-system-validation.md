@@ -401,3 +401,65 @@ Lease, deadline, budget, branch isolation, live delivery, redaction, monotonic r
 serialization, and delayed cancellation cleanup each have deterministic tests. The two
 skips remain the opt-in real Qwen3 embedding/reranker GPU integrations. No paid-provider
 latency or quality benchmark was run; MA10 owns those measurements.
+
+## 16. MA09 research workspace UI verification — 2026-09-17
+
+Implementation commit: `74f6cfb`.
+
+The Research workspace now exposes explicit paper-reading, figure/table analysis,
+comparison, curation, and writing actions with authoritative resource IDs. Dynamic task
+and artifact panels render the real plan, dependencies, retries, partial failures,
+provenance, versions, verification state, write receipts, and reconnect replay. Fast
+translation remains outside the specialist timeline.
+
+```text
+full Python suite                         1263 passed, 2 skipped
+desktop Vitest/typecheck                   69 files, 281 tests passed
+desktop lint                          passed with 5 pre-existing warnings
+desktop production build, Ruff, compileall                 passed
+```
+
+This validates component and API behavior. No manual Windows UI walkthrough was recorded;
+MA10 therefore keeps `manual_ui` as an unverified surface.
+
+## 17. MA10 deterministic acceptance and migration verification — 2026-09-17
+
+Implementation commit: `4163845` (benchmark scaffolding: `0417139` through `bc3ca3e`).
+Machine-readable result: `docs/development/ma10-deterministic-report.json`.
+
+The benchmark contract records quality dimensions, source coverage, budgets, versions,
+failures/degradation, latency, and usage. Unknown token/model/tool/retrieval counts remain
+`null`; they are never converted to zero. A reproducible blinded schedule covers
+single-Agent, legacy collaboration, and typed multi-Agent under equal-token and production
+budgets, with repeated-run aggregation and fail-closed recorded observations.
+
+The T01–T36 evidence manifest maps every acceptance scenario to explicit pytest selectors;
+T28 additionally runs the desktop event-replay test. The candidate contract result is
+36/36, including compound summary-to-translation artifact handoff, malicious document
+instruction isolation, checkpoint/replay/idempotency boundaries, and stale-source export
+warnings.
+
+```text
+T01-T36 matrix selectors                         57 passed
+desktop replay selector                            3 passed
+full Python suite                         1306 passed, 2 skipped
+desktop Vitest/typecheck                   69 files, 282 tests passed
+desktop lint                          passed with 5 pre-existing warnings
+desktop production build and PDF.js offline guard              passed
+Tauri cargo check --no-default-features                          passed
+changed-file Ruff, compileall, diff-check                        passed
+```
+
+The two skips are the existing opt-in real Qwen3 embedding/reranker GPU integrations. This
+host has no PyTorch runtime, no explicit test permission was found for a real configured
+remote LLM benchmark, and the current task did not expose the computer-use `node_repl`
+required for a manual UI walkthrough. Therefore `qwen3_local`, `configured_llm`,
+`manual_ui`, and `semantic_quality_ab` remain unverified and `release_ready` is false.
+
+Because no real three-strategy semantic benefit has been established,
+`AITRANS_MULTI_AGENT_ROLLOUT` defaults to `single`. Operators may explicitly select
+`simple`, `single`, or `workflow`; the older `AITRANS_MULTI_AGENT_ENGINE=legacy|off`
+paths remain available. Source search confirms the legacy planner/executor still have a
+production consumer, so they and old checkpoint interpreters were retained. Rollback must
+not delete databases; back up checkpoint, artifact, memory, Knowledge, and Research SQLite
+files before switching versions or migration modes.

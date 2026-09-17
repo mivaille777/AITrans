@@ -1,8 +1,8 @@
 # AITrans 多 Agent 系统评估与架构设计
 
-> 日期：2026-09-16；核对基线：`WebReBuild @ ad27691`。
+> 日期：2026-09-16；初始评估基线：`WebReBuild @ ad27691`；实现复验：2026-09-17 `4163845`。
 > 适用定位：以个人知识工作区为核心的本地优先文档理解、研究辅助和知识管理产品。
-> 状态：评估与设计完成；目标架构尚未实现。本文不代表已测得多 Agent 带来的质量提升。
+> 状态：目标架构与 MA00–MA10 确定性门禁已实现；真实 Qwen3、真实配置 LLM、手工 UI 和三策略语义质量 A/B 尚未验证，因此本文仍不代表已测得多 Agent 质量提升。
 > 开发执行入口：[多 Agent 分阶段任务书](multi-agent-system-taskbook.md)。记忆契约参见[记忆系统任务书](memory-system-taskbook.md)。
 
 ## 1. 设计结论与产品目标
@@ -108,7 +108,27 @@ conda run -n aitrans python -m pytest tests/agent/test_multi_agent_stage5_6.py t
 | synthetic context 指定 workspace A/doc A，图中放带边的 B 标记节点，查询完全无关 | B 标记节点和另一节点均返回，score=0.05 | 实证接口忽略 scope 且关系加分可独立命中；未对真实用户图做越界测试 |
 | adapter 1 保存，再新建 adapter 2 读取同一测试 profile | `{}` | 默认存储随对象生命周期丢失 |
 
-本次未调用付费模型评判回答质量，未测真实任务加速率，也未修改 Agent 运行代码。架构建议和性能目标均需后续开发任务验证。
+以上为 2026-09-16 初始基线记录；当时未调用付费模型评判回答质量、未测真实任务加速率，也未修改 Agent 运行代码。当前实现状态见下一节。
+
+### 2.5 2026-09-17 实现后状态
+
+生产入口仍只有一个 `AgentRuntime → ReadingAgentGraph`。新的可信 scope resolver、typed TaskPlan、Document/Research/Writer/Curator 专家子图、共享 Language 能力、版本化 artifact、受限并发调度、任务 checkpoint、实时事件、MemoryCoordinator 和 Research UI 均已接入这一根图，没有建立第二套会话或最终回答所有权。
+
+```text
+Agent API / WebSocket / Research UI
+  → AgentRuntime（trace、取消、恢复、会话所有权）
+  → ReadingAgentGraph（唯一根图）
+      → authoritative scope + memory snapshot + budget
+      → fast | single | workflow
+          → Document / Research / Writer / Curator 子图
+          → shared Language tools
+      → verified versioned artifacts / explicit business commits
+      → final delivery and persistent task events
+```
+
+MA10 的 deterministic T01–T36 契约矩阵为 36/36，通过完整 Python、桌面端和 Tauri 门禁。公平 A/B 调度和 recorded-input 协议已经具备，但当前没有真实三策略语义观测；usage 未知时写 `null`，不写假零。发布策略因此采用 `AITRANS_MULTI_AGENT_ROLLOUT=single` 默认值，复杂 workflow 仅显式启用。完整边界和报告见[任务书 MA10 记录](multi-agent-system-taskbook.md#ma10-实施记录--2026-09-17)与[确定性报告](ma10-deterministic-report.json)。
+
+旧 `AgentPlanner/AgentExecutor` 仍由 legacy 迁移桥生产使用；旧 checkpoint 解释器也处于兼容期。本阶段保留这些代码和历史数据。回滚可按 `workflow → single → simple → legacy/off` 收紧运行面，切换前应备份 checkpoint、artifact、memory、Knowledge 与 Research SQLite 文件。
 
 ## 3. 设计理念与合理性
 

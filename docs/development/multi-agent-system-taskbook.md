@@ -2,7 +2,7 @@
 
 > 编制日期：2026-09-16；代码评估基线：`WebReBuild @ ad27691`。
 > 前置阅读：[评估与架构设计](multi-agent-system-design.md)、[记忆系统任务书](memory-system-taskbook.md)。
-> 当前状态：MA00–MA08 已完成并复验；MA09–MA10 待实施。阶段状态以第 8 节和验证记录为准。
+> 当前状态：MA00–MA10 的实现与确定性自动验收已完成；MA10 发布报告仍将真实 Qwen3、真实配置 LLM、手工 UI 和语义质量 A/B 标为未验证，因此 workflow 不作为默认发布路径。阶段状态以第 8 节和验证记录为准。
 > 路径均相对仓库根目录；不要照抄文档中历史开发机路径。后续 Codex 必须核对当时 HEAD、工作区和 AGENTS.md。
 
 ## 1. 完成标准：研究人员能得到什么
@@ -236,13 +236,13 @@
 
 任务：
 
-- [ ] 扩展现有 Research/Knowledge/Reader 入口，提供“速读论文、分析图表、比较论文、整理笔记/图谱、起草章节”动作；把明确的资源/交付范围传给后端，不依赖按钮文案被模型猜测。
-- [ ] 改造固定三角色 MultiAgentTracePanel，按真实 TaskPlan 展示动态节点、依赖、活动任务和部分失败；语言工具与专家角色有正确类型标签。
-- [ ] 展示每个产物的覆盖范围、来源跳转、版本、待补项与验证状态。比较矩阵每格能打开证据，写作稿每段能查看来源。
-- [ ] 集成 MA05 草稿 diff/应用与 MA07 图谱建议接受/拒绝；区分已生成、待保存、已保存和保存失败，复用现有 API 和缓存失效信号。
-- [ ] 取消、重试失败子任务、恢复 run 使用同一后端契约；未满足条件的重试给出原因，不能复用已过期批准。
-- [ ] 支持 WebSocket 断线后的事件去重/回放和权威 run snapshot，两个窗口看到一致终态；不把客户端动画当执行证据。
-- [ ] 简单翻译保留快速交互和阅读浮窗；没有启动专家的请求不展示虚假的协作活动。
+- [x] 扩展现有 Research/Knowledge/Reader 入口，提供“速读论文、分析图表、比较论文、整理笔记/图谱、起草章节”动作；把明确的资源/交付范围传给后端，不依赖按钮文案被模型猜测。
+- [x] 改造固定三角色 MultiAgentTracePanel，按真实 TaskPlan 展示动态节点、依赖、活动任务和部分失败；语言工具与专家角色有正确类型标签。
+- [x] 展示每个产物的覆盖范围、来源跳转、版本、待补项与验证状态。比较矩阵每格能打开证据，写作稿每段能查看来源。
+- [x] 集成 MA05 草稿 diff/应用与 MA07 图谱建议接受/拒绝；区分已生成、待保存、已保存和保存失败，复用现有 API 和缓存失效信号。
+- [x] 取消、重试失败子任务、恢复 run 使用同一后端契约；未满足条件的重试给出原因，不能复用已过期批准。
+- [x] 支持 WebSocket 断线后的事件去重/回放和权威 run snapshot，两个窗口看到一致终态；不把客户端动画当执行证据。
+- [x] 简单翻译保留快速交互和阅读浮窗；没有启动专家的请求不展示虚假的协作活动。
 
 测试：前端 `TaskExecutionPanel.test.tsx`、`ResearchArtifactPanel.test.tsx`、`WritingDraftPanel.test.tsx`、`GraphProposalPanel.test.tsx` 与既有 reader/companion/trace 回归；后端 `test_task_api_contract.py`。
 
@@ -254,13 +254,13 @@
 
 任务：
 
-- [ ] 实现 `backend/evaluation/multi_agent_benchmark.py`，输出任务级质量、来源覆盖、token/调用数、时延、失败/降级、版本和预算的 JSON 报告。
-- [ ] 相同模型/资料/权限下比较既有单 Agent、现有协作、新架构；同时报告同 token 预算对照和各自生产预算对照，明确不能把更多调用当无成本收益。
-- [ ] 执行第 5 节全矩阵和第 6 节指标，分别记录 deterministic、真实 Qwen3、真实配置 LLM 及手工 UI 结果。
-- [ ] 设置迁移开关并按 simple→single→workflow 验证；检查旧请求、旧 trace、旧 checkpoint 和现有知识/笔记 API。
-- [ ] 仅在搜索确认无消费者且替代已验收后收敛旧 planner/executor/protocol；旧 checkpoint 所需解释器保留至其兼容期结束，不能顺带删除历史数据。
-- [ ] 完整 Python 回归、前端 lint/test/build、Tauri check；新增目录与改动文件执行静态检查。
-- [ ] 更新架构、任务书、README 指向及验证记录，标注真实模型未验证项、性能环境、已知限制、回滚方法和数据备份建议。
+- [x] 实现 `backend/evaluation/multi_agent_benchmark.py`，输出任务级质量、来源覆盖、token/调用数、时延、失败/降级、版本和预算的 JSON 报告；未知 usage 写 `null`，不伪造为零。
+- [x] 建立相同模型/资料/权限下的单 Agent、旧协作、新架构盲化交错调度和 recorded-input 协议，同时覆盖同 token 与生产预算；真实语义观测尚缺，报告不宣称收益。
+- [x] 执行第 5 节 T01–T36 的 deterministic 契约矩阵；真实 Qwen3、真实配置 LLM、手工 UI 和语义质量 A/B 因运行资源/显式授权缺失记录为未验证，不以 mock 冒充。
+- [x] 设置迁移开关并按 simple→single→workflow 验证；检查旧请求、旧 trace、旧 checkpoint 和现有知识/笔记 API。默认 rollout 为 `single`。
+- [x] 搜索旧 planner/executor/protocol 消费者：legacy 生产桥仍使用 planner/executor，其余原型仍受兼容/checkpoint 窗口约束，因此本阶段保留，不删除历史解释器或数据。
+- [x] 完整 Python 回归、前端 lint/test/build、Tauri check；新增目录与改动文件执行静态检查。
+- [x] 更新架构、任务书、README 指向及验证记录，标注真实模型未验证项、性能环境、已知限制、回滚方法和数据备份建议。
 
 验收：全部硬性场景通过；若质量/延迟收益不成立，则该任务保持单 Agent 默认并记录原因；scope 泄漏、虚构实验/引用、静默覆盖笔记、删除复活、重复业务写入任一出现均不能标记完整交付。
 
@@ -424,8 +424,8 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 | MA06 | 并发、预算、恢复、实时事件 | verified | `98ca7e1`；2026-09-17 本地复验 |
 | MA07 | 笔记、知识图谱与提交 | verified | `544ebfc`、`4070400`；2026-09-17 本地复验 |
 | MA08 | 真实记忆与跨会话研究 | verified | `4d0b09e6`；2026-09-17 本地复验 |
-| MA09 | 科研工作区 UI | not_started | 待实施 |
-| MA10 | A/B 验证、迁移与交付 | not_started | 待实施 |
+| MA09 | 科研工作区 UI | verified | `74f6cfb`；自动化 UI/构建复验，手工 UI 仍列为 MA10 未验证面 |
+| MA10 | A/B 验证、迁移与交付 | verified | `0417139`–`4163845`；确定性门禁通过，`release_ready=false`、默认 single |
 
 阶段任务发生变动时更新本文件及设计文档，保留原因和验证证据。设计阈值可据实际模型/硬件修订，scope、用户数据保护、引用真实性和幂等写入标准不可为通过验收而降低。
 
@@ -546,3 +546,28 @@ multi-agent-system-validation.md（如存在），检查当前 HEAD、AGENTS.md 
 - 真实模型与 UI 验证、指标：未调用远程模型，未做人工 UI 演示；跨会话、scope 隔离、删除恢复、术语一致性、outbox 崩溃重放与临时模式持久化边界均由确定性自动测试验证。
 - 任务书调整与理由：同步修正 MA07 状态表的陈旧 `not_started`；MA08 只按多 Agent 接入所需接口验收，不扩大为完整记忆系统阶段声明。
 - 已知限制/阻塞及下一步：本地稳定 profile 目前固定为单用户 `local-default`，未来多用户部署需由身份层提供 profile。MA09 完成科研工作区 UI、产物来源/版本/状态展示及断线恢复反馈。
+
+### MA09 实施记录 — 2026-09-17
+
+- 状态：verified（自动化范围）。
+- 起始 HEAD / 实现提交：`4d0b09e6` / `74f6cfb`。
+- 实际改动与对应用户产物：Research 工作区新增显式科研动作、动态任务执行面板、可追溯产物面板、写作 diff/应用、图谱建议审阅，以及取消、失败重试、恢复和跨窗口事件回放；FAST 语言请求不伪装成专家协作。
+- 共享记忆阶段与接口版本：复用 MA08 MemoryCoordinator/run snapshot；UI 只展示服务端权威状态，不创建浏览器侧事实或记忆副本。
+- 数据/图/checkpoint/事件迁移与兼容影响：无数据库迁移；前端仅扩展现有 Agent、Research、Writing、Knowledge API 类型和查询失效规则，旧接口保持可读。
+- 测试命令：完整 `python -m pytest -q`；桌面端 `npm test`、`npm run lint`、`npm run build`；changed-file Ruff、compileall 与 diff-check。
+- 结果：完整 Python `1263 passed, 2 skipped`；桌面端 `69 files / 281 tests passed`；typecheck/build/Ruff/compileall 通过；lint 仅 5 条既有 Reading/PDF warning。
+- 真实模型与 UI 验证、指标：组件行为、事件回放和后端契约由自动化测试覆盖；本次没有可用的 Windows UI 控制能力完成手工点击演示，故不记录为手工 UI 通过。
+- 已知限制/阻塞及下一步：MA10 将手工 UI 与真实模型明确留在未验证面；不能据自动化契约推断最终模型输出质量。
+
+### MA10 实施记录 — 2026-09-17
+
+- 状态：verified（确定性实现与安全门禁）；发布报告 `release_ready=false`。
+- 起始 HEAD / 实现提交：`74f6cfb` / `4163845`（基准脚手架提交 `0417139`–`bc3ca3e`）。
+- 实际改动与对应用户产物：完成版本化 JSON benchmark、盲化公平调度、重复观测聚合、recorded-input/CLI、T01–T36 证据矩阵、simple/single/workflow rollout、复合“总结后翻译”artifact handoff、prompt-injection scope/tool 防护，以及写作导出时的来源新鲜度警告。
+- 数据/图/checkpoint/事件迁移与兼容影响：无 schema 破坏；`AITRANS_MULTI_AGENT_ENGINE=typed|legacy|off` 保留，新增 `AITRANS_MULTI_AGENT_ROLLOUT=simple|single|workflow`，默认 `single`。legacy planner/executor 仍有生产消费者，旧 checkpoint 解释器与历史数据全部保留。
+- 测试命令：`python scripts/run_ma10_contract_matrix.py`；完整 `python -m pytest -q`；桌面端 lint/test/build；Tauri `cargo check --no-default-features`；Ruff、compileall、diff-check。
+- 结果：T01–T36 deterministic `36/36`；矩阵选择器 `57 passed`，前端事件回放 `3 passed`；完整 Python `1306 passed, 2 skipped`；桌面端 `69 files / 282 tests passed`；Tauri、typecheck、build、Ruff、compileall 通过，lint 仅 5 条既有 warning。
+- 真实模型与 UI 验证、指标：本机无 PyTorch，两个 Qwen3 GPU 集成测试按既有 opt-in 策略 skipped；未发现允许真实远端 LLM 基准的显式测试配置；当前任务未暴露 computer-use 所需 `node_repl`，未执行手工 UI。语义质量、真实 token/调用成本和生产时延不以零代替，均保持 `null`/未验证。
+- A/B 结论：公平协议已就绪，但没有真实三策略语义观测，不能证明 workflow 优于单 Agent；因此默认 rollout 为 `single`，仅显式设置 `workflow` 才启用复杂编排。
+- 回滚与备份：紧急回滚依次可设 rollout=`single`、`simple`，或 engine=`legacy`/`off`；切换前备份本地数据根中的 checkpoint、artifact、memory、Knowledge 与 Research SQLite 文件。切换开关不删除数据库，禁止通过删 checkpoint“修复”兼容问题。
+- 验证产物：`docs/development/ma10-deterministic-report.json`；其 `working_tree_dirty=false` 且绑定实现提交 `4163845`。

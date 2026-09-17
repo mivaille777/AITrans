@@ -23,22 +23,15 @@ The project has evolved from an early desktop translation assistant into a knowl
 User
  |
  v
-Supervisor Agent
- |
- +----------------+
- |                |
-Research Agent  Reading Agent
- |
-Translation Agent
- |
- v
 Agent Runtime
  |
-Knowledge Runtime
+ReadingAgentGraph (authoritative root)
  |
-Knowledge Workspace
+ +-- fast language/tool path
+ +-- single specialist
+ +-- bounded specialist workflow
  |
-Personal Memory
+Evidence + Knowledge Workspace + Personal Memory
 ```
 
 AITrans does not treat translation as the final product. Translation is provided as an Agent capability inside a larger reading and research workflow.
@@ -81,18 +74,19 @@ Update Personal Knowledge Base
 Current agent direction:
 
 ```text
-Supervisor Agent
+Authoritative ReadingAgentGraph
         |
-        +-- Research Agent
+        +-- Document Analyst
+        +-- Research Synthesizer
+        +-- Academic Writer
+        +-- Knowledge Curator
         |
-        +-- Reading Agent
-        |
-        +-- Translation Agent
-        |
-        +-- Knowledge Retrieval Agent
+        +-- Shared Language tools (translation / polish)
 ```
 
-Agents share context through the Knowledge Runtime and Workspace Context system.
+The root graph owns scope, budget, checkpoints, events, memory snapshots, and final delivery. Specialists exchange typed tasks and versioned artifacts rather than mutable free-form shared state. Simple language work stays on the fast path.
+
+The conservative rollout default is `AITRANS_MULTI_AGENT_ROLLOUT=single`; set it to `workflow` only when complex orchestration is intended. `simple` keeps the canonical single-Agent path, while `AITRANS_MULTI_AGENT_ENGINE=legacy|off` provides compatibility rollback. Switching modes does not delete checkpoints or user data.
 
 ---
 
@@ -164,13 +158,21 @@ Test:
 python -m pytest -q
 ```
 
+Architecture and verification:
+
+- [Multi-Agent system design](docs/development/multi-agent-system-design.md)
+- [Multi-Agent phased taskbook](docs/development/multi-agent-system-taskbook.md)
+- [MA10 deterministic report](docs/development/ma10-deterministic-report.json)
+
+Before migration or rollback, back up the local data root, especially checkpoint, artifact, memory, Knowledge, and Research SQLite databases. Real Qwen3 GPU tests require PyTorch/CUDA and explicit `AITRANS_RUN_RAG_GPU_TESTS=1`; real configured-LLM and manual-UI results are not claimed by the deterministic report.
+
 ---
 
 ## Roadmap
 
 Future development focuses on:
 
-- Advanced Agent orchestration
+- Real-model semantic A/B evaluation and workflow rollout evidence
 - Multimodal RAG
 - Research Agent
 - Long-term Memory
