@@ -55,9 +55,59 @@
   z-index: 45;
 }
 
+/* The Reading grid must be constrained to the viewport. Without an explicit
+   minmax(0, 1fr) row, a tall PDF page can enlarge the implicit grid row. That
+   pushes the Trash footer, Outline scroll area, and PDF zoom controls below
+   the visible application window. */
+.ait-reading-workspace > section,
+.ait-reading-workspace > section > div.grid {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ait-reading-workspace > section > div.grid {
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
+.ait-reading-workspace > section > div.grid > aside,
+.ait-reading-workspace > section > div.grid > main {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* All Documents and Outline own their own vertical scrolling. Keeping their
+   scroll regions constrained also guarantees the fixed footer actions (Trash
+   and Live Reading) remain visible at every window height. */
+.ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel,
+.ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel {
+  min-height: 0 !important;
+  overflow-y: scroll !important;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
+.ait-reading-workspace > section > div.grid > aside:first-child > div:last-child,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div:last-child {
+  flex-shrink: 0;
+  background: #fff;
+  position: relative;
+  z-index: 8;
+}
+
+/* Keep the PDF flex surface inside the center column instead of allowing its
+   intrinsic page height to grow the grid row. */
+.ait-reading-workspace main > div.relative.flex.min-h-0.flex-1.flex-col {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* PDF owns both axes. Always reserve scrollbar space so zoomed pages can be
    panned vertically and horizontally with visible scroll affordances. */
 .ait-reading-workspace .ait-pdf-scroll-surface {
+  min-height: 0;
   overflow-x: scroll !important;
   overflow-y: scroll !important;
   overscroll-behavior: contain;
@@ -84,6 +134,17 @@
 
 .ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-thumb:hover {
   background: #858585;
+}
+
+/* The PDF zoom control is a sibling of the scroll surface. Force it to remain
+   pinned above the viewport even when the rendered canvas is larger than the
+   available center column. */
+.ait-reading-workspace .ait-pdf-scroll-surface ~ [aria-label="Document zoom controls"] {
+  position: absolute !important;
+  right: 16px !important;
+  bottom: 16px !important;
+  z-index: 80 !important;
+  display: flex !important;
 }
 
 @media (max-width: 1180px) {
