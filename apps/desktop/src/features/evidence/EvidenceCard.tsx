@@ -30,7 +30,7 @@ export function EvidenceCard({
   })
 
   return (
-    <article className={`rounded-[18px] border border-slate-200 bg-slate-50/70 ${compact ? "p-3" : "p-4"}`}>
+    <article id={`evidence-${encodeURIComponent(item.evidence_id)}`} className={`scroll-mt-24 rounded-[18px] border border-slate-200 bg-slate-50/70 ${compact ? "p-3" : "p-4"}`}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone="info">{item.source_type || "evidence"}</Badge>
         <Badge tone="success">Relevant source</Badge>

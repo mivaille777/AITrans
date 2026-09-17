@@ -393,6 +393,7 @@ class SQLiteMemoryRepository:
                 + _hash(
                     _json(
                         {
+                            "run": run_id,
                             "profile": profile_id,
                             "workspace": workspace_id,
                             "scope": scope_ref,

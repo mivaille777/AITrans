@@ -2,6 +2,7 @@ import { LoaderCircle, ServerOff } from "lucide-react"
 
 import { EmptyState } from "../../shared/ui/EmptyState"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
+import { ResearchWorkflowActions } from "../agent/components/ResearchWorkflowActions"
 import EvidenceReviewPanel from "./EvidenceReviewPanel"
 import KnowledgeResearchBridgePanel from "./KnowledgeResearchBridgePanel"
 import ResearchProjectPanel from "./ResearchProjectPanel"
@@ -47,6 +48,7 @@ export default function ResearchRoute({
 
   return (
     <div className="mx-auto max-w-[1220px] space-y-4">
+      <ResearchWorkflowActions />
       <ResearchProjectPanel workspace={workspace} />
       <EvidenceReviewPanel workspace={workspace} />
       <KnowledgeResearchBridgePanel workspace={workspace} />

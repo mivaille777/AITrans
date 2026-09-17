@@ -3,6 +3,7 @@ import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
 import { Button } from "../../shared/ui/Button"
+import { ResearchWorkflowActions } from "../agent/components/ResearchWorkflowActions"
 import KnowledgePaperReaderPanel from "../knowledge/KnowledgePaperReaderPanel"
 import type { KnowledgeDocument } from "../knowledge/knowledge-types"
 import type { KnowledgeLibraryController } from "../knowledge/useKnowledgeLibrary"
@@ -45,6 +46,7 @@ export default function ReadingWorkspace({
 
   return (
     <div className="space-y-4">
+      <ResearchWorkflowActions available={["quick_read", "analyze_visuals"]} compact />
       <ReadingLibraryLanding
         library={library}
         onOpenPaper={(itemId) => setSearchParams(buildOpenReadingPaperParams(searchParams, itemId))}

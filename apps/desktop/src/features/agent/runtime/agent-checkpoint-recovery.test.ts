@@ -60,6 +60,14 @@ describe("agent checkpoint recovery", () => {
     })
   })
 
+  it("uses the same resume contract for a task retry without carrying approval", () => {
+    const pending = rememberPendingAgentRun(accepted, 1_000)
+    const request = buildAgentResumeRequest(pending!, "zh-CN", "research-1")
+    expect(request.resume_run_id).toBe("run-checkpoint")
+    expect(request.retry_task_id).toBe("research-1")
+    expect(request.confirmed_write_tools).toBeUndefined()
+  })
+
   it("expires stale or future-dated recovery records", () => {
     rememberPendingAgentRun(accepted, 1_000)
     expect(readPendingAgentRun(1_000 + AGENT_PENDING_RUN_MAX_AGE_MS + 1)).toBeNull()

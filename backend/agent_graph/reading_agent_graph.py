@@ -386,6 +386,17 @@ class ReadingAgentGraph:
             )
         return state
 
+    def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
+        adapter = self._collaboration_adapter
+        prepare = getattr(adapter, "prepare_task_retry", None)
+        if not callable(prepare):
+            raise AgentRuntimeError(
+                "Task retry is unavailable for this Agent workflow.",
+                stage="checkpoint",
+                fallback_reason="task_retry_unavailable",
+            )
+        return tuple(prepare(state, task_id))
+
     def _pending_checkpoint_write_tool(
         self,
         state: AgentState,

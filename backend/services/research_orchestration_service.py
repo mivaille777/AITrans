@@ -206,6 +206,10 @@ class ResearchOrchestrationService:
                     payload={
                         "task_id": task.task_id,
                         "parent_task_id": "",
+                        "role": task.role.value,
+                        "depends_on": list(task.depends_on),
+                        "required": task.required,
+                        "output_kind": task.expected_output_kind.value,
                         "attempt": 0,
                         "plan_revision": task.plan_revision,
                         "reason_code": "",
@@ -215,8 +219,13 @@ class ResearchOrchestrationService:
         if route.lane is OrchestrationLane.FAST or task_plan is None:
             execution_results: tuple[TaskResult, ...] = ()
             outputs: dict[str, Any] = {}
-            direct_output = None
-            direct_delivery = False
+            direct_output = (
+                "This research action needs additional scoped input before it can run: "
+                + ", ".join(route.missing_information)
+                if route.missing_information
+                else None
+            )
+            direct_delivery = bool(route.missing_information)
         else:
             active_executor = (
                 self.temporary_executor
@@ -298,6 +307,22 @@ class ResearchOrchestrationService:
             direct_output=direct_output,
             direct_delivery=direct_delivery,
         )
+
+    def prepare_task_retry(self, state: Any, task_id: str) -> tuple[str, ...]:
+        plan_payload = dict(getattr(state, "orchestration_plan", {}) or {})
+        if not plan_payload:
+            raise ValueError("run has no validated orchestration plan")
+        plan = ValidatedTaskPlan.model_validate(plan_payload)
+        scope_ref = str(
+            dict(getattr(state, "orchestration_scope", {}) or {}).get("scope_ref", "")
+            or ""
+        )
+        if scope_ref != plan.scope_ref:
+            raise ValueError("persisted run scope no longer matches its task plan")
+        prepare = getattr(self.executor, "prepare_retry", None)
+        if not callable(prepare):
+            raise TypeError("task retry is unavailable for this executor")
+        return tuple(prepare(run_id=state.run_id, plan=plan, task_id=task_id))
 
 
 __all__ = ["ResearchOrchestrationRun", "ResearchOrchestrationService"]

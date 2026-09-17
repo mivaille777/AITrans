@@ -63,6 +63,31 @@ def test_resumed_run_keeps_frozen_version_but_revocation_removes_body(tmp_path):
     assert "version one" not in str(invalidated["role_projections"])
 
 
+def test_distinct_runs_get_distinct_snapshot_ids_for_identical_memory(tmp_path):
+    repository = SQLiteMemoryRepository(tmp_path / "memory.sqlite3")
+    coordinator = MemoryCoordinator(repository)
+    scope = ScopeContext.issue(
+        profile_id="profile-a",
+        workspace_id="workspace-a",
+        scope_revision="same-scope",
+    )
+
+    first = coordinator.load_snapshot(
+        profile_id="profile-a", scope=scope, run_id="run-a"
+    )
+    second = coordinator.load_snapshot(
+        profile_id="profile-a", scope=scope, run_id="run-b"
+    )
+
+    assert first["snapshot_id"] != second["snapshot_id"]
+    assert (
+        coordinator.load_snapshot(
+            profile_id="profile-a", scope=scope, run_id="run-a"
+        )["snapshot_id"]
+        == first["snapshot_id"]
+    )
+
+
 def test_disabled_or_deleted_memory_cannot_reappear_from_old_snapshot(tmp_path):
     repository = SQLiteMemoryRepository(tmp_path / "memory.sqlite3")
     coordinator = MemoryCoordinator(repository)

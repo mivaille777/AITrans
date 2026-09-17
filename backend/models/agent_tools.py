@@ -16,6 +16,14 @@ AgentRunStatus = Literal["completed", "confirmation_required"]
 AgentPlanAction = Literal["answer", "tool"]
 AgentClientSurface = Literal["main", "overlay", "unknown"]
 AgentContextMode = Literal["general", "reading", "knowledge", "research", "translation"]
+AgentWorkflowAction = Literal[
+    "",
+    "quick_read",
+    "analyze_visuals",
+    "compare_papers",
+    "curate_knowledge",
+    "draft_section",
+]
 AgentTraceEventType = Literal[
     "agent_start",
     "context_ready",
@@ -184,6 +192,8 @@ class AgentRunRequest(ReadingContextPayload):
     knowledge_relation_type: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
     temporary: bool = False
+    workflow_action: AgentWorkflowAction = ""
+    retry_task_id: str = Field(default="", max_length=256)
 
 
 class AgentRunResponse(BaseModel):
@@ -220,3 +230,16 @@ class AgentRunTraceResponse(BaseModel):
     total_duration_ms: int = Field(default=0, ge=0)
     run: AgentRunResponse
     events: list[AgentTraceEvent] = Field(default_factory=list)
+
+
+class AgentRunSnapshotResponse(BaseModel):
+    run_id: str
+    trace_id: str
+    status: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+    plan: dict[str, Any] = Field(default_factory=dict)
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[AgentTraceEvent] = Field(default_factory=list)
+    resumable: bool = False
+    retryable_task_ids: list[str] = Field(default_factory=list)

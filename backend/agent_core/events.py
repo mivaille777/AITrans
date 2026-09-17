@@ -70,6 +70,7 @@ class AgentEvent(BaseModel):
     run_id: str = ""
     trace_id: str = ""
     elapsed_ms: int = Field(default=0, ge=0)
+    sequence: int = Field(default=-1, ge=-1)
     timestamp: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat()
     )

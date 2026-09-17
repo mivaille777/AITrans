@@ -162,6 +162,12 @@ export default function WritingDraftPanel({ workspaceId }: { workspaceId: string
               <select aria-label="Paragraph to revise" value={paragraph?.paragraph_id ?? ""} onChange={(event) => { setParagraphId(event.target.value); setReplacement(null); setPreview(null) }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">{section.paragraphs.map((item) => <option key={item.paragraph_id} value={item.paragraph_id}>{item.paragraph_id}</option>)}</select>
             </label>
             <textarea aria-label="Revision text" value={revisionText} onChange={(event) => { setReplacement(event.target.value); setPreview(null) }} className="mt-3 min-h-32 w-full rounded-xl border border-slate-200 p-3 text-sm leading-6" />
+            <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] text-slate-500" aria-label="Paragraph evidence">
+              <span>已保存 v{section.version} · 段落来源：</span>
+              {paragraph?.evidence_ids.length
+                ? paragraph.evidence_ids.map((id) => <a key={id} href={`#evidence-${encodeURIComponent(id)}`} className="rounded bg-cyan-50 px-1.5 py-0.5 text-cyan-800">{id}</a>)
+                : <span className="text-amber-700">无来源，应用前需复核</span>}
+            </div>
             <Button disabled={!paragraph || revisionText === paragraph.markdown || previewMutation.isPending} onClick={() => previewMutation.mutate()}><FilePenLine size={13} />Preview revision</Button>
 
             {preview ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4" aria-label="Revision diff">

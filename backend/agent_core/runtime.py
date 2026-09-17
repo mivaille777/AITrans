@@ -15,7 +15,7 @@ from backend.agent_core.state import AgentState
 
 AgentEventSink = Callable[[AgentEvent], None]
 AgentRunRecorder = Callable[[AgentState, tuple[AgentEvent, ...]], None]
-AgentEventRecorder = Callable[[AgentState, AgentEvent, int], None]
+AgentEventRecorder = Callable[[AgentState, AgentEvent, int], int | None]
 
 
 def _fallback_reason(exc: Exception) -> str:
@@ -82,12 +82,17 @@ class AgentRuntime:
             elapsed_ms=control.elapsed_ms if control is not None else 0,
         )
         self.events.append(event)
+        event.sequence = len(self.events) - 1
         temporary = bool(
             state is not None and state.browser_context.get("temporary", False)
         )
         if self.event_recorder is not None and state is not None and not temporary:
             try:
-                self.event_recorder(state, event, len(self.events) - 1)
+                persisted_sequence = self.event_recorder(
+                    state, event, len(self.events) - 1
+                )
+                if persisted_sequence is not None:
+                    event.sequence = max(0, int(persisted_sequence))
             except Exception:  # noqa: BLE001,S110 - observer is best effort
                 # Live trace durability is observational and cannot fail the run.
                 pass
@@ -133,7 +138,31 @@ class AgentRuntime:
                 stage="checkpoint",
                 fallback_reason="checkpoint_not_found",
             )
+        context = dict(state.browser_context)
+        context["confirmed_write_tools"] = []
+        state.browser_context = context
+        state.sync_contract()
         return state
+
+    def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
+        """Reopen one failed orchestration task through the configured workflow."""
+
+        prepare = getattr(self.workflow_adapter, "prepare_task_retry", None)
+        if not callable(prepare):
+            raise AgentRuntimeError(
+                "The configured Agent workflow does not support task retry.",
+                stage="checkpoint",
+                fallback_reason="task_retry_unavailable",
+            )
+        retried = tuple(prepare(state, task_id))
+        context = dict(state.browser_context)
+        # A confirmation authorizes one concrete write attempt only. A resumed
+        # or retried task must request a fresh confirmation if it reaches a write.
+        context["confirmed_write_tools"] = []
+        context["retry_task_id"] = str(task_id or "").strip()
+        state.browser_context = context
+        state.sync_contract()
+        return retried
 
     def execute(
         self,

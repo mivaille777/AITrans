@@ -237,7 +237,13 @@ class MultiAgentRuntimeBridge:
             ),
             "knowledge_item_ids": list(context.get("knowledge_item_ids", ()) or ()),
             "temporary": bool(context.get("temporary", False)),
+            "workflow_action": str(context.get("workflow_action", "") or ""),
         }
+
+    def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
+        if self.orchestrator is None:
+            raise ValueError("task retry requires the typed orchestration runtime")
+        return tuple(self.orchestrator.prepare_task_retry(state, task_id))
 
     @staticmethod
     def _apply_memory_projection(

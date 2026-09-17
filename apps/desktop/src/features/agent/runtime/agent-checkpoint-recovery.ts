@@ -88,6 +88,7 @@ export function clearPendingAgentRun(runId = ""): void {
 export function buildAgentResumeRequest(
   pending: PendingAgentRun,
   targetLanguage: string,
+  retryTaskId = "",
 ): AgentRunRequest {
   return {
     session_id: pending.sessionId,
@@ -105,5 +106,6 @@ export function buildAgentResumeRequest(
     context_before: "",
     context_after: "",
     source_kind: "checkpoint_resume",
+    retry_task_id: retryTaskId,
   }
 }

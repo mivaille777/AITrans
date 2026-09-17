@@ -120,6 +120,10 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
                 "reason_code",
                 "usage",
                 "task_count",
+                "role",
+                "depends_on",
+                "required",
+                "output_kind",
             }
         )
         for event_type in (
@@ -528,7 +532,7 @@ class AgentTraceStoreService:
         state: AgentState,
         event: AgentEvent,
         sequence: int,
-    ) -> None:
+    ) -> int:
         """Persist one redacted event immediately for crash-safe replay."""
 
         del sequence  # Database sequence is monotonic across resumed runtime instances.
@@ -577,6 +581,7 @@ class AgentTraceStoreService:
                 "UPDATE agent_runs SET event_count = ? WHERE run_id = ?",
                 (next_sequence + 1, state.run_id),
             )
+            return next_sequence
 
     @staticmethod
     def _run_from_row(row: sqlite3.Row) -> StoredAgentRun:

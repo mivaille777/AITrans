@@ -180,4 +180,21 @@ describe("Agent run request", () => {
 
     expect(request.temporary).toBe(true)
   })
+
+  it("carries the structured research action independently from prompt wording", () => {
+    const request = buildAgentRunRequest({
+      context,
+      sessionId: "research-action",
+      traceId: "trace-action",
+      requestId: 9,
+      userMessage: "do it",
+      sourceText: "",
+      translatedText: "",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      conversationId: "",
+      workflowAction: "compare_papers",
+    })
+    expect(request.workflow_action).toBe("compare_papers")
+  })
 })

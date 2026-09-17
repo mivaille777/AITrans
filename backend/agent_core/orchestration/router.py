@@ -11,6 +11,13 @@ _WRITING_TERMS = ("撰写", "写作", "起草", "大纲", "章节", "draft", "ou
 _CURATION_TERMS = ("笔记", "知识图谱", "知识卡", "整理", "note", "knowledge graph", "curate")
 _DOCUMENT_TERMS = ("论文", "文档", "总结", "方法", "实验", "图表", "table", "figure", "paper", "summarize", "analyze")
 _DIRECT_WRITE_TERMS = ("save", "保存", "存为", "添加到笔记", "add to notes")
+_ACTION_ROLES = {
+    "quick_read": TaskRole.DOCUMENT,
+    "analyze_visuals": TaskRole.DOCUMENT,
+    "compare_papers": TaskRole.RESEARCH,
+    "curate_knowledge": TaskRole.CURATOR,
+    "draft_section": TaskRole.WRITER,
+}
 
 
 def _contains(text: str, terms: tuple[str, ...]) -> bool:
@@ -41,6 +48,36 @@ class ResearchTaskRouter:
                 lane=OrchestrationLane.FAST,
                 reason_code="multi_agent_disabled",
                 user_visible_reason="Multi-agent execution is disabled for this request.",
+            )
+
+        workflow_action = str(context.get("workflow_action", "") or "").strip()
+        explicit_role = _ACTION_ROLES.get(workflow_action)
+        if explicit_role is not None:
+            missing_information: list[str] = []
+            if workflow_action in {"quick_read", "analyze_visuals"}:
+                if not selected_text and not document_ids:
+                    missing_information.append("source_required")
+            elif workflow_action == "compare_papers" and len(document_ids) < 2:
+                missing_information.append("at_least_two_documents")
+            elif (
+                workflow_action in {"curate_knowledge", "draft_section"}
+                and not document_ids
+                and not selected_text
+            ):
+                missing_information.append("source_required")
+            lane = (
+                OrchestrationLane.SINGLE
+                if workflow_action in {"quick_read", "analyze_visuals"}
+                else OrchestrationLane.WORKFLOW
+            )
+            return OrchestrationRoute(
+                lane=lane,
+                primary_role=explicit_role,
+                reason_code=f"explicit_{workflow_action}",
+                user_visible_reason=(
+                    "The selected research action maps to a typed specialist deliverable."
+                ),
+                missing_information=missing_information,
             )
 
         if selected_text and _contains(text, _TRANSLATION_TERMS) and not (

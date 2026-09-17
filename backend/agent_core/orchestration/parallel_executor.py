@@ -313,6 +313,71 @@ class SQLiteTaskCheckpointStore:
             )
         return completed, interrupted
 
+    def prepare_retry(
+        self,
+        *,
+        run_id: str,
+        plan_hash: str,
+        task_ids: set[str],
+        target_task_id: str,
+        max_attempts: int,
+    ) -> tuple[str, ...]:
+        """Mark a failed task frontier as interrupted so normal resume rules rerun it."""
+
+        if not task_ids or target_task_id not in task_ids:
+            raise TaskCheckpointConflictError("retry target is not in the task plan")
+        now = self._clock()
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = connection.execute(
+                "SELECT * FROM multi_agent_task_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if run is None or str(run["plan_hash"]) != plan_hash:
+                connection.rollback()
+                raise TaskCheckpointConflictError(
+                    "retry target does not match the persisted task plan"
+                )
+            if str(run["lease_owner"]) and float(run["lease_expires_at"]) > now:
+                connection.rollback()
+                raise TaskRunLeaseError("multi-agent run already has an active owner")
+            target = connection.execute(
+                """
+                SELECT status, attempt_ordinal FROM multi_agent_task_checkpoints
+                WHERE run_id = ? AND task_id = ? AND plan_hash = ?
+                """,
+                (run_id, target_task_id, plan_hash),
+            ).fetchone()
+            if target is None:
+                connection.rollback()
+                raise TaskCheckpointConflictError("retry target has no persisted attempt")
+            if str(target["status"]) not in {
+                "failed",
+                "partial",
+                "blocked",
+                "cancelled",
+                "skipped",
+            }:
+                connection.rollback()
+                raise TaskCheckpointConflictError(
+                    "only failed, partial, blocked, cancelled, or skipped tasks can be retried"
+                )
+            if int(target["attempt_ordinal"]) >= max_attempts:
+                connection.rollback()
+                raise TaskCheckpointConflictError("task retry budget is exhausted")
+            placeholders = ",".join("?" for _ in task_ids)
+            connection.execute(
+                f"""
+                UPDATE multi_agent_task_checkpoints
+                SET status = 'running', result_json = '', output_json = 'null',
+                    direct_delivery = 0, updated_at = ?
+                WHERE run_id = ? AND plan_hash = ?
+                  AND task_id IN ({placeholders})
+                """,
+                (now, run_id, plan_hash, *sorted(task_ids)),
+            )
+            connection.commit()
+        return tuple(sorted(task_ids))
+
 
 class ParallelTaskGraphExecutor:
     """Bounded fan-out/fan-in scheduler around typed LangGraph specialists."""
@@ -355,11 +420,46 @@ class ParallelTaskGraphExecutor:
             payload={
                 "task_id": task.task_id if task is not None else "",
                 "parent_task_id": "",
+                "role": task.role.value if task is not None else "supervisor",
+                "depends_on": list(task.depends_on) if task is not None else [],
+                "required": bool(task.required) if task is not None else False,
+                "output_kind": (
+                    task.expected_output_kind.value if task is not None else ""
+                ),
                 "attempt": attempt,
                 "plan_revision": task.plan_revision if task is not None else 0,
                 "reason_code": reason_code,
                 "usage": (usage or ResourceUsage()).model_dump(mode="json"),
             },
+        )
+
+    def prepare_retry(
+        self,
+        *,
+        run_id: str,
+        plan: ValidatedTaskPlan,
+        task_id: str,
+    ) -> tuple[str, ...]:
+        if self.checkpoints is None:
+            raise TaskCheckpointConflictError("task checkpoint persistence is unavailable")
+        normalized = str(task_id or "").strip()
+        tasks = plan.task_map()
+        if normalized not in tasks:
+            raise TaskCheckpointConflictError(f"unknown retry task: {normalized}")
+        descendants = {normalized}
+        changed = True
+        while changed:
+            changed = False
+            for task in plan.tasks:
+                if task.task_id not in descendants and descendants.intersection(task.depends_on):
+                    descendants.add(task.task_id)
+                    changed = True
+        return self.checkpoints.prepare_retry(
+            run_id=run_id,
+            plan_hash=self._plan_hash(plan),
+            task_ids=descendants,
+            target_task_id=normalized,
+            max_attempts=self.policy.max_retries + 1,
         )
 
     def _execute_one(

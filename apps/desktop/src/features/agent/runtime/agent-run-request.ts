@@ -1,4 +1,4 @@
-import type { AgentKnowledgeContext, AgentRunRequest } from "../../../api/agent"
+import type { AgentKnowledgeContext, AgentRunRequest, AgentWorkflowAction } from "../../../api/agent"
 import type { ReadingContextFields } from "../../../api/types"
 import type { AgentContextMode } from "./agent-context-mode"
 
@@ -20,6 +20,7 @@ export interface BuildAgentRunRequestInput {
   researchSourceIds?: string[]
   knowledgeContext?: AgentKnowledgeContext | null
   temporary?: boolean
+  workflowAction?: AgentWorkflowAction
 }
 
 export function buildAgentRunRequest({
@@ -40,6 +41,7 @@ export function buildAgentRunRequest({
   researchSourceIds = [],
   knowledgeContext = null,
   temporary = false,
+  workflowAction = "",
 }: BuildAgentRunRequestInput): AgentRunRequest {
   return {
     ...context,
@@ -62,5 +64,6 @@ export function buildAgentRunRequest({
     knowledge_context: knowledgeContext,
     request_id: requestId,
     temporary,
+    workflow_action: workflowAction,
   }
 }

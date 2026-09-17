@@ -137,4 +137,14 @@ describe("WritingDraftPanel", () => {
     expect(await screen.findByText("Version conflict: reload the latest section before applying.")).not.toBeNull()
     expect(screen.getByLabelText("Revision diff")).not.toBeNull()
   })
+
+  it("shows the stored version and paragraph-level source state", async () => {
+    const sourced = project()
+    sourced.sections[0].paragraphs[0].evidence_ids = ["ev-writing-1"]
+    api.listWritingProjects.mockResolvedValue({ total: 1, projects: [sourced] })
+    renderPanel()
+    const evidence = await screen.findByLabelText("Paragraph evidence")
+    expect(evidence.textContent).toContain("已保存 v1")
+    expect(screen.getByRole("link", { name: "ev-writing-1" }).getAttribute("href")).toContain("evidence-ev-writing-1")
+  })
 })
