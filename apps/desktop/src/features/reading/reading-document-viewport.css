@@ -1,10 +1,10 @@
 .ait-reading-workspace main > .ait-scroll-panel {
+  height: 100%;
   min-height: 0;
   overflow-x: auto !important;
   overflow-y: scroll !important;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
-  touch-action: pan-x pan-y;
 }
 
 .ait-reading-workspace main > .ait-scroll-panel > div {
@@ -38,11 +38,52 @@
   word-break: break-word;
 }
 
+/* The document header has a single source of page navigation: the PDF toolbar.
+   Text/Markdown/Word readers do not invent a page number. */
+.ait-reading-workspace main > header > div:last-child > span {
+  display: none;
+}
+
+.ait-reading-workspace.is-text-reader aside:last-child .ait-scroll-panel > section:nth-of-type(2) > p:last-child {
+  display: none;
+}
+
 .ait-reading-workspace .ait-reading-document-zoom {
   position: absolute;
   right: 340px;
   bottom: 16px;
   z-index: 45;
+}
+
+/* PDF owns both axes. Always reserve scrollbar space so zoomed pages can be
+   panned vertically and horizontally with visible scroll affordances. */
+.ait-reading-workspace .ait-pdf-scroll-surface {
+  overflow-x: scroll !important;
+  overflow-y: scroll !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-color: #a8a8a8 #f0f0f0;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-track {
+  background: #f0f0f0;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-thumb {
+  min-width: 36px;
+  min-height: 36px;
+  border: 2px solid #f0f0f0;
+  border-radius: 999px;
+  background: #a8a8a8;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-thumb:hover {
+  background: #858585;
 }
 
 @media (max-width: 1180px) {
