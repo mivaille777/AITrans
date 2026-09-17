@@ -12,6 +12,7 @@ from backend.api.knowledge_workspace_dependencies import (
     DEFAULT_KNOWLEDGE_WORKSPACE_FILENAME,
     get_knowledge_workspace_service,
 )
+from backend.api.memory_dependencies import get_memory_coordinator
 from backend.knowledge.suggestion_repository import (
     SqliteKnowledgeRelationSuggestionRepository,
 )
@@ -36,6 +37,7 @@ def get_curator_commit_service() -> CuratorCommitService:
                 ),
                 research_notes=get_research_note_service(),
                 research_workspaces=get_research_workspace_service(),
+                memory_coordinator=get_memory_coordinator(),
                 database_path=database_path,
             )
         return _service

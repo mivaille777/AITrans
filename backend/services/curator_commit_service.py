@@ -97,6 +97,7 @@ class CuratorCommitService:
         suggestion_repository: Any,
         research_notes: Any,
         research_workspaces: Any | None = None,
+        memory_coordinator: Any | None = None,
         database_path: str | Path | None = None,
     ) -> None:
         repository = getattr(knowledge_workspace, "_repository", None)
@@ -109,6 +110,7 @@ class CuratorCommitService:
         self._suggestions = suggestion_repository
         self._notes = research_notes
         self._workspaces = research_workspaces
+        self._memory = memory_coordinator
         self._lock = RLock()
         self._initialize()
 
@@ -391,6 +393,28 @@ class CuratorCommitService:
         if self._workspaces is not None and self._workspaces.get(workspace_id) is None:
             raise CuratorCommitError("research workspace no longer exists")
 
+    def _validate_memory_references(self, artifact: KnowledgeDraftArtifact) -> None:
+        if self._memory is None:
+            return
+        references = artifact.content.get("memory_references", [])
+        if not isinstance(references, list):
+            raise CuratorCommitError("knowledge draft memory references are invalid")
+        repository = self._memory.repository
+        for reference in references:
+            if not isinstance(reference, dict):
+                raise CuratorCommitError("knowledge draft memory reference is invalid")
+            item_id = str(reference.get("item_id", "") or "").strip()
+            current = repository.get(item_id) if item_id else None
+            status = str(getattr(getattr(current, "status", ""), "value", ""))
+            if current is None or status != "active":
+                raise CuratorCommitError(
+                    "knowledge draft used memory that was deleted or disabled"
+                )
+            if current.workspace_id and current.workspace_id != artifact.workspace_id:
+                raise CuratorCommitError(
+                    "knowledge draft memory is outside the current workspace"
+                )
+
     def _validate_sources(self, source_ids: list[str], scope: ScopeContext) -> None:
         if scope.mode is ScopeMode.UNSCOPED_GLOBAL:
             return
@@ -636,6 +660,7 @@ class CuratorCommitService:
                 "knowledge draft artifact not found or has the wrong type"
             )
         self._validate_scope(artifact, scope)
+        self._validate_memory_references(artifact)
         selected = {
             str(item).strip()
             for item in (selected_draft_ids or [])

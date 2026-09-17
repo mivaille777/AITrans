@@ -7,10 +7,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
-from backend.models.agent_artifacts import Artifact, artifact_from_payload
+from backend.models.agent_artifacts import (
+    Artifact,
+    ArtifactRef,
+    VerificationStatus,
+    artifact_from_payload,
+)
 
-
-ARTIFACT_STORE_SCHEMA_VERSION = 1
+ARTIFACT_STORE_SCHEMA_VERSION = 2
 
 
 class ArtifactConflictError(ValueError):
@@ -24,7 +28,7 @@ def _default_database_path() -> Path:
 
     data_root = str(os.getenv("AITRANS_DATA_ROOT", "") or "").strip()
     if data_root:
-        return (Path(data_root).expanduser().resolve() / "agent_artifacts.sqlite3")
+        return Path(data_root).expanduser().resolve() / "agent_artifacts.sqlite3"
 
     repository_root = Path(__file__).resolve().parents[3]
     return repository_root / "data" / "agent_artifacts.sqlite3"
@@ -32,7 +36,9 @@ def _default_database_path() -> Path:
 
 class SQLiteArtifactStore:
     def __init__(self, database_path: str | Path | None = None) -> None:
-        self.database_path = Path(database_path or _default_database_path()).expanduser().resolve()
+        self.database_path = (
+            Path(database_path or _default_database_path()).expanduser().resolve()
+        )
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self.migrate()
@@ -44,11 +50,13 @@ class SQLiteArtifactStore:
         return connection
 
     def migrate(self, target_version: int | None = None) -> int:
-        requested = ARTIFACT_STORE_SCHEMA_VERSION if target_version is None else int(target_version)
+        requested = (
+            ARTIFACT_STORE_SCHEMA_VERSION
+            if target_version is None
+            else int(target_version)
+        )
         if requested != ARTIFACT_STORE_SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported artifact store schema version: {requested}"
-            )
+            raise ValueError(f"unsupported artifact store schema version: {requested}")
         with self._lock, self._connect() as connection:
             current = int(connection.execute("PRAGMA user_version").fetchone()[0])
             if current > ARTIFACT_STORE_SCHEMA_VERSION:
@@ -79,7 +87,48 @@ class SQLiteArtifactStore:
                     PRAGMA user_version = 1;
                     """
                 )
+                current = 1
+            if current < 2:
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS artifact_memory_outbox (
+                        artifact_id TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        content_hash TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        created_at TEXT NOT NULL,
+                        delivered_at TEXT NOT NULL DEFAULT '',
+                        PRIMARY KEY (artifact_id, version),
+                        FOREIGN KEY (artifact_id, version)
+                            REFERENCES artifact_versions(artifact_id, version)
+                            ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_artifact_memory_outbox_status
+                        ON artifact_memory_outbox(status, created_at, artifact_id, version);
+                    PRAGMA user_version = 2;
+                    """
+                )
             return int(connection.execute("PRAGMA user_version").fetchone()[0])
+
+    @staticmethod
+    def _enqueue_memory_candidate(
+        connection: sqlite3.Connection, artifact: Artifact
+    ) -> None:
+        if artifact.verification_status is not VerificationStatus.PASSED:
+            return
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO artifact_memory_outbox (
+                artifact_id, version, content_hash, status, created_at
+            ) VALUES (?, ?, ?, 'pending', ?)
+            """,
+            (
+                artifact.artifact_id,
+                artifact.version,
+                artifact.content_hash,
+                artifact.created_at.isoformat(),
+            ),
+        )
 
     def put(self, artifact: Artifact) -> Artifact:
         payload = artifact.model_dump(mode="json")
@@ -103,7 +152,9 @@ class SQLiteArtifactStore:
                     raise ArtifactConflictError(
                         "artifact version already exists with a different content hash"
                     )
-                return artifact_from_payload(json.loads(str(row["payload_json"])))
+                stored = artifact_from_payload(json.loads(str(row["payload_json"])))
+                self._enqueue_memory_candidate(connection, stored)
+                return stored
 
             connection.execute(
                 """
@@ -123,7 +174,41 @@ class SQLiteArtifactStore:
                     artifact.created_at.isoformat(),
                 ),
             )
+            self._enqueue_memory_candidate(connection, artifact)
         return artifact.model_copy(deep=True)
+
+    def pending_memory_refs(self, *, limit: int = 100) -> tuple[ArtifactRef, ...]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT v.payload_json
+                FROM artifact_memory_outbox o
+                JOIN artifact_versions v
+                  ON v.artifact_id = o.artifact_id AND v.version = o.version
+                WHERE o.status = 'pending' AND v.revoked_at = ''
+                ORDER BY o.created_at ASC, o.artifact_id ASC, o.version ASC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 1000)),),
+            ).fetchall()
+        return tuple(
+            artifact_from_payload(json.loads(str(row["payload_json"]))).ref()
+            for row in rows
+        )
+
+    def mark_memory_delivered(self, ref: ArtifactRef) -> bool:
+        delivered_at = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE artifact_memory_outbox
+                SET status = 'delivered', delivered_at = ?
+                WHERE artifact_id = ? AND version = ? AND content_hash = ?
+                  AND status = 'pending'
+                """,
+                (delivered_at, ref.artifact_id, ref.version, ref.content_hash),
+            )
+            return cursor.rowcount > 0
 
     def get(
         self,
@@ -164,8 +249,7 @@ class SQLiteArtifactStore:
                 (str(artifact_id),),
             ).fetchall()
         return tuple(
-            artifact_from_payload(json.loads(str(row["payload_json"])))
-            for row in rows
+            artifact_from_payload(json.loads(str(row["payload_json"]))) for row in rows
         )
 
     def revoke(
@@ -192,14 +276,17 @@ class InMemoryArtifactStore:
     def __init__(self) -> None:
         self._items: dict[tuple[str, int], Artifact] = {}
         self._revoked: dict[tuple[str, int], str] = {}
+        self._memory_outbox: dict[tuple[str, int], ArtifactRef] = {}
         self._lock = RLock()
 
     def migrate(self, target_version: int | None = None) -> int:
-        requested = ARTIFACT_STORE_SCHEMA_VERSION if target_version is None else int(target_version)
+        requested = (
+            ARTIFACT_STORE_SCHEMA_VERSION
+            if target_version is None
+            else int(target_version)
+        )
         if requested != ARTIFACT_STORE_SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported artifact store schema version: {requested}"
-            )
+            raise ValueError(f"unsupported artifact store schema version: {requested}")
         return ARTIFACT_STORE_SCHEMA_VERSION
 
     def put(self, artifact: Artifact) -> Artifact:
@@ -211,9 +298,31 @@ class InMemoryArtifactStore:
                     raise ArtifactConflictError(
                         "artifact version already exists with a different content hash"
                     )
+                if previous.verification_status is VerificationStatus.PASSED:
+                    self._memory_outbox.setdefault(key, previous.ref())
                 return previous.model_copy(deep=True)
             self._items[key] = artifact.model_copy(deep=True)
+            if artifact.verification_status is VerificationStatus.PASSED:
+                self._memory_outbox[key] = artifact.ref()
         return artifact.model_copy(deep=True)
+
+    def pending_memory_refs(self, *, limit: int = 100) -> tuple[ArtifactRef, ...]:
+        with self._lock:
+            values = [
+                ref.model_copy(deep=True)
+                for key, ref in self._memory_outbox.items()
+                if key not in self._revoked
+            ]
+        return tuple(values[: max(1, min(int(limit), 1000))])
+
+    def mark_memory_delivered(self, ref: ArtifactRef) -> bool:
+        key = (ref.artifact_id, ref.version)
+        with self._lock:
+            current = self._memory_outbox.get(key)
+            if current is None or current.content_hash != ref.content_hash:
+                return False
+            del self._memory_outbox[key]
+            return True
 
     def get(
         self,

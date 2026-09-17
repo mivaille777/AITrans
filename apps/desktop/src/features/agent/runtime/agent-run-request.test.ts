@@ -162,4 +162,22 @@ describe("Agent run request", () => {
     expect(request.knowledge_document_ids).toEqual(["temporary-doc"])
     expect(request.research_source_ids).toEqual(["temporary-source"])
   })
+
+  it("carries temporary mode without storing it in a separate client cache", () => {
+    const request = buildAgentRunRequest({
+      context,
+      sessionId: "temporary-session",
+      traceId: "temporary-trace",
+      requestId: 1,
+      userMessage: "ephemeral",
+      sourceText: "",
+      translatedText: "",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      conversationId: "",
+      temporary: true,
+    })
+
+    expect(request.temporary).toBe(true)
+  })
 })

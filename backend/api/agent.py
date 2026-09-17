@@ -239,6 +239,12 @@ def _execute_runtime(
 ) -> AgentState:
     try:
         resume_run_id = payload.resume_run_id.strip()
+        if resume_run_id and payload.temporary:
+            raise AgentRuntimeError(
+                "Temporary Agent runs do not have persistent checkpoints.",
+                stage="checkpoint",
+                fallback_reason="temporary_checkpoint_unavailable",
+            )
         state = (
             runtime.restore_checkpoint(resume_run_id)
             if resume_run_id
@@ -266,11 +272,17 @@ def _execute_runtime(
             detail=str(exc),
         ) from exc
     except (AgentBudgetExceededError, AgentToolTimeoutError) as exc:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
+        ) from exc
     except AgentRuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
     except AIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -299,7 +311,9 @@ def _trace_response(state: AgentState, runtime: AgentRuntime) -> AgentRunTraceRe
         ui_mode=state.ui_mode,
         total_duration_ms=total_duration_ms,
         run=_run_response(state),
-        events=[_trace_event(index, event) for index, event in enumerate(runtime.events)],
+        events=[
+            _trace_event(index, event) for index, event in enumerate(runtime.events)
+        ],
     )
 
 
@@ -342,7 +356,9 @@ def execute_agent_tool(
     try:
         result = registry.execute(tool_name, **payload.model_dump())
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -354,7 +370,9 @@ def execute_agent_tool(
             detail=str(exc),
         ) from exc
     except AIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
 
     return _tool_response(result)
 
@@ -461,9 +479,7 @@ async def stream_product_agent(
                     "run_id": error_run_id,
                     "trace_id": error_trace_id,
                     "code": _stream_error_code(exc),
-                    "fallback_reason": str(
-                        getattr(exc, "fallback_reason", "") or ""
-                    ),
+                    "fallback_reason": str(getattr(exc, "fallback_reason", "") or ""),
                     "message": message or "Invalid Agent request.",
                 }
             )
@@ -532,7 +548,7 @@ async def stream_product_agent(
                         "message": str(exc) or "Agent run cancelled.",
                     }
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - stream terminal envelope
                 enqueue(
                     {
                         "type": "error",

@@ -7,6 +7,7 @@ from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
 from backend.knowledge.domain import AI_SUGGESTIBLE_RELATION_TYPES, KnowledgeItemType
 from backend.models.agent_artifacts import (
@@ -46,6 +47,7 @@ class KnowledgeCuratorState(TypedDict, total=False):
     draft: dict[str, Any]
     artifact: KnowledgeDraftArtifact
     result: TaskResult
+    memory_snapshot: dict[str, Any]
 
 
 def _short_title(statement: str) -> str:
@@ -371,11 +373,24 @@ class KnowledgeCuratorGraph:
                     item.ref().model_dump(mode="json") for item in source_artifacts
                 ],
                 "approval_required": True,
+                "memory_snapshot_ref": str(
+                    state.get("memory_snapshot", {}).get("snapshot_id", "") or ""
+                ),
+                "memory_references": list(
+                    state.get("memory_snapshot", {}).get("references", [])
+                ),
+                "curation_preference_ids": [
+                    str(item.get("item_id", ""))
+                    for item in role_memory_projection(
+                        state.get("memory_snapshot", {}), "curator"
+                    )
+                    if str(item.get("item_id", ""))
+                ],
             },
             claims=[
-                    ClaimRecord(
-                        claim_id=f"{task.task_id}:draft:{index}",
-                        statement=item.ai_content or item.summary or item.title,
+                ClaimRecord(
+                    claim_id=f"{task.task_id}:draft:{index}",
+                    statement=item.ai_content or item.summary or item.title,
                     category="suggestion",
                     evidence_ids=[],
                 )
@@ -430,12 +445,12 @@ class KnowledgeCuratorGraph:
         dependency_results: Mapping[str, TaskResult],
         memory_snapshot: Mapping[str, Any],
     ) -> SpecialistExecution:
-        del memory_snapshot
         final = self._compiled.invoke(
             {
                 "task": task,
                 "scope": scope,
                 "dependency_results": dict(dependency_results),
+                "memory_snapshot": dict(memory_snapshot),
             }
         )
         artifact = final["artifact"]

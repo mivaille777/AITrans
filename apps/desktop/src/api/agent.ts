@@ -152,6 +152,7 @@ export interface AgentRunRequest extends ReadingContextFields {
   research_source_ids?: string[]
   knowledge_context?: AgentKnowledgeContext | null
   request_id?: number
+  temporary?: boolean
 }
 
 export interface AgentRunResponse {

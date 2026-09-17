@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.translation import TranslationResult
-from app.translation.errors import TranslationError
+from app.translation.errors import TextNormalizationError, TranslationError
 from backend.services import translation_fallback_service as module
 from backend.services.translation_fallback_service import TranslationFallbackService
 
@@ -62,7 +62,9 @@ class StubGateway:
         return StubAIService(self.calls)
 
 
-def install_providers(monkeypatch, calls: list[str], *, youdao_fail: bool, google_fail: bool):
+def install_providers(
+    monkeypatch, calls: list[str], *, youdao_fail: bool, google_fail: bool
+):
     monkeypatch.setattr(
         module,
         "YoudaoWebTranslationProvider",
@@ -151,12 +153,26 @@ def test_manual_ai_calls_only_ai(monkeypatch):
     assert result.notice == ""
 
 
+def test_terminology_preferences_use_ai_instead_of_unconstrained_web(monkeypatch):
+    calls: list[str] = []
+    install_providers(monkeypatch, calls, youdao_fail=False, google_fail=False)
+    service = TranslationFallbackService(llm_gateway=StubGateway(calls))
+
+    result = service.translate(
+        "graph neural network",
+        terminology=("graph neural network => 图神经网络",),
+    )
+
+    assert calls == ["ai"]
+    assert result.provider == "ai"
+
+
 def test_invalid_source_does_not_call_any_provider(monkeypatch):
     calls: list[str] = []
     install_providers(monkeypatch, calls, youdao_fail=False, google_fail=False)
     service = TranslationFallbackService(llm_gateway=StubGateway(calls))
 
-    with pytest.raises(Exception):
+    with pytest.raises(TextNormalizationError):
         service.translate("   ")
 
     assert calls == []

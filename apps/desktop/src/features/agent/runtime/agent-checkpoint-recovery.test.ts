@@ -40,6 +40,11 @@ describe("agent checkpoint recovery", () => {
     )
   })
 
+  it("does not persist a temporary run recovery record", () => {
+    expect(rememberPendingAgentRun(accepted, 1_000, true)).toBeNull()
+    expect(window.localStorage.getItem(AGENT_PENDING_RUN_STORAGE_KEY)).toBeNull()
+  })
+
   it("builds a minimal explicit resume request without user content", () => {
     const pending = rememberPendingAgentRun(accepted, 1_000)
 

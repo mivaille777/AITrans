@@ -7,6 +7,7 @@ from fastapi import Depends
 from backend.agent_core.context import ReadingContextProvider
 from backend.agent_core.orchestration import (
     AuthoritativeScopeResolver,
+    CoordinatorMemoryPort,
     ScopedEvidenceService,
     build_artifact_store,
 )
@@ -43,6 +44,7 @@ from backend.api.evidence_review_dependencies import (
 from backend.api.knowledge_board_dependencies import get_knowledge_board_service
 from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
 from backend.api.llm_dependencies import get_llm_gateway
+from backend.api.memory_dependencies import get_memory_coordinator
 from backend.models.agent_tasks import TaskRole
 from backend.services.academic_writer_service import AcademicWriterService
 from backend.services.agent_checkpoint_service import AgentCheckpointService
@@ -182,6 +184,7 @@ def get_agent_runtime(
         knowledge_workspace=knowledge_workspace,
     )
     artifact_store = build_artifact_store()
+    temporary_artifact_store = build_artifact_store(temporary=True)
     document_analyst = DocumentAnalystGraph(
         evidence_service=evidence_service,
         artifact_store=artifact_store,
@@ -190,18 +193,46 @@ def get_agent_runtime(
         artifact_store=artifact_store,
         evidence_review_service=_LazyEvidenceReviewService(),
     )
+    writer_provider = FallbackAcademicWriterProvider(
+        AcademicWriterService(
+            text_service=get_llm_gateway().create_text_service("academic_writer")
+        )
+    )
     writer = AcademicWriterGraph(
         artifact_store=artifact_store,
-        provider=FallbackAcademicWriterProvider(
-            AcademicWriterService(
-                text_service=get_llm_gateway().create_text_service("academic_writer")
-            )
-        ),
+        provider=writer_provider,
         literature_synthesis_service=_LazyLiteratureSynthesisService(),
     )
     curator = KnowledgeCuratorGraph(
         artifact_store=artifact_store,
         knowledge_workspace=knowledge_workspace,
+    )
+    temporary_writer = AcademicWriterGraph(
+        artifact_store=temporary_artifact_store,
+        provider=writer_provider,
+        literature_synthesis_service=_LazyLiteratureSynthesisService(),
+    )
+    temporary_executor = ParallelTaskGraphExecutor(
+        {
+            TaskRole.DOCUMENT: DocumentAnalystGraph(
+                evidence_service=evidence_service,
+                artifact_store=temporary_artifact_store,
+            ),
+            TaskRole.RESEARCH: ResearchSynthesizerGraph(
+                artifact_store=temporary_artifact_store,
+                evidence_review_service=_LazyEvidenceReviewService(),
+            ),
+            TaskRole.WRITER: temporary_writer,
+            TaskRole.CURATOR: KnowledgeCuratorGraph(
+                artifact_store=temporary_artifact_store,
+                knowledge_workspace=knowledge_workspace,
+            ),
+        },
+        artifact_store=temporary_artifact_store,
+    )
+    memory_port = CoordinatorMemoryPort(
+        get_memory_coordinator(),
+        artifact_store=artifact_store,
     )
     orchestration_service = ResearchOrchestrationService(
         scope_resolver=scope_resolver,
@@ -219,6 +250,8 @@ def get_agent_runtime(
             ),
             artifact_store=artifact_store,
         ),
+        memory_port=memory_port,
+        temporary_executor=temporary_executor,
     )
     collaboration_adapter = MultiAgentRuntimeBridge(
         collaboration_service,
@@ -227,9 +260,7 @@ def get_agent_runtime(
     graph = ReadingAgentGraph(
         adapter,
         checkpointer=(
-            checkpoint_service.checkpointer
-            if checkpoint_service is not None
-            else None
+            checkpoint_service.checkpointer if checkpoint_service is not None else None
         ),
         context_provider=ReadingContextProvider(resolver),
         collaboration_adapter=collaboration_adapter,

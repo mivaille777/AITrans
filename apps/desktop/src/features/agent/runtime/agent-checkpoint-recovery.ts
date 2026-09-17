@@ -37,8 +37,9 @@ function normalizedPendingRun(value: unknown): PendingAgentRun | null {
 export function rememberPendingAgentRun(
   event: AgentStreamAcceptedEvent,
   acceptedAt = Date.now(),
+  temporary = false,
 ): PendingAgentRun | null {
-  if (typeof window === "undefined") return null
+  if (temporary || typeof window === "undefined") return null
   const pending = normalizedPendingRun({
     runId: event.run_id,
     traceId: event.trace_id,

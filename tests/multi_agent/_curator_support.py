@@ -27,7 +27,7 @@ from backend.services.research_note_service import ResearchNoteService
 from backend.services.research_workspace_service import ResearchWorkspaceService
 
 
-def curator_stack(tmp_path: Path):
+def curator_stack(tmp_path: Path, *, memory_coordinator=None):
     knowledge_path = tmp_path / "knowledge.sqlite3"
     workspace_service = ResearchWorkspaceService(
         ResearchWorkspaceStore(storage_path=tmp_path / "workspaces.sqlite3")
@@ -46,6 +46,7 @@ def curator_stack(tmp_path: Path):
         suggestion_repository=suggestions,
         research_notes=notes,
         research_workspaces=workspace_service,
+        memory_coordinator=memory_coordinator,
         database_path=knowledge_path,
     )
     scope = ScopeContext.issue(
@@ -94,6 +95,7 @@ def draft_artifact(
     notes: list[NoteDraft] | None = None,
     items: list[KnowledgeItemDraft] | None = None,
     proposals: list[RelationProposal] | None = None,
+    content: dict | None = None,
 ) -> KnowledgeDraftArtifact:
     return KnowledgeDraftArtifact(
         artifact_id=artifact_id,
@@ -103,6 +105,7 @@ def draft_artifact(
         notes=list(notes or []),
         items=list(items or []),
         relation_proposals=list(proposals or []),
+        content=dict(content or {}),
         evidence_refs=source_artifact(scope).evidence_refs,
         verification_status=VerificationStatus.PASSED,
     )

@@ -19,6 +19,7 @@ export interface BuildAgentRunRequestInput {
   knowledgeDocumentIds?: string[]
   researchSourceIds?: string[]
   knowledgeContext?: AgentKnowledgeContext | null
+  temporary?: boolean
 }
 
 export function buildAgentRunRequest({
@@ -38,6 +39,7 @@ export function buildAgentRunRequest({
   knowledgeDocumentIds = [],
   researchSourceIds = [],
   knowledgeContext = null,
+  temporary = false,
 }: BuildAgentRunRequestInput): AgentRunRequest {
   return {
     ...context,
@@ -59,5 +61,6 @@ export function buildAgentRunRequest({
     research_source_ids: researchSourceIds,
     knowledge_context: knowledgeContext,
     request_id: requestId,
+    temporary,
   }
 }

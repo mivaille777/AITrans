@@ -82,7 +82,10 @@ class AgentRuntime:
             elapsed_ms=control.elapsed_ms if control is not None else 0,
         )
         self.events.append(event)
-        if self.event_recorder is not None and state is not None:
+        temporary = bool(
+            state is not None and state.browser_context.get("temporary", False)
+        )
+        if self.event_recorder is not None and state is not None and not temporary:
             try:
                 self.event_recorder(state, event, len(self.events) - 1)
             except Exception:  # noqa: BLE001,S110 - observer is best effort
@@ -96,10 +99,16 @@ class AgentRuntime:
                 # WebSocket or broken debug sink must not change Agent behavior.
                 pass
 
-    def _run_collaboration(self, state: AgentState, control: AgentRunControl) -> AgentState:
+    def _run_collaboration(
+        self, state: AgentState, control: AgentRunControl
+    ) -> AgentState:
         adapter = self.collaboration_adapter
         if adapter is None:
             return state
+
+        prepare_state = getattr(adapter, "prepare_state", None)
+        if callable(prepare_state):
+            state = prepare_state(state)
 
         should_run = getattr(adapter, "should_run", None)
         if callable(should_run) and not bool(should_run(state)):
@@ -154,7 +163,9 @@ class AgentRuntime:
                     "session_id": state.session_id,
                     "run_id": state.run_id,
                     "trace_id": state.trace_id,
-                    "budget_ms": int(active_control.policy.total_timeout_seconds * 1000),
+                    "budget_ms": int(
+                        active_control.policy.total_timeout_seconds * 1000
+                    ),
                     "resumed": resume,
                 },
             )
@@ -274,7 +285,10 @@ class AgentRuntime:
             state.sync_contract()
             self._emit(
                 AgentEventType.AGENT_END,
-                {"intent": state.intent, "total_duration_ms": active_control.elapsed_ms},
+                {
+                    "intent": state.intent,
+                    "total_duration_ms": active_control.elapsed_ms,
+                },
             )
             return state
         except AgentCancelledError as exc:
@@ -293,7 +307,9 @@ class AgentRuntime:
                     "intent": state.intent,
                     "status": "cancelled",
                     "ui_mode": state.ui_mode,
-                    "total_duration_ms": self._control.elapsed_ms if self._control else 0,
+                    "total_duration_ms": self._control.elapsed_ms
+                    if self._control
+                    else 0,
                 },
             )
             raise
@@ -314,12 +330,15 @@ class AgentRuntime:
                     "intent": state.intent,
                     "status": "failed",
                     "ui_mode": state.ui_mode,
-                    "total_duration_ms": self._control.elapsed_ms if self._control else 0,
+                    "total_duration_ms": self._control.elapsed_ms
+                    if self._control
+                    else 0,
                 },
             )
             raise
         finally:
-            if self.run_recorder is not None:
+            temporary = bool(state.browser_context.get("temporary", False))
+            if self.run_recorder is not None and not temporary:
                 try:
                     self.run_recorder(state, tuple(self.events))
                 except Exception:  # noqa: BLE001,S110 - persistence is best effort

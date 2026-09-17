@@ -6,6 +6,7 @@ from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
 from backend.models.agent_artifacts import (
     ComparisonArtifact,
@@ -121,6 +122,7 @@ def _bounded_memory_context(
     """Normalize an already-authorized frozen snapshot without treating it as evidence."""
 
     candidates: list[Any] = []
+    candidates.extend(role_memory_projection(dict(memory_snapshot), "research"))
     for key in ("hypotheses", "items", "claims"):
         value = memory_snapshot.get(key, [])
         if isinstance(value, list | tuple):
@@ -131,6 +133,7 @@ def _bounded_memory_context(
             continue
         text = str(
             raw.get("text")
+            or raw.get("content")
             or raw.get("summary")
             or raw.get("hypothesis")
             or ""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,9 @@ from backend.agent_core.orchestration.artifact_store import (
 from backend.models.agent_artifacts import DocumentAnalysisArtifact
 
 
-def _artifact(scope_ref: str, *, version: int = 1, contribution: str = "A") -> DocumentAnalysisArtifact:
+def _artifact(
+    scope_ref: str, *, version: int = 1, contribution: str = "A"
+) -> DocumentAnalysisArtifact:
     return DocumentAnalysisArtifact(
         artifact_id="analysis-paper-a",
         version=version,
@@ -30,7 +33,10 @@ def _artifact(scope_ref: str, *, version: int = 1, contribution: str = "A") -> D
 def test_sqlite_store_persists_versions_across_reopen(isolated_data_root: Path) -> None:
     scope_ref = "scope:test"
     first = SQLiteArtifactStore()
-    assert first.database_path == (isolated_data_root / "agent_artifacts.sqlite3").resolve()
+    assert (
+        first.database_path
+        == (isolated_data_root / "agent_artifacts.sqlite3").resolve()
+    )
     assert first.migrate() == ARTIFACT_STORE_SCHEMA_VERSION
 
     v1 = first.put(_artifact(scope_ref, version=1, contribution="A"))
@@ -46,11 +52,15 @@ def test_sqlite_store_persists_versions_across_reopen(isolated_data_root: Path) 
     assert versions[1].content_hash == v2.content_hash
 
 
-def test_put_is_idempotent_but_hash_conflict_is_rejected(isolated_data_root: Path) -> None:
+def test_put_is_idempotent_but_hash_conflict_is_rejected(
+    isolated_data_root: Path,
+) -> None:
     store = SQLiteArtifactStore()
     original = _artifact("scope:test")
     stored = store.put(original)
-    duplicate = DocumentAnalysisArtifact.model_validate(original.model_dump(mode="json"))
+    duplicate = DocumentAnalysisArtifact.model_validate(
+        original.model_dump(mode="json")
+    )
 
     assert store.put(duplicate).content_hash == stored.content_hash
 
@@ -59,11 +69,16 @@ def test_put_is_idempotent_but_hash_conflict_is_rejected(isolated_data_root: Pat
         store.put(conflicting)
 
 
-def test_revocation_hides_content_without_deleting_version(isolated_data_root: Path) -> None:
+def test_revocation_hides_content_without_deleting_version(
+    isolated_data_root: Path,
+) -> None:
     store = SQLiteArtifactStore()
     artifact = store.put(_artifact("scope:test"))
 
-    assert store.revoke(artifact.artifact_id, artifact.version, reason="source revoked") is True
+    assert (
+        store.revoke(artifact.artifact_id, artifact.version, reason="source revoked")
+        is True
+    )
     assert store.get(artifact.artifact_id, artifact.version) is None
     retained = store.get(
         artifact.artifact_id,
@@ -99,3 +114,38 @@ def test_artifact_store_payload_round_trip_has_no_live_python_objects(
     assert isinstance(payload, dict)
     assert payload["content"] == {"summary": "A"}
     assert "sqlite3.Connection" not in repr(payload)
+
+
+def test_schema_v1_migrates_additively_to_memory_outbox(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-artifacts.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE artifact_versions (
+                artifact_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                producer_task_id TEXT NOT NULL,
+                scope_ref TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                revoked_at TEXT NOT NULL DEFAULT '',
+                revocation_reason TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (artifact_id, version)
+            );
+            PRAGMA user_version = 1;
+            """
+        )
+
+    store = SQLiteArtifactStore(path)
+
+    assert store.migrate() == ARTIFACT_STORE_SCHEMA_VERSION
+    with sqlite3.connect(path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert "artifact_memory_outbox" in tables

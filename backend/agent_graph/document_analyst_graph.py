@@ -7,6 +7,7 @@ from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.runtime_budget import reserve_runtime_resource
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
 from backend.models.agent_artifacts import (
@@ -66,6 +67,7 @@ class DocumentAnalystState(TypedDict, total=False):
     draft: dict[str, Any]
     artifact: DocumentAnalysisArtifact
     result: TaskResult
+    memory_snapshot: dict[str, Any]
 
 
 class DeterministicDocumentAnalysisProvider:
@@ -149,6 +151,10 @@ class DocumentAnalystGraph:
             f"{task.objective} methods datasets experiments results",
             f"{task.objective} limitations future work",
         ][: self._max_queries]
+        for item in role_memory_projection(state.get("memory_snapshot", {}), "document"):
+            if item.get("kind") == "reading_goal" and str(item.get("content", "")).strip():
+                queries.append(str(item["content"])[:1000])
+                break
         return {"document_ids": document_ids, "queries": queries}
 
     def _retrieve_evidence(self, state: DocumentAnalystState) -> dict[str, Any]:
@@ -387,6 +393,16 @@ class DocumentAnalystGraph:
                 "unavailable": unavailable_refs,
             },
             "visual_evidence": visual_evidence,
+            "memory_snapshot_ref": str(
+                state.get("memory_snapshot", {}).get("snapshot_id", "") or ""
+            ),
+            "memory_context_ids": [
+                str(item.get("item_id", ""))
+                for item in role_memory_projection(
+                    state.get("memory_snapshot", {}), "document"
+                )
+                if str(item.get("item_id", ""))
+            ],
         }
         document_id = state["document_ids"][0] if state["document_ids"] else "unknown"
         artifact = DocumentAnalysisArtifact(
@@ -443,8 +459,10 @@ class DocumentAnalystGraph:
         dependency_results: Mapping[str, TaskResult],
         memory_snapshot: Mapping[str, Any],
     ) -> SpecialistExecution:
-        del dependency_results, memory_snapshot
-        final = self._compiled.invoke({"task": task, "scope": scope})
+        del dependency_results
+        final = self._compiled.invoke(
+            {"task": task, "scope": scope, "memory_snapshot": dict(memory_snapshot)}
+        )
         artifact = final["artifact"]
         return SpecialistExecution(
             result=final["result"],

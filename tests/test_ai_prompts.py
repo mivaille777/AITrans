@@ -29,6 +29,20 @@ def test_translate_prompt_preserves_user_text_as_json_data():
     assert payload["target_language"] == "zh-CN"
 
 
+def test_translate_prompt_carries_bounded_terminology_as_data():
+    request = AITextRequest(
+        "graph neural network",
+        AITextAction.TRANSLATE,
+        terminology=("graph neural network => 图神经网络",),
+    )
+
+    system_prompt, user_prompt = build_translate_prompt(request)
+    payload = json.loads(user_prompt)
+
+    assert "terminology preferences" in system_prompt
+    assert payload["terminology"] == ["graph neural network => 图神经网络"]
+
+
 def test_polish_prompt_includes_selected_style_instruction():
     request = AITextRequest(
         "This are a test.",

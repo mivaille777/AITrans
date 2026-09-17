@@ -103,7 +103,9 @@ class AgentKnowledgeRelationContext(BaseModel):
 class AgentKnowledgeContext(BaseModel):
     canvas: AgentKnowledgeCanvasContext | None = None
     cards: list[AgentKnowledgeCardContext] = Field(default_factory=list, max_length=60)
-    relations: list[AgentKnowledgeRelationContext] = Field(default_factory=list, max_length=60)
+    relations: list[AgentKnowledgeRelationContext] = Field(
+        default_factory=list, max_length=60
+    )
 
 
 class AgentToolDefinition(BaseModel):
@@ -181,6 +183,7 @@ class AgentRunRequest(ReadingContextPayload):
     knowledge_writeback_operation: str = Field(default="", max_length=128)
     knowledge_relation_type: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
+    temporary: bool = False
 
 
 class AgentRunResponse(BaseModel):

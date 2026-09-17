@@ -28,6 +28,7 @@ class TranslationResultData(AgentToolModel):
     fallback_level: int = Field(default=0, ge=0)
     notice: str = ""
     attempts: list[TranslationAttemptData] = Field(default_factory=list)
+    memory_preference_refs: list[str] = Field(default_factory=list, max_length=32)
 
 
 class TranslationAgentTool:
@@ -54,13 +55,31 @@ class TranslationAgentTool:
     ) -> AgentToolExecutionResult:
         typed = cast(TranslateSelectionArgs, args)
         target_language = typed.target_language or context.target_language
+        terminology_preferences = [
+            item
+            for item in context.memory_preferences
+            if str(item.get("kind", "") or "") == "terminology"
+            and str(item.get("content", "") or "").strip()
+        ]
+        terminology = tuple(
+            str(item.get("content", "") or "").strip()
+            for item in terminology_preferences
+        )
+        preference_refs = [
+            f"{item.get('item_id', '')}:{item.get('version', '')}"
+            for item in terminology_preferences
+        ]
 
         if self._translation_fallback_service is not None:
+            translation_arguments = {
+                "source_language": context.source_language,
+                "target_language": target_language,
+                "request_id": context.request_id,
+            }
+            if terminology:
+                translation_arguments["terminology"] = terminology
             result = self._translation_fallback_service.translate(
-                context.source_text,
-                source_language=context.source_language,
-                target_language=target_language,
-                request_id=context.request_id,
+                context.source_text, **translation_arguments
             )
             return AgentToolExecutionResult(
                 tool_name="translate_selection",
@@ -78,11 +97,16 @@ class TranslationAgentTool:
                         {"provider": item.provider, "status": item.status}
                         for item in result.attempts
                     ],
+                    "memory_preference_refs": preference_refs,
                 },
             )
 
         if self._translation_service is None:
             raise RuntimeError("Agent translation service is unavailable.")
+        if terminology:
+            raise RuntimeError(
+                "Terminology-aware translation requires the AI-capable translation cascade."
+            )
 
         result = self._translation_service.translate(
             context.source_text,
@@ -102,6 +126,7 @@ class TranslationAgentTool:
                 "fallback_level": 0,
                 "notice": "",
                 "attempts": [],
+                "memory_preference_refs": preference_refs,
             },
         )
 

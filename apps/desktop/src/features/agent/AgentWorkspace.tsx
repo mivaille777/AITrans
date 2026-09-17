@@ -272,6 +272,15 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
       />
 
       <div className="sticky bottom-0 z-20 rounded-[18px] border border-slate-200/80 bg-white/95 p-3 shadow-[0_-12px_34px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+        <label className="mb-2 flex items-center gap-2 px-1 text-[11px] text-slate-500">
+          <input
+            type="checkbox"
+            checked={runtime.temporary}
+            disabled={runtime.pending}
+            onChange={(event) => runtime.setTemporaryMode(event.target.checked)}
+          />
+          临时会话：不读取长期记忆，不保存聊天、checkpoint、trace 或恢复记录
+        </label>
         <AgentInputComposer
           value={runtime.prompt}
           onChange={runtime.setPrompt}

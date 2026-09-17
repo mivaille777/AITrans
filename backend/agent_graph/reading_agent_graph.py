@@ -216,9 +216,7 @@ def _retrieval_observation(
     results = data.get("results", ())
     result_count = len(results) if isinstance(results, (list, tuple)) else 0
     query = str(
-        data.get("query", "")
-        or decision.arguments.get("query", "")
-        or ""
+        data.get("query", "") or decision.arguments.get("query", "") or ""
     ).strip()
     return AgentRetrievalObservation(
         query=query,
@@ -269,8 +267,12 @@ class ReadingAgentGraph:
         collaboration_adapter: Any | None = None,
     ) -> None:
         self._adapter = adapter
-        self._react_decision_service = react_decision_service or AgentReActDecisionService()
-        self._evidence_gate_service = evidence_gate_service or AgentEvidenceGateService()
+        self._react_decision_service = (
+            react_decision_service or AgentReActDecisionService()
+        )
+        self._evidence_gate_service = (
+            evidence_gate_service or AgentEvidenceGateService()
+        )
         self._checkpointer = checkpointer
         self._context_provider = context_provider
         self._collaboration_adapter = collaboration_adapter
@@ -327,6 +329,7 @@ class ReadingAgentGraph:
         builder.add_edge("finalize_react", "finalize_conversation")
         builder.add_edge("finalize_conversation", END)
         self._compiled = builder.compile(checkpointer=checkpointer)
+        self._temporary_compiled = builder.compile()
 
     @property
     def compiled_graph(self):
@@ -478,6 +481,9 @@ class ReadingAgentGraph:
             return {"agent_state": _dump_agent_state(state)}
 
         emit, control = self._runtime(runtime)
+        prepare_state = getattr(adapter, "prepare_state", None)
+        if callable(prepare_state):
+            state = prepare_state(state)
         should_run = getattr(adapter, "should_run", None)
         if callable(should_run) and not bool(should_run(state)):
             return {"agent_state": _dump_agent_state(state)}
@@ -523,7 +529,9 @@ class ReadingAgentGraph:
         )
         return {AgentEventType.REACT_LIMIT_REACHED}
 
-    def _prepare_conversation(self, graph_state: ReadingAgentGraphState) -> dict[str, Any]:
+    def _prepare_conversation(
+        self, graph_state: ReadingAgentGraphState
+    ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         conversation_run = self._adapter.begin_conversation(state)
         return {
@@ -757,9 +765,7 @@ class ReadingAgentGraph:
 
         if _is_repeated_react_action(state, decision):
             emitted.update(
-                self._emit_react_limit(
-                    state, emit, reason="repeated_action_detected"
-                )
+                self._emit_react_limit(state, emit, reason="repeated_action_detected")
             )
         elif (
             decision.kind == "tool"
@@ -821,11 +827,9 @@ class ReadingAgentGraph:
                     graph_state.get("emitted_event_types", ()), emitted
                 ),
             }
-        if (
-            decision.tool_name == _KNOWLEDGE_SEARCH_TOOL
-            and _knowledge_search_count(state)
-            >= min(control.policy.max_knowledge_searches, control.policy.max_tool_calls)
-        ):
+        if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL and _knowledge_search_count(
+            state
+        ) >= min(control.policy.max_knowledge_searches, control.policy.max_tool_calls):
             emitted = self._emit_react_limit(
                 state, emit, reason="knowledge_search_budget_exhausted"
             )
@@ -951,15 +955,11 @@ class ReadingAgentGraph:
 
         if len(state.tool_calls) >= control.policy.max_tool_calls:
             emitted.update(
-                self._emit_react_limit(
-                    state, emit, reason="tool_call_budget_exhausted"
-                )
+                self._emit_react_limit(state, emit, reason="tool_call_budget_exhausted")
             )
         elif state.react.iteration >= control.policy.max_react_iterations:
             emitted.update(
-                self._emit_react_limit(
-                    state, emit, reason="iteration_budget_exhausted"
-                )
+                self._emit_react_limit(state, emit, reason="iteration_budget_exhausted")
             )
 
         return {
@@ -999,7 +999,11 @@ class ReadingAgentGraph:
                 )
             else:
                 decision: AgentReActDecision | None = state.react.last_decision
-                if decision is None or decision.kind != "final" or not decision.final_answer:
+                if (
+                    decision is None
+                    or decision.kind != "final"
+                    or not decision.final_answer
+                ):
                     raise AgentRuntimeError(
                         "ReAct reached its execution limit before producing an answer or observation.",
                         stage="react_finalize",
@@ -1011,7 +1015,8 @@ class ReadingAgentGraph:
                         "status": "completed",
                         "output_text": decision.final_answer,
                         "provider": str(
-                            getattr(self._react_decision_service, "provider_name", "") or ""
+                            getattr(self._react_decision_service, "provider_name", "")
+                            or ""
                         ),
                         "model": str(
                             getattr(self._react_decision_service, "model", "") or ""
@@ -1028,7 +1033,8 @@ class ReadingAgentGraph:
                             "model": state.response_state.model,
                             "request_id": state.execution.request_id,
                             "prompt_id": str(
-                                getattr(self._react_decision_service, "prompt_id", "") or ""
+                                getattr(self._react_decision_service, "prompt_id", "")
+                                or ""
                             ),
                             "grounded": False,
                         },
@@ -1073,17 +1079,25 @@ class ReadingAgentGraph:
             "route_metadata": {},
             "emitted_event_types": [],
         }
+        temporary = bool(state.browser_context.get("temporary", False))
+        if resume and temporary:
+            raise AgentRuntimeError(
+                "Temporary Agent runs cannot be resumed across process boundaries.",
+                stage="checkpoint",
+                fallback_reason="temporary_checkpoint_unavailable",
+            )
         if resume and self._checkpointer is None:
             raise AgentRuntimeError(
                 "Agent checkpoint persistence is unavailable.",
                 stage="checkpoint",
                 fallback_reason="checkpoint_unavailable",
             )
-        result = self._compiled.invoke(
+        graph = self._temporary_compiled if temporary else self._compiled
+        result = graph.invoke(
             None if resume else initial,
             config=(
                 self._checkpoint_config(state.run_id)
-                if self._checkpointer is not None
+                if self._checkpointer is not None and not temporary
                 else None
             ),
             context={

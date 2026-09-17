@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 from app.ai.gateway import LLMGateway
 from app.infrastructure.settings import SettingsManager
@@ -119,16 +120,19 @@ class TranslationFallbackService:
         *,
         fallback_level: int,
         notice: str = "",
+        terminology: tuple[str, ...] = (),
     ) -> TranslationCascadeResult:
         ai_service = None
         try:
             ai_service = self._llm_gateway.create_text_service("translation_ai")
-            ai_result = ai_service.translate(
-                request.source_text,
-                source_language=request.source_language,
-                target_language=request.target_language,
-                request_id=request.request_id,
-            )
+            translate_arguments = {
+                "source_language": request.source_language,
+                "target_language": request.target_language,
+                "request_id": request.request_id,
+            }
+            if terminology:
+                translate_arguments["terminology"] = terminology
+            ai_result = ai_service.translate(request.source_text, **translate_arguments)
             if not ai_result.output_text.strip():
                 raise TranslationError("AI translated text is empty")
             return TranslationCascadeResult(
@@ -155,6 +159,7 @@ class TranslationFallbackService:
         target_language: str = "zh-CN",
         request_id: int = 0,
         provider_mode: TranslationProviderMode = "auto",
+        terminology: tuple[str, ...] = (),
     ) -> TranslationCascadeResult:
         request = self._request(
             source_text,
@@ -165,6 +170,14 @@ class TranslationFallbackService:
         mode = str(provider_mode or "auto").strip().lower()
         if mode not in {"auto", "youdao_web", "google_web", "ai"}:
             raise ValueError(f"unsupported translation provider mode: {provider_mode}")
+        normalized_terminology = tuple(
+            str(item).strip()[:1000] for item in terminology[:32] if str(item).strip()
+        )
+        # Public web engines cannot guarantee a caller-provided glossary. Use
+        # the AI language capability whenever an effective terminology memory
+        # is present instead of falsely reporting that the preference was used.
+        if normalized_terminology and mode == "auto":
+            mode = "ai"
 
         if mode == "youdao_web":
             try:
@@ -184,7 +197,11 @@ class TranslationFallbackService:
 
         if mode == "ai":
             try:
-                return self._translate_ai(request, fallback_level=0)
+                return self._translate_ai(
+                    request,
+                    fallback_level=0,
+                    terminology=normalized_terminology,
+                )
             except TextNormalizationError:
                 raise
             except Exception as exc:
@@ -216,7 +233,7 @@ class TranslationFallbackService:
                 )
             except TextNormalizationError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001 - unavailable provider advances cascade
                 attempts.append(TranslationAttempt(provider_name, "unavailable"))
             finally:
                 self._close_provider(provider)
@@ -226,6 +243,7 @@ class TranslationFallbackService:
                 request,
                 fallback_level=2,
                 notice="有道和 Google 翻译当前不可用，已使用 AI 翻译。",
+                terminology=normalized_terminology,
             )
         except Exception as exc:
             raise TranslationError("all translation providers are unavailable") from exc

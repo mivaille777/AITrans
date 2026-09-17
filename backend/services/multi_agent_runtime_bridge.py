@@ -74,7 +74,11 @@ class MultiAgentRuntimeBridge:
         return self.service.planner.create_plan(state.user_input, None)
 
     def should_run(self, state: AgentState) -> bool:
-        mode = str(state.browser_context.get("multi_agent_mode", "auto") or "auto").strip().lower()
+        mode = (
+            str(state.browser_context.get("multi_agent_mode", "auto") or "auto")
+            .strip()
+            .lower()
+        )
         if mode == "off":
             return False
         if self.orchestrator is not None:
@@ -228,9 +232,42 @@ class MultiAgentRuntimeBridge:
             ).strip(),
             "research_source_ids": list(context.get("research_source_ids", ()) or ()),
             "research_note_ids": list(context.get("research_note_ids", ()) or ()),
-            "knowledge_document_ids": list(context.get("knowledge_document_ids", ()) or ()),
+            "knowledge_document_ids": list(
+                context.get("knowledge_document_ids", ()) or ()
+            ),
             "knowledge_item_ids": list(context.get("knowledge_item_ids", ()) or ()),
+            "temporary": bool(context.get("temporary", False)),
         }
+
+    @staticmethod
+    def _apply_memory_projection(
+        state: AgentState, memory_snapshot: dict[str, Any]
+    ) -> AgentState:
+        context = dict(state.browser_context)
+        projections = memory_snapshot.get("role_projections", {})
+        language_preferences = (
+            projections.get("language", []) if isinstance(projections, dict) else []
+        )
+        context["memory_language_preferences"] = [
+            dict(item) for item in language_preferences[:32] if isinstance(item, dict)
+        ]
+        state.memory_snapshot_ref = str(memory_snapshot.get("snapshot_id", "") or "")
+        state.browser_context = context
+        state.sync_contract()
+        return state
+
+    def prepare_state(self, state: AgentState) -> AgentState:
+        if self.orchestrator is None:
+            return state
+        _scope, memory_snapshot = self.orchestrator.resolve_memory(
+            profile_id=str(
+                state.browser_context.get("profile_id", "local-default")
+                or "local-default"
+            ).strip(),
+            run_id=state.run_id,
+            runtime_context=self._runtime_context(state),
+        )
+        return self._apply_memory_projection(state, memory_snapshot)
 
     def run_with_events(
         self,
@@ -254,8 +291,7 @@ class MultiAgentRuntimeBridge:
                         or "local-default"
                     ).strip(),
                     mode=str(
-                        state.browser_context.get("multi_agent_mode", "auto")
-                        or "auto"
+                        state.browser_context.get("multi_agent_mode", "auto") or "auto"
                     ),
                     run_id=state.run_id,
                     trace_id=state.trace_id,
@@ -297,9 +333,12 @@ class MultiAgentRuntimeBridge:
         context["multi_agent_active"] = True
 
         if self.orchestrator is not None:
-            snapshot_id = str(
-                getattr(run, "memory_snapshot", {}).get("snapshot_id", "") or ""
-            )
+            memory_snapshot = getattr(run, "memory_snapshot", {})
+            snapshot_id = str(memory_snapshot.get("snapshot_id", "") or "")
+            self._apply_memory_projection(state, memory_snapshot)
+            context = dict(state.browser_context)
+            context["multi_agent_context"] = collaboration
+            context["multi_agent_active"] = True
             task_plan = (
                 run.task_plan.model_dump(mode="json")
                 if run.task_plan is not None
@@ -310,8 +349,7 @@ class MultiAgentRuntimeBridge:
                 status=(
                     "blocked"
                     if run.route.missing_information
-                    else
-                    "completed"
+                    else "completed"
                     if all(
                         item.status.value in {"succeeded", "partial", "skipped"}
                         for item in run.results

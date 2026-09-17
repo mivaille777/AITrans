@@ -68,6 +68,7 @@ _CONTEXT_FIELDS = (
     "knowledge_writeback_type",
     "knowledge_writeback_operation",
     "knowledge_relation_type",
+    "memory_preferences",
 )
 
 
@@ -96,7 +97,9 @@ class AgentToolRegistry:
     ) -> None:
         if translation_fallback_service is not None:
             fallback_service = translation_fallback_service
-        elif translation_service is None or isinstance(translation_service, TranslationService):
+        elif translation_service is None or isinstance(
+            translation_service, TranslationService
+        ):
             fallback_service = TranslationFallbackService()
         else:
             fallback_service = None

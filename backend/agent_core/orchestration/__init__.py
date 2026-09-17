@@ -5,6 +5,7 @@ from backend.agent_core.orchestration.artifact_store import (
     SQLiteArtifactStore,
     build_artifact_store,
 )
+from backend.agent_core.orchestration.coordinator_memory import CoordinatorMemoryPort
 from backend.agent_core.orchestration.evidence_service import (
     ScopedEvidenceCache,
     ScopedEvidenceService,
@@ -65,6 +66,7 @@ __all__ = [
     "ArtifactPort",
     "AuthoritativeScopeResolver",
     "BudgetPort",
+    "CoordinatorMemoryPort",
     "EvidencePort",
     "InMemoryArtifactStore",
     "InvalidTaskTransitionError",

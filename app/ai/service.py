@@ -9,7 +9,6 @@ from app.ai.errors import AIConfigurationError, AIError, AIResponseError
 from app.ai.models import AITextAction, AITextRequest, AITextResult
 from app.ai.provider import AITextProvider, DeepSeekTextProvider
 
-
 DEFAULT_AI_SOURCE_LANGUAGE = "auto"
 DEFAULT_AI_TARGET_LANGUAGE = "zh-CN"
 DEFAULT_AI_POLISH_STYLE = "general"
@@ -52,15 +51,31 @@ class AITextService:
             raise AIConfigurationError("AI source text must not be empty.")
         if not isinstance(request.action, AITextAction):
             raise AIConfigurationError("Unsupported AI text action.")
-        if not isinstance(request.source_language, str) or not request.source_language.strip():
+        if (
+            not isinstance(request.source_language, str)
+            or not request.source_language.strip()
+        ):
             raise AIConfigurationError("AI source language must not be empty.")
-        if request.action is AITextAction.TRANSLATE:
-            if not isinstance(request.target_language, str) or not request.target_language.strip():
-                raise AIConfigurationError("AI target language must not be empty.")
+        if request.action is AITextAction.TRANSLATE and (
+            not isinstance(request.target_language, str)
+            or not request.target_language.strip()
+        ):
+            raise AIConfigurationError("AI target language must not be empty.")
         if not isinstance(request.style, str) or not request.style.strip():
             raise AIConfigurationError("AI text style must not be empty.")
-        if isinstance(request.request_id, bool) or not isinstance(request.request_id, int):
+        if isinstance(request.request_id, bool) or not isinstance(
+            request.request_id, int
+        ):
             raise AIConfigurationError("AI request_id must be an integer.")
+        if (
+            not isinstance(request.terminology, tuple)
+            or len(request.terminology) > 32
+            or any(
+                not isinstance(item, str) or not item.strip() or len(item) > 1000
+                for item in request.terminology
+            )
+        ):
+            raise AIConfigurationError("AI terminology preferences are invalid.")
         return request
 
     def execute(self, request: AITextRequest) -> AITextResult:
@@ -71,7 +86,7 @@ class AITextService:
             result = self.provider.execute(validated)
         except AIError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - normalize provider failures
             error = AIResponseError("AI text provider failed.")
             error.__cause__ = exc
             raise error
@@ -99,6 +114,7 @@ class AITextService:
         source_language: str = DEFAULT_AI_SOURCE_LANGUAGE,
         target_language: str = DEFAULT_AI_TARGET_LANGUAGE,
         request_id: int = 0,
+        terminology: tuple[str, ...] = (),
     ) -> AITextResult:
         """Convenience entry point for AI translation."""
 
@@ -110,6 +126,11 @@ class AITextService:
                 target_language=target_language,
                 style=DEFAULT_AI_POLISH_STYLE,
                 request_id=request_id,
+                terminology=tuple(
+                    str(item).strip()[:1000]
+                    for item in terminology[:32]
+                    if str(item).strip()
+                ),
             )
         )
 
@@ -123,7 +144,9 @@ class AITextService:
     ) -> AITextResult:
         """Convenience entry point for same-language AI polishing."""
 
-        normalized_source_language = str(source_language).strip() or DEFAULT_AI_SOURCE_LANGUAGE
+        normalized_source_language = (
+            str(source_language).strip() or DEFAULT_AI_SOURCE_LANGUAGE
+        )
         return self.execute(
             AITextRequest(
                 source_text=source_text,
@@ -147,8 +170,8 @@ class AITextService:
 
 
 __all__ = [
-    "AITextService",
     "DEFAULT_AI_POLISH_STYLE",
     "DEFAULT_AI_SOURCE_LANGUAGE",
     "DEFAULT_AI_TARGET_LANGUAGE",
+    "AITextService",
 ]

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from backend.agent_core.exceptions import AgentRuntimeError
 from backend.agent_core.multi_agent.trace import (
     MultiAgentTraceCollector,
     MultiAgentTraceEvent,
@@ -61,12 +63,14 @@ class ResearchOrchestrationService:
         router: ResearchTaskRouter | None = None,
         planner: ValidatedSupervisorPlanner | None = None,
         memory_port: Any | None = None,
+        temporary_executor: Any | None = None,
     ) -> None:
         self.scope_resolver = scope_resolver
         self.executor = executor
         self.router = router or ResearchTaskRouter()
         self.planner = planner or ValidatedSupervisorPlanner()
         self.memory_port = memory_port or NullMemoryPort()
+        self.temporary_executor = temporary_executor
 
     @staticmethod
     def _scope_request(runtime_context: dict[str, Any]) -> tuple[ScopeKind, str]:
@@ -101,6 +105,44 @@ class ResearchOrchestrationService:
     ) -> OrchestrationRoute:
         return self.router.route(user_input, runtime_context, mode=mode)
 
+    def resolve_memory(
+        self,
+        *,
+        profile_id: str,
+        run_id: str,
+        runtime_context: dict[str, Any] | None = None,
+    ) -> tuple[ScopeContext, dict[str, Any]]:
+        context = dict(runtime_context or {})
+        kind, scope_id = self._scope_request(context)
+        scope = self.scope_resolver.resolve(
+            profile_id=profile_id,
+            scope_kind=kind,
+            scope_id=scope_id,
+            selected_document_ids=context.get("knowledge_document_ids", ()) or (),
+            selected_note_ids=context.get("research_note_ids", ()) or (),
+            selected_item_ids=context.get("knowledge_item_ids", ()) or (),
+            explicit_current_source_refs=context.get("research_source_ids", ()) or (),
+        )
+        temporary = bool(context.get("temporary", False))
+        load_snapshot = self.memory_port.load_snapshot
+        memory_arguments: dict[str, Any] = {
+            "profile_id": profile_id,
+            "scope": scope,
+        }
+        parameters = inspect.signature(load_snapshot).parameters
+        if "run_id" in parameters:
+            memory_arguments["run_id"] = run_id
+        if "temporary" in parameters:
+            memory_arguments["temporary"] = temporary
+        memory_snapshot = dict(load_snapshot(**memory_arguments))
+        if memory_snapshot.get("status") == "invalidated":
+            raise AgentRuntimeError(
+                "The frozen memory snapshot was invalidated by deletion or scope change.",
+                stage="memory",
+                fallback_reason="memory_snapshot_invalidated",
+            )
+        return scope, memory_snapshot
+
     def run(
         self,
         user_input: str,
@@ -115,23 +157,16 @@ class ResearchOrchestrationService:
     ) -> ResearchOrchestrationRun:
         context = dict(runtime_context or {})
         route = self.route(user_input, context, mode=mode)
-        kind, scope_id = self._scope_request(context)
-        scope = self.scope_resolver.resolve(
-            profile_id=profile_id,
-            scope_kind=kind,
-            scope_id=scope_id,
-            selected_document_ids=context.get("knowledge_document_ids", ()) or (),
-            selected_note_ids=context.get("research_note_ids", ()) or (),
-            selected_item_ids=context.get("knowledge_item_ids", ()) or (),
-            explicit_current_source_refs=context.get("research_source_ids", ()) or (),
-        )
-        memory_snapshot = dict(
-            self.memory_port.load_snapshot(profile_id=profile_id, scope=scope)
-        )
         collector = MultiAgentTraceCollector(
             run_id=run_id,
             trace_id=trace_id,
             event_sink=event_sink,
+        )
+        temporary = bool(context.get("temporary", False))
+        scope, memory_snapshot = self.resolve_memory(
+            profile_id=profile_id,
+            run_id=collector.run_id,
+            runtime_context=context,
         )
         collector.emit(
             "supervisor_started",
@@ -147,7 +182,9 @@ class ResearchOrchestrationService:
             payload={
                 "lane": route.lane.value,
                 "task_count": len(task_plan.tasks) if task_plan else 0,
-                "agents": [task.role.value for task in task_plan.tasks] if task_plan else [],
+                "agents": [task.role.value for task in task_plan.tasks]
+                if task_plan
+                else [],
             },
         )
         if task_plan is not None:
@@ -181,7 +218,12 @@ class ResearchOrchestrationService:
             direct_output = None
             direct_delivery = False
         else:
-            execution = self.executor.execute(
+            active_executor = (
+                self.temporary_executor
+                if temporary and self.temporary_executor is not None
+                else self.executor
+            )
+            execution = active_executor.execute(
                 plan=task_plan,
                 scope=scope,
                 memory_snapshot=memory_snapshot,
@@ -195,10 +237,32 @@ class ResearchOrchestrationService:
             direct_delivery = execution.direct_delivery
             for result in execution_results:
                 collector.emit(
-                    "agent_completed" if result.status.value in {"succeeded", "partial"} else "agent_failed",
+                    "agent_completed"
+                    if result.status.value in {"succeeded", "partial"}
+                    else "agent_failed",
                     actor=task_plan.task_map()[result.task_id].role.value,
                     status=result.status.value,
-                    payload={"task_id": result.task_id, "error_code": result.error_code},
+                    payload={
+                        "task_id": result.task_id,
+                        "error_code": result.error_code,
+                    },
+                )
+            submit_candidates = getattr(self.memory_port, "submit_candidates", None)
+            if callable(submit_candidates):
+                candidate_arguments: dict[str, Any] = {
+                    "profile_id": profile_id,
+                    "workspace_id": scope.workspace_id,
+                    "artifact_refs": [
+                        ref
+                        for result in execution_results
+                        for ref in result.artifact_refs
+                    ],
+                    "temporary": temporary,
+                }
+                if "scope_ref" in inspect.signature(submit_candidates).parameters:
+                    candidate_arguments["scope_ref"] = scope.scope_ref
+                submit_candidates(
+                    **candidate_arguments,
                 )
         partial = any(
             item.status.value not in {"succeeded", "skipped"}

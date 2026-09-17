@@ -51,7 +51,11 @@ def _hash_text(value: str) -> str:
 
 
 def _split_paragraphs(markdown: str) -> list[str]:
-    return [item.strip() for item in str(markdown).replace("\r\n", "\n").split("\n\n") if item.strip()]
+    return [
+        item.strip()
+        for item in str(markdown).replace("\r\n", "\n").split("\n\n")
+        if item.strip()
+    ]
 
 
 def _json(value: Any) -> str:
@@ -67,14 +71,18 @@ class WritingProjectService:
         artifact_store: Any,
         database_path: str | Path | None = None,
         workspace_service: Any | None = None,
+        memory_coordinator: Any | None = None,
     ) -> None:
         inferred = getattr(artifact_store, "database_path", None)
         if database_path is None and inferred is None:
-            raise ValueError("database_path is required for a non-SQLite artifact store")
+            raise ValueError(
+                "database_path is required for a non-SQLite artifact store"
+            )
         self.database_path = Path(database_path or inferred).expanduser().resolve()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._artifacts = artifact_store
         self._workspaces = workspace_service
+        self._memory = memory_coordinator
         self._lock = RLock()
         self._initialize()
 
@@ -145,7 +153,9 @@ class WritingProjectService:
                 (str(WRITING_PROJECT_SCHEMA_VERSION),),
             )
 
-    def create(self, *, workspace_id: str, title: str, writing_goal: str = "") -> WritingProjectSnapshot:
+    def create(
+        self, *, workspace_id: str, title: str, writing_goal: str = ""
+    ) -> WritingProjectSnapshot:
         workspace = str(workspace_id).strip()
         if not workspace or not str(title).strip():
             raise WritingProjectError("workspace_id and title are required")
@@ -160,13 +170,22 @@ class WritingProjectService:
                     project_id, workspace_id, title, writing_goal, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (project_id, workspace, str(title).strip(), str(writing_goal).strip(), now, now),
+                (
+                    project_id,
+                    workspace,
+                    str(title).strip(),
+                    str(writing_goal).strip(),
+                    now,
+                    now,
+                ),
             )
         result = self.get(project_id)
         assert result is not None
         return result
 
-    def list(self, *, workspace_id: str = "", limit: int = 100) -> tuple[WritingProjectSnapshot, ...]:
+    def list(
+        self, *, workspace_id: str = "", limit: int = 100
+    ) -> tuple[WritingProjectSnapshot, ...]:
         bounded = max(1, min(500, int(limit)))
         query = "SELECT project_id FROM writing_projects"
         parameters: tuple[Any, ...]
@@ -177,17 +196,26 @@ class WritingProjectService:
             parameters = (bounded,)
         query += " ORDER BY updated_at DESC LIMIT ?"
         with self._lock, self._connect() as connection:
-            ids = [str(row["project_id"]) for row in connection.execute(query, parameters)]
-        return tuple(item for item in (self.get(item_id) for item_id in ids) if item is not None)
+            ids = [
+                str(row["project_id"]) for row in connection.execute(query, parameters)
+            ]
+        return tuple(
+            item for item in (self.get(item_id) for item_id in ids) if item is not None
+        )
 
     @staticmethod
     def _paragraphs(artifact: ManuscriptSectionArtifact) -> list[WritingParagraph]:
         markdown = _split_paragraphs(artifact.markdown)
         ids = list(artifact.paragraph_ids)
         if not ids:
-            ids = [f"{artifact.section_id}:p{index}" for index in range(1, len(markdown) + 1)]
+            ids = [
+                f"{artifact.section_id}:p{index}"
+                for index in range(1, len(markdown) + 1)
+            ]
         if len(ids) != len(markdown) or len(ids) != len(set(ids)):
-            raise WritingProjectError("paragraph_ids must uniquely match markdown paragraphs")
+            raise WritingProjectError(
+                "paragraph_ids must uniquely match markdown paragraphs"
+            )
         return [
             WritingParagraph(
                 paragraph_id=paragraph_id,
@@ -205,19 +233,27 @@ class WritingProjectService:
             version=int(row["version"]),
             title=str(row["title"]),
             markdown=str(row["markdown"]),
-            paragraphs=[WritingParagraph.model_validate(item) for item in json.loads(str(row["paragraphs_json"]))],
+            paragraphs=[
+                WritingParagraph.model_validate(item)
+                for item in json.loads(str(row["paragraphs_json"]))
+            ],
             artifact_ref=ArtifactRef(
                 artifact_id=str(row["artifact_id"]),
                 version=int(row["artifact_version"]),
                 kind="manuscript_section",
                 content_hash=str(row["artifact_hash"]),
             ),
-            references=[ReferenceRecord.model_validate(item) for item in json.loads(str(row["references_json"]))],
+            references=[
+                ReferenceRecord.model_validate(item)
+                for item in json.loads(str(row["references_json"]))
+            ],
             verification_status=str(row["verification_status"]),
             created_at=str(row["created_at"]),
         )
 
-    def _latest_sections(self, connection: sqlite3.Connection, project_id: str) -> list[WritingSectionSnapshot]:
+    def _latest_sections(
+        self, connection: sqlite3.Connection, project_id: str
+    ) -> list[WritingSectionSnapshot]:
         rows = connection.execute(
             """
             SELECT versions.* FROM writing_section_versions AS versions
@@ -261,10 +297,47 @@ class WritingProjectService:
             updated_at=str(row["updated_at"]),
         )
 
-    def save_outline(self, project_id: str, *, artifact_id: str, artifact_version: int, expected_version: int) -> WritingProjectSnapshot:
+    def _validate_memory_references(self, project_id: str, artifact: Any) -> None:
+        if self._memory is None:
+            return
+        project = self.get(project_id)
+        if project is None:
+            raise WritingProjectError("Writing project not found")
+        references = artifact.content.get("memory_references", [])
+        if not isinstance(references, list):
+            raise WritingProjectError("writing artifact memory references are invalid")
+        repository = self._memory.repository
+        for reference in references:
+            if not isinstance(reference, dict):
+                raise WritingProjectError(
+                    "writing artifact memory reference is invalid"
+                )
+            item_id = str(reference.get("item_id", "") or "").strip()
+            current = repository.get(item_id) if item_id else None
+            status = str(getattr(getattr(current, "status", ""), "value", ""))
+            if current is None or status != "active":
+                raise WritingProjectError(
+                    "writing artifact used memory that was deleted or disabled"
+                )
+            if current.workspace_id and current.workspace_id != project.workspace_id:
+                raise WritingProjectError(
+                    "writing artifact memory is outside the project workspace"
+                )
+
+    def save_outline(
+        self,
+        project_id: str,
+        *,
+        artifact_id: str,
+        artifact_version: int,
+        expected_version: int,
+    ) -> WritingProjectSnapshot:
         artifact = self._artifacts.get(artifact_id, artifact_version)
         if not isinstance(artifact, OutlineArtifact):
-            raise WritingProjectError("outline artifact not found or has the wrong type")
+            raise WritingProjectError(
+                "outline artifact not found or has the wrong type"
+            )
+        self._validate_memory_references(str(project_id), artifact)
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT outline_version FROM writing_projects WHERE project_id = ?",
@@ -283,13 +356,21 @@ class WritingProjectService:
                     outline_artifact_version = ?, outline_version = ?, updated_at = ?
                 WHERE project_id = ?
                 """,
-                (artifact.artifact_id, artifact.version, current + 1, _now(), str(project_id)),
+                (
+                    artifact.artifact_id,
+                    artifact.version,
+                    current + 1,
+                    _now(),
+                    str(project_id),
+                ),
             )
         result = self.get(project_id)
         assert result is not None
         return result
 
-    def _current_section(self, connection: sqlite3.Connection, project_id: str, section_id: str) -> WritingSectionSnapshot | None:
+    def _current_section(
+        self, connection: sqlite3.Connection, project_id: str, section_id: str
+    ) -> WritingSectionSnapshot | None:
         row = connection.execute(
             """
             SELECT * FROM writing_section_versions
@@ -299,7 +380,12 @@ class WritingProjectService:
         ).fetchone()
         return self._section_from_row(row) if row is not None else None
 
-    def _insert_section(self, connection: sqlite3.Connection, project_id: str, artifact: ManuscriptSectionArtifact) -> WritingSectionSnapshot:
+    def _insert_section(
+        self,
+        connection: sqlite3.Connection,
+        project_id: str,
+        artifact: ManuscriptSectionArtifact,
+    ) -> WritingSectionSnapshot:
         paragraphs = self._paragraphs(artifact)
         now = _now()
         connection.execute(
@@ -333,16 +419,32 @@ class WritingProjectService:
         assert current is not None
         return current
 
-    def save_section(self, project_id: str, *, artifact_id: str, artifact_version: int, expected_version: int) -> WritingSectionSnapshot:
+    def save_section(
+        self,
+        project_id: str,
+        *,
+        artifact_id: str,
+        artifact_version: int,
+        expected_version: int,
+    ) -> WritingSectionSnapshot:
         artifact = self._artifacts.get(artifact_id, artifact_version)
         if not isinstance(artifact, ManuscriptSectionArtifact):
-            raise WritingProjectError("manuscript section artifact not found or has the wrong type")
+            raise WritingProjectError(
+                "manuscript section artifact not found or has the wrong type"
+            )
+        self._validate_memory_references(str(project_id), artifact)
         with self._lock, self._connect() as connection:
-            if connection.execute(
-                "SELECT 1 FROM writing_projects WHERE project_id = ?", (str(project_id),)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM writing_projects WHERE project_id = ?",
+                    (str(project_id),),
+                ).fetchone()
+                is None
+            ):
                 raise WritingProjectError("Writing project not found")
-            current = self._current_section(connection, str(project_id), artifact.section_id)
+            current = self._current_section(
+                connection, str(project_id), artifact.section_id
+            )
             current_version = current.version if current is not None else 0
             if current_version != int(expected_version):
                 raise WritingProjectConflictError(
@@ -355,7 +457,9 @@ class WritingProjectService:
             return self._insert_section(connection, str(project_id), artifact)
 
     @staticmethod
-    def _operation_hash(project_id: str, revision: RevisionArtifact, expected_version: int) -> str:
+    def _operation_hash(
+        project_id: str, revision: RevisionArtifact, expected_version: int
+    ) -> str:
         return _hash_text(
             _json(
                 {
@@ -377,7 +481,10 @@ class WritingProjectService:
     ) -> WritingOperationReceipt:
         revision = self._artifacts.get(artifact_id, artifact_version)
         if not isinstance(revision, RevisionArtifact):
-            raise WritingProjectError("revision artifact not found or has the wrong type")
+            raise WritingProjectError(
+                "revision artifact not found or has the wrong type"
+            )
+        self._validate_memory_references(str(project_id), revision)
         operation = str(operation_id).strip()
         if not operation:
             raise WritingProjectError("operation_id is required")
@@ -409,22 +516,30 @@ class WritingProjectService:
             )
             if current is None:
                 raise WritingProjectError("target manuscript section not found")
-            if current.version != int(expected_version) or revision.base_version != current.version:
+            if (
+                current.version != int(expected_version)
+                or revision.base_version != current.version
+            ):
                 raise WritingProjectConflictError(
                     f"section version conflict: expected {expected_version}, current {current.version}"
                 )
-            base = self._artifacts.get(current.artifact_ref.artifact_id, current.artifact_ref.version)
+            base = self._artifacts.get(
+                current.artifact_ref.artifact_id, current.artifact_ref.version
+            )
             if not isinstance(base, ManuscriptSectionArtifact):
                 raise WritingProjectError("base manuscript artifact is unavailable")
             allowed = set(revision.allowed_paragraph_ids)
             changes = {item.paragraph_id: item for item in revision.changes}
             if not set(changes).issubset(allowed):
-                raise WritingProjectError("revision changes a paragraph outside the authorized range")
+                raise WritingProjectError(
+                    "revision changes a paragraph outside the authorized range"
+                )
             paragraphs = {item.paragraph_id: item for item in current.paragraphs}
             if not set(changes).issubset(paragraphs):
                 raise WritingProjectError("revision targets an unknown paragraph")
             available_evidence = {
-                item.evidence_id for item in (*base.evidence_refs, *revision.evidence_refs)
+                item.evidence_id
+                for item in (*base.evidence_refs, *revision.evidence_refs)
             }
             claim_source_map = dict(base.claim_source_map)
             claims = list(base.claims)
@@ -464,7 +579,9 @@ class WritingProjectService:
                 for item in ordered
                 if not item.evidence_ids and "[Missing" in item.markdown
             ]
-            status = VerificationStatus.PARTIAL if missing else VerificationStatus.PASSED
+            status = (
+                VerificationStatus.PARTIAL if missing else VerificationStatus.PASSED
+            )
             payload = base.model_dump(mode="python")
             payload.update(
                 {
@@ -485,9 +602,19 @@ class WritingProjectService:
                     "verification_status": status,
                     "verification_report": VerificationReport(
                         status=status,
-                        checked_fields=["paragraph_scope", "before_hash", "claim_source_map"],
+                        checked_fields=[
+                            "paragraph_scope",
+                            "before_hash",
+                            "claim_source_map",
+                        ],
                         source_ids=sorted(
-                            {item.source_id for item in (*base.evidence_refs, *revision.evidence_refs)}
+                            {
+                                item.source_id
+                                for item in (
+                                    *base.evidence_refs,
+                                    *revision.evidence_refs,
+                                )
+                            }
                         ),
                         citation_count=sum(len(item.evidence_ids) for item in ordered),
                         issues=[
@@ -544,14 +671,18 @@ class WritingProjectService:
         request: WritingRevisionPreviewRequest,
     ) -> WritingRevisionPreviewResponse:
         with self._lock, self._connect() as connection:
-            current = self._current_section(connection, str(project_id), str(section_id))
+            current = self._current_section(
+                connection, str(project_id), str(section_id)
+            )
         if current is None:
             raise WritingProjectError("target manuscript section not found")
         if current.version != request.expected_version:
             raise WritingProjectConflictError(
                 f"section version conflict: expected {request.expected_version}, current {current.version}"
             )
-        base = self._artifacts.get(current.artifact_ref.artifact_id, current.artifact_ref.version)
+        base = self._artifacts.get(
+            current.artifact_ref.artifact_id, current.artifact_ref.version
+        )
         if not isinstance(base, ManuscriptSectionArtifact):
             raise WritingProjectError("base manuscript artifact is unavailable")
         paragraphs = {item.paragraph_id: item for item in current.paragraphs}
@@ -611,7 +742,13 @@ class WritingProjectService:
             base_version=current.version,
             allowed_paragraph_ids=[item.paragraph_id for item in changes],
             changes=changes,
-            content={"draft_only": True, "applied": False, "project_id": project_id},
+            content={
+                "draft_only": True,
+                "applied": False,
+                "project_id": project_id,
+                "memory_snapshot_ref": base.content.get("memory_snapshot_ref", ""),
+                "memory_references": list(base.content.get("memory_references", [])),
+            },
             evidence_refs=[
                 item for item in base.evidence_refs if item.evidence_id in evidence_ids
             ],
@@ -648,7 +785,9 @@ class WritingProjectService:
         if project.writing_goal:
             chunks.extend(["", f"> Writing goal: {project.writing_goal}"])
         if project.outline_ref is not None:
-            outline = self._artifacts.get(project.outline_ref.artifact_id, project.outline_ref.version)
+            outline = self._artifacts.get(
+                project.outline_ref.artifact_id, project.outline_ref.version
+            )
             if isinstance(outline, OutlineArtifact):
                 chunks.extend(["", "## Outline"])
                 chunks.extend(
@@ -656,7 +795,9 @@ class WritingProjectService:
                 )
         references: dict[str, ReferenceRecord] = {}
         for section in project.sections:
-            chunks.extend(["", f"## {section.title or section.section_id}", "", section.markdown])
+            chunks.extend(
+                ["", f"## {section.title or section.section_id}", "", section.markdown]
+            )
             for reference in section.references:
                 existing = references.get(reference.source_id)
                 if existing is None:
@@ -682,13 +823,17 @@ class WritingProjectService:
                     )
                     if item
                 )
-                chunks.append(f"{index}. {title}" + (f" — {details}" if details else ""))
+                chunks.append(
+                    f"{index}. {title}" + (f" — {details}" if details else "")
+                )
         return WritingExportResponse(
             project_id=project.project_id,
             markdown="\n".join(chunks).strip() + "\n",
             references=list(references.values()),
             outline_version=project.outline_version,
-            section_versions={item.section_id: item.version for item in project.sections},
+            section_versions={
+                item.section_id: item.version for item in project.sections
+            },
         )
 
 

@@ -14,6 +14,8 @@ class MemoryPort(Protocol):
         *,
         profile_id: str,
         scope: ScopeContext,
+        run_id: str = "",
+        temporary: bool = False,
     ) -> Mapping[str, Any]:
         ...
 

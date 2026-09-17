@@ -31,6 +31,8 @@ from backend.api.knowledge_relation_suggestions import (
 )
 from backend.api.knowledge_relations import router as knowledge_relations_router
 from backend.api.llm_settings import router as llm_settings_router
+from backend.api.memory import router as memory_router
+from backend.api.memory_dependencies import close_memory_coordinator
 from backend.api.overlay import router as overlay_router
 from backend.api.quick_actions import router as quick_actions_router
 from backend.api.rag_models import router as rag_models_router
@@ -88,6 +90,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         close_curator_commit_service()
+        close_memory_coordinator()
         close_agent_checkpoint_service()
 
 
@@ -114,6 +117,7 @@ def create_app():
         agent_routing_router,
         agent_observability_router,
         agent_runtime_config_router,
+        memory_router,
         translation_router,
         translation_cascade_router,
         browser_context_router,
@@ -148,6 +152,7 @@ app = create_app()
 
 def main():
     import uvicorn
+
     uvicorn.run(
         "backend.main:app",
         host=os.getenv("AITRANS_API_HOST", DEFAULT_API_HOST),

@@ -23,6 +23,7 @@ class AITextRequest:
     target_language: str = "zh-CN"
     style: str = "general"
     request_id: int = 0
+    terminology: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

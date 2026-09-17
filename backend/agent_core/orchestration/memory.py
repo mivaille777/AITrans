@@ -14,7 +14,10 @@ class NullMemoryPort:
         *,
         profile_id: str,
         scope: ScopeContext,
+        run_id: str = "",
+        temporary: bool = False,
     ) -> Mapping[str, Any]:
+        del run_id, temporary
         return {
             "status": "unavailable",
             "snapshot_id": "",

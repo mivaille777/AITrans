@@ -7,6 +7,7 @@ from typing import Any, Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.ai.errors import AIError
+from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
 from backend.models.agent_artifacts import (
     Artifact,
@@ -49,6 +50,7 @@ class AcademicWriterState(TypedDict, total=False):
     input_artifacts: list[Artifact]
     input_issues: list[dict[str, Any]]
     user_material: list[dict[str, str]]
+    writing_preferences: list[dict[str, Any]]
     review_evidence: list[dict[str, Any]]
     draft: dict[str, Any]
     artifact: Artifact
@@ -56,7 +58,9 @@ class AcademicWriterState(TypedDict, total=False):
 
 
 def _artifact_id(task: TaskSpec, scope: ScopeContext, kind: ArtifactKind) -> str:
-    material = f"{scope.scope_ref}\0{task.task_id}\0{task.objective}\0{kind.value}".encode()
+    material = (
+        f"{scope.scope_ref}\0{task.task_id}\0{task.objective}\0{kind.value}".encode()
+    )
     return f"{kind.value}:{hashlib.sha256(material).hexdigest()[:24]}"
 
 
@@ -88,8 +92,12 @@ def _normalize_user_material(snapshot: Mapping[str, Any]) -> list[dict[str, str]
             continue
         result.append(
             {
-                "evidence_id": str(raw.get("evidence_id") or f"user-supplied-{index}")[:256],
-                "source_id": str(raw.get("source_id") or raw.get("experiment_id") or "user")[:256],
+                "evidence_id": str(raw.get("evidence_id") or f"user-supplied-{index}")[
+                    :256
+                ],
+                "source_id": str(
+                    raw.get("source_id") or raw.get("experiment_id") or "user"
+                )[:256],
                 "text": text[:20_000],
             }
         )
@@ -180,7 +188,11 @@ class DeterministicAcademicWriterProvider:
 
         if expected_kind == ArtifactKind.REVISION.value:
             base = next(
-                (item for item in artifacts if item.get("kind") == "manuscript_section"),
+                (
+                    item
+                    for item in artifacts
+                    if item.get("kind") == "manuscript_section"
+                ),
                 None,
             )
             return {
@@ -232,7 +244,9 @@ class DeterministicAcademicWriterProvider:
             "section_id": "results" if _is_experiment_section(objective) else "draft",
             "title": objective[:1000] or "Draft section",
             "paragraphs": paragraphs,
-            "missing_inputs": [] if paragraphs else [
+            "missing_inputs": []
+            if paragraphs
+            else [
                 "user_supplied_experiment_results"
                 if _is_experiment_section(objective)
                 else "verified_research_artifacts"
@@ -241,14 +255,20 @@ class DeterministicAcademicWriterProvider:
 
 
 class FallbackAcademicWriterProvider:
-    def __init__(self, primary: Any | None, fallback: AcademicWriterProvider | None = None) -> None:
+    def __init__(
+        self, primary: Any | None, fallback: AcademicWriterProvider | None = None
+    ) -> None:
         self._primary = primary
         self._fallback = fallback or DeterministicAcademicWriterProvider()
 
-    def generate(self, *, expected_kind: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    def generate(
+        self, *, expected_kind: str, payload: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
         if self._primary is not None:
             try:
-                return self._primary.generate(expected_kind=expected_kind, payload=payload)
+                return self._primary.generate(
+                    expected_kind=expected_kind, payload=payload
+                )
             except (AIError, ValueError, TypeError):
                 pass
         return self._fallback.generate(expected_kind=expected_kind, payload=payload)
@@ -308,6 +328,9 @@ class AcademicWriterGraph:
             "input_artifacts": inputs,
             "input_issues": issues,
             "user_material": _normalize_user_material(state.get("memory_snapshot", {})),
+            "writing_preferences": role_memory_projection(
+                state.get("memory_snapshot", {}), "writer"
+            ),
         }
 
     def _review_draft(self, state: AcademicWriterState) -> dict[str, Any]:
@@ -337,7 +360,11 @@ class AcademicWriterGraph:
                     evidence.append(
                         EvidenceRef(
                             evidence_id=evidence_id,
-                            source_id=(item.document_ids[0] if item.document_ids else "review-ledger"),
+                            source_id=(
+                                item.document_ids[0]
+                                if item.document_ids
+                                else "review-ledger"
+                            ),
                             source_type="review_ledger",
                         ).model_dump(mode="json")
                     )
@@ -376,15 +403,14 @@ class AcademicWriterGraph:
                 _compact_artifact(item) for item in state.get("input_artifacts", [])
             ],
             "user_supplied": list(state.get("user_material", [])),
+            "writing_preferences": list(state.get("writing_preferences", [])),
             "allowed_evidence_ids": sorted(
                 {
                     ref.evidence_id
                     for artifact in state.get("input_artifacts", [])
                     for ref in artifact.evidence_refs
                 }
-                | {
-                    item["evidence_id"] for item in state.get("user_material", [])
-                }
+                | {item["evidence_id"] for item in state.get("user_material", [])}
             ),
         }
         if (
@@ -422,7 +448,9 @@ class AcademicWriterGraph:
         references: list[ReferenceRecord] = []
         for source_id, evidence_ids in sorted(grouped.items()):
             source = metadata.get(source_id, {})
-            authors = [str(item) for item in source.get("authors", []) if str(item).strip()]
+            authors = [
+                str(item) for item in source.get("authors", []) if str(item).strip()
+            ]
             title = str(source.get("title", "") or "").strip()
             year = str(source.get("year", "") or "").strip()
             doi = str(source.get("doi", "") or "").strip()
@@ -459,7 +487,10 @@ class AcademicWriterGraph:
         ]
         evidence_refs = [
             ref for artifact in input_artifacts for ref in artifact.evidence_refs
-        ] + [EvidenceRef.model_validate(item) for item in state.get("review_evidence", [])]
+        ] + [
+            EvidenceRef.model_validate(item)
+            for item in state.get("review_evidence", [])
+        ]
         for item in state.get("user_material", []):
             evidence_refs.append(
                 EvidenceRef(
@@ -472,6 +503,11 @@ class AcademicWriterGraph:
         kind = task.expected_output_kind
         references = self._references(input_artifacts, list(evidence_by_id.values()))
         missing_inputs = [str(item) for item in draft.get("missing_inputs", []) or []]
+        memory_snapshot = state.get("memory_snapshot", {})
+        memory_provenance = {
+            "memory_snapshot_ref": str(memory_snapshot.get("snapshot_id", "") or ""),
+            "memory_references": list(memory_snapshot.get("references", [])),
+        }
 
         if kind is ArtifactKind.OUTLINE:
             sections: list[OutlineSection] = []
@@ -490,7 +526,9 @@ class AcademicWriterGraph:
                     section = section.model_copy(
                         update={
                             "evidence_ids": [
-                                item for item in section.evidence_ids if item in evidence_by_id
+                                item
+                                for item in section.evidence_ids
+                                if item in evidence_by_id
                             ]
                         }
                     )
@@ -511,7 +549,11 @@ class AcademicWriterGraph:
                 sections=sections,
                 references=references,
                 missing_inputs=sorted(set(missing_inputs)),
-                content={"draft_only": True, "applied": False},
+                content={
+                    "draft_only": True,
+                    "applied": False,
+                    **memory_provenance,
+                },
                 evidence_refs=list(evidence_by_id.values()),
                 lineage=[item.ref() for item in input_artifacts],
                 source_coverage=SourceCoverage(
@@ -523,7 +565,9 @@ class AcademicWriterGraph:
                 verification_report=VerificationReport(
                     status=status,
                     checked_fields=["sections", "evidence_ids", "references"],
-                    source_ids=sorted({item.source_id for item in evidence_by_id.values()}),
+                    source_ids=sorted(
+                        {item.source_id for item in evidence_by_id.values()}
+                    ),
                     citation_count=sum(len(item.evidence_ids) for item in sections),
                     issues=issues,
                 ),
@@ -537,7 +581,9 @@ class AcademicWriterGraph:
             if not target:
                 target = "unknown"
                 missing_inputs.append("target_manuscript_section")
-            allowed = [str(item) for item in draft.get("allowed_paragraph_ids", []) or []]
+            allowed = [
+                str(item) for item in draft.get("allowed_paragraph_ids", []) or []
+            ]
             if any(item.paragraph_id not in set(allowed) for item in changes):
                 issues.append(
                     VerificationIssue(
@@ -548,7 +594,9 @@ class AcademicWriterGraph:
                 )
             status = (
                 VerificationStatus.PARTIAL
-                if missing_inputs or not changes or any(item.severity == "error" for item in issues)
+                if missing_inputs
+                or not changes
+                or any(item.severity == "error" for item in issues)
                 else VerificationStatus.PASSED
             )
             artifact = RevisionArtifact(
@@ -563,14 +611,21 @@ class AcademicWriterGraph:
                     "draft_only": True,
                     "applied": False,
                     "missing_inputs": sorted(set(missing_inputs)),
+                    **memory_provenance,
                 },
                 evidence_refs=list(evidence_by_id.values()),
                 lineage=[item.ref() for item in input_artifacts],
                 verification_status=status,
                 verification_report=VerificationReport(
                     status=status,
-                    checked_fields=["target_section", "allowed_paragraphs", "before_hash"],
-                    source_ids=sorted({item.source_id for item in evidence_by_id.values()}),
+                    checked_fields=[
+                        "target_section",
+                        "allowed_paragraphs",
+                        "before_hash",
+                    ],
+                    source_ids=sorted(
+                        {item.source_id for item in evidence_by_id.values()}
+                    ),
                     citation_count=sum(len(item.evidence_ids) for item in changes),
                     issues=issues,
                 ),
@@ -579,7 +634,9 @@ class AcademicWriterGraph:
             paragraphs: list[dict[str, Any]] = []
             seen_ids: set[str] = set()
             experiment = _is_experiment_section(task.objective)
-            user_evidence = {item["evidence_id"] for item in state.get("user_material", [])}
+            user_evidence = {
+                item["evidence_id"] for item in state.get("user_material", [])
+            }
             for index, raw in enumerate(draft.get("paragraphs", []) or [], start=1):
                 paragraph_id = str(raw.get("paragraph_id") or "").strip() or _stable_id(
                     "paragraph", str(raw.get("markdown", "")), index
@@ -597,7 +654,12 @@ class AcademicWriterGraph:
                 seen_ids.add(paragraph_id)
                 markdown = str(raw.get("markdown", "") or "").strip()
                 category = str(raw.get("category", "fact") or "fact")
-                if category not in {"fact", "interpretation", "suggestion", "user_supplied"}:
+                if category not in {
+                    "fact",
+                    "interpretation",
+                    "suggestion",
+                    "user_supplied",
+                }:
                     category = "suggestion"
                 evidence_ids = [
                     str(item) for item in raw.get("evidence_ids", []) or [] if str(item)
@@ -612,7 +674,9 @@ class AcademicWriterGraph:
                             field=paragraph_id,
                         )
                     )
-                    evidence_ids = [item for item in evidence_ids if item in evidence_by_id]
+                    evidence_ids = [
+                        item for item in evidence_ids if item in evidence_by_id
+                    ]
                 if category == "fact" and not evidence_ids:
                     issues.append(
                         VerificationIssue(
@@ -636,8 +700,13 @@ class AcademicWriterGraph:
                             field=paragraph_id,
                         )
                     )
-                if experiment and category in {"fact", "user_supplied"} and (
-                    not evidence_ids or not set(evidence_ids).issubset(user_evidence)
+                if (
+                    experiment
+                    and category in {"fact", "user_supplied"}
+                    and (
+                        not evidence_ids
+                        or not set(evidence_ids).issubset(user_evidence)
+                    )
                 ):
                     issues.append(
                         VerificationIssue(
@@ -707,6 +776,7 @@ class AcademicWriterGraph:
                 content={
                     "draft_only": True,
                     "applied": False,
+                    **memory_provenance,
                     "review_status": str(draft.get("review_status", "") or ""),
                     "review_prompt_id": str(draft.get("review_prompt_id", "") or ""),
                     "paragraph_categories": {
@@ -721,7 +791,9 @@ class AcademicWriterGraph:
                         bool(state.get("review_evidence"))
                         if _is_formal_review(task.objective)
                         else bool(input_artifacts)
-                        and all(item.source_coverage.complete for item in input_artifacts)
+                        and all(
+                            item.source_coverage.complete for item in input_artifacts
+                        )
                     ),
                     covered_refs=[item.artifact_id for item in input_artifacts],
                 ),
@@ -734,8 +806,12 @@ class AcademicWriterGraph:
                         "experiment_source_policy",
                         "references",
                     ],
-                    source_ids=sorted({item.source_id for item in evidence_by_id.values()}),
-                    citation_count=sum(len(item["evidence_ids"]) for item in paragraphs),
+                    source_ids=sorted(
+                        {item.source_id for item in evidence_by_id.values()}
+                    ),
+                    citation_count=sum(
+                        len(item["evidence_ids"]) for item in paragraphs
+                    ),
                     issues=issues,
                 ),
             )

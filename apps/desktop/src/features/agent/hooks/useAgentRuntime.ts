@@ -40,6 +40,7 @@ export function useAgentRuntime(
   const [cancelledMessage, setCancelledMessage] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [fallbackReason, setFallbackReason] = useState("")
+  const [temporary, setTemporary] = useState(false)
   const [observabilityRefresh, setObservabilityRefresh] = useState(0)
   const reactInstanceId = useId()
   const sessionId = `agent-workspace-${reactInstanceId.replace(/[^a-zA-Z0-9_-]/g, "")}`
@@ -208,7 +209,7 @@ export function useAgentRuntime(
       onEvent(event) {
         if (event.type === "accepted") {
           activeRunId.current = event.run_id
-          rememberPendingAgentRun(event)
+          rememberPendingAgentRun(event, Date.now(), Boolean(payload.temporary))
           return
         }
 
@@ -339,6 +340,7 @@ export function useAgentRuntime(
       knowledgeDocumentIds: workspace.researchRetrievalScope.knowledgeDocumentIds,
       researchSourceIds: workspace.researchRetrievalScope.researchSourceIds,
       knowledgeContext,
+      temporary,
     })
     lastPayload.current = payload
     execute(payload)
@@ -367,6 +369,15 @@ export function useAgentRuntime(
     streamHandle.current?.cancel()
   }
 
+  function setTemporaryMode(enabled: boolean) {
+    if (pending) return
+    setTemporary(enabled)
+    conversationId.current = ""
+    conversationMode.current = null
+    lastPayload.current = null
+    clearPendingAgentRun()
+  }
+
   return {
     prompt,
     setPrompt,
@@ -379,6 +390,8 @@ export function useAgentRuntime(
     pending,
     cancelRequested,
     observabilityRefresh,
+    temporary,
+    setTemporaryMode,
     submitPrompt,
     confirmWriteTool,
     cancelRun,
