@@ -60,8 +60,7 @@
 }
 
 /* The Reading grid must stay constrained to the visible app viewport. A tall
-   PDF canvas must never enlarge the implicit grid row, otherwise the Trash
-   footer, Outline scroller, and PDF zoom controls are pushed below the window. */
+   PDF canvas or a long side panel must never enlarge the implicit grid row. */
 .ait-reading-workspace > section,
 .ait-reading-workspace > section > div.grid {
   height: 100%;
@@ -77,40 +76,78 @@
 .ait-reading-workspace > section > div.grid > main {
   height: 100%;
   min-height: 0;
+  max-height: 100%;
   overflow: hidden;
 }
 
-/* All Documents and Outline own independent vertical scrolling. Their bottom
-   actions remain fixed and visible while only the list/tree body scrolls. */
-.ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel,
-.ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel {
+/* All Documents, Outline, and Evidence & Actions each own a dedicated vertical
+   scroll region. The explicit zero-height flex basis is intentional: it forces
+   the list/tree/action body to remain inside the current window and overflow
+   internally, instead of growing the whole Reading grid beyond the viewport. */
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel {
+  flex: 1 1 0% !important;
+  height: 0 !important;
   min-height: 0 !important;
-  overflow-y: scroll !important;
+  max-height: none !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
   overscroll-behavior-y: contain;
+  touch-action: pan-y;
   scrollbar-gutter: stable;
-  scrollbar-color: #b8b8b8 transparent;
+  scrollbar-width: thin;
+  scrollbar-color: #ababab #f7f7f7;
 }
 
-.ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel::-webkit-scrollbar,
-.ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
 
-.ait-reading-workspace > section > div.grid > aside > .ait-scroll-panel::-webkit-scrollbar-thumb,
-.ait-reading-workspace > section > div.grid > aside > div.ait-scroll-panel::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar-track,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar-track,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar-track {
+  background: #f7f7f7;
+}
+
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar-thumb,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar-thumb,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar-thumb {
+  min-height: 34px;
+  border: 2px solid #f7f7f7;
   border-radius: 999px;
-  background: #b8b8b8;
-  background-clip: padding-box;
+  background: #ababab;
 }
 
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar-thumb:hover,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar-thumb:hover,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar-thumb:hover {
+  background: #858585;
+}
+
+/* Keep the fixed side-panel controls visible while their content bodies scroll. */
+.ait-reading-workspace > section > div.grid > aside:first-child > div:first-child,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div:first-child,
+.ait-reading-workspace > section > div.grid > aside:last-child > div:first-child,
 .ait-reading-workspace > section > div.grid > aside:first-child > div:last-child,
 .ait-reading-workspace > section > div.grid > aside:nth-child(2) > div:last-child {
   flex-shrink: 0;
   background: #fff;
   position: relative;
   z-index: 8;
+}
+
+/* Keep the horizontal document-type filter independent from vertical sidebar
+   scrolling. It may still pan left/right when there are more type chips. */
+.ait-reading-workspace > section > div.grid > aside:first-child > div:first-child .ait-scroll-panel {
+  height: auto !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  touch-action: pan-x;
+  scrollbar-gutter: auto;
 }
 
 /* Keep the PDF flex surface inside the center column instead of allowing its
