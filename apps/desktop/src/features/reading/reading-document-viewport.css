@@ -48,10 +48,14 @@
   display: none;
 }
 
+/* Text-based document zoom lives in the same top control band rather than
+   floating over the document body. PDF owns an inline zoom group immediately
+   to the right of its page controls inside PdfReaderSurface. */
 .ait-reading-workspace .ait-reading-document-zoom {
   position: absolute;
-  right: 340px;
-  bottom: 16px;
+  top: 14px;
+  right: 376px;
+  bottom: auto;
   z-index: 45;
 }
 
@@ -149,17 +153,6 @@
   background: #858585;
 }
 
-/* The PDF zoom control is a sibling of the scroll surface. Force it to remain
-   pinned above the viewport even when the rendered canvas is larger than the
-   available center column. */
-.ait-reading-workspace .ait-pdf-scroll-surface ~ [aria-label="Document zoom controls"] {
-  position: absolute !important;
-  right: 16px !important;
-  bottom: 16px !important;
-  z-index: 80 !important;
-  display: flex !important;
-}
-
 /* Evidence & Actions uses the same collapsible rail language as All Documents
    and Outline. The expanded collapse affordance sits inside its header area. */
 .ait-reading-workspace .ait-reading-evidence-collapse {
@@ -203,11 +196,11 @@
 }
 
 .ait-reading-workspace.evidence-collapsed .ait-reading-document-zoom {
-  right: 68px;
+  right: 104px;
 }
 
 @media (max-width: 1180px) {
   .ait-reading-workspace.evidence-expanded .ait-reading-document-zoom {
-    right: 332px;
+    right: 372px;
   }
 }
