@@ -41,10 +41,11 @@ describe("workspace navigation", () => {
     expect(getWorkspaceRouteMeta("/unknown").path).toBe("/chat")
   })
 
-  it("reserves whole-workspace scrolling for chat's internal panes", () => {
+  it("lets full-height workspaces own their internal scrolling", () => {
     expect(workspaceRouteUsesFixedHeight("/chat")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/research")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/knowledge")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/settings")).toBe(true)
     expect(workspaceRouteUsesFixedHeight("/translation")).toBe(false)
-    expect(workspaceRouteUsesFixedHeight("/knowledge")).toBe(false)
-    expect(workspaceRouteUsesFixedHeight("/settings")).toBe(false)
   })
 })
