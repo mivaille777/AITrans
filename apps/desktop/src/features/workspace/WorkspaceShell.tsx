@@ -47,7 +47,7 @@ export default function WorkspaceShell({ children, llmStatus }: {
 
         <div className="min-h-0 min-w-0 overflow-hidden p-3">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[22px] border border-slate-200/70 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.08)]">
-            {location.pathname === "/research" || location.pathname === "/knowledge" ? null : (
+            {location.pathname === "/research" || location.pathname === "/knowledge" || location.pathname === "/settings" ? null : (
               <WorkspaceHeader
                 title={routeMeta.label}
                 description={routeMeta.description}
