@@ -159,6 +159,8 @@
 }
 
 .knowledge-inspector-pane {
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   border-left: 1px solid #e8e8e8;
   padding: 18px 18px 24px;
@@ -707,6 +709,18 @@
 
 .knowledge-inspector-heading-copy {
   min-width: 0;
+}
+
+.knowledge-inspector,
+.knowledge-inspector-content,
+.knowledge-inspector-relations {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.knowledge-inspector-relations > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .knowledge-inspector-heading .knowledge-object-icon {

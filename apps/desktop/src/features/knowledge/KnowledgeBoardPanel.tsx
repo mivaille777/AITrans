@@ -89,7 +89,7 @@ function RelationRow({
   const target = itemById.get(relation.target_item_id)
 
   return (
-    <div className="rounded-[12px] border border-slate-200 bg-white p-2.5">
+    <div className="min-w-0 max-w-full rounded-[12px] border border-slate-200 bg-white p-2.5">
       <div className="flex items-start gap-2">
         <Link2 size={12} className="mt-0.5 shrink-0 text-slate-400" />
         <div className="min-w-0 flex-1">
