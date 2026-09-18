@@ -5,8 +5,15 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, status
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    RateLimitError,
+)
 
-from app.ai.client import SUPPORTED_DEEPSEEK_MODELS
+from app.ai.errors import AIConfigurationError
 from app.ai.factory import (
     AI_PROVIDER_LABELS,
     DEFAULT_AI_PROVIDER,
@@ -14,6 +21,7 @@ from app.ai.factory import (
     SUPPORTED_AI_PROVIDERS,
     provider_defaults,
 )
+from app.ai.model_catalog import list_available_model_ids
 from app.ai.runtime_status import llm_runtime_status
 from app.infrastructure.settings import SettingsManager
 from backend.api.dependencies import (
@@ -24,6 +32,8 @@ from backend.api.dependencies import (
 )
 from backend.api.llm_dependencies import reset_llm_dependencies
 from backend.models.llm_settings import (
+    LLMModelOption,
+    LLMModelsResponse,
     LLMProviderOption,
     LLMRuntimeStatusResponse,
     LLMSettingsResponse,
@@ -72,8 +82,8 @@ def _validate(payload: LLMSettingsUpdateRequest) -> tuple[str, str, str]:
     model = payload.model.strip()
     base_url = payload.base_url.strip()
     if provider == DEFAULT_AI_PROVIDER:
-        if model not in SUPPORTED_DEEPSEEK_MODELS:
-            raise ValueError("请选择受支持的 DeepSeek 模型。")
+        if not model:
+            raise ValueError("DeepSeek 模型名称不能为空。")
         _, default_base_url = provider_defaults(provider)
         return provider, model, base_url or default_base_url
     if not base_url:
@@ -109,6 +119,59 @@ def get_llm_runtime_status() -> LLMRuntimeStatusResponse:
         model=current.model,
         detail=current.detail,
         active_requests=current.active_requests,
+    )
+
+
+def _model_catalog_detail(exc: Exception) -> str:
+    if isinstance(exc, AIConfigurationError):
+        return str(exc)
+    if isinstance(exc, AuthenticationError):
+        return "API key was rejected by the provider."
+    if isinstance(exc, RateLimitError):
+        return "The provider rate limit was reached while loading models."
+    if isinstance(exc, APITimeoutError):
+        return "The provider took too long to return its model list."
+    if isinstance(exc, APIConnectionError):
+        return "Unable to connect to the provider model catalog."
+    if isinstance(exc, APIStatusError):
+        code = getattr(exc, "status_code", None)
+        return (
+            f"The provider model catalog request failed (HTTP {code})."
+            if code is not None
+            else "The provider model catalog request failed."
+        )
+    return "Unable to load the provider model catalog."
+
+
+@router.get("/models", response_model=LLMModelsResponse)
+def get_available_llm_models() -> LLMModelsResponse:
+    settings = SettingsManager()
+    provider = _config_value(settings, "provider", DEFAULT_AI_PROVIDER)
+    if provider not in SUPPORTED_AI_PROVIDERS:
+        provider = DEFAULT_AI_PROVIDER
+    default_model, default_base_url = provider_defaults(provider)
+    current_model = _config_value(settings, "model", default_model)
+    base_url = _config_value(settings, "base_url", default_base_url)
+    try:
+        model_ids = list_available_model_ids(
+            provider=provider,
+            base_url=base_url,
+        )
+    except Exception as exc:  # noqa: BLE001 - provider errors are returned as safe UI detail
+        return LLMModelsResponse(
+            provider=provider,
+            current_model=current_model,
+            available=False,
+            detail=_model_catalog_detail(exc),
+        )
+
+    models = [LLMModelOption(id=model_id) for model_id in model_ids]
+    return LLMModelsResponse(
+        provider=provider,
+        current_model=current_model,
+        available=bool(models),
+        models=models,
+        detail="" if models else "The provider returned no available models.",
     )
 
 

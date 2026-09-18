@@ -17,6 +17,18 @@ export interface LlmSettings {
   providers: LlmProviderOption[]
 }
 
+export interface LlmModelOption {
+  id: string
+}
+
+export interface LlmModelsResponse {
+  provider: LlmProviderId
+  current_model: string
+  available: boolean
+  models: LlmModelOption[]
+  detail: string
+}
+
 export interface LlmSettingsUpdate {
   provider: LlmProviderId
   model: string
@@ -41,6 +53,10 @@ export function getLlmSettings(): Promise<LlmSettings> {
 
 export function getLlmRuntimeStatus(): Promise<LlmRuntimeStatus> {
   return apiGet<LlmRuntimeStatus>(`${LLM_SETTINGS_PATH}/status`)
+}
+
+export function getAvailableLlmModels(): Promise<LlmModelsResponse> {
+  return apiGet<LlmModelsResponse>(`${LLM_SETTINGS_PATH}/models`)
 }
 
 export function updateLlmSettings(payload: LlmSettingsUpdate): Promise<LlmSettings> {

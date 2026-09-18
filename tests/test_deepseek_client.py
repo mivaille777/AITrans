@@ -66,9 +66,10 @@ def test_thinking_mode_omits_temperature() -> None:
     assert "temperature" not in request
 
 
-def test_rejects_unsupported_model() -> None:
-    with pytest.raises(AIConfigurationError):
-        DeepSeekClient(model="deepseek-chat", sdk_client=FakeSDKClient())
+def test_accepts_model_identifier_returned_by_provider_catalog() -> None:
+    client = DeepSeekClient(model="deepseek-flash", sdk_client=FakeSDKClient())
+
+    assert client.model == "deepseek-flash"
 
 
 def test_rejects_invalid_temperature_before_request() -> None:

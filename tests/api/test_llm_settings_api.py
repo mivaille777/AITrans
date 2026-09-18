@@ -98,3 +98,31 @@ def test_llm_settings_api_rejects_key_fields(monkeypatch) -> None:
 
     assert response.status_code == 422
     assert "Extra inputs" in response.text
+
+
+def test_llm_models_api_returns_models_from_current_provider(monkeypatch) -> None:
+    from backend.api import llm_settings
+
+    _FakeSettings.values = {
+        "provider": "openai_compatible",
+        "model": "llama-current",
+        "base_url": "https://gateway.example/v1",
+    }
+    monkeypatch.setattr(llm_settings, "SettingsManager", _FakeSettings)
+    monkeypatch.setattr(
+        llm_settings,
+        "list_available_model_ids",
+        lambda **_: ("llama-current", "llama-fast"),
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/api/settings/llm/models")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "openai_compatible",
+        "current_model": "llama-current",
+        "available": True,
+        "models": [{"id": "llama-current"}, {"id": "llama-fast"}],
+        "detail": "",
+    }

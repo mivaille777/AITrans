@@ -22,6 +22,18 @@ class LLMSettingsResponse(BaseModel):
     providers: list[LLMProviderOption] = Field(default_factory=list)
 
 
+class LLMModelOption(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+
+
+class LLMModelsResponse(BaseModel):
+    provider: AIProviderName
+    current_model: str = ""
+    available: bool = False
+    models: list[LLMModelOption] = Field(default_factory=list)
+    detail: str = ""
+
+
 class LLMSettingsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -40,6 +52,8 @@ class LLMRuntimeStatusResponse(BaseModel):
 
 __all__ = [
     "AIProviderName",
+    "LLMModelOption",
+    "LLMModelsResponse",
     "LLMProviderOption",
     "LLMRuntimeStatusResponse",
     "LLMSettingsResponse",

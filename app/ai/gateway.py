@@ -189,12 +189,14 @@ class LLMGateway:
             configured_model if saved_model else _DEFAULT_MODELS[normalized_role]
         )
 
-        if provider == DEFAULT_AI_PROVIDER and model not in SUPPORTED_DEEPSEEK_MODELS:
+        if provider == DEFAULT_AI_PROVIDER and environment_model and model not in SUPPORTED_DEEPSEEK_MODELS:
             supported = ", ".join(sorted(SUPPORTED_DEEPSEEK_MODELS))
             raise AIConfigurationError(
                 f"Unsupported model for DeepSeek LLM route {normalized_role}: "
-                f"{model}. Supported models: {supported}."
+                f"{model}. Supported environment overrides: {supported}."
             )
+        if provider == DEFAULT_AI_PROVIDER and not model:
+            raise AIConfigurationError("DeepSeek provider requires a model identifier.")
         if provider == OPENAI_COMPATIBLE_PROVIDER and not model:
             raise AIConfigurationError("OpenAI-compatible provider requires a model identifier.")
         if provider == OPENAI_COMPATIBLE_PROVIDER and not configured_base_url:

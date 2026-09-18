@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { BookOpen, ChevronDown, ChevronRight, FileText, MoreHorizontal, Paperclip, Share2 } from "lucide-react"
+import { BookOpen, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, MoreHorizontal, Paperclip, Share2 } from "lucide-react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import {
   dismissCompanionHandoff,
   getCompanionHandoff,
 } from "../../api/companion"
+import { getAvailableLlmModels, getLlmSettings, updateLlmSettings } from "../../api/llm-settings"
 import { saveResearchNote } from "../../api/quick-actions"
 import type { ResearchNoteSaveRequest } from "../../api/types"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
@@ -36,8 +37,10 @@ export default function CompanionWorkspaceV2() {
   const [editingMessageId, setEditingMessageId] = useState("")
   const [editingText, setEditingText] = useState("")
   const [branchingMessageId, setBranchingMessageId] = useState("")
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const handoffIdRef = useRef("")
   const usingHandoffRef = useRef(false)
+  const modelPickerRef = useRef<HTMLDivElement>(null)
 
   const routedConversationId = searchParams.get("conversation") ?? ""
 
@@ -54,6 +57,59 @@ export default function CompanionWorkspaceV2() {
   const runtimeConversationId = runtime.conversationId
   const openRuntimeConversation = runtime.openConversation
   const resetRuntime = runtime.reset
+
+  const llmSettingsQuery = useQuery({
+    queryKey: queryKeys.llm.settings,
+    queryFn: getLlmSettings,
+    staleTime: 30_000,
+    retry: 0,
+  })
+  const modelCatalogQuery = useQuery({
+    queryKey: queryKeys.llm.models(
+      llmSettingsQuery.data?.provider ?? "deepseek",
+      llmSettingsQuery.data?.base_url ?? "",
+    ),
+    queryFn: getAvailableLlmModels,
+    enabled: modelPickerOpen && llmSettingsQuery.isSuccess,
+    staleTime: 60_000,
+    retry: 0,
+  })
+  const modelSwitchMutation = useMutation({
+    mutationFn: async (model: string) => {
+      const settings = llmSettingsQuery.data
+      if (!settings) throw new Error("LLM settings are not ready yet.")
+      return updateLlmSettings({
+        provider: settings.provider,
+        model,
+        base_url: settings.base_url,
+      })
+    },
+    onSuccess: (nextSettings) => {
+      queryClient.setQueryData(queryKeys.llm.settings, nextSettings)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.llm.status })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.companion.chatStatus })
+      setModelPickerOpen(false)
+    },
+  })
+
+  useEffect(() => {
+    if (!modelPickerOpen) return undefined
+
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!modelPickerRef.current?.contains(event.target as Node)) {
+        setModelPickerOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setModelPickerOpen(false)
+    }
+    document.addEventListener("pointerdown", closeOnPointerDown)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [modelPickerOpen])
 
   const handoffQuery = useQuery({
     queryKey: queryKeys.companion.handoff,
@@ -226,9 +282,20 @@ export default function CompanionWorkspaceV2() {
     : runtime.context.resource_title || runtime.context.section_heading || "Reading context"
   const canAttachSaved = Boolean(runtime.context.source_text)
   const branchBusy = Boolean(branchingMessageId) || runtime.activeRequestId !== null
-  const activeModel = [...runtime.messages]
-    .reverse()
-    .find((message) => message.model)?.model || "Llama 3.1 8B (Local)"
+  const activeModel = llmSettingsQuery.data?.model
+    || [...runtime.messages]
+      .reverse()
+      .find((message) => message.model)?.model
+    || "Llama 3.1 8B (Local)"
+  const modelSwitchError = modelSwitchMutation.error instanceof Error
+    ? modelSwitchMutation.error.message
+    : ""
+
+  function selectModel(model: string) {
+    if (!model.trim() || modelSwitchMutation.isPending || model === activeModel) return
+    modelSwitchMutation.mutate(model)
+  }
+
   const showingHandoff = Boolean(
     readingHandoff &&
       !runtime.conversationId &&
@@ -627,10 +694,54 @@ export default function CompanionWorkspaceV2() {
               <span>{runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge" : "Reading" : "Research"}</span>
               <ChevronDown size={14} />
             </span>
-            <span className="ait-chat-composer-control">
-              <span>{activeModel}</span>
-              <ChevronDown size={14} />
-            </span>
+            <div className="ait-chat-model-picker" ref={modelPickerRef}>
+              <button
+                type="button"
+                className="ait-chat-composer-control ait-chat-composer-model-button"
+                aria-haspopup="listbox"
+                aria-expanded={modelPickerOpen}
+                disabled={runtime.activeRequestId !== null || modelSwitchMutation.isPending}
+                onClick={() => setModelPickerOpen((open) => !open)}
+              >
+                <span className="ait-chat-composer-model-label">{activeModel}</span>
+                <ChevronDown size={14} />
+              </button>
+              {modelPickerOpen && (
+                <div className="ait-chat-model-menu" role="listbox" aria-label="Available models">
+                  <div className="ait-chat-model-menu-heading">
+                    <span>Available models</span>
+                    {modelCatalogQuery.isFetching && <LoaderCircle size={13} className="ait-chat-model-menu-spinner" />}
+                  </div>
+                  {modelCatalogQuery.isPending ? (
+                    <p className="ait-chat-model-menu-message">Checking the current API key…</p>
+                  ) : modelCatalogQuery.isError ? (
+                    <p className="ait-chat-model-menu-message is-error">Unable to load models. Try again.</p>
+                  ) : !modelCatalogQuery.data?.available ? (
+                    <p className="ait-chat-model-menu-message is-error">
+                      {modelCatalogQuery.data?.detail || "No models are available for this API key."}
+                    </p>
+                  ) : (
+                    <div className="ait-chat-model-options">
+                      {modelCatalogQuery.data.models.map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          role="option"
+                          aria-selected={model.id === activeModel}
+                          className="ait-chat-model-option"
+                          disabled={modelSwitchMutation.isPending}
+                          onClick={() => selectModel(model.id)}
+                        >
+                          <span>{model.id}</span>
+                          {model.id === activeModel && <Check size={15} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {modelSwitchError && <p className="ait-chat-model-menu-message is-error">{modelSwitchError}</p>}
+                </div>
+              )}
+            </div>
             <span className={`ait-chat-composer-knowledge ${runtime.knowledgeEnabled ? "is-on" : ""}`}>
               <span className="ait-chat-composer-knowledge-dot" />
               Knowledge {runtime.knowledgeEnabled ? "on" : "off"}
