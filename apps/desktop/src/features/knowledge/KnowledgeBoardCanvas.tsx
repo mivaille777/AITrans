@@ -338,11 +338,11 @@ export default function KnowledgeBoardCanvas({
       </div>
 
       {linkingSourceId || linkPreview ? (
-        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-slate-700 shadow-sm">
+        <div className="knowledge-canvas-link-status absolute left-1/2 z-30 -translate-x-1/2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-slate-700 shadow-sm">
           {linkPreview ? "Drag to another card to create a relation" : "Select a target card to create a relation"} · Esc/canvas to cancel
         </div>
       ) : selectedItemIds.length > 0 ? (
-        <div className="absolute left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-1 rounded-[12px] border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur">
+        <div className="knowledge-canvas-selection-toolbar absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 rounded-[12px] border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur">
           <span className="px-2 text-[10px] font-semibold text-slate-500">{selectedItemIds.length} selected</span>
           <button type="button" className="flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100" onClick={onAskSelection}><Bot size={13} />Ask Agent</button>
           {selectedItemIds.length === 1 ? <button type="button" className="flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100" onClick={onOpenSelection}><ExternalLink size={13} />Open</button> : null}

@@ -508,6 +508,12 @@
   box-shadow: 0 5px 14px rgba(0, 0, 0, .06);
 }
 
+.knowledge-canvas-link-status,
+.knowledge-canvas-selection-toolbar {
+  top: 68px;
+  z-index: 31;
+}
+
 .knowledge-fit-label {
   font-size: 10px;
   font-weight: 600;
