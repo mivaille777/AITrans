@@ -79,5 +79,5 @@ export function getWorkspaceRouteMeta(pathname: string): WorkspaceRouteMeta {
  * workspace <main> element scroll the whole page.
  */
 export function workspaceRouteUsesFixedHeight(pathname: string): boolean {
-  return pathname === "/chat"
+  return pathname === "/chat" || pathname === "/research" || pathname === "/knowledge"
 }

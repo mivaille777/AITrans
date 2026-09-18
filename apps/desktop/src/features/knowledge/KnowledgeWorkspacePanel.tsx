@@ -1,4 +1,5 @@
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom"
+import { useState } from "react"
 
 import { buildReadingPaperPath } from "../reading/reading-navigation"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
@@ -6,6 +7,7 @@ import KnowledgeBoardPanel from "./KnowledgeBoardPanel"
 import KnowledgeGraphPanel from "./KnowledgeGraphPanel"
 import KnowledgeLibraryPanel from "./KnowledgeLibraryPanel"
 import KnowledgeWorkspaceHeader from "./KnowledgeWorkspaceHeader"
+import "./KnowledgeWorkspace.css"
 import type { KnowledgeItem } from "./knowledge-types"
 import {
   buildKnowledgeViewParams,
@@ -35,6 +37,8 @@ export default function KnowledgeWorkspacePanel({
   const graphFocusId = requestedFocusId || fallbackFocusId
   const view = resolveKnowledgeView(searchParams)
   const legacyReaderPaperId = resolveLegacyKnowledgeReaderPaperId(searchParams)
+  const [searchRequest, setSearchRequest] = useState(0)
+  const [newRequest, setNewRequest] = useState(0)
 
   if (legacyReaderPaperId) {
     return <Navigate to={buildReadingPaperPath(legacyReaderPaperId)} replace />
@@ -60,13 +64,25 @@ export default function KnowledgeWorkspacePanel({
     setSearchParams(buildOpenLibraryItemParams(searchParams, item.item_id))
   }
 
-  return (
-    <section className="space-y-3" aria-label="Knowledge workspace">
-      <KnowledgeWorkspaceHeader view={view} onSelectView={setView} />
+  function requestSearch() {
+    if (view === "graph") setView("canvas")
+    setSearchRequest((request) => request + 1)
+  }
 
-      {view === "canvas" ? <KnowledgeBoardPanel library={library} board={board} /> : null}
+  function requestNew() {
+    if (view !== "canvas") setView("canvas")
+    setNewRequest((request) => request + 1)
+  }
+
+  return (
+    <section className="knowledge-workspace" aria-label="Knowledge workspace">
+      <KnowledgeWorkspaceHeader view={view} onSelectView={setView} onSearch={requestSearch} onNew={requestNew} />
+
+      <div className="knowledge-workspace-body">
+        {view === "canvas" ? <KnowledgeBoardPanel library={library} board={board} focusSearchRequest={searchRequest} createCardRequest={newRequest} /> : null}
       {view === "graph" ? <KnowledgeGraphPanel library={library} board={board} focusItemId={graphFocusId} onFocusChange={openGraph} onOpenItem={openGraphItem} /> : null}
-      {view === "library" ? <KnowledgeLibraryPanel library={library} onOpenPaper={openPaper} onOpenGraph={openGraph} /> : null}
+        {view === "library" ? <KnowledgeLibraryPanel library={library} onOpenPaper={openPaper} onOpenGraph={openGraph} focusSearchRequest={searchRequest} createCardRequest={newRequest} /> : null}
+      </div>
     </section>
   )
 }

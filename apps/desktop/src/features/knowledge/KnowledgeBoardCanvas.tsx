@@ -326,19 +326,19 @@ export default function KnowledgeBoardCanvas({
   )
 
   return (
-    <div className="relative h-full min-h-[620px] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-50" data-testid="knowledge-board-canvas">
-      <div className="absolute left-3 top-3 z-30 flex items-center gap-1 rounded-[12px] border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur">
+    <div className="knowledge-board-canvas relative h-full overflow-hidden bg-slate-50" data-testid="knowledge-board-canvas">
+      <div className="knowledge-canvas-toolbar absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center gap-1 rounded-[12px] border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur">
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100 disabled:opacity-30" aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"} disabled={!canUndo} onClick={onUndo}><Undo2 size={14} /></button>
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100 disabled:opacity-30" aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"} disabled={!canRedo} onClick={onRedo}><Redo2 size={14} /></button>
         <span className="mx-1 h-5 w-px bg-slate-200" />
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Zoom out" onClick={() => setViewport((current) => ({ ...current, zoom: clampBoardZoom(current.zoom / 1.15) }))}><Minus size={14} /></button>
         <span className="min-w-12 text-center text-[10px] font-semibold text-slate-500">{Math.round(viewport.zoom * 100)}%</span>
         <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Zoom in" onClick={() => setViewport((current) => ({ ...current, zoom: clampBoardZoom(current.zoom * 1.15) }))}><Plus size={14} /></button>
-        <button type="button" className="flex h-8 w-8 items-center justify-center rounded-[8px] text-slate-500 hover:bg-slate-100" aria-label="Fit board" onClick={fitView}><Maximize2 size={14} /></button>
+        <button type="button" className="flex h-8 items-center justify-center gap-1.5 rounded-[8px] px-2 text-slate-500 hover:bg-slate-100" aria-label="Fit to view" onClick={fitView}><Maximize2 size={14} /><span className="knowledge-fit-label">Fit to view</span></button>
       </div>
 
       {linkingSourceId || linkPreview ? (
-        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-[10px] font-semibold text-cyan-800 shadow-sm">
+        <div className="absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-slate-700 shadow-sm">
           {linkPreview ? "Drag to another card to create a relation" : "Select a target card to create a relation"} · Esc/canvas to cancel
         </div>
       ) : selectedItemIds.length > 0 ? (
@@ -373,7 +373,7 @@ export default function KnowledgeBoardCanvas({
               const selected = selectedRelationId === relation.relation_id
               return (
                 <g key={relation.relation_id} data-knowledge-relation={relation.relation_id}>
-                  <path d={edge.path} fill="none" stroke={selected ? "rgb(6 182 212)" : "rgb(148 163 184)"} strokeWidth={selected ? "2.5" : "1.5"} markerEnd="url(#knowledge-edge-arrow)" style={{ pointerEvents: "none" }} />
+                  <path d={edge.path} fill="none" stroke={selected ? "rgb(17 17 17)" : "rgb(160 160 160)"} strokeWidth={selected ? "2.5" : "1.5"} markerEnd="url(#knowledge-edge-arrow)" style={{ pointerEvents: "none" }} />
                   <path
                     d={edge.path}
                     fill="none"
@@ -387,7 +387,7 @@ export default function KnowledgeBoardCanvas({
                       onRelationSelectionChange?.(relation.relation_id)
                     }}
                   />
-                  <text x={edge.labelX} y={edge.labelY - 7} textAnchor="middle" className={`${selected ? "fill-cyan-700" : "fill-slate-500"} text-[10px] font-semibold`} style={{ pointerEvents: "none" }}>{relation.label || relation.relation_type.replaceAll("_", " ")}</text>
+                  <text x={edge.labelX} y={edge.labelY - 7} textAnchor="middle" className={`${selected ? "fill-slate-950" : "fill-slate-500"} text-[10px] font-semibold`} style={{ pointerEvents: "none" }}>{relation.label || relation.relation_type.replaceAll("_", " ")}</text>
                 </g>
               )
             })}
@@ -405,19 +405,19 @@ export default function KnowledgeBoardCanvas({
                 key={node.item_id}
                 data-knowledge-node
                 data-knowledge-item-id={node.item_id}
-                className={`absolute select-none overflow-hidden rounded-[18px] border bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow ${selected ? "border-cyan-400 ring-2 ring-cyan-100" : "border-slate-200 hover:border-slate-300"}`}
+                className={`knowledge-canvas-node absolute select-none overflow-hidden rounded-[18px] border bg-white shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow ${selected ? "is-selected border-slate-950 ring-2 ring-slate-200" : "border-slate-200 hover:border-slate-300"}`}
                 style={{ left: node.x, top: node.y, width: node.width, height: node.height, zIndex: selected ? Math.max(node.z_index, 1000) : node.z_index }}
                 onClick={(event) => selectNode(event, node.item_id)}
               >
                 <div className="absolute left-0 right-20 top-0 z-10 h-12 cursor-move" aria-hidden="true" onPointerDown={(event) => beginNodeInteraction(event, node, "move")} />
                 <KnowledgeCardRenderer item={item} />
                 <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
-                  <button type="button" className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition ${linkingSourceId === item.item_id ? "bg-cyan-100 text-cyan-800" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`} title="Click to connect this card" aria-label={`Connect ${item.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setLinkingSourceId((current) => current === item.item_id ? null : item.item_id) }}><Link2 size={13} /></button>
+                  <button type="button" className={`flex h-7 w-7 items-center justify-center rounded-[8px] transition ${linkingSourceId === item.item_id ? "bg-slate-950 text-white" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"}`} title="Click to connect this card" aria-label={`Connect ${item.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setLinkingSourceId((current) => current === item.item_id ? null : item.item_id) }}><Link2 size={13} /></button>
                   <button type="button" className="flex h-7 w-7 items-center justify-center rounded-[8px] text-slate-400 transition hover:bg-rose-50 hover:text-rose-600" title="Remove from canvas" aria-label={`Remove ${item.title} from canvas`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemoveNode(item.item_id) }}><Trash2 size={13} /></button>
                 </div>
                 <button
                   type="button"
-                  className="absolute right-0 top-1/2 z-20 flex h-10 w-4 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-l-full border border-r-0 border-cyan-200 bg-cyan-50 text-cyan-600 opacity-35 transition hover:opacity-100"
+                  className="absolute right-0 top-1/2 z-20 flex h-10 w-4 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-l-full border border-r-0 border-slate-300 bg-slate-100 text-slate-600 opacity-35 transition hover:opacity-100"
                   title="Drag to another card to connect"
                   aria-label={`Drag connection from ${item.title}`}
                   onPointerDown={(event) => beginLinkDrag(event, node)}

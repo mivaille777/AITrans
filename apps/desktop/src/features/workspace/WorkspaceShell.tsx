@@ -47,11 +47,13 @@ export default function WorkspaceShell({ children, llmStatus }: {
 
         <div className="min-h-0 min-w-0 overflow-hidden p-3">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[22px] border border-slate-200/70 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.08)]">
-            <WorkspaceHeader
-              title={routeMeta.label}
-              description={routeMeta.description}
-              llmStatus={llmStatus}
-            />
+            {location.pathname === "/research" || location.pathname === "/knowledge" ? null : (
+              <WorkspaceHeader
+                title={routeMeta.label}
+                description={routeMeta.description}
+                llmStatus={llmStatus}
+              />
+            )}
             <main
               className={`min-h-0 flex-1 workspace-route-enter ${
                 fixedHeightRoute

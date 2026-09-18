@@ -1,24 +1,27 @@
 import {
   BookOpenText,
   Bot,
-  Check,
+  ChevronRight,
   ExternalLink,
   FileText,
+  Filter,
   Highlighter,
   LayoutDashboard,
   Lightbulb,
   Link2,
+  MoreHorizontal,
   Pencil,
   Plus,
   Search,
+  Sparkles,
   StickyNote,
   Trash2,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
-import { Button } from "../../shared/ui/Button"
-import { EmptyState } from "../../shared/ui/EmptyState"
+import { ResearchWorkflowActions } from "../agent/components/ResearchWorkflowActions"
+import { knowledgeCardLabel } from "./knowledge-card-model"
 import type {
   KnowledgeAgentCardContext,
   KnowledgeAgentRelationContext,
@@ -29,10 +32,12 @@ import { nodeSnapshot, useKnowledgeBoardHistory, type KnowledgeBoardNodeSnapshot
 import KnowledgeBoardCanvas from "./KnowledgeBoardCanvas"
 import { KnowledgeBoardCreateDialog } from "./KnowledgeBoardCreateDialog"
 import { KnowledgeBoardManageDialog } from "./KnowledgeBoardManageDialog"
+import { KnowledgeCreateCardDialog } from "./KnowledgeCreateCardDialog"
 import KnowledgeInspector from "./KnowledgeInspector"
 import { KnowledgeRelationDialog } from "./KnowledgeRelationDialog"
 import { KnowledgeRelationEditDialog } from "./KnowledgeRelationEditDialog"
 import { KnowledgeRelationInspector } from "./KnowledgeRelationInspector"
+import KnowledgeSuggestionInbox from "./KnowledgeSuggestionInbox"
 import { dispatchKnowledgeAction } from "./knowledge-action-dispatcher"
 import type {
   KnowledgeBoardNode,
@@ -44,9 +49,19 @@ import { buildOpenLibraryItemParams } from "./knowledge-workspace-navigation"
 import { emitKnowledgeWorkspaceEvent, type KnowledgeWorkspaceEvent } from "./knowledge-workspace-events"
 import type { KnowledgeBoardController } from "./useKnowledgeBoard"
 import type { KnowledgeLibraryController } from "./useKnowledgeLibrary"
+import { useKnowledgeRelationSuggestions } from "./useKnowledgeRelationSuggestions"
 import { useOptionalKnowledgeWorkspaceContext } from "./useKnowledgeWorkspaceContext"
 
 const EMPTY_ITEMS: KnowledgeItem[] = []
+type CanvasFilter = "all" | "paper" | "note" | "evidence" | "concept"
+
+const canvasFilters: Array<{ value: CanvasFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "paper", label: "Papers" },
+  { value: "note", label: "Notes" },
+  { value: "evidence", label: "Evidence" },
+  { value: "concept", label: "Concepts" },
+]
 
 function TrayIcon({ type }: { type: KnowledgeItemType }) {
   const props = { size: 14, strokeWidth: 1.7 }
@@ -109,9 +124,13 @@ function snapshotPayload(node: KnowledgeBoardNodeSnapshot) {
 export default function KnowledgeBoardPanel({
   library,
   board,
+  focusSearchRequest = 0,
+  createCardRequest = 0,
 }: {
   library: KnowledgeLibraryController
   board: KnowledgeBoardController
+  focusSearchRequest?: number
+  createCardRequest?: number
 }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -125,24 +144,36 @@ export default function KnowledgeBoardPanel({
   const [fallbackSelectedIds, setFallbackSelectedIds] = useState<string[]>([])
   const [fallbackLastEvent, setFallbackLastEvent] = useState<KnowledgeWorkspaceEvent | null>(null)
   const [createBoardOpen, setCreateBoardOpen] = useState(false)
+  const [createCardOpen, setCreateCardOpen] = useState(false)
   const [manageBoardOpen, setManageBoardOpen] = useState(false)
+  const [filter, setFilter] = useState<CanvasFilter>("all")
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false)
+  const [suggestionInboxOpen, setSuggestionInboxOpen] = useState(true)
+  const [selectionTouched, setSelectionTouched] = useState(false)
   const [relationPair, setRelationPair] = useState<{ source: KnowledgeItem; target: KnowledgeItem } | null>(null)
   const [editingRelation, setEditingRelation] = useState<KnowledgeRelation | null>(null)
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   const itemById = useMemo(() => new Map(items.map((item) => [item.item_id, item] as const)), [items])
   const nodeItemIds = useMemo(() => new Set((snapshot?.nodes ?? []).map((node) => node.item_id)), [snapshot?.nodes])
   const selectionSource = workspaceContext?.selectedKnowledgeIds ?? fallbackSelectedIds
-  const selectedItemIds = selectionSource.filter((itemId) => nodeItemIds.has(itemId))
+  const storedSelectedItemIds = selectionSource.filter((itemId) => nodeItemIds.has(itemId))
+  const selectedItemIds = storedSelectedItemIds.length > 0
+    ? storedSelectedItemIds
+    : !selectionTouched
+      ? (snapshot?.nodes[0]?.item_id ? [snapshot.nodes[0].item_id] : [])
+      : []
   const selectedItems = selectedItemIds.map((itemId) => itemById.get(itemId)).filter((item): item is KnowledgeItem => Boolean(item))
 
   const trayItems = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase()
     return items.filter((item) => (
-      !normalized
-      || [item.title, item.summary, item.item_type].join(" ").toLocaleLowerCase().includes(normalized)
+      (filter === "all" || item.item_type === filter)
+      && (!normalized
+        || [item.title, item.summary, item.item_type].join(" ").toLocaleLowerCase().includes(normalized))
     ))
-  }, [items, search])
+  }, [filter, items, search])
 
   const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null
   const selectedRelations = selectedItem
@@ -152,6 +183,8 @@ export default function KnowledgeBoardPanel({
   const selectedRelation = selectedRelationId
     ? relationsForBoard.find((relation) => relation.relation_id === selectedRelationId) ?? null
     : null
+  const suggestionFocusId = selectedItem?.item_id ?? snapshot?.nodes[0]?.item_id ?? items[0]?.item_id ?? ""
+  const suggestions = useKnowledgeRelationSuggestions(suggestionFocusId)
   const lastEvent = workspaceContext?.lastEvent ?? fallbackLastEvent
   const loadError = library.itemsQuery.error ?? board.boardsQuery.error ?? board.boardQuery.error ?? board.relationsQuery.error
   const actionError = board.upsertNodeMutation.error
@@ -171,7 +204,16 @@ export default function KnowledgeBoardPanel({
     || board.updateBoardMutation.isPending
     || board.deleteBoardMutation.isPending
 
+  useEffect(() => {
+    if (focusSearchRequest > 0) searchInputRef.current?.focus()
+  }, [focusSearchRequest])
+
+  useEffect(() => {
+    if (createCardRequest > 0) setCreateCardOpen(true)
+  }, [createCardRequest])
+
   function updateSelection(ids: string[]) {
+    setSelectionTouched(true)
     const validIds = ids.filter((itemId) => nodeItemIds.has(itemId))
     if (validIds.length > 0) setSelectedRelationId(null)
     const nextItem = validIds.length === 1 ? itemById.get(validIds[0]) ?? null : null
@@ -348,63 +390,99 @@ export default function KnowledgeBoardPanel({
 
   if (library.itemsQuery.isPending || board.boardsQuery.isPending || (board.activeBoardId && board.boardQuery.isPending)) {
     return (
-      <section className="ait-surface h-[720px] overflow-hidden p-5" aria-busy="true" aria-label="Loading visual knowledge board">
-        <div className="ait-skeleton h-10 w-full rounded-[14px]" />
-        <div className="mt-4 grid h-[640px] grid-cols-[210px_1fr] gap-3"><div className="ait-skeleton rounded-[18px]" /><div className="ait-skeleton rounded-[18px]" /></div>
+      <section className="knowledge-board-panel p-4" aria-busy="true" aria-label="Loading visual knowledge board">
+        <div className="ait-skeleton h-9 w-full rounded-[10px]" />
+        <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(260px,345px)_1fr_320px] gap-0"><div className="ait-skeleton rounded-[12px]" /><div className="ait-skeleton rounded-[12px]" /><div className="ait-skeleton rounded-[12px]" /></div>
       </section>
     )
   }
 
-  return (
-    <section className="ait-surface overflow-hidden">
-      <header className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-slate-950 text-white"><LayoutDashboard size={17} /></span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Visual knowledge canvas</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <select value={board.activeBoardId ?? ""} onChange={(event) => { updateSelection([]); setSelectedRelationId(null); history.clear(); board.setActiveBoardId(event.target.value || null) }} className="max-w-xs truncate bg-transparent text-base font-semibold text-slate-950 outline-none">
-                {boards.map((candidate) => <option key={candidate.board_id} value={candidate.board_id}>{candidate.name}</option>)}
-              </select>
-              <span className="text-[10px] text-slate-400">{snapshot?.nodes.length ?? 0} cards · {relationsForBoard.length} relations</span>
-              <span className={`flex items-center gap-1 text-[10px] ${actionError ? "text-rose-500" : saving ? "text-amber-500" : "text-emerald-600"}`}>{!saving && !actionError ? <Check size={11} /> : null}{actionError ? "Save failed" : saving ? "Saving…" : "Saved"}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {snapshot?.nodes.length ? <Button variant="ghost" size="sm" onClick={() => askAgentForItems(snapshot.nodes.map((node) => itemById.get(node.item_id)).filter((item): item is KnowledgeItem => Boolean(item)), "Canvas")}><Bot size={14} />Ask canvas</Button> : null}
-          {snapshot ? <Button variant="ghost" size="sm" onClick={() => setManageBoardOpen(true)}><Pencil size={13} />Manage</Button> : null}
-          <Button size="sm" onClick={() => setCreateBoardOpen(true)}><Plus size={14} />New canvas</Button>
-        </div>
-      </header>
+  function selectSuggestionItem(itemId: string) {
+    const item = itemById.get(itemId)
+    if (!item) return
+    if (nodeItemIds.has(itemId)) updateSelection([itemId])
+    else openLibraryItem(item)
+  }
 
-      {(loadError || actionError) ? <div role="alert" className="mx-4 mt-4 rounded-[13px] border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMessage(actionError ?? loadError)}</div> : null}
+  return (
+    <section className="knowledge-board-panel">
+      {(loadError || actionError) ? <div role="alert" className="knowledge-board-error">{errorMessage(actionError ?? loadError)}</div> : null}
 
       {!snapshot && !loadError ? (
-        <div className="p-7"><EmptyState icon={<LayoutDashboard size={24} />} title="No canvas is selected" description="Create or select a knowledge canvas to arrange papers, notes, concepts, and highlights." actions={<Button onClick={() => setCreateBoardOpen(true)}><Plus size={14} />New canvas</Button>} /></div>
+        <div className="knowledge-board-empty">
+          <div className="knowledge-board-empty-card">
+            <LayoutDashboard size={25} strokeWidth={1.6} />
+            <h2>No canvas is selected</h2>
+            <p>Create a canvas before arranging papers, notes, concepts, and evidence. Canvas data is stored by the Knowledge API.</p>
+            <button type="button" onClick={() => setCreateBoardOpen(true)}><Plus size={14} />New canvas</button>
+          </div>
+        </div>
       ) : snapshot ? (
-        <div className="grid h-[min(74vh,820px)] min-h-[660px] grid-cols-[210px_minmax(0,1fr)] gap-0 xl:grid-cols-[210px_minmax(0,1fr)_290px]">
-          <aside className="min-h-0 border-r border-slate-100 bg-white p-3">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400">Card tray</p>
-            <label className="mt-3 flex items-center gap-2 rounded-[11px] border border-slate-200 px-2.5 py-2"><Search size={12} className="text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[10px] text-slate-700 outline-none placeholder:text-slate-400" placeholder="Find cards…" /></label>
-            <p className="mt-2 text-[9px] leading-4 text-slate-400">Drag a card into the canvas, or use the quick actions. The same knowledge object can appear in multiple canvases.</p>
-            <div className="ait-scroll-panel mt-3 h-[calc(100%_-_92px)] space-y-2 overflow-y-auto pr-1">
-              {trayItems.map((item) => (
-                <article key={item.item_id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(knowledgeBoardCardDragType, item.item_id) }} className={`cursor-grab rounded-[12px] border p-2.5 active:cursor-grabbing ${nodeItemIds.has(item.item_id) ? "border-cyan-100 bg-cyan-50/40" : "border-slate-200 bg-white hover:border-slate-300"}`}>
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 text-slate-500"><TrayIcon type={item.item_type} /></span>
-                    <div className="min-w-0 flex-1"><p className="truncate text-[10px] font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-[9px] capitalize text-slate-400">{item.item_type}{nodeItemIds.has(item.item_id) ? " · On canvas" : ""}</p></div>
-                  </div>
-                  <div className="mt-2 flex items-center gap-1 border-t border-slate-100 pt-2">
-                    {!nodeItemIds.has(item.item_id) ? <button type="button" className="rounded-[7px] px-2 py-1 text-[9px] font-semibold text-slate-600 hover:bg-slate-100" onPointerDown={(event) => event.stopPropagation()} onClick={() => quickAddNode(item.item_id)}><Plus size={10} className="mr-1 inline" />Add</button> : null}
-                    <button type="button" className="rounded-[7px] px-2 py-1 text-[9px] font-semibold text-slate-600 hover:bg-slate-100" onPointerDown={(event) => event.stopPropagation()} onClick={() => openLibraryItem(item)}><ExternalLink size={10} className="mr-1 inline" />Open</button>
-                  </div>
-                </article>
-              ))}
+        <div className="knowledge-board-grid">
+          <aside className="knowledge-object-pane">
+            <div className="knowledge-object-heading">
+              <div>
+                <h2>Knowledge Objects <ChevronRight size={14} strokeWidth={1.8} /></h2>
+                <p>Add papers, concepts, notes and more to your canvas.</p>
+              </div>
+              <select
+                aria-label="Knowledge canvas"
+                value={board.activeBoardId ?? ""}
+                onChange={(event) => { updateSelection([]); setSelectedRelationId(null); history.clear(); board.setActiveBoardId(event.target.value || null) }}
+                className="knowledge-board-select"
+              >
+                {boards.map((candidate) => <option key={candidate.board_id} value={candidate.board_id}>{candidate.name}</option>)}
+              </select>
+            </div>
+
+            <div className="knowledge-object-filters" aria-label="Knowledge object type filter">
+              {canvasFilters.map((entry) => <button key={entry.value} type="button" className={`knowledge-object-filter${filter === entry.value ? " is-active" : ""}`} onClick={() => setFilter(entry.value)}>{entry.label}</button>)}
+            </div>
+
+            <div className="knowledge-object-search-row">
+              <label className="knowledge-object-search">
+                <Search size={15} strokeWidth={1.8} />
+                <input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search knowledge objects..." aria-label="Search knowledge objects" />
+              </label>
+              <button type="button" className={`knowledge-object-filter-trigger${filterMenuOpen ? " is-open" : ""}`} aria-label="More knowledge object filters" aria-expanded={filterMenuOpen} onClick={() => setFilterMenuOpen((open) => !open)}><Filter size={15} strokeWidth={1.8} /></button>
+              {filterMenuOpen ? <div className="knowledge-object-filter-popover" role="menu">
+                {(["all", "paper", "note", "evidence", "concept", "document", "web", "insight", "question", "highlight"] as const).map((value) => <button key={value} type="button" role="menuitem" className={filter === value ? "is-active" : ""} onClick={() => { setFilter(value as CanvasFilter); setFilterMenuOpen(false) }}>{value === "all" ? "All objects" : knowledgeCardLabel(value)}</button>)}
+              </div> : null}
+            </div>
+
+            <p className="knowledge-object-count">{trayItems.length} objects · {snapshot.nodes.length} on canvas</p>
+
+            <div className="knowledge-object-list" aria-label="Knowledge objects">
+              {trayItems.map((item) => {
+                const onCanvas = nodeItemIds.has(item.item_id)
+                const selected = selectedItemIds.includes(item.item_id)
+                return (
+                  <article
+                    key={item.item_id}
+                    draggable
+                    className={`knowledge-object-card${onCanvas ? " is-on-canvas" : ""}${selected ? " is-selected" : ""}`}
+                    onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData(knowledgeBoardCardDragType, item.item_id) }}
+                  >
+                    <div className="knowledge-object-card-head">
+                      <span className="knowledge-object-icon"><TrayIcon type={item.item_type} /></span>
+                      <div className="knowledge-object-card-copy">
+                        <p className="knowledge-object-type">{knowledgeCardLabel(item.item_type)}</p>
+                        <p className="knowledge-object-title" title={item.title}>{item.title}</p>
+                        <p className="knowledge-object-summary" title={item.summary}>{item.summary || (onCanvas ? "On canvas" : "Ready to add to canvas")}</p>
+                      </div>
+                      <button type="button" className="knowledge-object-more" aria-label={`More actions for ${item.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => openLibraryItem(item)}><MoreHorizontal size={15} /></button>
+                    </div>
+                    <div className="knowledge-object-actions">
+                      {!onCanvas ? <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => quickAddNode(item.item_id)}><Plus size={12} />Add</button> : null}
+                      <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => openLibraryItem(item)}><ExternalLink size={11} />Open</button>
+                    </div>
+                  </article>
+                )
+              })}
             </div>
           </aside>
 
-          <main className="min-w-0 bg-slate-50/60 p-3">
+          <main className="knowledge-canvas-pane" aria-label="Knowledge canvas">
             <KnowledgeBoardCanvas
               items={items}
               nodes={snapshot.nodes}
@@ -428,8 +506,13 @@ export default function KnowledgeBoardPanel({
             />
           </main>
 
-          <aside className="hidden min-h-0 border-l border-slate-100 bg-white p-3 xl:block">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400">Knowledge inspector</p>
+          <aside className="knowledge-inspector-pane">
+            {suggestionInboxOpen ? (
+              <KnowledgeSuggestionInbox focusItemId={suggestionFocusId} items={items} controller={suggestions} onSelectItem={selectSuggestionItem} onClose={() => setSuggestionInboxOpen(false)} />
+            ) : (
+              <button type="button" className="knowledge-suggestion-button" onClick={() => setSuggestionInboxOpen(true)}><Sparkles size={14} />Show AI suggestions</button>
+            )}
+            <div className="knowledge-inspector-divider" />
             {selectedRelation ? (
               <KnowledgeRelationInspector
                 relation={selectedRelation}
@@ -440,15 +523,31 @@ export default function KnowledgeBoardPanel({
                 onDelete={() => board.deleteRelationMutation.mutate(selectedRelation.relation_id, { onSuccess: () => setSelectedRelationId(null) })}
               />
             ) : (
-              <KnowledgeInspector item={selectedItem} relationCount={selectedRelations.length} lastEventType={lastEvent?.item.item_id === selectedItem?.item_id ? lastEvent?.type ?? null : null} onAction={handleKnowledgeAction} relations={selectedRelations.length > 0 ? selectedRelations.map((relation) => (
-                <RelationRow key={relation.relation_id} relation={relation} itemById={itemById} deleting={board.deleteRelationMutation.isPending && board.deleteRelationMutation.variables === relation.relation_id} onEdit={() => setEditingRelation(relation)} onDelete={() => board.deleteRelationMutation.mutate(relation.relation_id, { onSuccess: () => { if (selectedRelationId === relation.relation_id) setSelectedRelationId(null) } })} />
-              )) : undefined} />
+              <>
+                <div className="knowledge-inspector-section-head"><span>Knowledge Object</span><button type="button" className="knowledge-object-more" aria-label="More knowledge object actions"><MoreHorizontal size={16} /></button></div>
+                <KnowledgeInspector item={selectedItem} relationCount={selectedRelations.length} lastEventType={lastEvent?.item.item_id === selectedItem?.item_id ? lastEvent?.type ?? null : null} onAction={handleKnowledgeAction} onOpen={() => selectedItem && openLibraryItem(selectedItem)} onFocusCanvas={() => selectedItem && updateSelection([selectedItem.item_id])} relations={selectedRelations.length > 0 ? selectedRelations.map((relation) => (
+                  <RelationRow key={relation.relation_id} relation={relation} itemById={itemById} deleting={board.deleteRelationMutation.isPending && board.deleteRelationMutation.variables === relation.relation_id} onEdit={() => setEditingRelation(relation)} onDelete={() => board.deleteRelationMutation.mutate(relation.relation_id, { onSuccess: () => { if (selectedRelationId === relation.relation_id) setSelectedRelationId(null) } })} />
+                )) : undefined} />
+              </>
             )}
+            <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
+              <span className="text-[9px] text-slate-400">{snapshot.nodes.length} cards · {relationsForBoard.length} relations</span>
+              <div className="flex items-center gap-1">
+                {snapshot.nodes.length ? <button type="button" className="knowledge-object-more" aria-label="Ask Agent about canvas" onClick={() => askAgentForItems(snapshot.nodes.map((node) => itemById.get(node.item_id)).filter((item): item is KnowledgeItem => Boolean(item)) , "Canvas")}><Bot size={15} /></button> : null}
+                <button type="button" className="knowledge-object-more" aria-label="Manage canvas" onClick={() => setManageBoardOpen(true)}><Pencil size={15} /></button>
+                <button type="button" className="knowledge-object-more" aria-label="Create canvas" onClick={() => setCreateBoardOpen(true)}><Plus size={15} /></button>
+              </div>
+            </div>
+            <details className="knowledge-workflow-details">
+              <summary>Research Agent workflows</summary>
+              <ResearchWorkflowActions available={["compare_papers", "curate_knowledge", "draft_section"]} compact variant="inline" />
+            </details>
           </aside>
         </div>
       ) : null}
 
       <KnowledgeBoardCreateDialog open={createBoardOpen} creating={board.createBoardMutation.isPending} onClose={() => !board.createBoardMutation.isPending && setCreateBoardOpen(false)} onCreate={(payload) => board.createBoardMutation.mutate(payload, { onSuccess: () => { updateSelection([]); setSelectedRelationId(null); history.clear(); setCreateBoardOpen(false) } })} />
+      <KnowledgeCreateCardDialog open={createCardOpen} creating={library.createItemMutation.isPending} onClose={() => !library.createItemMutation.isPending && setCreateCardOpen(false)} onCreate={(payload) => library.createItemMutation.mutate(payload, { onSuccess: () => setCreateCardOpen(false) })} />
       <KnowledgeBoardManageDialog board={manageBoardOpen ? snapshot?.board ?? null : null} saving={board.updateBoardMutation.isPending} deleting={board.deleteBoardMutation.isPending} onClose={() => !saving && setManageBoardOpen(false)} onSave={(payload) => snapshot && board.updateBoardMutation.mutate({ boardId: snapshot.board.board_id, payload }, { onSuccess: () => setManageBoardOpen(false) })} onDelete={() => snapshot && board.deleteBoardMutation.mutate(snapshot.board.board_id, { onSuccess: () => { updateSelection([]); setSelectedRelationId(null); history.clear(); setManageBoardOpen(false) } })} />
       <KnowledgeRelationDialog source={relationPair?.source ?? null} target={relationPair?.target ?? null} creating={board.createRelationMutation.isPending} onClose={() => !board.createRelationMutation.isPending && setRelationPair(null)} onCreate={(payload) => board.createRelationMutation.mutate(payload, { onSuccess: (relation) => { setRelationPair(null); updateSelection([]); setSelectedRelationId(relation.relation_id) } })} />
       <KnowledgeRelationEditDialog relation={editingRelation} saving={board.updateRelationMutation.isPending} onClose={() => !board.updateRelationMutation.isPending && setEditingRelation(null)} onSave={(payload) => editingRelation && board.updateRelationMutation.mutate({ relationId: editingRelation.relation_id, payload }, { onSuccess: (relation) => { setEditingRelation(null); setSelectedRelationId(relation.relation_id) } })} />

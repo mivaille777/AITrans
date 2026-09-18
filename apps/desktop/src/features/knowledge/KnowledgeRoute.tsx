@@ -1,7 +1,6 @@
 import { ServerOff } from "lucide-react"
 
 import { EmptyState } from "../../shared/ui/EmptyState"
-import { ResearchWorkflowActions } from "../agent/components/ResearchWorkflowActions"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import { KnowledgeWorkspaceProvider } from "./knowledge-workspace-provider"
 import KnowledgeWorkspacePanel from "./KnowledgeWorkspacePanel"
@@ -42,10 +41,7 @@ function ConnectedKnowledgeWorkspace({ workspace }: { workspace: TranslationWork
 
   return (
     <KnowledgeWorkspaceProvider>
-      <div className="space-y-4">
-        <ResearchWorkflowActions available={["compare_papers", "curate_knowledge", "draft_section"]} compact />
-        <KnowledgeWorkspacePanel library={library} board={board} workspace={workspace} />
-      </div>
+      <KnowledgeWorkspacePanel library={library} board={board} workspace={workspace} />
     </KnowledgeWorkspaceProvider>
   )
 }

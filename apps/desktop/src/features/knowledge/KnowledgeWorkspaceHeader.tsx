@@ -1,40 +1,51 @@
-import { LayoutDashboard, LibraryBig, Network } from "lucide-react"
+import { Plus, Search } from "lucide-react"
 
 import type { KnowledgePrimaryView } from "./knowledge-workspace-navigation"
 
 const primaryViews = [
-  ["canvas", LayoutDashboard, "Canvas"],
-  ["graph", Network, "Graph"],
-  ["library", LibraryBig, "Library"],
+  ["canvas", "Canvas"],
+  ["graph", "Graph"],
+  ["library", "Library"],
 ] as const
 
 export default function KnowledgeWorkspaceHeader({
   view,
   onSelectView,
+  onSearch,
+  onNew,
 }: {
   view: KnowledgePrimaryView
   onSelectView: (view: KnowledgePrimaryView) => void
+  onSearch?: () => void
+  onNew?: () => void
 }) {
   return (
-    <header className="ait-surface flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Knowledge workspace</p>
-        <h1 className="mt-1 text-lg font-semibold text-slate-950">AI Knowledge Space</h1>
-        <p className="mt-1 text-xs text-slate-500">Organize papers, concepts, notes, evidence, relations, and agent-ready knowledge. Open papers in Reading for focused reading actions.</p>
+    <header className="knowledge-workspace-header">
+      <div className="knowledge-workspace-header-copy">
+        <h1 className="knowledge-workspace-title">AI Knowledge Space</h1>
+        <p className="knowledge-workspace-subtitle">Connect ideas. Ground in sources. Think deeper.</p>
       </div>
-      <nav className="flex items-center gap-1 rounded-[14px] border border-slate-200 bg-white p-1 shadow-sm" aria-label="Knowledge workspace view">
-        {primaryViews.map(([value, Icon, label]) => (
+      <nav className="knowledge-workspace-tabs" aria-label="Knowledge workspace view">
+        {primaryViews.map(([value, label]) => (
           <button
             key={value}
             type="button"
-            className={`flex items-center gap-2 rounded-[10px] px-3 py-2 text-xs font-semibold transition ${view === value ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}
+            className={`knowledge-workspace-tab${view === value ? " is-active" : ""}`}
             onClick={() => onSelectView(value)}
           >
-            <Icon size={14} />
             {label}
           </button>
         ))}
       </nav>
+      <div className="knowledge-workspace-actions">
+        <button type="button" className="knowledge-workspace-search" aria-label="Search knowledge objects" onClick={onSearch}>
+          <Search size={17} strokeWidth={1.8} />
+        </button>
+        <button type="button" className="knowledge-workspace-new" onClick={onNew}>
+          <Plus size={16} strokeWidth={1.8} />
+          New
+        </button>
+      </div>
     </header>
   )
 }
