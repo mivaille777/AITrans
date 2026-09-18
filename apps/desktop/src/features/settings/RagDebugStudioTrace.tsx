@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Copy, LoaderCircle, Play } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
 type StageKey = "query" | "rewrite" | "dense" | "bm25" | "fusion" | "rerank" | "context" | "answer"
 type Candidate = {
@@ -123,7 +123,7 @@ export default function RagDebugStudioTrace() {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block"><span className="mb-1.5 block text-[11px] font-semibold text-slate-700">{label}</span>{children}</label> }
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block"><span className="mb-1.5 block text-[11px] font-semibold text-slate-700">{label}</span>{children}</label> }
 
 function ResultTable({ stage, rows, selectedId, onSelect }: { stage: StageKey; rows: Candidate[]; selectedId: string; onSelect: (id: string) => void }) {
   const title = stage === "dense" ? "Dense Retrieval Results" : stage === "bm25" ? "BM25 Retrieval Results" : stage === "fusion" ? "Fusion Results" : "Reranker Results"
