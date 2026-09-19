@@ -12,6 +12,7 @@ import {
   Copy,
   Database,
   Download,
+  FilePlus2,
   FileText,
   HelpCircle,
   LoaderCircle,
@@ -27,6 +28,10 @@ import {
   X,
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+
+import { desktop } from "../../desktop"
+import { addKnowledgeDocument, deleteKnowledgeDocument, listKnowledgeDocuments, reindexKnowledgeDocument } from "../../api/knowledge"
+import type { KnowledgeDocument } from "../knowledge/knowledge-types"
 
 import {
   activateRagDebugConfig,
@@ -44,7 +49,6 @@ import {
   listRagDebugChunks,
   listRagDebugConfigs,
   listRagDebugDatasets,
-  listRagDebugDocuments,
   type RagConfig,
   type RagDebugCase,
   type RagDebugCandidate,
@@ -242,7 +246,7 @@ function ConfigTuningPanel({ config, onSaved, onNotice }: { config?: RagDebugCon
 }
 
 function ChunksTab() {
-  const [documents, setDocuments] = useState<Array<{ document_id: string; title: string; chunk_count: number; status: string }>>([])
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [documentId, setDocumentId] = useState("")
   const [query, setQuery] = useState("")
   const [page, setPage] = useState(1)
@@ -250,11 +254,533 @@ function ChunksTab() {
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<RagDebugChunk | null>(null)
   const [loading, setLoading] = useState(false)
+  const [operation, setOperation] = useState<"idle" | "importing" | "reindexing" | "deleting">("idle")
+  const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState("")
-  useEffect(() => { listRagDebugDocuments().then(setDocuments).catch((reason) => setError(errorText(reason))) }, [])
-  useEffect(() => { let disposed = false; setLoading(true); listRagDebugChunks({ documentId, query, page, pageSize: 50 }).then((result) => { if (!disposed) { setChunks(result.chunks); setTotal(result.total); setSelected(result.chunks[0] ?? null) } }).catch((reason) => { if (!disposed) setError(errorText(reason)) }).finally(() => { if (!disposed) setLoading(false) }); return () => { disposed = true } }, [documentId, query, page])
-  const sectionCounts = useMemo(() => chunks.reduce<Record<string, number>>((acc, chunk) => { acc[chunk.section || "Unsectioned"] = (acc[chunk.section || "Unsectioned"] ?? 0) + 1; return acc }, {}), [chunks])
-  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="grid min-h-[540px] gap-4 lg:grid-cols-[260px_minmax(0,1fr)_300px]"><div className="rounded-[10px] border border-slate-200 p-3"><PanelHeader title="Document Structure" right={<span>{documents.length} documents</span>} />{documents.length === 0 ? <EmptyState title="No indexed documents" description="Import a document in Knowledge before exploring chunks." /> : <div className="mt-3 space-y-1">{documents.map((document) => <button key={document.document_id} type="button" onClick={() => { setDocumentId(document.document_id); setPage(1) }} className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] ${documentId === document.document_id ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}><FileText size={13} /><span className="min-w-0 flex-1 truncate">{document.title || document.document_id}</span><span className="text-slate-400">{document.chunk_count}</span></button>)}<div className="mt-4 border-t border-slate-100 pt-3"><p className="px-2 text-[9px] font-semibold uppercase tracking-[.08em] text-slate-400">Sections on this page</p>{Object.entries(sectionCounts).map(([label, count]) => <div key={label} className="flex items-center justify-between px-2 py-1.5 text-[10px] text-slate-600"><span className="min-w-0 truncate">{label}</span><span className="text-slate-400">{count}</span></div>)}</div></div>}</div><div className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Chunks</h2><p className="mt-1 text-[10px] text-slate-500">Inspect the chunks persisted by the active index.</p></div><span className="text-[10px] text-slate-400">{total} total</span></div><div className="mt-3 flex gap-2"><div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={14} /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search chunk text…" className={inputClass("h-9 w-full pl-9 text-[10px]")} /></div><button type="button" onClick={() => setPage(1)} className="rounded-[8px] border border-slate-200 px-3 text-slate-500 hover:bg-slate-50"><RefreshCw size={13} /></button></div>{error && <div className="mt-3 text-[10px] text-rose-600">{error}</div>}{loading ? <EmptyState title="Loading chunks…" description="Reading the local chunk catalogue." loading /> : chunks.length === 0 ? <EmptyState title="No chunks found" description="Try another document or search query." /> : <div className="mt-3 space-y-2">{chunks.map((chunk) => <button key={chunk.id} type="button" onClick={() => setSelected(chunk)} className={`block w-full rounded-[8px] border px-3 py-3 text-left transition ${selected?.id === chunk.id ? "border-slate-950 bg-slate-50" : "border-slate-100 hover:border-slate-300"}`}><div className="flex items-start gap-2"><FileText size={14} className="mt-0.5 shrink-0 text-slate-500" /><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-3"><h3 className="truncate text-[11px] font-semibold">{chunk.title || chunk.id}</h3><span className="shrink-0 text-[9px] text-slate-400">{chunk.page ? `p. ${chunk.page}` : ""}</span></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">{chunk.preview}</p><div className="mt-2 flex gap-3 text-[9px] text-slate-400"><span>{chunk.tokens} tokens</span><span>{chunk.type}</span><span>{chunk.id}</span></div></div></div></button>)}</div>}<div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-[10px] text-slate-500"><span>Page {page} · {Math.max(1, Math.ceil(total / 50))}</span><div className="flex gap-1"><PaginationButton disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={13} /></PaginationButton><PaginationButton disabled={page >= Math.ceil(total / 50)} onClick={() => setPage((value) => value + 1)}><ChevronRight size={13} /></PaginationButton></div></div></div><section className="rounded-[10px] border border-slate-200 p-4">{selected ? <ChunkRecordDetail chunk={selected} /> : <EmptyState title="Select a chunk" description="Chunk metadata and full text will appear here." />}</section></section></div></ScrollSurface>
+  const [notice, setNotice] = useState("")
+
+  const selectedDocument = documents.find((document) => document.document_id === documentId) ?? null
+  const operationBusy = operation !== "idle"
+
+  useEffect(() => {
+    let disposed = false
+    setError("")
+    listKnowledgeDocuments()
+      .then((result) => {
+        if (!disposed) setDocuments(result.documents)
+      })
+      .catch((reason) => {
+        if (!disposed) setError(errorText(reason))
+      })
+    return () => {
+      disposed = true
+    }
+  }, [refreshKey])
+
+  useEffect(() => {
+    let disposed = false
+    setLoading(true)
+    listRagDebugChunks({ documentId, query, page, pageSize: 50 })
+      .then((result) => {
+        if (!disposed) {
+          setChunks(result.chunks)
+          setTotal(result.total)
+          setSelected(result.chunks[0] ?? null)
+        }
+      })
+      .catch((reason) => {
+        if (!disposed) setError(errorText(reason))
+      })
+      .finally(() => {
+        if (!disposed) setLoading(false)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [documentId, query, page, refreshKey])
+
+  useEffect(() => {
+    if (documentId && !documents.some((document) => document.document_id === documentId)) {
+      setDocumentId("")
+    }
+  }, [documents, documentId])
+
+  const sectionCounts = useMemo(
+    () =>
+      chunks.reduce<Record<string, number>>((acc, chunk) => {
+        const section = chunk.section || "Unsectioned"
+        acc[section] = (acc[section] ?? 0) + 1
+        return acc
+      }, {}),
+    [chunks],
+  )
+
+  async function refreshAfterOperation() {
+    setRefreshKey((value) => value + 1)
+  }
+
+  async function importDocument() {
+    setOperation("importing")
+    setError("")
+    setNotice("")
+    try {
+      const path = await desktop.files.pickKnowledgeDocument()
+      if (!path) return
+      const result = await addKnowledgeDocument(path)
+      setDocumentId(result.document.document_id)
+      setPage(1)
+      setNotice(
+        (result.document.title || "Document") +
+          " indexed into " +
+          result.document.chunk_count +
+          " chunks.",
+      )
+      await refreshAfterOperation()
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setOperation("idle")
+    }
+  }
+
+  async function rechunkDocument() {
+    if (!selectedDocument || operationBusy) return
+    if (
+      !window.confirm(
+        "Re-chunk and re-index this document with the current Knowledge settings?",
+      )
+    ) {
+      return
+    }
+    setOperation("reindexing")
+    setError("")
+    setNotice("")
+    try {
+      const result = await reindexKnowledgeDocument(selectedDocument.document_id)
+      setNotice(
+        (result.document.title || "Document") +
+          " re-chunked into " +
+          result.document.chunk_count +
+          " chunks.",
+      )
+      await refreshAfterOperation()
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setOperation("idle")
+    }
+  }
+
+  async function removeDocument() {
+    if (!selectedDocument || operationBusy) return
+    if (
+      !window.confirm(
+        "Remove this document and its indexed chunks? The source file will be preserved.",
+      )
+    ) {
+      return
+    }
+    setOperation("deleting")
+    setError("")
+    setNotice("")
+    try {
+      await deleteKnowledgeDocument(selectedDocument.document_id)
+      setDocumentId("")
+      setChunks([])
+      setSelected(null)
+      setTotal(0)
+      setNotice(
+        "Document removed from the local RAG index. The source file was preserved.",
+      )
+      await refreshAfterOperation()
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setOperation("idle")
+    }
+  }
+
+  return (
+    <ScrollSurface>
+      <div className="mx-auto max-w-[1240px] space-y-4">
+        <section className="rounded-[10px] border border-slate-200 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[13px] font-semibold">Chunk workspace</h2>
+              <p className="mt-1 max-w-[720px] text-[10px] leading-4 text-slate-500">
+                Import a local document, run the existing parse → chunk → embedding → index pipeline, then inspect the persisted chunks used by retrieval.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <SecondaryButton
+                onClick={() => void refreshAfterOperation()}
+                disabled={operationBusy}
+              >
+                <RefreshCw size={13} />
+                Refresh
+              </SecondaryButton>
+              <PrimaryButton
+                onClick={() => void importDocument()}
+                disabled={operationBusy}
+              >
+                {operation === "importing" ? (
+                  <LoaderCircle size={13} className="animate-spin" />
+                ) : (
+                  <FilePlus2 size={13} />
+                )}
+                {operation === "importing" ? "Indexing…" : "Import document"}
+              </PrimaryButton>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-4">
+            <ChunkStat label="Indexed documents" value={String(documents.length)} />
+            <ChunkStat label="Visible chunks" value={String(total)} />
+            <ChunkStat
+              label="Selected status"
+              value={selectedDocument?.status ?? "All documents"}
+            />
+            <ChunkStat
+              label="Chunker"
+              value={selectedDocument?.chunker_version || "Runtime default"}
+            />
+          </div>
+          {(error || notice) && (
+            <div
+              className={
+                "mt-3 rounded-[8px] px-3 py-2 text-[10px] " +
+                (error
+                  ? "border border-rose-200 bg-rose-50 text-rose-700"
+                  : "bg-slate-950 text-white")
+              }
+            >
+              {error || notice}
+            </div>
+          )}
+        </section>
+
+        <section className="grid min-h-[540px] gap-4 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
+          <div className="rounded-[10px] border border-slate-200 p-3">
+            <PanelHeader
+              title="Document Structure"
+              right={<span>{documents.length} documents</span>}
+            />
+            {documents.length === 0 ? (
+              <div className="flex min-h-[260px] flex-col items-center justify-center px-3 text-center">
+                <FilePlus2 size={23} className="text-slate-300" />
+                <p className="mt-3 text-[12px] font-semibold text-slate-700">
+                  No indexed documents
+                </p>
+                <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                  Import a PDF, DOCX, TXT, MD, or HTML file to start chunk inspection.
+                </p>
+                <SecondaryButton
+                  onClick={() => void importDocument()}
+                  disabled={operationBusy}
+                >
+                  <FilePlus2 size={13} />
+                  Import document
+                </SecondaryButton>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-1">
+                {documents.map((document) => (
+                  <button
+                    key={document.document_id}
+                    type="button"
+                    onClick={() => {
+                      setDocumentId(document.document_id)
+                      setPage(1)
+                      setNotice("")
+                      setError("")
+                    }}
+                    className={
+                      "flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] " +
+                      (documentId === document.document_id
+                        ? "bg-slate-100 font-semibold"
+                        : "hover:bg-slate-50")
+                    }
+                  >
+                    <FileText size={13} className="shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {document.title || document.document_id}
+                    </span>
+                    <span className="shrink-0 text-[9px] text-slate-400">
+                      {document.chunk_count}
+                    </span>
+                    <span
+                      className={
+                        "h-1.5 w-1.5 shrink-0 rounded-full " +
+                        (document.status === "ready"
+                          ? "bg-emerald-500"
+                          : document.status === "failed"
+                            ? "bg-rose-500"
+                            : "bg-amber-400")
+                      }
+                      title={document.status}
+                    />
+                  </button>
+                ))}
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  <p className="px-2 text-[9px] font-semibold uppercase tracking-[.08em] text-slate-400">
+                    Sections on this page
+                  </p>
+                  {Object.entries(sectionCounts).map(([label, count]) => (
+                    <div
+                      key={label}
+                      className="flex items-center justify-between px-2 py-1.5 text-[10px] text-slate-600"
+                    >
+                      <span className="min-w-0 truncate">{label}</span>
+                      <span className="text-slate-400">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-[10px] border border-slate-200 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-[13px] font-semibold">Chunks</h2>
+                <p className="mt-1 truncate text-[10px] text-slate-500">
+                  {selectedDocument
+                    ? "Inspecting " +
+                      (selectedDocument.title || selectedDocument.document_id)
+                    : "Inspect chunks persisted by the active Knowledge index."}
+                </p>
+              </div>
+              <span className="shrink-0 text-[10px] text-slate-400">
+                {total} total
+              </span>
+            </div>
+            {selectedDocument && (
+              <div className="mt-3 rounded-[8px] border border-slate-100 bg-slate-50/70 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2 text-[10px] text-slate-600">
+                    <span
+                      className={
+                        "h-2 w-2 rounded-full " +
+                        (selectedDocument.status === "ready"
+                          ? "bg-emerald-500"
+                          : selectedDocument.status === "failed"
+                            ? "bg-rose-500"
+                            : "bg-amber-400")
+                      }
+                    />
+                    <span className="font-semibold">{selectedDocument.status}</span>
+                    <span className="truncate text-slate-400">
+                      {selectedDocument.source_type.toUpperCase()} ·{" "}
+                      {selectedDocument.embedding_model || "embedding pending"}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <SecondaryButton
+                      onClick={() => void rechunkDocument()}
+                      disabled={operationBusy}
+                    >
+                      {operation === "reindexing" ? (
+                        <LoaderCircle size={13} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={13} />
+                      )}
+                      {operation === "reindexing"
+                        ? "Re-chunking…"
+                        : "Re-chunk & reindex"}
+                    </SecondaryButton>
+                    <button
+                      type="button"
+                      onClick={() => void removeDocument()}
+                      disabled={operationBusy}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] border border-rose-200 bg-white px-3 text-[11px] font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
+                    >
+                      {operation === "deleting" ? (
+                        <LoaderCircle size={13} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={13} />
+                      )}
+                      {operation === "deleting" ? "Removing…" : "Remove"}
+                    </button>
+                  </div>
+                </div>
+                {selectedDocument.error && (
+                  <p className="mt-2 break-words text-[10px] text-rose-600">
+                    {selectedDocument.error}
+                  </p>
+                )}
+              </div>
+            )}
+            <div className="mt-3 flex gap-2">
+              <div className="relative min-w-0 flex-1">
+                <Search
+                  className="absolute left-3 top-2.5 text-slate-400"
+                  size={14}
+                />
+                <input
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value)
+                    setPage(1)
+                  }}
+                  placeholder="Search chunk text…"
+                  className={inputClass("h-9 w-full pl-9 text-[10px]")}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setRefreshKey((value) => value + 1)}
+                className="rounded-[8px] border border-slate-200 px-3 text-slate-500 hover:bg-slate-50"
+                aria-label="Refresh chunks"
+              >
+                <RefreshCw size={13} />
+              </button>
+            </div>
+            {loading ? (
+              <EmptyState
+                title="Loading chunks…"
+                description="Reading the local chunk catalogue."
+                loading
+              />
+            ) : chunks.length === 0 ? (
+              <EmptyState
+                title="No chunks found"
+                description={
+                  selectedDocument
+                    ? "This document has no returned chunks. Check its indexing status or re-index it."
+                    : "Import a document or try another search query."
+                }
+              />
+            ) : (
+              <div className="mt-3 space-y-2">
+                {chunks.map((chunk) => (
+                  <button
+                    key={chunk.id}
+                    type="button"
+                    onClick={() => setSelected(chunk)}
+                    className={
+                      "block w-full rounded-[8px] border px-3 py-3 text-left transition " +
+                      (selected?.id === chunk.id
+                        ? "border-slate-950 bg-slate-50"
+                        : "border-slate-100 hover:border-slate-300")
+                    }
+                  >
+                    <div className="flex items-start gap-2">
+                      <FileText
+                        size={14}
+                        className="mt-0.5 shrink-0 text-slate-500"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="truncate text-[11px] font-semibold">
+                            {chunk.title || chunk.id}
+                          </h3>
+                          <span className="shrink-0 text-[9px] text-slate-400">
+                            {chunk.page ? "p. " + chunk.page : ""}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">
+                          {chunk.preview}
+                        </p>
+                        <div className="mt-2 flex gap-3 text-[9px] text-slate-400">
+                          <span>{chunk.tokens} tokens</span>
+                          <span>{chunk.type}</span>
+                          <span>{chunk.id}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-[10px] text-slate-500">
+              <span>
+                Page {page} · {Math.max(1, Math.ceil(total / 50))}
+              </span>
+              <div className="flex gap-1">
+                <PaginationButton
+                  disabled={page <= 1}
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                >
+                  <ChevronLeft size={13} />
+                </PaginationButton>
+                <PaginationButton
+                  disabled={page >= Math.ceil(total / 50)}
+                  onClick={() => setPage((value) => value + 1)}
+                >
+                  <ChevronRight size={13} />
+                </PaginationButton>
+              </div>
+            </div>
+          </div>
+
+          <section className="rounded-[10px] border border-slate-200 p-4">
+            {selected ? (
+              <ChunkRecordDetail chunk={selected} />
+            ) : (
+              <EmptyState
+                title="Select a chunk"
+                description="Chunk metadata and full text will appear here."
+              />
+            )}
+          </section>
+        </section>
+
+        {selectedDocument && (
+          <section className="grid gap-3 rounded-[10px] border border-slate-200 p-4 md:grid-cols-4">
+            <ChunkMeta
+              label="Parser"
+              value={selectedDocument.parser_version || "Runtime default"}
+            />
+            <ChunkMeta
+              label="Chunker"
+              value={selectedDocument.chunker_version || "Runtime default"}
+            />
+            <ChunkMeta
+              label="Structure quality"
+              value={selectedDocument.structure_quality || "unknown"}
+            />
+            <ChunkMeta
+              label="Indexed at"
+              value={
+                selectedDocument.indexed_at
+                  ? new Date(selectedDocument.indexed_at).toLocaleString()
+                  : "Not indexed"
+              }
+            />
+          </section>
+        )}
+      </div>
+    </ScrollSurface>
+  )
+}
+
+function ChunkStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[8px] bg-slate-50 px-3 py-2">
+      <p className="text-[9px] text-slate-500">{label}</p>
+      <p
+        className="mt-1 truncate text-[12px] font-semibold text-slate-800"
+        title={value}
+      >
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function ChunkMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[9px] uppercase tracking-[.08em] text-slate-400">
+        {label}
+      </p>
+      <p
+        className="mt-1 truncate text-[10px] font-medium text-slate-700"
+        title={value}
+      >
+        {value}
+      </p>
+    </div>
+  )
 }
 
 function EvaluationTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[] }) {

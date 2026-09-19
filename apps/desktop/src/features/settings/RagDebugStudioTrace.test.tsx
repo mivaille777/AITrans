@@ -86,7 +86,6 @@ vi.mock("../../api/rag-debug", () => {
     listRagDebugChunks: vi.fn().mockResolvedValue({ chunks: [chunk], total: 1, page: 1, page_size: 50 }),
     listRagDebugConfigs: vi.fn().mockResolvedValue([config, { ...config, config_id: "candidate", name: "Candidate", active: false }]),
     listRagDebugDatasets: vi.fn().mockResolvedValue([dataset]),
-    listRagDebugDocuments: vi.fn().mockResolvedValue([{ document_id: "doc-1", title: "unep_2023.pdf", source_uri: "", status: "ready", chunk_count: 1, updated_at: "" }]),
     saveRagDebugCase: vi.fn(),
     startRagDebugRun: vi.fn(),
     updateRagDebugCase: vi.fn(),
@@ -94,9 +93,50 @@ vi.mock("../../api/rag-debug", () => {
   }
 })
 
-import RagDebugStudioTrace from "./RagDebugStudioTrace"
+vi.mock("../../api/knowledge", () => {
+  const document = {
+    document_id: "doc-1",
+    title: "unep_2023.pdf",
+    source_uri: "C:\\papers\\unep_2023.pdf",
+    source_type: "pdf",
+    status: "ready",
+    chunk_count: 1,
+    indexed_at: "2026-09-19T10:00:00Z",
+    error: "",
+    content_hash: "hash",
+    parser_version: "pdf-v1",
+    chunker_version: "semantic-v1",
+    embedding_model: "Qwen",
+    embedding_dimension: 384,
+    structure_quality: "good",
+    section_count: 2,
+    reindex_recommended: false,
+  }
+  return {
+    addKnowledgeDocument: vi.fn().mockResolvedValue({ document, reused_existing: false, elapsed_ms: 12 }),
+    deleteKnowledgeDocument: vi.fn().mockResolvedValue({ document_id: document.document_id, deleted: true, source_file_preserved: true }),
+    listKnowledgeDocuments: vi.fn().mockResolvedValue({ total: 1, documents: [document] }),
+    reindexKnowledgeDocument: vi.fn().mockResolvedValue({ document, reused_existing: false, elapsed_ms: 8 }),
+  }
+})
 
-afterEach(cleanup)
+vi.mock("../../desktop", () => ({
+  desktop: {
+    files: {
+      pickKnowledgeDocument: vi.fn().mockResolvedValue("C:\\papers\\new.pdf"),
+    },
+  },
+}))
+
+import RagDebugStudioTrace from "./RagDebugStudioTrace"
+import { addKnowledgeDocument, deleteKnowledgeDocument, reindexKnowledgeDocument } from "../../api/knowledge"
+import { desktop } from "../../desktop"
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+  vi.restoreAllMocks()
+})
 
 describe("RagDebugStudio", () => {
   it("renders all five interactive tabs", () => {
@@ -117,6 +157,34 @@ describe("RagDebugStudio", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Nature-based solutions offer multiple co-benefits/ })).toBeTruthy())
     fireEvent.click(screen.getByRole("button", { name: /Nature-based solutions offer multiple co-benefits/ }))
     expect(screen.getByText("2.1 Nature-based Solutions", { selector: "dd" })).toBeTruthy()
+  })
+
+  it("imports and re-chunks a document through the Knowledge API", async () => {
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Chunks" }))
+    await waitFor(() => expect(screen.getByText("unep_2023.pdf")).toBeTruthy())
+
+    fireEvent.click(screen.getByRole("button", { name: "Import document" }))
+    await waitFor(() => expect(addKnowledgeDocument).toHaveBeenCalledWith("C:\\papers\\new.pdf"))
+
+    vi.spyOn(window, "confirm").mockReturnValue(true)
+    fireEvent.click(screen.getByRole("button", { name: "Re-chunk & reindex" }))
+    await waitFor(() => expect(reindexKnowledgeDocument).toHaveBeenCalledWith("doc-1"))
+  })
+
+  it("removes indexed chunks while keeping the source file", async () => {
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Chunks" }))
+    await waitFor(() => expect(screen.getByRole("button", { name: /unep_2023\.pdf/ })).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: /unep_2023\.pdf/ }))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy())
+
+    vi.spyOn(window, "confirm").mockReturnValue(true)
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }))
+    await waitFor(() => expect(deleteKnowledgeDocument).toHaveBeenCalledWith("doc-1"))
+    expect(desktop.files.pickKnowledgeDocument).not.toHaveBeenCalled()
   })
 
   it("shows evaluation metrics", () => {
