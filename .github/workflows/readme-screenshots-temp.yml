@@ -1,0 +1,108 @@
+name: Capture README Screenshots
+
+on:
+  push:
+    branches:
+      - docs/readme-screenshots-20260919
+    paths:
+      - .github/workflows/readme-screenshots-temp.yml
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v6
+        with:
+          ref: docs/readme-screenshots-20260919
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install backend
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Install frontend and screenshot runtime
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          npm ci --no-audit --prefer-offline
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install chromium
+
+      - name: Start local backend and frontend
+        shell: pwsh
+        run: |
+          $backendLog = Join-Path $env:RUNNER_TEMP "aitrans-backend.log"
+          $frontendLog = Join-Path $env:RUNNER_TEMP "aitrans-frontend.log"
+
+          Start-Process -FilePath "python" -ArgumentList "-m","backend" -RedirectStandardOutput $backendLog -RedirectStandardError $backendLog
+          Start-Process -FilePath "npm.cmd" -WorkingDirectory "apps/desktop" -ArgumentList "run","dev","--","--host","127.0.0.1" -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendLog
+
+          $backendReady = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              $response = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8766/health" -TimeoutSec 2
+              if ($response.StatusCode -eq 200) { $backendReady = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $backendReady) {
+            Get-Content $backendLog -ErrorAction SilentlyContinue
+            throw "Backend did not become ready."
+          }
+
+          $frontendReady = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              $response = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:5173" -TimeoutSec 2
+              if ($response.StatusCode -eq 200) { $frontendReady = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          if (-not $frontendReady) {
+            Get-Content $frontendLog -ErrorAction SilentlyContinue
+            throw "Frontend did not become ready."
+          }
+
+      - name: Capture current product UI
+        working-directory: apps/desktop
+        shell: pwsh
+        run: node ../../scripts/capture-readme-screenshots.mjs
+
+      - name: Commit screenshots
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/assets/screenshots
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No screenshot changes to commit."
+            exit 0
+          }
+          git commit -m "docs: capture current AITrans interface screenshots"
+          git push origin HEAD:docs/readme-screenshots-20260919
