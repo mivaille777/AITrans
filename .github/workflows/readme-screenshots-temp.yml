@@ -95,7 +95,7 @@ jobs:
       - name: Capture current product UI
         working-directory: apps/desktop
         shell: pwsh
-        run: node ../../scripts/capture-readme-screenshots.mjs
+        run: node ./scripts/capture-readme-screenshots.mjs
 
       - name: Commit screenshots
         shell: pwsh
