@@ -184,6 +184,29 @@ def _state_from_run_request(
     return AgentState(**kwargs)
 
 
+def _apply_resume_request_context(
+    state: AgentState,
+    payload: AgentRunRequest,
+) -> AgentState:
+    """Carry only explicit per-request safety scope into a resumed run.
+
+    Checkpoint restore intentionally clears one-shot write approvals. The
+    approval request must therefore be overlaid onto the restored state before
+    the runtime rehydrates its durable checkpoint. Tool scope is carried too so
+    a resumed Chat Agent cannot widen beyond the tools selected for the run.
+    """
+
+    if not payload.resume_run_id.strip():
+        return state
+    context = dict(state.browser_context)
+    context["confirmed_write_tools"] = list(payload.confirmed_write_tools)
+    if payload.enabled_tools:
+        context["enabled_tools"] = list(payload.enabled_tools)
+    state.browser_context = context
+    state.sync_contract()
+    return state
+
+
 def _associate_workspace_result(
     payload: AgentRunRequest,
     state: AgentState,
@@ -268,6 +291,7 @@ def _execute_runtime(
                 research_notes=research_notes,
             )
         )
+        state = _apply_resume_request_context(state, payload)
         retrying = bool(resume_run_id and payload.retry_task_id.strip())
         if retrying:
             runtime.prepare_task_retry(state, payload.retry_task_id)
@@ -575,6 +599,7 @@ async def stream_product_agent(
                     research_notes=research_notes,
                 )
             )
+            state = _apply_resume_request_context(state, payload)
             retrying = bool(resume_run_id and payload.retry_task_id.strip())
             if retrying:
                 runtime.prepare_task_retry(state, payload.retry_task_id)

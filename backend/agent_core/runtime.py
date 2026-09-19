@@ -172,8 +172,19 @@ class AgentRuntime:
         control: AgentRunControl | None = None,
         resume: bool = False,
     ) -> AgentState:
+        resume_context = {
+            key: state.browser_context[key]
+            for key in ("confirmed_write_tools", "enabled_tools")
+            if key in state.browser_context
+        }
         if resume:
             state = self.restore_checkpoint(state.run_id)
+            if resume_context:
+                state.browser_context = {
+                    **state.browser_context,
+                    **resume_context,
+                }
+                state.sync_contract()
         previous_sink = self._event_sink
         previous_state = self._active_state
         previous_control = self._control

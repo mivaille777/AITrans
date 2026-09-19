@@ -6,6 +6,7 @@ export interface BuildAgentRunRequestInput {
   context: ReadingContextFields
   contextMode?: AgentContextMode
   sessionId: string
+  clientId?: string
   traceId: string
   requestId: number
   userMessage: string
@@ -16,6 +17,7 @@ export interface BuildAgentRunRequestInput {
   conversationId: string
   workspaceId?: string
   confirmedWriteTools?: string[]
+  enabledTools?: string[]
   knowledgeDocumentIds?: string[]
   researchSourceIds?: string[]
   knowledgeContext?: AgentKnowledgeContext | null
@@ -27,6 +29,7 @@ export function buildAgentRunRequest({
   context,
   contextMode = "general",
   sessionId,
+  clientId = sessionId,
   traceId,
   requestId,
   userMessage,
@@ -37,6 +40,7 @@ export function buildAgentRunRequest({
   conversationId,
   workspaceId = "",
   confirmedWriteTools = [],
+  enabledTools = [],
   knowledgeDocumentIds = [],
   researchSourceIds = [],
   knowledgeContext = null,
@@ -46,7 +50,7 @@ export function buildAgentRunRequest({
   return {
     ...context,
     session_id: sessionId,
-    client_id: sessionId,
+    client_id: clientId,
     client_surface: "main",
     context_mode: contextMode,
     trace_id: traceId,
@@ -59,6 +63,7 @@ export function buildAgentRunRequest({
     conversation_id: conversationId,
     workspace_id: workspaceId,
     confirmed_write_tools: confirmedWriteTools,
+    enabled_tools: enabledTools,
     knowledge_document_ids: knowledgeDocumentIds,
     research_source_ids: researchSourceIds,
     knowledge_context: knowledgeContext,

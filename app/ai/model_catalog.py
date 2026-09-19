@@ -9,7 +9,11 @@ from openai import OpenAI
 
 from app.ai.client import DEEPSEEK_BASE_URL
 from app.ai.errors import AIConfigurationError
-from app.ai.factory import OPENAI_COMPATIBLE_PROVIDER
+from app.ai.factory import (
+    DEFAULT_AI_PROVIDER,
+    is_openai_compatible_provider,
+    provider_defaults,
+)
 from app.ai.secrets import ProviderCredentialStore, get_provider_api_key
 
 MODEL_CATALOG_TIMEOUT_SECONDS = 10.0
@@ -51,10 +55,11 @@ def list_available_model_ids(
     """
 
     normalized_provider = str(provider or "").strip().lower().replace("-", "_")
-    if normalized_provider == "deepseek":
+    if normalized_provider == DEFAULT_AI_PROVIDER:
         endpoint = DEEPSEEK_BASE_URL
-    elif normalized_provider == OPENAI_COMPATIBLE_PROVIDER:
-        endpoint = str(base_url or "").strip().rstrip("/")
+    elif is_openai_compatible_provider(normalized_provider):
+        _default_model, default_base_url = provider_defaults(normalized_provider)
+        endpoint = str(base_url or default_base_url).strip().rstrip("/")
         if not endpoint.startswith(("http://", "https://")):
             raise AIConfigurationError(
                 "OpenAI-compatible provider requires a valid Base URL before models can be loaded."

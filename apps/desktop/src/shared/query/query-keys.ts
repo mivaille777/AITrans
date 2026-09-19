@@ -27,6 +27,9 @@ export const queryKeys = {
     chatStatus: ["companion", "chat-status"] as const,
     ownership: (conversationId: string) => ["companion", "ownership", conversationId] as const,
   },
+  agent: {
+    tools: ["agent", "tools"] as const,
+  },
   conversations: {
     list: (limit: number) => ["conversations", "list", limit] as const,
     detail: (conversationId: string) => ["conversations", "detail", conversationId] as const,

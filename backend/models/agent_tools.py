@@ -183,6 +183,7 @@ class AgentRunRequest(ReadingContextPayload):
     conversation_id: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
+    enabled_tools: list[str] = Field(default_factory=list, max_length=64)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
     research_source_ids: list[str] = Field(default_factory=list, max_length=100)
     knowledge_context: AgentKnowledgeContext | None = None

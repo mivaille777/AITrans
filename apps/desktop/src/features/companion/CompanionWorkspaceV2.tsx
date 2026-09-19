@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { BookOpen, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, MoreHorizontal, Paperclip, Share2 } from "lucide-react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import {
   dismissCompanionHandoff,
@@ -28,28 +28,36 @@ import {
 } from "./companion-runtime"
 import { companionLayoutClassNames } from "./companion-layout"
 import ConversationHistoryPanel from "./ConversationHistoryPanel"
+import { AgentToolsControl } from "./components/AgentToolsControl"
+import { AgentRunInspector } from "./components/AgentRunInspector"
 import { KnowledgeRetrievalControl } from "./components/KnowledgeRetrievalControl"
 import { useCompanionConversationRuntime } from "./useCompanionConversationRuntime"
 
 export default function CompanionWorkspaceV2() {
   const queryClient = useQueryClient()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const [editingMessageId, setEditingMessageId] = useState("")
   const [editingText, setEditingText] = useState("")
   const [branchingMessageId, setBranchingMessageId] = useState("")
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [contextPickerOpen, setContextPickerOpen] = useState(false)
   const handoffIdRef = useRef("")
   const usingHandoffRef = useRef(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
+  const contextPickerRef = useRef<HTMLDivElement>(null)
+  const messageScrollerRef = useRef<HTMLDivElement>(null)
+  const messageNearBottomRef = useRef(true)
 
   const routedConversationId = searchParams.get("conversation") ?? ""
 
   const setConversationRoute = useCallback((conversationId: string) => {
+    if (location.pathname !== "/chat") return
     const next = new URLSearchParams(searchParams)
     if (conversationId) next.set("conversation", conversationId)
     else next.delete("conversation")
     setSearchParams(next, { replace: true })
-  }, [searchParams, setSearchParams])
+  }, [location.pathname, searchParams, setSearchParams])
 
   const runtime = useCompanionConversationRuntime({
     onConversationAccepted: setConversationRoute,
@@ -110,6 +118,24 @@ export default function CompanionWorkspaceV2() {
       document.removeEventListener("keydown", closeOnEscape)
     }
   }, [modelPickerOpen])
+
+  useEffect(() => {
+    if (!contextPickerOpen) return undefined
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!contextPickerRef.current?.contains(event.target as Node)) {
+        setContextPickerOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextPickerOpen(false)
+    }
+    document.addEventListener("pointerdown", closeOnPointerDown)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [contextPickerOpen])
 
   const handoffQuery = useQuery({
     queryKey: queryKeys.companion.handoff,
@@ -272,7 +298,11 @@ export default function CompanionWorkspaceV2() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    runtime.sendMessage()
+    runtime.sendMessage(undefined, undefined, {
+      transport: runtime.selectedTools.length > 0 ? "agent" : "companion",
+      enabledTools: runtime.selectedTools,
+      agentContextMode: isKnowledgeContext ? "knowledge" : runtime.contextMode === "reading" ? "reading" : "general",
+    })
   }
 
   const isKnowledgeContext = runtime.contextMode === "reading"
@@ -290,11 +320,37 @@ export default function CompanionWorkspaceV2() {
   const modelSwitchError = modelSwitchMutation.error instanceof Error
     ? modelSwitchMutation.error.message
     : ""
+  const contextControlLabel = runtime.selectedTools.length > 0
+    ? isKnowledgeContext ? "Knowledge" : "Research"
+    : runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge" : "Reading" : "General"
+  const latestAssistant = [...runtime.messages]
+    .reverse()
+    .find((message) => message.role === "assistant")
+  const showAgentInspector = runtime.inspectorView === "run"
+    && (runtime.agentRunId || runtime.agentEvents.length > 0 || runtime.agentPhase !== "idle")
 
   function selectModel(model: string) {
     if (!model.trim() || modelSwitchMutation.isPending || model === activeModel) return
     modelSwitchMutation.mutate(model)
   }
+
+  function scrollMessagesToBottom() {
+    const element = messageScrollerRef.current
+    if (!element) return
+    element.scrollTop = element.scrollHeight
+  }
+
+  function handleMessageScroll() {
+    const element = messageScrollerRef.current
+    if (!element) return
+    messageNearBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 72
+  }
+
+  useEffect(() => {
+    if (messageNearBottomRef.current) {
+      requestAnimationFrame(scrollMessagesToBottom)
+    }
+  }, [runtime.messages])
 
   const showingHandoff = Boolean(
     readingHandoff &&
@@ -319,6 +375,24 @@ export default function CompanionWorkspaceV2() {
       />
 
       <aside className={companionLayoutClassNames.contextPanel}>
+        {showAgentInspector ? (
+          <AgentRunInspector
+            context={runtime.context}
+            phase={runtime.agentPhase}
+            runId={runtime.agentRunId}
+            traceId={runtime.agentTraceId}
+            events={runtime.agentEvents}
+            snapshot={runtime.agentSnapshot}
+            selectedTools={runtime.selectedTools}
+            confirmationTool={runtime.agentConfirmationTool}
+            evidence={latestAssistant?.evidence ?? []}
+            citations={latestAssistant?.citations ?? []}
+            knowledgeDocumentIds={runtime.knowledgeDocumentIds}
+            onViewContext={() => runtime.setInspectorView("context")}
+            onConfirmWrite={() => runtime.confirmAgentWrite()}
+          />
+        ) : (
+          <>
         <div className="ait-chat-context-header">
           <div className="ait-chat-context-heading">
             <span className="ait-chat-context-icon"><BookOpen size={19} /></span>
@@ -511,6 +585,8 @@ export default function CompanionWorkspaceV2() {
             <Link to="/knowledge">Map the debate</Link>
           </div>
         </section>
+          </>
+        )}
       </aside>
 
       <div className={companionLayoutClassNames.chatColumn}>
@@ -530,7 +606,11 @@ export default function CompanionWorkspaceV2() {
           </button>
         </header>
 
-        <div className={companionLayoutClassNames.messageScroller}>
+        <div
+          ref={messageScrollerRef}
+          className={companionLayoutClassNames.messageScroller}
+          onScroll={handleMessageScroll}
+        >
           {runtime.messages.length === 0 && (
             <EmptyState
               title={runtime.contextMode === "general"
@@ -690,10 +770,50 @@ export default function CompanionWorkspaceV2() {
             </p>
           )}
           <div className="ait-chat-composer-controls">
-            <span className="ait-chat-composer-control">
-              <span>{runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge" : "Reading" : "Research"}</span>
-              <ChevronDown size={14} />
-            </span>
+            <div className="ait-chat-context-picker" ref={contextPickerRef}>
+              <button
+                type="button"
+                className="ait-chat-composer-control ait-chat-context-picker-button"
+                aria-haspopup="menu"
+                aria-expanded={contextPickerOpen}
+                disabled={runtime.activeRequestId !== null || runtime.contextUpdating}
+                onClick={() => setContextPickerOpen((open) => !open)}
+              >
+                <span>{contextControlLabel}</span>
+                <ChevronDown size={14} />
+              </button>
+              {contextPickerOpen && (
+                <div className="ait-chat-context-picker-menu" role="menu" aria-label="Chat context">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={`ait-chat-context-picker-option ${runtime.contextMode === "general" ? "is-active" : ""}`}
+                    onClick={() => {
+                      void runtime.detachReadingContext()
+                      runtime.setSelectedTools([])
+                      setContextPickerOpen(false)
+                    }}
+                  >
+                    <span><strong>General</strong><small>Chat without a reading selection.</small></span>
+                    {runtime.contextMode === "general" && <Check size={14} />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!canAttachSaved && !readingHandoff}
+                    className={`ait-chat-context-picker-option ${runtime.contextMode === "reading" ? "is-active" : ""}`}
+                    onClick={() => {
+                      if (canAttachSaved) void runtime.attachSavedContext()
+                      else void attachCurrentReading()
+                      setContextPickerOpen(false)
+                    }}
+                  >
+                    <span><strong>{isKnowledgeContext ? "Knowledge" : "Reading"}</strong><small>Ground the next message in current context.</small></span>
+                    {runtime.contextMode === "reading" && <Check size={14} />}
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="ait-chat-model-picker" ref={modelPickerRef}>
               <button
                 type="button"
@@ -742,10 +862,23 @@ export default function CompanionWorkspaceV2() {
                 </div>
               )}
             </div>
-            <span className={`ait-chat-composer-knowledge ${runtime.knowledgeEnabled ? "is-on" : ""}`}>
+            <button
+              type="button"
+              className={`ait-chat-composer-knowledge ait-chat-composer-knowledge-button ${runtime.knowledgeEnabled ? "is-on" : ""}`}
+              role="switch"
+              aria-checked={runtime.knowledgeEnabled}
+              disabled={runtime.activeRequestId !== null || runtime.openingConversation}
+              onClick={() => runtime.setKnowledgeEnabled(!runtime.knowledgeEnabled)}
+            >
               <span className="ait-chat-composer-knowledge-dot" />
               Knowledge {runtime.knowledgeEnabled ? "on" : "off"}
-            </span>
+            </button>
+            <AgentToolsControl
+              selectedTools={runtime.selectedTools}
+              disabled={runtime.activeRequestId !== null || runtime.openingConversation}
+              hasReadingContext={Boolean(runtime.context.source_text.trim())}
+              onChange={runtime.setSelectedTools}
+            />
           </div>
           <div className="ait-chat-composer-row">
             <label className="ait-chat-composer-field">

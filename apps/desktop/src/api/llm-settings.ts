@@ -1,6 +1,15 @@
 import { apiGet, apiPut } from "./client"
 
-export type LlmProviderId = "deepseek" | "openai_compatible"
+export type LlmProviderId =
+  | "deepseek"
+  | "openai"
+  | "google"
+  | "mistral"
+  | "groq"
+  | "openrouter"
+  | "together"
+  | "qwen"
+  | "openai_compatible"
 
 export interface LlmProviderOption {
   id: LlmProviderId

@@ -6,7 +6,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AIProviderName = Literal["deepseek", "openai_compatible"]
+AIProviderName = Literal[
+    "deepseek",
+    "openai",
+    "google",
+    "mistral",
+    "groq",
+    "openrouter",
+    "together",
+    "qwen",
+    "openai_compatible",
+]
 class LLMProviderOption(BaseModel):
     id: AIProviderName
     label: str

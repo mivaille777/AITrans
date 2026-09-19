@@ -6,7 +6,7 @@ import pytest
 
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.state import AgentState
-from backend.models.agent_runtime import AgentRouteDecision
+from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem, AgentRouteDecision
 from backend.models.agent_tools import AgentPlan
 from backend.services.agent_conversation_service import (
     AgentConversationBusyError,
@@ -17,6 +17,7 @@ from backend.services.companion_ownership_service import (
 )
 from backend.services.conversation_lifecycle_service import ConversationLifecycleService
 from backend.services.product_agent_service import ProductAgentService
+from backend.services.conversation_grounding_service import load_message_grounding
 
 
 def _state(
@@ -126,6 +127,32 @@ def test_confirmation_required_discards_temporary_exchange_before_confirmed_retr
     assert stored is not None
     assert stored.messages == ()
     assert ownership.snapshot(run.conversation_id) is None
+
+
+def test_agent_conversation_persists_grounding_for_reopened_messages(tmp_path) -> None:
+    store = ConversationLifecycleService(storage_path=tmp_path / "chat.sqlite3")
+    ownership = CompanionConversationOwnershipService()
+    service = AgentConversationService(store=store, ownership=ownership)
+    state = _state(message="Find evidence", source="grounded selection", request_id=6)
+    run = service.begin(state)
+    service.apply_to_state(state, run)
+    state.evidence = [
+        AgentEvidenceItem(evidence_id="evidence-1", title="Paper", excerpt="A grounded claim.")
+    ]
+    state.citations = [AgentCitationRef(citation_id="citation-1", evidence_ids=["evidence-1"], label="[1]")]
+    state.apply_response({
+        "status": "completed",
+        "output_text": "Grounded answer",
+        "provider": "fake",
+        "model": "fake-model",
+    })
+
+    service.complete(run, state)
+
+    grounding = load_message_grounding(store.storage_path, run.assistant_message_id)
+    assert grounding.knowledge_enabled is True
+    assert grounding.evidence[0].evidence_id == "evidence-1"
+    assert grounding.citations[0].label == "[1]"
 
 
 def test_agent_conversation_respects_existing_companion_ownership(tmp_path) -> None:

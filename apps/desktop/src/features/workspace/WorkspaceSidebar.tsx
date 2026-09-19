@@ -107,7 +107,7 @@ export default function WorkspaceSidebar({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="ait-sidebar-wordmark">AITrans</p>
-              <p className="ait-sidebar-tagline">Understand more. Go further.</p>
+              <p className="ait-sidebar-tagline">Think deeper. Keep it yours.</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="ait-sidebar-brand-icon" aria-hidden="true">

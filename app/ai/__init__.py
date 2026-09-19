@@ -20,8 +20,10 @@ from app.ai.factory import (
     AI_PROVIDER_LABELS,
     DEFAULT_AI_PROVIDER,
     OPENAI_COMPATIBLE_PROVIDER,
+    OPENAI_COMPATIBLE_PROVIDER_IDS,
     SUPPORTED_AI_PROVIDERS,
     create_ai_text_service,
+    is_openai_compatible_provider,
     normalize_ai_provider,
 )
 from app.ai.models import AITextAction, AITextRequest, AITextResult
@@ -73,6 +75,7 @@ __all__ = [
     "DeepSeekClient",
     "DeepSeekTextProvider",
     "OPENAI_COMPATIBLE_PROVIDER",
+    "OPENAI_COMPATIBLE_PROVIDER_IDS",
     "OpenAICompatibleClient",
     "OpenAICompatibleTextProvider",
     "OutputValidation",
@@ -87,6 +90,7 @@ __all__ = [
     "get_provider_api_key",
     "merge_chunks",
     "normalize_ai_provider",
+    "is_openai_compatible_provider",
     "normalize_model_output",
     "split_text",
     "validate_model_output",

@@ -59,6 +59,34 @@ def test_llm_settings_api_persists_non_secret_config(monkeypatch) -> None:
     }
 
 
+def test_llm_settings_api_lists_provider_presets(monkeypatch) -> None:
+    from backend.api import llm_settings
+
+    _FakeSettings.values = {
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "base_url": "https://api.deepseek.com",
+    }
+    monkeypatch.setattr(llm_settings, "SettingsManager", _FakeSettings)
+    client = TestClient(create_app())
+
+    response = client.get("/api/settings/llm")
+
+    assert response.status_code == 200
+    providers = response.json()["providers"]
+    assert [provider["id"] for provider in providers] == [
+        "deepseek",
+        "openai",
+        "google",
+        "mistral",
+        "groq",
+        "openrouter",
+        "together",
+        "qwen",
+        "openai_compatible",
+    ]
+
+
 def test_llm_settings_api_requires_valid_custom_base_url(monkeypatch) -> None:
     from backend.api import llm_settings
 

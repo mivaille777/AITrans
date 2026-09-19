@@ -13,6 +13,21 @@ export type AgentClientSurface = "main" | "overlay" | "unknown"
 export type AgentContextMode = "general" | "reading" | "knowledge" | "research" | "translation"
 export type AgentWorkflowAction = "" | "quick_read" | "analyze_visuals" | "compare_papers" | "curate_knowledge" | "draft_section"
 
+export interface AgentToolDefinition {
+  name: string
+  title: string
+  description: string
+  category: string
+  effect: AgentToolEffect
+  requires_reading_context: boolean
+  requires_confirmation: boolean
+  input_schema: Record<string, unknown>
+}
+
+export interface AgentToolCatalogResponse {
+  tools: AgentToolDefinition[]
+}
+
 export type AgentTraceEventType =
   | "agent_start"
   | "context_ready"
@@ -149,6 +164,7 @@ export interface AgentRunRequest extends ReadingContextFields {
   conversation_id?: string
   workspace_id?: string
   confirmed_write_tools?: string[]
+  enabled_tools?: string[]
   knowledge_document_ids?: string[]
   research_source_ids?: string[]
   knowledge_context?: AgentKnowledgeContext | null
@@ -246,6 +262,10 @@ export interface AgentRunSnapshot {
 
 export function runAgentTrace(payload: AgentRunRequest): Promise<AgentRunTraceResponse> {
   return apiPost<AgentRunTraceResponse, AgentRunRequest>("/api/agent/run/trace", payload)
+}
+
+export function getAgentTools(): Promise<AgentToolCatalogResponse> {
+  return apiGet<AgentToolCatalogResponse>("/api/agent/tools")
 }
 
 export function getAgentRunSnapshot(runId: string): Promise<AgentRunSnapshot> {

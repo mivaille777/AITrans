@@ -16,7 +16,7 @@ from app.ai.client import (
 from app.ai.errors import AIConfigurationError
 from app.ai.factory import (
     DEFAULT_AI_PROVIDER,
-    OPENAI_COMPATIBLE_PROVIDER,
+    is_openai_compatible_provider,
     normalize_ai_provider,
     provider_defaults,
 )
@@ -85,12 +85,16 @@ class RoutedAITextService:
                             thinking_enabled=self.route.thinking_enabled,
                         )
                         provider = DeepSeekTextProvider(client=client)
-                    elif self.route.provider == OPENAI_COMPATIBLE_PROVIDER:
+                    elif is_openai_compatible_provider(self.route.provider):
                         client = OpenAICompatibleClient(
+                            provider=self.route.provider,
                             model=self.route.model,
                             base_url=self.route.base_url,
                         )
-                        provider = OpenAICompatibleTextProvider(client=client)
+                        provider = OpenAICompatibleTextProvider(
+                            client=client,
+                            name=self.route.provider,
+                        )
                     else:  # Defensive: routes are validated by LLMGateway.
                         raise AIConfigurationError(
                             f"Unsupported saved AI provider: {self.route.provider}."
@@ -197,10 +201,10 @@ class LLMGateway:
             )
         if provider == DEFAULT_AI_PROVIDER and not model:
             raise AIConfigurationError("DeepSeek provider requires a model identifier.")
-        if provider == OPENAI_COMPATIBLE_PROVIDER and not model:
-            raise AIConfigurationError("OpenAI-compatible provider requires a model identifier.")
-        if provider == OPENAI_COMPATIBLE_PROVIDER and not configured_base_url:
-            raise AIConfigurationError("OpenAI-compatible provider requires a base URL.")
+        if is_openai_compatible_provider(provider) and not model:
+            raise AIConfigurationError("The selected AI provider requires a model identifier.")
+        if is_openai_compatible_provider(provider) and not configured_base_url:
+            raise AIConfigurationError("The selected AI provider requires a base URL.")
 
         return LLMRoute(
             role=normalized_role,

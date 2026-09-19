@@ -17,8 +17,8 @@ from app.ai.errors import AIConfigurationError
 from app.ai.factory import (
     AI_PROVIDER_LABELS,
     DEFAULT_AI_PROVIDER,
-    OPENAI_COMPATIBLE_PROVIDER,
     SUPPORTED_AI_PROVIDERS,
+    is_openai_compatible_provider,
     provider_defaults,
 )
 from app.ai.model_catalog import list_available_model_ids
@@ -56,7 +56,7 @@ def _provider_options() -> list[LLMProviderOption]:
             LLMProviderOption(
                 id=provider,
                 label=AI_PROVIDER_LABELS[provider],
-                requires_base_url=provider == OPENAI_COMPATIBLE_PROVIDER,
+                requires_base_url=is_openai_compatible_provider(provider),
                 default_model=model,
                 default_base_url=base_url,
             )
@@ -81,13 +81,17 @@ def _validate(payload: LLMSettingsUpdateRequest) -> tuple[str, str, str]:
     provider = payload.provider
     model = payload.model.strip()
     base_url = payload.base_url.strip()
+    if not model:
+        label = AI_PROVIDER_LABELS.get(provider, provider)
+        raise ValueError(f"{label} 模型名称不能为空。")
     if provider == DEFAULT_AI_PROVIDER:
-        if not model:
-            raise ValueError("DeepSeek 模型名称不能为空。")
         _, default_base_url = provider_defaults(provider)
         return provider, model, base_url or default_base_url
     if not base_url:
-        raise ValueError("自定义 OpenAI-compatible 供应商需要 Base URL。")
+        _, default_base_url = provider_defaults(provider)
+        base_url = default_base_url
+    if not base_url:
+        raise ValueError("当前供应商需要 Base URL。")
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Base URL 必须是完整的 http:// 或 https:// 地址。")

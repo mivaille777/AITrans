@@ -60,3 +60,17 @@ def test_factory_builds_saved_openai_compatible_provider() -> None:
         assert service.provider.client.base_url == "https://example.invalid/v1"
     finally:
         service.close()
+
+
+def test_factory_builds_openai_protocol_provider_preset() -> None:
+    config = FakeConfig({"provider": "groq"})
+    store = FakeCredentialStore({"groq": "groq-secret"})
+
+    service = create_ai_text_service(config, credential_store=store)
+    try:
+        assert isinstance(service.provider, OpenAICompatibleTextProvider)
+        assert service.provider_name == "groq"
+        assert service.model == "llama-3.3-70b-versatile"
+        assert service.provider.client.base_url == "https://api.groq.com/openai/v1"
+    finally:
+        service.close()

@@ -20,8 +20,8 @@ export default function WorkspaceShell({ children, llmStatus }: {
   const routeMeta = getWorkspaceRouteMeta(location.pathname)
   const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
   const shellColumns = sidebarCollapsed
-    ? "grid-cols-[72px_minmax(0,1fr)]"
-    : "grid-cols-[240px_minmax(0,1fr)]"
+    ? "grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)]"
+    : "grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)]"
   const toggleSidebar = () => setSidebarCollapsed((value) => !value)
 
   if (location.pathname === "/reading") {
@@ -35,6 +35,19 @@ export default function WorkspaceShell({ children, llmStatus }: {
               {children}
             </div>
           </div>
+        </div>
+      </WindowFrame>
+    )
+  }
+
+  if (location.pathname === "/settings") {
+    return (
+      <WindowFrame>
+        <div className={`ait-app-shell ait-settings-shell grid h-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-transparent text-slate-950 ${shellColumns}`}>
+          <WorkspaceSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
+          <main className="min-h-0 min-w-0 overflow-hidden bg-white">
+            {children}
+          </main>
         </div>
       </WindowFrame>
     )

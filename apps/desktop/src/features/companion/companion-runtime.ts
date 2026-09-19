@@ -1,4 +1,5 @@
 import type { CompanionClientSurface } from "../../api/companion"
+import type { AgentRunSnapshot, AgentTraceEvent } from "../../api/agent"
 import type {
   ChatContextMode,
   CompanionChatMessage,
@@ -10,6 +11,16 @@ import type {
 import type { AgentCitationRef, AgentEvidenceItem } from "../evidence/evidence-types"
 
 export type CompanionMessageStatus = "complete" | "streaming" | "cancelled" | "error"
+export type CompanionTransport = "companion" | "agent"
+export type CompanionAgentPhase =
+  | "idle"
+  | "running"
+  | "cancelling"
+  | "cancelled"
+  | "completed"
+  | "confirmation_required"
+  | "error"
+export type CompanionInspectorView = "context" | "run"
 
 export interface CompanionRuntimeMessage extends CompanionChatMessage {
   id: string
@@ -22,6 +33,17 @@ export interface CompanionRuntimeMessage extends CompanionChatMessage {
   knowledgeFallbackReason?: string
   evidence?: AgentEvidenceItem[]
   citations?: AgentCitationRef[]
+}
+
+export interface CompanionAgentRuntimeState {
+  transport: CompanionTransport
+  agentPhase: CompanionAgentPhase
+  runId: string
+  traceId: string
+  agentEvents: AgentTraceEvent[]
+  agentSnapshot: AgentRunSnapshot | null
+  selectedTools: string[]
+  inspectorView: CompanionInspectorView
 }
 
 export interface CompanionContextSnapshot {

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.ai.errors import AIResponseError
+from backend.agent_core.exceptions import AgentToolError
 from backend.api.dependencies import get_product_agent_service
 from backend.main import create_app
 from backend.models.agent_tools import AgentPlan
@@ -150,6 +151,34 @@ def test_product_agent_executes_compute_tool_then_synthesizes_observation() -> N
     assert registry.executions[0][0] == "explain_selection"
     assert chat.calls[0]["tool_name"] == "explain_selection"
     assert '"evidence": "grounded"' in chat.calls[0]["tool_context"]
+
+
+def test_enabled_tools_filter_the_route_catalog() -> None:
+    registry = FakeRegistry()
+    chat = FakeChatService()
+    planner = FakePlanner(AgentPlan(action="answer", user_visible_reason="Answer directly."))
+    service = ProductAgentService(registry=registry, chat_service=chat, planner=planner)
+
+    service.resolve_route(**run_payload(enabled_tools=["explain_selection"]))
+
+    assert [tool.name for tool in planner.calls[0]["tools"]] == ["explain_selection"]
+
+
+def test_enabled_tools_are_hard_execution_boundary() -> None:
+    registry = FakeRegistry()
+    chat = FakeChatService()
+    planner = FakePlanner(
+        AgentPlan(
+            action="tool",
+            tool_name="save_research_note",
+            user_visible_reason="The user asked to save this selection.",
+        )
+    )
+    service = ProductAgentService(registry=registry, chat_service=chat, planner=planner)
+
+    with pytest.raises(AgentToolError, match="outside the enabled tool scope"):
+        service.run(**run_payload(enabled_tools=["explain_selection"]))
+    assert registry.executions == []
 
 
 def test_product_agent_stops_before_unconfirmed_write_tool() -> None:

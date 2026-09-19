@@ -118,6 +118,7 @@ class ProductAgentRuntimeAdapter:
             "conversation_id": state.conversation.conversation_id,
             "history": history,
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
+            "enabled_tools": _scope_values(context.get("enabled_tools", ())),
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
             "research_source_ids": _scope_values(context.get("research_source_ids", ())),
             "knowledge_context": _structured(context.get("knowledge_context")),

@@ -9,7 +9,19 @@ from typing import Any
 from app.ai.errors import AIConfigurationError
 
 CREDENTIAL_TARGET_PREFIX = "AITranslator/ai"
-SUPPORTED_SECRET_PROVIDERS = frozenset({"deepseek", "openai_compatible"})
+SUPPORTED_SECRET_PROVIDERS = frozenset(
+    {
+        "deepseek",
+        "openai",
+        "google",
+        "mistral",
+        "groq",
+        "openrouter",
+        "together",
+        "qwen",
+        "openai_compatible",
+    }
+)
 _WINDOWS_CREDENTIAL_NOT_FOUND = 1168
 
 

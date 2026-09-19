@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
@@ -39,6 +39,15 @@ function App() {
   const workspace = useTranslationWorkspace()
   const location = useLocation()
   const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
+  const [chatMounted, setChatMounted] = useState(() => location.pathname === "/chat")
+  const showingChat = location.pathname === "/chat"
+
+  /* oxlint-disable react/set-state-in-effect -- remember the first Chat mount so its active stream survives route changes */
+  useEffect(() => {
+    if (showingChat) setChatMounted(true)
+  }, [showingChat])
+  /* oxlint-enable react/set-state-in-effect */
+
   const llmStatusQuery = useQuery({
     queryKey: queryKeys.llm.status,
     queryFn: getLlmRuntimeStatus,
@@ -64,46 +73,57 @@ function App() {
       llmStatus={llmStatus}
     >
       <CompanionHandoffNavigator />
-      <div
-        key={location.pathname}
-        className={`workspace-route-enter ${fixedHeightRoute ? "h-full min-h-0" : ""}`}
-      >
-        <WorkspaceRouteBoundary>
+      {(showingChat || chatMounted) && (
+        <div
+          className={showingChat ? "h-full min-h-0 overflow-hidden" : "hidden"}
+          aria-hidden={!showingChat}
+        >
           <Suspense fallback={<WorkspaceRouteFallback />}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/chat" replace />} />
-              <Route
-                path="/translation"
-                element={(
-                  <div className="space-y-4">
-                    <BrowserReadingContextPanel
-                      browserStatus={workspace.browserStatus}
-                      readingSelection={workspace.readingSelection}
-                      browserPage={workspace.browserPage}
-                      followBrowserSelection={workspace.followBrowserSelection}
-                      autoTranslateSelection={workspace.autoTranslateSelection}
-                      autoTranslating={workspace.autoTranslating}
-                      onFollowBrowserSelectionChange={workspace.setFollowBrowserSelection}
-                      onAutoTranslateSelectionChange={workspace.setAutoTranslateSelection}
-                    />
-                    <TranslationWorkspace workspace={workspace} />
-                  </div>
-                )}
-              />
-              <Route path="/reading" element={<ReadingWorkspace workspace={workspace} />} />
-              <Route path="/chat" element={<CompanionWorkspaceV2 />} />
-              <Route path="/agent" element={<AgentWorkspace workspace={workspace} />} />
-              <Route path="/knowledge" element={<KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />} />
-              <Route
-                path="/research"
-                element={<ResearchRoute backendState={workspace.backendState} workspace={workspace} />}
-              />
-              <Route path="/settings" element={<SettingsWorkspace workspace={workspace} />} />
-              <Route path="*" element={<Navigate to="/chat" replace />} />
-            </Routes>
+            <CompanionWorkspaceV2 />
           </Suspense>
-        </WorkspaceRouteBoundary>
-      </div>
+        </div>
+      )}
+      {!showingChat && (
+        <div
+          key={location.pathname}
+          className={`workspace-route-enter ${fixedHeightRoute ? "h-full min-h-0" : ""}`}
+        >
+          <WorkspaceRouteBoundary>
+            <Suspense fallback={<WorkspaceRouteFallback />}>
+              <Routes>
+                <Route path="/" element={<Navigate to="/chat" replace />} />
+                <Route
+                  path="/translation"
+                  element={(
+                    <div className="space-y-4">
+                      <BrowserReadingContextPanel
+                        browserStatus={workspace.browserStatus}
+                        readingSelection={workspace.readingSelection}
+                        browserPage={workspace.browserPage}
+                        followBrowserSelection={workspace.followBrowserSelection}
+                        autoTranslateSelection={workspace.autoTranslateSelection}
+                        autoTranslating={workspace.autoTranslating}
+                        onFollowBrowserSelectionChange={workspace.setFollowBrowserSelection}
+                        onAutoTranslateSelectionChange={workspace.setAutoTranslateSelection}
+                      />
+                      <TranslationWorkspace workspace={workspace} />
+                    </div>
+                  )}
+                />
+                <Route path="/reading" element={<ReadingWorkspace workspace={workspace} />} />
+                <Route path="/agent" element={<AgentWorkspace workspace={workspace} />} />
+                <Route path="/knowledge" element={<KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />} />
+                <Route
+                  path="/research"
+                  element={<ResearchRoute backendState={workspace.backendState} workspace={workspace} />}
+                />
+                <Route path="/settings" element={<SettingsWorkspace workspace={workspace} />} />
+                <Route path="*" element={<Navigate to="/chat" replace />} />
+              </Routes>
+            </Suspense>
+          </WorkspaceRouteBoundary>
+        </div>
+      )}
     </WorkspaceShell>
   )
 }

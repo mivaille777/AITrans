@@ -17,7 +17,8 @@ const MAX_LLM_API_KEY_BYTES: usize = 4096;
 fn llm_credential_target(provider: &str) -> Result<String, String> {
     let normalized = provider.trim().to_ascii_lowercase().replace('-', "_");
     match normalized.as_str() {
-        "deepseek" | "openai_compatible" => {
+        "deepseek" | "openai" | "google" | "mistral" | "groq" | "openrouter"
+        | "together" | "qwen" | "openai_compatible" => {
             Ok(format!("{LLM_CREDENTIAL_TARGET_PREFIX}/{normalized}"))
         }
         _ => Err("Unsupported AI provider credential namespace.".to_string()),
@@ -55,6 +56,54 @@ fn llm_credential_is_configured(provider: &str) -> Result<bool, String> {
 
 #[cfg(not(windows))]
 fn llm_credential_is_configured(_provider: &str) -> Result<bool, String> {
+    Err("AI credential storage is available only on Windows.".to_string())
+}
+
+#[cfg(windows)]
+fn llm_credential_preview(provider: &str) -> Result<String, String> {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::Security::Credentials::{
+        CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
+    };
+
+    let target = wide_string(&llm_credential_target(provider)?);
+    let mut credential: *mut CREDENTIALW = null_mut();
+    let result = unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) };
+    if result == 0 {
+        let error = unsafe { GetLastError() };
+        return match error {
+            1168 => Ok(String::new()),
+            _ => Err("Unable to read the saved AI provider credential.".to_string()),
+        };
+    }
+
+    let preview = if credential.is_null() {
+        String::new()
+    } else {
+        let size = unsafe { (*credential).CredentialBlobSize as usize };
+        let pointer = unsafe { (*credential).CredentialBlob };
+        if pointer.is_null() || size == 0 {
+            String::new()
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(pointer, size) };
+            let secret = String::from_utf8_lossy(bytes).trim().to_string();
+            let characters: Vec<char> = secret.chars().collect();
+            if characters.is_empty() {
+                String::new()
+            } else {
+                let suffix: String = characters.iter().rev().take(4).rev().collect();
+                let mask = "•".repeat(characters.len().saturating_sub(suffix.chars().count()).min(12).max(4));
+                format!("{mask}{suffix} · {} chars", characters.len())
+            }
+        }
+    };
+    unsafe { CredFree(credential.cast()) };
+    Ok(preview)
+}
+
+#[cfg(not(windows))]
+fn llm_credential_preview(_provider: &str) -> Result<String, String> {
     Err("AI credential storage is available only on Windows.".to_string())
 }
 
@@ -118,6 +167,11 @@ fn delete_llm_credential_value(_provider: &str) -> Result<(), String> {
 #[tauri::command]
 fn get_llm_credential_status(provider: String) -> Result<bool, String> {
     llm_credential_is_configured(&provider)
+}
+
+#[tauri::command]
+fn get_llm_credential_preview(provider: String) -> Result<String, String> {
+    llm_credential_preview(&provider)
 }
 
 #[tauri::command]
@@ -594,6 +648,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_llm_credential_status,
+            get_llm_credential_preview,
             save_llm_credential,
             delete_llm_credential,
             animate_overlay_position,

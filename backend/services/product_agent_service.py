@@ -184,6 +184,29 @@ class ProductAgentService:
             history.append((role, content))
         return tuple(history[-32:])
 
+    def _tools_for_payload(self, payload: dict[str, Any]):
+        """Return the catalog allowed for this run.
+
+        An empty list intentionally means automatic mode and preserves the
+        existing catalog. A non-empty list is a hard boundary shared by route
+        selection, planning, and execution.
+        """
+        selected = _trusted_scope_ids(payload.get("enabled_tools", ()), limit=64)
+        tools = tuple(self._registry.list_tools())
+        if not selected:
+            return tools
+
+        available = {str(getattr(tool, "name", "") or "") for tool in tools}
+        unknown = sorted(set(selected) - available)
+        if unknown:
+            raise AgentRuntimeError(
+                f"Unknown enabled Agent tool(s): {', '.join(unknown)}",
+                stage="planner",
+                fallback_reason="invalid_enabled_tools",
+            )
+        selected_set = set(selected)
+        return tuple(tool for tool in tools if str(getattr(tool, "name", "") or "") in selected_set)
+
     @staticmethod
     def _chat_context_mode(payload: dict[str, Any]) -> str:
         """Map Agent execution domains onto the chat core's General/Reading modes."""
@@ -283,7 +306,7 @@ class ProductAgentService:
         history = self._conversation_history(payload)
         return self._resolve_route(
             control=active_control,
-            tools=self._registry.list_tools(),
+            tools=self._tools_for_payload(payload),
             user_message=str(payload["user_message"]),
             reading=reading,
             history=history,
@@ -301,7 +324,7 @@ class ProductAgentService:
         reading = self._reading_fields(payload)
         history = self._conversation_history(payload)
         plan = self._multi_step_planner.plan(
-            tools=self._registry.list_tools(),
+            tools=self._tools_for_payload(payload),
             max_steps=min(
                 active_control.policy.max_plan_steps,
                 active_control.policy.max_tool_calls,
@@ -348,6 +371,13 @@ class ProductAgentService:
         event_sink: AgentLifecycleSink | None,
         request_id: int,
     ) -> tuple[AgentToolExecutionResult | None, bool]:
+        selected = set(_trusted_scope_ids(payload.get("enabled_tools", ()), limit=64))
+        if selected and plan.tool_name not in selected:
+            raise AgentToolError(
+                f"Agent tool {plan.tool_name} is outside the enabled tool scope.",
+                stage="tool",
+                fallback_reason="tool_outside_enabled_scope",
+            )
         spec = self._registry.get_tool(plan.tool_name)
         if spec is None:
             raise RuntimeError(
