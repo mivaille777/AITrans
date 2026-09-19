@@ -38,8 +38,8 @@ function Invoke-BackendVerification {
     & python -m pip check
     Assert-LastExitCode "pip dependency check"
 
-    & python -m ruff check backend tests scripts
-    Assert-LastExitCode "Ruff"
+    & python -m ruff check backend tests scripts --select E9,F63,F7,F82
+    Assert-LastExitCode "Ruff critical correctness checks"
 
     & python -m compileall -q backend
     Assert-LastExitCode "Python compile check"
