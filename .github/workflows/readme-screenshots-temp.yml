@@ -56,11 +56,13 @@ jobs:
       - name: Start local backend and frontend
         shell: pwsh
         run: |
-          $backendLog = Join-Path $env:RUNNER_TEMP "aitrans-backend.log"
-          $frontendLog = Join-Path $env:RUNNER_TEMP "aitrans-frontend.log"
+          $backendLog = Join-Path $env:RUNNER_TEMP "aitrans-backend.out.log"
+          $backendErr = Join-Path $env:RUNNER_TEMP "aitrans-backend.err.log"
+          $frontendLog = Join-Path $env:RUNNER_TEMP "aitrans-frontend.out.log"
+          $frontendErr = Join-Path $env:RUNNER_TEMP "aitrans-frontend.err.log"
 
-          Start-Process -FilePath "python" -ArgumentList "-m","backend" -RedirectStandardOutput $backendLog -RedirectStandardError $backendLog
-          Start-Process -FilePath "npm.cmd" -WorkingDirectory "apps/desktop" -ArgumentList "run","dev","--","--host","127.0.0.1" -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendLog
+          Start-Process -FilePath "python" -ArgumentList "-m","backend" -RedirectStandardOutput $backendLog -RedirectStandardError $backendErr
+          Start-Process -FilePath "npm.cmd" -WorkingDirectory "apps/desktop" -ArgumentList "run","dev","--","--host","127.0.0.1" -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendErr
 
           $backendReady = $false
           for ($i = 0; $i -lt 60; $i++) {
@@ -72,6 +74,7 @@ jobs:
           }
           if (-not $backendReady) {
             Get-Content $backendLog -ErrorAction SilentlyContinue
+            Get-Content $backendErr -ErrorAction SilentlyContinue
             throw "Backend did not become ready."
           }
 
@@ -85,6 +88,7 @@ jobs:
           }
           if (-not $frontendReady) {
             Get-Content $frontendLog -ErrorAction SilentlyContinue
+            Get-Content $frontendErr -ErrorAction SilentlyContinue
             throw "Frontend did not become ready."
           }
 
