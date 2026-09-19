@@ -139,7 +139,7 @@ export default function RagDebugStudioTrace() {
 function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfile[]; onConfigsChanged: () => Promise<void> }) {
   const [query, setQuery] = useState("")
   const [configId, setConfigId] = useState("default")
-  const [topK, setTopK] = useState(8)
+  const [topK, setTopK] = useState("8")
   const [includeAnswer, setIncludeAnswer] = useState(false)
   const [trace, setTrace] = useState<RagDebugTraceResponse | null>(null)
   const [selectedId, setSelectedId] = useState("")
@@ -157,13 +157,20 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
   const selectedIndex = Math.max(0, candidates.findIndex((item) => item.id === selectedId))
   const selected = candidates[selectedIndex]
   const activeStage = trace?.stages.find((item) => item.status === "active")?.key ?? ""
+  const topKNumber = Number(topK)
+  const topKValid = /^\d+$/.test(topK) && topKNumber >= 1 && topKNumber <= 100
+  const topKError = topK && !topKValid ? "Enter a whole number from 1 to 100." : ""
 
   async function run() {
     if (!query.trim() || running) return
+    if (!topKValid) {
+      setNotice("Top K must be a whole number between 1 and 100.")
+      return
+    }
     setRunning(true)
     setNotice("")
     try {
-      const accepted = await startRagDebugRun({ query: query.trim(), config_id: configId, top_k: topK, include_answer: includeAnswer })
+      const accepted = await startRagDebugRun({ query: query.trim(), config_id: configId, top_k: topKNumber, include_answer: includeAnswer })
       let next = await getRagDebugRun(accepted.run_id)
       if (mounted.current) setTrace(next)
       while (next.status === "queued" || next.status === "running") {
@@ -209,8 +216,8 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
           <div className="mt-4 grid items-end gap-3 lg:grid-cols-[1fr_1fr_120px_148px]">
             <Field label="Workspace"><select className={selectClass} defaultValue="workspace"><option value="workspace">My Workspace</option><option value="all">All indexed documents</option></select></Field>
             <Field label="RAG Config"><div className="flex gap-2"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}{item.active ? " · active" : ""}</option>) : <option value="default">Default</option>}</select><button type="button" title="Duplicate selected profile" aria-label="Duplicate selected profile" onClick={async () => { if (!selectedConfig) return; const name = window.prompt("New RAG profile name", `${selectedConfig.name} copy`); if (!name?.trim()) return; await createRagDebugConfig({ name, description: selectedConfig.description, config: selectedConfig.config }); await onConfigsChanged() }} className="rounded-[8px] border border-slate-200 px-2.5 text-slate-600 hover:bg-slate-50"><Plus size={14} /></button></div></Field>
-            <Field label="Top K"><select value={topK} onChange={(event) => setTopK(Number(event.target.value))} className={selectClass}>{[5, 8, 10, 20].map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
-            <PrimaryButton onClick={running ? stop : run} disabled={!running && !query.trim()}>{running ? <><X size={14} />Stop</> : <><Play size={14} fill="currentColor" />Run trace</>}</PrimaryButton>
+            <Field label="Top K"><input aria-describedby="top-k-help" aria-label="Top K" type="number" inputMode="numeric" min={1} max={100} step={1} value={topK} onChange={(event) => { setTopK(event.target.value); setNotice("") }} disabled={running} className={inputClass("h-10 w-full text-[12px]")} />{topKError ? <span id="top-k-help" className="mt-1 block text-[9px] text-rose-600">{topKError}</span> : <span id="top-k-help" className="mt-1 block text-[9px] text-slate-400">1–100 results</span>}</Field>
+            <PrimaryButton onClick={running ? stop : run} disabled={!running && (!query.trim() || !topKValid)}>{running ? <><X size={14} />Stop</> : <><Play size={14} fill="currentColor" />Run trace</>}</PrimaryButton>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
             <label className="inline-flex items-center gap-2"><input type="checkbox" checked={includeAnswer} onChange={(event) => setIncludeAnswer(event.target.checked)} className="accent-slate-950" />Include optional answer generation</label>

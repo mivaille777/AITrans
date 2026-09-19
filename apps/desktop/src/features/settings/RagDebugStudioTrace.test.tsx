@@ -80,14 +80,14 @@ vi.mock("../../api/rag-debug", () => {
     deleteRagDebugDataset: vi.fn(),
     evaluateRagDebugDataset: vi.fn(),
     exportRagDebugDataset: vi.fn(),
-    getRagDebugRun: vi.fn(),
+    getRagDebugRun: vi.fn().mockResolvedValue({ run_id: "run-1", trace_id: "trace-1", status: "completed", query: "", config_id: "default", query_plan: {}, stages: [], candidates: [], context: { text: "", estimated_tokens: 0, included_evidence_ids: [], omitted_evidence_ids: [], source_count: 0 }, evidence: [], citations: [], answer: "", metadata: {}, error: "" }),
     importRagDebugDataset: vi.fn(),
     listRagDebugCases: vi.fn().mockResolvedValue([evaluationCase]),
     listRagDebugChunks: vi.fn().mockResolvedValue({ chunks: [chunk], total: 1, page: 1, page_size: 50 }),
     listRagDebugConfigs: vi.fn().mockResolvedValue([config, { ...config, config_id: "candidate", name: "Candidate", active: false }]),
     listRagDebugDatasets: vi.fn().mockResolvedValue([dataset]),
     saveRagDebugCase: vi.fn(),
-    startRagDebugRun: vi.fn(),
+    startRagDebugRun: vi.fn().mockResolvedValue({ run_id: "run-1", trace_id: "trace-1", status: "completed" }),
     updateRagDebugCase: vi.fn(),
     updateRagDebugConfig: vi.fn(),
   }
@@ -130,6 +130,7 @@ vi.mock("../../desktop", () => ({
 
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
 import { addKnowledgeDocument, deleteKnowledgeDocument, reindexKnowledgeDocument } from "../../api/knowledge"
+import { startRagDebugRun } from "../../api/rag-debug"
 import { desktop } from "../../desktop"
 
 afterEach(() => {
@@ -157,6 +158,27 @@ describe("RagDebugStudio", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Nature-based solutions offer multiple co-benefits/ })).toBeTruthy())
     fireEvent.click(screen.getByRole("button", { name: /Nature-based solutions offer multiple co-benefits/ }))
     expect(screen.getByText("2.1 Nature-based Solutions", { selector: "dd" })).toBeTruthy()
+  })
+
+  it("accepts a custom Top K value when starting a trace", async () => {
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question against/), {
+      target: { value: "Find relevant evidence" },
+    })
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Top K" }), {
+      target: { value: "42" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Run trace" }))
+
+    await waitFor(() =>
+      expect(startRagDebugRun).toHaveBeenCalledWith({
+        query: "Find relevant evidence",
+        config_id: "default",
+        top_k: 42,
+        include_answer: false,
+      }),
+    )
   })
 
   it("imports and re-chunks a document through the Knowledge API", async () => {
