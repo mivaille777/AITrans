@@ -43,6 +43,10 @@ class SparseRetriever(Protocol):
 
     def rebuild(self, chunks: list[DocumentChunk]) -> None: ...
 
+    def list_chunks(self) -> list[DocumentChunk]: ...
+
+    def get_chunk(self, chunk_id: str) -> DocumentChunk | None: ...
+
 
 class _SparseData(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -198,6 +202,26 @@ class BM25SparseRetriever:
         }
         self._rebuild_index()
         self._save()
+
+    def list_chunks(self) -> list[DocumentChunk]:
+        """Return the persisted chunk catalogue without exposing private state."""
+
+        return [
+            chunk.model_copy(deep=True)
+            for chunk in sorted(
+                self._data.chunks.values(),
+                key=lambda item: (
+                    item.document_id,
+                    item.page_number if item.page_number is not None else 10**9,
+                    item.chunk_index,
+                    item.chunk_id,
+                ),
+            )
+        ]
+
+    def get_chunk(self, chunk_id: str) -> DocumentChunk | None:
+        chunk = self._data.chunks.get(str(chunk_id or "").strip())
+        return chunk.model_copy(deep=True) if chunk is not None else None
 
     def _rebuild_index(self) -> None:
         self._index.rebuild(

@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   ArrowDown,
   ArrowUp,
   BarChart3,
@@ -9,79 +10,58 @@ import {
   ChevronRight,
   Clock3,
   Copy,
+  Database,
+  Download,
   FileText,
   HelpCircle,
   LoaderCircle,
-  MoreHorizontal,
   Play,
   Plus,
+  RefreshCw,
   Save,
   Search,
+  SlidersHorizontal,
   Target,
   Trash2,
   Upload,
+  X,
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
+import {
+  activateRagDebugConfig,
+  cancelRagDebugRun,
+  compareRagDebugDataset,
+  createRagDebugConfig,
+  createRagDebugDataset,
+  deleteRagDebugCase,
+  deleteRagDebugDataset,
+  evaluateRagDebugDataset,
+  exportRagDebugDataset,
+  getRagDebugRun,
+  importRagDebugDataset,
+  listRagDebugCases,
+  listRagDebugChunks,
+  listRagDebugConfigs,
+  listRagDebugDatasets,
+  listRagDebugDocuments,
+  type RagConfig,
+  type RagDebugCase,
+  type RagDebugCandidate,
+  type RagDebugChunk,
+  type RagDebugCompareResponse,
+  type RagDebugConfigProfile,
+  type RagDebugDataset,
+  type RagDebugEvaluationResponse,
+  type RagDebugStage,
+  type RagDebugTraceResponse,
+  saveRagDebugCase,
+  startRagDebugRun,
+  updateRagDebugCase,
+  updateRagDebugConfig,
+} from "../../api/rag-debug"
+
 type RagTab = "trace" | "chunks" | "evaluation" | "compare" | "datasets"
-type StageKey = "query" | "rewrite" | "dense" | "bm25" | "fusion" | "rerank" | "context" | "answer"
-type Candidate = {
-  id: string
-  source: string
-  section: string
-  page: number
-  tokens: number
-  dense: number
-  bm25: number
-  fusion: number
-  rerank: number
-  before: number
-  after: number
-  text: string
-}
-
-type ChunkRecord = {
-  id: string
-  title: string
-  preview: string
-  section: string
-  page: number
-  tokens: number
-  overlap: number
-  start: number
-  end: number
-  type: string
-  embedding: string
-  text: string
-}
-
-type EvaluationCase = {
-  id: number
-  query: string
-  type: string
-  pass: boolean
-  recall: number
-  firstGoldRank: number | null
-}
-
-type CompareCase = {
-  id: number
-  query: string
-  aRank: number
-  bRank: number
-}
-
-type DatasetCase = {
-  id: number
-  query: string
-  type: "Factual" | "Analytical" | "Comparative" | "Creative"
-  goldChunks: string[]
-  answer: string
-  answerable: boolean
-  tags: string[]
-  updated: string
-  notes: string
-}
 
 const TABS: Array<{ id: RagTab; label: string }> = [
   { id: "trace", label: "Trace" },
@@ -91,152 +71,49 @@ const TABS: Array<{ id: RagTab; label: string }> = [
   { id: "datasets", label: "Datasets" },
 ]
 
-const STAGES: Array<{ key: StageKey; label: string; short: string; ms: number; note: string }> = [
-  { key: "query", label: "Query", short: "Query", ms: 12, note: "Parse query and intent" },
-  { key: "rewrite", label: "Rewrite", short: "Rewrite", ms: 48, note: "Generate sub-queries" },
-  { key: "dense", label: "Dense Retrieval", short: "Dense", ms: 142, note: "Top 30 results" },
-  { key: "bm25", label: "BM25 Retrieval", short: "BM25", ms: 87, note: "Top 30 results" },
-  { key: "fusion", label: "Fusion", short: "Fusion", ms: 12, note: "RRF merge to 20" },
-  { key: "rerank", label: "Rerank", short: "Rerank", ms: 95, note: "Qwen3 reranker" },
-  { key: "context", label: "Context Building", short: "Context", ms: 36, note: "Build final context" },
-  { key: "answer", label: "Answer Generation", short: "Answer", ms: 312, note: "Generate response" },
+const INITIAL_STAGES: RagDebugStage[] = [
+  { key: "query", label: "Query", status: "pending", elapsed_ms: 0, note: "Parse query and intent", summary: {}, candidate_count: 0 },
+  { key: "rewrite", label: "Rewrite", status: "pending", elapsed_ms: 0, note: "Generate standalone retrieval queries", summary: {}, candidate_count: 0 },
+  { key: "dense", label: "Dense Retrieval", status: "pending", elapsed_ms: 0, note: "Vector search from the active index", summary: {}, candidate_count: 0 },
+  { key: "bm25", label: "BM25 Retrieval", status: "pending", elapsed_ms: 0, note: "Sparse lexical search from the active index", summary: {}, candidate_count: 0 },
+  { key: "fusion", label: "Fusion", status: "pending", elapsed_ms: 0, note: "Merge retrieval lists with the configured strategy", summary: {}, candidate_count: 0 },
+  { key: "rerank", label: "Rerank", status: "pending", elapsed_ms: 0, note: "Apply the configured reranker when available", summary: {}, candidate_count: 0 },
+  { key: "context", label: "Context Building", status: "pending", elapsed_ms: 0, note: "Build bounded grounded context", summary: {}, candidate_count: 0 },
+  { key: "answer", label: "Answer Generation", status: "pending", elapsed_ms: 0, note: "Optional answer generation from context", summary: {}, candidate_count: 0 },
 ]
-
-const ROWS: Candidate[] = [
-  { id: "chunk_3f2a1c", source: "unep_2023.pdf", section: "4.2 Coastal Adaptation Strategies", page: 42, tokens: 362, dense: .862, bm25: 8.42, fusion: .043, rerank: .892, before: 13, after: 1, text: "Coastal cities face compounded risks from sea-level rise, more frequent and intense storm surges, and chronic flooding. Effective adaptation requires integrated approaches including resilient infrastructure, nature-based solutions such as mangrove restoration, and improved early warning systems. Governance, financing, and community engagement are critical enablers for long-term resilience." },
-  { id: "chunk_7e9d4b", source: "ipcc_ar6.pdf", section: "12.3 Adaptation Pathways", page: 118, tokens: 318, dense: .841, bm25: 7.96, fusion: .041, rerank: .845, before: 10, after: 2, text: "Adaptation pathways help decision makers sequence near-term actions while keeping longer-term options open under uncertainty. Flexible pathways combine risk reduction, land-use planning, ecosystem restoration, and staged infrastructure investment." },
-  { id: "chunk_a1d9f8", source: "worldbank_2022.pdf", section: "3.1 Financing resilience", page: 27, tokens: 295, dense: .826, bm25: 7.35, fusion: .038, rerank: .781, before: 8, after: 3, text: "Long-lived coastal resilience programs depend on predictable financing, credible project pipelines, and institutions capable of coordinating public and private investment." },
-  { id: "chunk_c4b2e6", source: "nature_2021.pdf", section: "2.4 Nature-based adaptation", page: 9, tokens: 342, dense: .804, bm25: 6.81, fusion: .035, rerank: .742, before: 4, after: 4, text: "Nature-based solutions can reduce flood exposure while delivering habitat, cooling, and social co-benefits. Their effectiveness depends on local conditions and integration with engineered protection." },
-  { id: "chunk_9f7d3a", source: "unhabitat_2022.pdf", section: "5.1 Inclusive planning", page: 64, tokens: 276, dense: .792, bm25: 6.44, fusion: .033, rerank: .698, before: 3, after: 5, text: "Inclusive adaptation planning improves implementation quality by incorporating neighborhood-scale vulnerability, informal settlement conditions, and local knowledge." },
-  { id: "chunk_d8e3c1", source: "ipcc_ar6.pdf", section: "12.5 Residual risk", page: 126, tokens: 301, dense: .775, bm25: 5.98, fusion: .031, rerank: .665, before: 9, after: 6, text: "Even with substantial adaptation, residual coastal risk persists because extreme events can exceed design assumptions and socioeconomic exposure continues to change." },
-]
-
-const CHUNKS: ChunkRecord[] = [
-  {
-    id: "chunk_3f2a1c",
-    title: "Coastal cities face compounded risks from sea-level rise…",
-    preview: "Coastal cities face compounded risks from sea-level rise, more frequent and intense storm surges, and chronic flooding…",
-    section: "2. Coastal Adaptation Strategies",
-    page: 42,
-    tokens: 362,
-    overlap: 200,
-    start: 0,
-    end: 2847,
-    type: "Text",
-    embedding: "Qwen3-Embedding-0.6B",
-    text: "Coastal cities face compounded risks from sea-level rise, more frequent and intense storm surges, and chronic flooding. Effective adaptation requires integrated approaches including resilient infrastructure, nature-based solutions such as mangrove restoration, and improved early warning systems. Governance, financing, and community engagement are critical enablers for long-term resilience, especially in vulnerable regions where socioeconomic factors increase exposure and limit adaptive capacity.",
-  },
-  {
-    id: "chunk_7e9d4b",
-    title: "Nature-based solutions offer multiple co-benefits…",
-    preview: "Nature-based solutions offer multiple co-benefits, including flood risk reduction, biodiversity conservation, and improved…",
-    section: "2.1 Nature-based Solutions",
-    page: 43,
-    tokens: 318,
-    overlap: 200,
-    start: 2648,
-    end: 5231,
-    type: "Text",
-    embedding: "Qwen3-Embedding-0.6B",
-    text: "Nature-based solutions offer multiple co-benefits, including flood risk reduction, biodiversity conservation, improved public space, and lower urban heat exposure. Their effectiveness depends on local hydrology, maintenance capacity, and long-term governance arrangements.",
-  },
-  {
-    id: "chunk_a1d9f8",
-    title: "Integrated coastal zone management (ICZM)…",
-    preview: "Integrated coastal zone management (ICZM) provides a holistic framework for balancing development and ecosystem…",
-    section: "2.3 Policy Frameworks",
-    page: 46,
-    tokens: 295,
-    overlap: 200,
-    start: 5032,
-    end: 7491,
-    type: "Text",
-    embedding: "Qwen3-Embedding-0.6B",
-    text: "Integrated coastal zone management provides a holistic framework for balancing development and ecosystem protection. It coordinates land use, infrastructure planning, environmental protection, and public participation across administrative boundaries.",
-  },
-  {
-    id: "chunk_c4b2e6",
-    title: "Hard infrastructure remains important in high-risk areas…",
-    preview: "Hard infrastructure remains important in high-risk areas, particularly where immediate protection is required for…",
-    section: "2.2 Infrastructure Approaches",
-    page: 49,
-    tokens: 342,
-    overlap: 200,
-    start: 7292,
-    end: 10156,
-    type: "Text",
-    embedding: "Qwen3-Embedding-0.6B",
-    text: "Hard infrastructure remains important in high-risk areas, particularly where immediate protection is required for dense settlements and critical assets. Seawalls, surge barriers, drainage upgrades, and elevated infrastructure are most effective when paired with adaptive design and periodic reassessment.",
-  },
-  {
-    id: "chunk_9f7d3a",
-    title: "Policy and governance enable long-term resilience…",
-    preview: "Policy and governance enable long-term resilience by aligning incentives, setting clear regulations, and fostering multi-level…",
-    section: "2.3 Policy Frameworks",
-    page: 52,
-    tokens: 276,
-    overlap: 200,
-    start: 9956,
-    end: 12331,
-    type: "Text",
-    embedding: "Qwen3-Embedding-0.6B",
-    text: "Policy and governance enable long-term resilience by aligning incentives, setting clear regulations, and fostering multi-level coordination. Durable institutions help cities sustain adaptation investments across political and budget cycles.",
-  },
-]
-
-const EVALUATION_CASES: EvaluationCase[] = [
-  { id: 1, query: "What are the key challenges of climate change adaptation in coastal cities?", type: "Factual", pass: true, recall: 1.00, firstGoldRank: 1 },
-  { id: 2, query: "How do coastal cities manage sea-level rise risks?", type: "Factual", pass: true, recall: .90, firstGoldRank: 2 },
-  { id: 3, query: "What infrastructure solutions are most effective?", type: "Comparative", pass: true, recall: .80, firstGoldRank: 3 },
-  { id: 4, query: "Summarize the IPCC findings on coastal adaptation.", type: "Summary", pass: true, recall: 1.00, firstGoldRank: 1 },
-  { id: 5, query: "What are the economic impacts of coastal flooding?", type: "Factual", pass: false, recall: .20, firstGoldRank: null },
-  { id: 6, query: "Which nature-based solutions are recommended?", type: "Factual", pass: true, recall: .80, firstGoldRank: 4 },
-  { id: 7, query: "How does mangrove restoration reduce risk?", type: "Causal", pass: true, recall: .90, firstGoldRank: 2 },
-  { id: 8, query: "What policies support resilient coastal infrastructure?", type: "Factual", pass: false, recall: .30, firstGoldRank: null },
-  { id: 9, query: "Compare hard vs. soft infrastructure approaches.", type: "Comparative", pass: true, recall: .70, firstGoldRank: 5 },
-  { id: 10, query: "What are early warning system best practices?", type: "Factual", pass: true, recall: .80, firstGoldRank: 3 },
-]
-
-const COMPARE_CASES: CompareCase[] = [
-  { id: 1, query: "What are the key challenges of climate change adaptation in coastal cities?", aRank: 13, bRank: 4 },
-  { id: 2, query: "How effective are nature-based solutions for coastal flood risk?", aRank: 8, bRank: 3 },
-  { id: 3, query: "What financing mechanisms support coastal resilience projects?", aRank: 5, bRank: 7 },
-  { id: 4, query: "How do sea-level rise projections affect urban planning?", aRank: 12, bRank: 12 },
-  { id: 5, query: "What are the social impacts of coastal adaptation strategies?", aRank: 20, bRank: 6 },
-]
-
-const DATASET_CASES: DatasetCase[] = [
-  { id: 1, query: "What are the key challenges of climate change adaptation in coastal cities?", type: "Analytical", goldChunks: ["chunk_3f2a1c", "chunk_7e9d4b", "chunk_a1d9f8"], answer: "Coastal cities face compounded risks from sea-level rise, more frequent and intense storm surges, and chronic flooding. Effective adaptation requires integrated approaches including resilient infrastructure, nature-based solutions, and early warning systems.", answerable: true, tags: ["adaptation", "coastal-cities", "challenges"], updated: "Mar 1, 2024", notes: "" },
-  { id: 2, query: "How does sea-level rise affect coastal planning?", type: "Factual", goldChunks: ["chunk_3f2a1c", "chunk_c4b2e6"], answer: "Sea-level rise increases chronic flood exposure and raises design requirements for infrastructure and land-use planning.", answerable: true, tags: ["sea-level"], updated: "Feb 28, 2024", notes: "" },
-  { id: 3, query: "What infrastructure solutions are most effective?", type: "Analytical", goldChunks: ["chunk_c4b2e6", "chunk_7e9d4b", "chunk_a1d9f8", "chunk_9f7d3a"], answer: "The strongest portfolios combine engineered protection, nature-based solutions, adaptive pathways, and supporting governance.", answerable: true, tags: ["infrastructure"], updated: "Feb 27, 2024", notes: "" },
-  { id: 4, query: "Are nature-based solutions enough on their own?", type: "Comparative", goldChunks: ["chunk_7e9d4b", "chunk_c4b2e6", "chunk_3f2a1c"], answer: "Not always. Nature-based solutions work best as part of an integrated portfolio with engineered measures where risk is high.", answerable: true, tags: ["nature-based"], updated: "Feb 26, 2024", notes: "" },
-  { id: 5, query: "What are the economic impacts of coastal flooding?", type: "Analytical", goldChunks: ["chunk_a1d9f8", "chunk_3f2a1c", "chunk_9f7d3a", "chunk_c4b2e6"], answer: "Impacts include direct asset losses, service disruption, reduced investment confidence, and higher adaptation expenditure.", answerable: true, tags: ["economics"], updated: "Feb 25, 2024", notes: "" },
-  { id: 6, query: "Which coastal cities are highlighted as examples?", type: "Factual", goldChunks: ["chunk_3f2a1c", "chunk_a1d9f8"], answer: "The source set highlights multiple coastal city contexts rather than one universal case.", answerable: true, tags: ["examples"], updated: "Feb 24, 2024", notes: "" },
-  { id: 7, query: "How effective are early warning systems?", type: "Analytical", goldChunks: ["chunk_3f2a1c", "chunk_7e9d4b", "chunk_a1d9f8", "chunk_9f7d3a"], answer: "They reduce loss of life and disruption when paired with reliable forecasts, communication channels, and response capacity.", answerable: true, tags: ["early-warning"], updated: "Feb 22, 2024", notes: "" },
-  { id: 8, query: "What policies support coastal resilience?", type: "Factual", goldChunks: ["chunk_9f7d3a", "chunk_a1d9f8", "chunk_c4b2e6"], answer: "Clear land-use rules, coordinated planning, financing mechanisms, and long-term institutional accountability support resilience.", answerable: true, tags: ["policy"], updated: "Feb 20, 2024", notes: "" },
-  { id: 9, query: "What are the trade-offs between hard and soft adaptation?", type: "Comparative", goldChunks: ["chunk_c4b2e6", "chunk_7e9d4b", "chunk_3f2a1c"], answer: "Hard measures can deliver immediate protection but are capital intensive; softer and nature-based measures provide co-benefits but may need more space and time.", answerable: true, tags: ["trade-offs"], updated: "Feb 18, 2024", notes: "" },
-  { id: 10, query: "How does mangrove restoration contribute to resilience?", type: "Factual", goldChunks: ["chunk_7e9d4b", "chunk_3f2a1c"], answer: "Mangroves reduce wave energy, stabilize shorelines, and provide ecological co-benefits.", answerable: true, tags: ["ecosystems"], updated: "Feb 16, 2024", notes: "" },
-]
-
-const scoreFor = (row: Candidate, stage: StageKey) => stage === "dense" ? row.dense : stage === "bm25" ? row.bm25 : stage === "fusion" ? row.fusion : row.rerank
-const retrievalStage = (stage: StageKey) => ["dense", "bm25", "fusion", "rerank"].includes(stage)
 
 export default function RagDebugStudioTrace() {
   const [activeTab, setActiveTab] = useState<RagTab>("trace")
+  const [configs, setConfigs] = useState<RagDebugConfigProfile[]>([])
+  const [datasets, setDatasets] = useState<RagDebugDataset[]>([])
+  const [baseError, setBaseError] = useState("")
+
+  async function refreshBaseData() {
+    const [configResult, datasetResult] = await Promise.allSettled([listRagDebugConfigs(), listRagDebugDatasets()])
+    if (configResult.status === "fulfilled") setConfigs(configResult.value)
+    if (datasetResult.status === "fulfilled") setDatasets(datasetResult.value)
+    const error = [configResult, datasetResult]
+      .filter((item): item is PromiseRejectedResult => item.status === "rejected")
+      .map((item) => item.reason instanceof Error ? item.reason.message : "Unable to load RAG Debug Studio data.")
+      .at(0)
+    setBaseError(error ?? "")
+  }
+
+  useEffect(() => { void refreshBaseData() }, [])
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <header className="shrink-0 border-b border-slate-200 px-8 pt-7">
-        <h1 className="text-[27px] font-semibold tracking-[-0.035em] text-slate-950">RAG Debug Studio</h1>
-        <p className="mt-1 text-[13px] text-slate-500">Inspect and debug your RAG pipeline. Trace retrieval, ranking, and generation step by step.</p>
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <h1 className="text-[27px] font-semibold tracking-[-0.035em] text-slate-950">RAG Debug Studio</h1>
+            <p className="mt-1 text-[13px] text-slate-500">Inspect and debug your RAG pipeline. Trace retrieval, ranking, and generation step by step.</p>
+          </div>
+          {baseError && <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] text-amber-800"><AlertCircle size={12} />{baseError}</span>}
+        </div>
         <nav className="mt-5 flex gap-8" aria-label="RAG Debug Studio tabs">
           {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`relative px-1 pb-4 text-[13px] font-medium transition-colors duration-150 ${activeTab === tab.id ? "text-slate-950" : "text-slate-500 hover:text-slate-800"}`}
-            >
+            <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`relative px-1 pb-4 text-[13px] font-medium transition-colors duration-150 ${activeTab === tab.id ? "text-slate-950" : "text-slate-500 hover:text-slate-800"}`}>
               {tab.label}
               <span className={`absolute inset-x-0 bottom-0 h-[2px] origin-center bg-slate-950 transition-transform duration-200 ${activeTab === tab.id ? "scale-x-100" : "scale-x-0"}`} />
             </button>
@@ -245,527 +122,215 @@ export default function RagDebugStudioTrace() {
       </header>
 
       <div key={activeTab} className="min-h-0 flex-1 animate-[ragFadeIn_.18s_ease-out]">
-        {activeTab === "trace" && <TraceTab />}
+        {activeTab === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} />}
         {activeTab === "chunks" && <ChunksTab />}
-        {activeTab === "evaluation" && <EvaluationTab />}
-        {activeTab === "compare" && <CompareTab />}
-        {activeTab === "datasets" && <DatasetsTab />}
+        {activeTab === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} />}
+        {activeTab === "compare" && <CompareTab configs={configs} datasets={datasets} />}
+        {activeTab === "datasets" && <DatasetsTab datasets={datasets} onDatasetsChanged={refreshBaseData} />}
       </div>
     </section>
   )
 }
 
-function TraceTab() {
-  const [query, setQuery] = useState("What are the key challenges of climate change adaptation in coastal cities?")
-  const [stage, setStage] = useState<StageKey>("rerank")
-  const [selectedId, setSelectedId] = useState(ROWS[0].id)
-  const [topK, setTopK] = useState(6)
-  const [done, setDone] = useState(STAGES.length)
+function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfile[]; onConfigsChanged: () => Promise<void> }) {
+  const [query, setQuery] = useState("")
+  const [configId, setConfigId] = useState("default")
+  const [topK, setTopK] = useState(8)
+  const [includeAnswer, setIncludeAnswer] = useState(false)
+  const [trace, setTrace] = useState<RagDebugTraceResponse | null>(null)
+  const [selectedId, setSelectedId] = useState("")
   const [running, setRunning] = useState(false)
-  const timer = useRef<number | null>(null)
+  const [notice, setNotice] = useState("")
+  const mounted = useRef(true)
 
-  useEffect(() => () => { if (timer.current !== null) window.clearInterval(timer.current) }, [])
+  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => {
+    if (configs.length && !configs.some((item) => item.config_id === configId)) setConfigId(configs[0].config_id)
+  }, [configs, configId])
 
-  const rows = useMemo(() => ROWS.slice(0, topK), [topK])
-  const selectedIndex = Math.max(0, rows.findIndex((row) => row.id === selectedId))
-  const selected = rows[selectedIndex] ?? rows[0]
-  const stageIndex = STAGES.findIndex((item) => item.key === stage)
-  const totalMs = STAGES.reduce((sum, item) => sum + item.ms, 0)
+  const selectedConfig = configs.find((item) => item.config_id === configId) ?? configs[0]
+  const candidates = trace?.candidates ?? []
+  const selectedIndex = Math.max(0, candidates.findIndex((item) => item.id === selectedId))
+  const selected = candidates[selectedIndex]
+  const activeStage = trace?.stages.find((item) => item.status === "active")?.key ?? ""
 
-  function run() {
-    if (timer.current !== null) window.clearInterval(timer.current)
+  async function run() {
+    if (!query.trim() || running) return
     setRunning(true)
-    setDone(0)
-    setStage("query")
-    let next = 0
-    timer.current = window.setInterval(() => {
-      next += 1
-      setDone(next)
-      setStage(STAGES[Math.min(next - 1, STAGES.length - 1)].key)
-      if (next >= STAGES.length) {
-        if (timer.current !== null) window.clearInterval(timer.current)
-        timer.current = null
-        setRunning(false)
-        setStage("rerank")
+    setNotice("")
+    try {
+      const accepted = await startRagDebugRun({ query: query.trim(), config_id: configId, top_k: topK, include_answer: includeAnswer })
+      let next = await getRagDebugRun(accepted.run_id)
+      if (mounted.current) setTrace(next)
+      while (next.status === "queued" || next.status === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 180))
+        next = await getRagDebugRun(accepted.run_id)
+        if (mounted.current) setTrace(next)
       }
-    }, 220)
+      if (next.status === "failed") setNotice(next.error || "Trace failed.")
+      if (next.status === "cancelled") setNotice("Trace cancelled.")
+      if (next.candidates[0] && mounted.current) setSelectedId(next.candidates[0].id)
+    } catch (error) {
+      if (mounted.current) setNotice(error instanceof Error ? error.message : "Unable to start trace.")
+    } finally {
+      if (mounted.current) setRunning(false)
+    }
   }
 
-  const move = (offset: number) => {
-    const index = (selectedIndex + offset + rows.length) % rows.length
-    setSelectedId(rows[index].id)
+  async function stop() {
+    if (!trace?.run_id) return
+    try {
+      const cancelled = await cancelRagDebugRun(trace.run_id)
+      setTrace(cancelled)
+      setRunning(false)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to stop trace.")
+    }
+  }
+
+  function move(offset: number) {
+    if (!candidates.length) return
+    setSelectedId(candidates[(selectedIndex + offset + candidates.length) % candidates.length].id)
   }
 
   return (
     <ScrollSurface>
       <div className="mx-auto max-w-[1240px] space-y-4">
         <section className="rounded-[10px] border border-slate-200 p-4">
-          <label className="text-[12px] font-semibold text-slate-800">Query</label>
-          <textarea value={query} onChange={(event) => setQuery(event.target.value)} rows={2} className={inputClass("mt-2 w-full resize-none py-2.5")} />
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-[12px] font-semibold text-slate-800">Query</label>
+            {selectedConfig?.requires_reindex && <span className="rounded-full bg-amber-50 px-2 py-1 text-[9px] text-amber-800">Index rebuild required for indexed config changes</span>}
+          </div>
+          <textarea value={query} onChange={(event) => setQuery(event.target.value)} rows={2} placeholder="Ask a question against the indexed knowledge base…" className={inputClass("mt-2 w-full resize-none py-2.5")} />
           <div className="mt-4 grid items-end gap-3 lg:grid-cols-[1fr_1fr_120px_148px]">
-            <Field label="Workspace"><select className={selectClass}><option>My Workspace</option><option>All sources</option></select></Field>
-            <Field label="RAG Config"><select className={selectClass}><option>Default (v1)</option><option>Hybrid + Rerank</option></select></Field>
-            <Field label="Top K"><select value={topK} onChange={(event) => setTopK(Number(event.target.value))} className={selectClass}><option value={5}>5</option><option value={6}>6</option></select></Field>
-            <PrimaryButton onClick={run} disabled={running || !query.trim()}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Running" : "Run"}</PrimaryButton>
+            <Field label="Workspace"><select className={selectClass} defaultValue="workspace"><option value="workspace">My Workspace</option><option value="all">All indexed documents</option></select></Field>
+            <Field label="RAG Config"><div className="flex gap-2"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}{item.active ? " · active" : ""}</option>) : <option value="default">Default</option>}</select><button type="button" title="Duplicate selected profile" aria-label="Duplicate selected profile" onClick={async () => { if (!selectedConfig) return; const name = window.prompt("New RAG profile name", `${selectedConfig.name} copy`); if (!name?.trim()) return; await createRagDebugConfig({ name, description: selectedConfig.description, config: selectedConfig.config }); await onConfigsChanged() }} className="rounded-[8px] border border-slate-200 px-2.5 text-slate-600 hover:bg-slate-50"><Plus size={14} /></button></div></Field>
+            <Field label="Top K"><select value={topK} onChange={(event) => setTopK(Number(event.target.value))} className={selectClass}>{[5, 8, 10, 20].map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
+            <PrimaryButton onClick={running ? stop : run} disabled={!running && !query.trim()}>{running ? <><X size={14} />Stop</> : <><Play size={14} fill="currentColor" />Run trace</>}</PrimaryButton>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={includeAnswer} onChange={(event) => setIncludeAnswer(event.target.checked)} className="accent-slate-950" />Include optional answer generation</label>
+            {selectedConfig && <><span>Embedding: {String(selectedConfig.config.embedding.model ?? "configured")}</span><span>Fusion: {selectedConfig.config.retrieval.fusion}</span><button type="button" onClick={async () => { await activateRagDebugConfig(selectedConfig.config_id); await onConfigsChanged(); setNotice(`${selectedConfig.name} is now the active profile.`) }} className="font-medium text-slate-800 underline underline-offset-2">Use this profile</button></>}
           </div>
         </section>
+
+        <ConfigTuningPanel config={selectedConfig} onSaved={onConfigsChanged} onNotice={setNotice} />
 
         <section className="rounded-[10px] border border-slate-200 px-4 py-4">
-          <div className="grid grid-cols-[repeat(8,minmax(70px,1fr))_92px]">
-            {STAGES.map((item, index) => {
-              const complete = index < done
-              const active = index === stageIndex
-              const current = running && index === done
-              return (
-                <button key={item.key} type="button" onClick={() => setStage(item.key)} className="group text-left">
-                  <div className="flex items-center">
-                    <span className={`z-10 flex h-5 w-5 items-center justify-center rounded-full border transition ${complete ? "border-slate-950 bg-slate-950 text-white" : current ? "border-slate-950 bg-white ring-4 ring-slate-900/10" : "border-slate-300 bg-slate-100"} ${active ? "scale-110" : ""}`}>{complete ? <Check size={12} /> : <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />}</span>
-                    {index < 7 && <span className={`h-px flex-1 transition-colors ${index < done - 1 ? "bg-slate-950" : "bg-slate-300"}`} />}
-                  </div>
-                  <p className={`mt-2 truncate text-[11px] font-semibold ${active ? "text-slate-950" : "text-slate-700"}`}>{item.short}</p>
-                  <p className="text-[10px] text-slate-500">{item.ms} ms</p>
-                </button>
-              )
-            })}
-            <div className="border-l border-slate-200 pl-4"><p className="text-[10px] text-slate-500">Total time</p><p className="mt-1 text-lg font-semibold">{totalMs} ms</p></div>
-          </div>
+          <div className="grid grid-cols-4 gap-2 md:grid-cols-8">{(trace?.stages ?? INITIAL_STAGES).map((item) => <StagePill key={item.key} stage={item} active={activeStage === item.key} />)}</div>
+          {trace && <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-500"><span className="inline-flex items-center gap-1"><Clock3 size={12} />{formatMs(Number(trace.metadata.total_rag_ms ?? 0))}</span><span>{trace.candidates.length} final candidates</span><span>{trace.context.source_count} evidence items</span><span className="rounded-full bg-slate-100 px-2 py-1">{trace.status}</span></div>}
         </section>
 
-        <div className="grid min-h-[410px] gap-3 xl:grid-cols-[190px_minmax(0,1fr)_330px]">
-          <aside className="rounded-[10px] border border-slate-200 p-3">
-            <h2 className="px-1 text-[13px] font-semibold">Pipeline stages</h2>
-            <div className="mt-2 space-y-1">
-              {STAGES.map((item, index) => (
-                <button key={item.key} type="button" onClick={() => setStage(item.key)} className={`flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left transition ${stage === item.key ? "bg-slate-100" : "hover:bg-slate-50"}`}>
-                  <span className={`flex h-4 w-4 items-center justify-center rounded-full border ${index < done ? "border-slate-950 bg-slate-950 text-white" : "border-slate-300"}`}>{index < done && <Check size={10} />}</span>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold">{item.label}</span><span className="block truncate text-[9px] text-slate-500">{item.note}</span></span>
-                  <span className="text-[9px] text-slate-400">{item.ms} ms</span>
-                </button>
-              ))}
-            </div>
-          </aside>
+        {trace?.error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700"><AlertCircle className="mr-1 inline" size={13} />{trace.error}</div>}
 
-          <main className="min-w-0 rounded-[10px] border border-slate-200 p-3">
-            {retrievalStage(stage) ? <ResultTable stage={stage} rows={rows} selectedId={selected?.id ?? ""} onSelect={setSelectedId} /> : <StageSummary stage={stage} query={query} />}
-          </main>
-
-          <aside className="rounded-[10px] border border-slate-200 p-3">{selected && <ChunkDetail row={selected} index={selectedIndex} total={rows.length} previous={() => move(-1)} next={() => move(1)} />}</aside>
-        </div>
+        {trace && candidates.length > 0 ? <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between border-b border-slate-100 px-1 pb-3"><div><h2 className="text-[13px] font-semibold">Final Retrieval Results</h2><p className="mt-0.5 text-[10px] text-slate-500">Click a row to inspect the actual indexed chunk.</p></div><span className="text-[10px] text-slate-400">{candidates.length} results</span></div><ResultTable rows={candidates} selectedId={selectedId} onSelect={setSelectedId} /></section>{selected && <section className="rounded-[10px] border border-slate-200 p-4"><ChunkDetail row={selected} index={selectedIndex} total={candidates.length} previous={() => move(-1)} next={() => move(1)} /></section>}</div> : <EmptyState title={running ? "Tracing retrieval…" : "Run a trace to inspect retrieval"} description="The studio reads the current local index and reports real query, retrieval, fusion, rerank, context, and answer stages." loading={running} />}
+        {trace?.answer && <section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center gap-2"><CheckCircle2 size={15} className="text-emerald-600" /><h2 className="text-[13px] font-semibold">Generated answer</h2></div><p className="mt-3 whitespace-pre-wrap text-[11px] leading-5 text-slate-700">{trace.answer}</p></section>}
+        {notice && <div className="rounded-[10px] bg-slate-950 px-4 py-2.5 text-[11px] text-white">{notice}</div>}
       </div>
     </ScrollSurface>
   )
+}
+
+function ConfigTuningPanel({ config, onSaved, onNotice }: { config?: RagDebugConfigProfile; onSaved: () => Promise<void>; onNotice: (value: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState({ dense_top_k: 30, sparse_top_k: 30, fusion_top_k: 20, final_top_k: 8, fusion: "rrf", small_to_big_enabled: true })
+  useEffect(() => { if (config) setDraft({ dense_top_k: config.config.retrieval.dense_top_k, sparse_top_k: config.config.retrieval.sparse_top_k, fusion_top_k: config.config.retrieval.fusion_top_k, final_top_k: config.config.retrieval.final_top_k, fusion: config.config.retrieval.fusion, small_to_big_enabled: config.config.retrieval.small_to_big_enabled }) }, [config])
+  if (!config) return null
+  const profile = config
+  async function save() { const nextConfig: RagConfig = { ...profile.config, retrieval: { ...profile.config.retrieval, ...draft } }; await updateRagDebugConfig(profile.config_id, { config: nextConfig }); await onSaved(); onNotice("RAG profile saved. Indexed-field changes are marked for reindexing.") }
+  return <section className="rounded-[10px] border border-slate-200"><button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center justify-between px-4 py-3 text-left"><span className="inline-flex items-center gap-2 text-[12px] font-semibold"><SlidersHorizontal size={14} />Retrieval tuning · {profile.name}</span><ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} /></button>{open && <div className="grid gap-3 border-t border-slate-100 px-4 py-4 md:grid-cols-5"><NumberField label="Dense top K" value={draft.dense_top_k} onChange={(value) => setDraft({ ...draft, dense_top_k: value })} /><NumberField label="BM25 top K" value={draft.sparse_top_k} onChange={(value) => setDraft({ ...draft, sparse_top_k: value })} /><NumberField label="Fusion top K" value={draft.fusion_top_k} onChange={(value) => setDraft({ ...draft, fusion_top_k: value })} /><NumberField label="Final top K" value={draft.final_top_k} onChange={(value) => setDraft({ ...draft, final_top_k: value })} /><label className="text-[10px] text-slate-600">Fusion<select value={draft.fusion} onChange={(event) => setDraft({ ...draft, fusion: event.target.value })} className={smallSelectClass}><option value="rrf">RRF</option></select></label><label className="inline-flex items-center gap-2 text-[10px] text-slate-600"><input type="checkbox" checked={draft.small_to_big_enabled} onChange={(event) => setDraft({ ...draft, small_to_big_enabled: event.target.checked })} className="accent-slate-950" />Small-to-big context</label><div className="md:col-span-5 flex justify-end gap-2"><SecondaryButton onClick={() => setOpen(false)}>Cancel</SecondaryButton><PrimaryButton onClick={save}><Save size={13} />Save profile</PrimaryButton></div></div>}</section>
 }
 
 function ChunksTab() {
-  const [document, setDocument] = useState("unep_2023.pdf")
+  const [documents, setDocuments] = useState<Array<{ document_id: string; title: string; chunk_count: number; status: string }>>([])
+  const [documentId, setDocumentId] = useState("")
   const [query, setQuery] = useState("")
-  const [display, setDisplay] = useState("50")
-  const [selectedId, setSelectedId] = useState(CHUNKS[0].id)
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ intro: true, adaptation: true, risk: true })
   const [page, setPage] = useState(1)
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (!needle) return CHUNKS
-    return CHUNKS.filter((chunk) => `${chunk.id} ${chunk.title} ${chunk.preview} ${chunk.section}`.toLowerCase().includes(needle))
-  }, [query])
-  const selected = filtered.find((chunk) => chunk.id === selectedId) ?? filtered[0] ?? CHUNKS[0]
-  const selectedIndex = Math.max(0, filtered.findIndex((chunk) => chunk.id === selected.id))
-
-  function move(offset: number) {
-    if (!filtered.length) return
-    const next = (selectedIndex + offset + filtered.length) % filtered.length
-    setSelectedId(filtered[next].id)
-  }
-
-  return (
-    <ScrollSurface>
-      <div className="mx-auto max-w-[1240px] space-y-3">
-        <section className="grid gap-4 rounded-[10px] border border-slate-200 p-4 lg:grid-cols-[280px_minmax(0,1fr)_260px]">
-          <Field label="Document"><select value={document} onChange={(event) => setDocument(event.target.value)} className={selectClass}><option>unep_2023.pdf</option><option>ipcc_ar6.pdf</option><option>worldbank_2022.pdf</option></select></Field>
-          <Field label="Search chunks"><div className="relative"><Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search content, section, or chunk ID…" className={inputClass("h-10 w-full pl-9")} /></div></Field>
-          <Field label="Display"><select value={display} onChange={(event) => setDisplay(event.target.value)} className={selectClass}><option value="50">50 per page</option><option value="25">25 per page</option><option value="10">10 per page</option></select></Field>
-        </section>
-
-        <div className="grid min-h-[600px] gap-3 xl:grid-cols-[300px_minmax(0,1fr)_380px]">
-          <aside className="overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-            <PanelHeader title="Document Structure" />
-            <div className="ait-scroll-page max-h-[640px] overflow-y-auto px-3 py-2 text-[11px]">
-              <div className="flex items-center gap-2 px-1 py-2 font-semibold"><FileText size={15} /><span className="min-w-0 flex-1 truncate">{document}</span><span className="text-slate-400">142 chunks</span></div>
-              <TreeSection label="1. Introduction" count={12} open={expanded.intro} onToggle={() => setExpanded((value) => ({ ...value, intro: !value.intro }))}>
-                <TreeLeaf label="1.1 Background" count={4} /><TreeLeaf label="1.2 Problem Statement" count={4} /><TreeLeaf label="1.3 Objectives" count={4} />
-              </TreeSection>
-              <TreeSection label="2. Coastal Adaptation Strategies" count={42} open={expanded.adaptation} active onToggle={() => setExpanded((value) => ({ ...value, adaptation: !value.adaptation }))}>
-                <TreeLeaf label="2.1 Nature-based Solutions" count={10} /><TreeLeaf label="2.2 Infrastructure Approaches" count={12} /><TreeLeaf label="2.3 Policy Frameworks" count={10} /><TreeLeaf label="2.4 Case Studies" count={10} />
-              </TreeSection>
-              <TreeSection label="3. Risk Assessment" count={28} open={expanded.risk} onToggle={() => setExpanded((value) => ({ ...value, risk: !value.risk }))}>
-                <TreeLeaf label="3.1 Sea-level Rise Projections" count={8} /><TreeLeaf label="3.2 Extreme Weather Events" count={8} /><TreeLeaf label="3.3 Vulnerability Analysis" count={12} />
-              </TreeSection>
-              <TreeSection label="4. Implementation" count={20} open={false} onToggle={() => undefined} />
-              <TreeSection label="5. Conclusion" count={8} open={false} onToggle={() => undefined} />
-            </div>
-          </aside>
-
-          <main className="min-w-0 overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-            <PanelHeader title="Chunks" right={<span>{filtered.length || 0} chunks</span>} />
-            <div className="ait-scroll-page max-h-[565px] space-y-2 overflow-y-auto p-2">
-              {filtered.map((chunk, index) => (
-                <button key={chunk.id} type="button" onClick={() => setSelectedId(chunk.id)} className={`group flex w-full gap-3 rounded-[10px] border p-3 text-left transition-all duration-150 ${selected.id === chunk.id ? "border-slate-950 bg-white shadow-[0_2px_8px_rgba(15,23,42,.06)]" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60"}`}>
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700">{index + 1}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11px] font-semibold text-slate-900">{chunk.title}</span>
-                    <span className="mt-1 block line-clamp-2 text-[10px] leading-4 text-slate-500">{chunk.preview}</span>
-                    <span className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[9px] text-slate-500"><span>{chunk.tokens} tokens</span><span>chars {chunk.start.toLocaleString()} – {chunk.end.toLocaleString()}</span><span className="rounded-full bg-slate-100 px-2 py-0.5">Overlap {chunk.overlap}</span></span>
-                  </span>
-                  <ChevronRight size={15} className="mt-1 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5" />
-                </button>
-              ))}
-              {filtered.length === 0 && <EmptyState title="No chunks found" description="Try a different search term." />}
-            </div>
-            <div className="flex items-center justify-center gap-2 border-t border-slate-100 px-3 py-3">
-              <PaginationButton disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={14} /></PaginationButton>
-              {[1, 2, 3, 4, 5].map((item) => <PaginationButton key={item} active={page === item} onClick={() => setPage(item)}>{item}</PaginationButton>)}
-              <span className="text-[10px] text-slate-400">…</span><PaginationButton onClick={() => setPage(9)}>9</PaginationButton>
-              <PaginationButton onClick={() => setPage((value) => Math.min(9, value + 1))}><ChevronRight size={14} /></PaginationButton>
-            </div>
-          </main>
-
-          <aside className="overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <h2 className="text-[13px] font-semibold">Chunk Detail</h2>
-              <div className="flex items-center gap-2 text-[10px] text-slate-500"><button type="button" onClick={() => move(-1)} className="rounded p-1 hover:bg-slate-100"><ChevronLeft size={14} /></button><span>{selectedIndex + 1} of {Math.max(filtered.length, 1)}</span><button type="button" onClick={() => move(1)} className="rounded border border-slate-200 p-1.5 hover:bg-slate-50"><ChevronRight size={14} /></button></div>
-            </div>
-            <ChunkRecordDetail chunk={selected} />
-          </aside>
-        </div>
-      </div>
-    </ScrollSurface>
-  )
+  const [chunks, setChunks] = useState<RagDebugChunk[]>([])
+  const [total, setTotal] = useState(0)
+  const [selected, setSelected] = useState<RagDebugChunk | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  useEffect(() => { listRagDebugDocuments().then(setDocuments).catch((reason) => setError(errorText(reason))) }, [])
+  useEffect(() => { let disposed = false; setLoading(true); listRagDebugChunks({ documentId, query, page, pageSize: 50 }).then((result) => { if (!disposed) { setChunks(result.chunks); setTotal(result.total); setSelected(result.chunks[0] ?? null) } }).catch((reason) => { if (!disposed) setError(errorText(reason)) }).finally(() => { if (!disposed) setLoading(false) }); return () => { disposed = true } }, [documentId, query, page])
+  const sectionCounts = useMemo(() => chunks.reduce<Record<string, number>>((acc, chunk) => { acc[chunk.section || "Unsectioned"] = (acc[chunk.section || "Unsectioned"] ?? 0) + 1; return acc }, {}), [chunks])
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="grid min-h-[540px] gap-4 lg:grid-cols-[260px_minmax(0,1fr)_300px]"><div className="rounded-[10px] border border-slate-200 p-3"><PanelHeader title="Document Structure" right={<span>{documents.length} documents</span>} />{documents.length === 0 ? <EmptyState title="No indexed documents" description="Import a document in Knowledge before exploring chunks." /> : <div className="mt-3 space-y-1">{documents.map((document) => <button key={document.document_id} type="button" onClick={() => { setDocumentId(document.document_id); setPage(1) }} className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] ${documentId === document.document_id ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}><FileText size={13} /><span className="min-w-0 flex-1 truncate">{document.title || document.document_id}</span><span className="text-slate-400">{document.chunk_count}</span></button>)}<div className="mt-4 border-t border-slate-100 pt-3"><p className="px-2 text-[9px] font-semibold uppercase tracking-[.08em] text-slate-400">Sections on this page</p>{Object.entries(sectionCounts).map(([label, count]) => <div key={label} className="flex items-center justify-between px-2 py-1.5 text-[10px] text-slate-600"><span className="min-w-0 truncate">{label}</span><span className="text-slate-400">{count}</span></div>)}</div></div>}</div><div className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Chunks</h2><p className="mt-1 text-[10px] text-slate-500">Inspect the chunks persisted by the active index.</p></div><span className="text-[10px] text-slate-400">{total} total</span></div><div className="mt-3 flex gap-2"><div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-2.5 text-slate-400" size={14} /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search chunk text…" className={inputClass("h-9 w-full pl-9 text-[10px]")} /></div><button type="button" onClick={() => setPage(1)} className="rounded-[8px] border border-slate-200 px-3 text-slate-500 hover:bg-slate-50"><RefreshCw size={13} /></button></div>{error && <div className="mt-3 text-[10px] text-rose-600">{error}</div>}{loading ? <EmptyState title="Loading chunks…" description="Reading the local chunk catalogue." loading /> : chunks.length === 0 ? <EmptyState title="No chunks found" description="Try another document or search query." /> : <div className="mt-3 space-y-2">{chunks.map((chunk) => <button key={chunk.id} type="button" onClick={() => setSelected(chunk)} className={`block w-full rounded-[8px] border px-3 py-3 text-left transition ${selected?.id === chunk.id ? "border-slate-950 bg-slate-50" : "border-slate-100 hover:border-slate-300"}`}><div className="flex items-start gap-2"><FileText size={14} className="mt-0.5 shrink-0 text-slate-500" /><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-3"><h3 className="truncate text-[11px] font-semibold">{chunk.title || chunk.id}</h3><span className="shrink-0 text-[9px] text-slate-400">{chunk.page ? `p. ${chunk.page}` : ""}</span></div><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">{chunk.preview}</p><div className="mt-2 flex gap-3 text-[9px] text-slate-400"><span>{chunk.tokens} tokens</span><span>{chunk.type}</span><span>{chunk.id}</span></div></div></div></button>)}</div>}<div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-[10px] text-slate-500"><span>Page {page} · {Math.max(1, Math.ceil(total / 50))}</span><div className="flex gap-1"><PaginationButton disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={13} /></PaginationButton><PaginationButton disabled={page >= Math.ceil(total / 50)} onClick={() => setPage((value) => value + 1)}><ChevronRight size={13} /></PaginationButton></div></div></div><section className="rounded-[10px] border border-slate-200 p-4">{selected ? <ChunkRecordDetail chunk={selected} /> : <EmptyState title="Select a chunk" description="Chunk metadata and full text will appear here." />}</section></section></div></ScrollSurface>
 }
 
-function EvaluationTab() {
-  const [dataset, setDataset] = useState("Coastal Adaptation Test Set")
-  const [config, setConfig] = useState("Default (v1)")
-  const [evaluating, setEvaluating] = useState(false)
-  const [run, setRun] = useState(0)
-  const [page, setPage] = useState(1)
-
-  function startEvaluation() {
-    setEvaluating(true)
-    window.setTimeout(() => {
-      setRun((value) => value + 1)
-      setEvaluating(false)
-    }, 900)
-  }
-
-  return (
-    <ScrollSurface>
-      <div className="mx-auto max-w-[1240px] space-y-3">
-        <section className="grid items-end gap-4 rounded-[10px] border border-slate-200 p-4 lg:grid-cols-[1.1fr_1fr_140px_1fr_170px]">
-          <Field label="Dataset"><select value={dataset} onChange={(event) => setDataset(event.target.value)} className={selectClass}><option>Coastal Adaptation Test Set</option><option>Academic RAG Core</option></select></Field>
-          <Field label="Run Configuration"><select value={config} onChange={(event) => setConfig(event.target.value)} className={selectClass}><option>Default (v1)</option><option>Hybrid + Rerank</option></select></Field>
-          <Field label="Test Cases"><div className="flex h-10 items-center rounded-[8px] border border-slate-200 px-3 text-[12px]">50</div></Field>
-          <Field label="Last Evaluated"><div className="flex h-10 items-center text-[11px] text-slate-500">Apr 22, 2024, 10:24 AM</div></Field>
-          <PrimaryButton onClick={startEvaluation} disabled={evaluating}>{evaluating ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{evaluating ? "Evaluating" : "Run Evaluation"}</PrimaryButton>
-        </section>
-
-        <div className={`grid gap-3 md:grid-cols-2 xl:grid-cols-4 ${evaluating ? "opacity-60" : ""}`}>
-          <MetricCard icon={<Target size={17} />} title="Recall@10" value={(0.892 + run * .001).toFixed(3)} delta="↑ 0.08" detail="vs. previous (0.812)" />
-          <MetricCard icon={<BarChart3 size={17} />} title="MRR" value={(0.665 + run * .001).toFixed(3)} delta="↑ 0.05" detail="vs. previous (0.615)" />
-          <MetricCard icon={<FileText size={17} />} title="Context Recall" value={(0.781 + run * .001).toFixed(3)} delta="↑ 0.06" detail="vs. previous (0.721)" />
-          <MetricCard icon={<Clock3 size={17} />} title="Latency" value={`${312 - run} ms`} delta="↓ 18%" detail="vs. previous (381 ms)" />
-        </div>
-
-        <section className="overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-          <PanelHeader title="Case Results" right={<div className="flex items-center gap-2"><span>1–10 of 50</span><PaginationButton disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={14} /></PaginationButton><PaginationButton onClick={() => setPage((value) => value + 1)}><ChevronRight size={14} /></PaginationButton></div>} />
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-[10px]">
-              <thead className="border-b border-slate-200 text-slate-600"><tr><th className="w-10 px-3 py-2">#</th><th className="px-2">Query</th><th className="w-[135px] px-2">Type</th><th className="w-[110px] px-2">Status</th><th className="w-[105px] px-2">Recall@10</th><th className="w-[120px] px-2">First Gold Rank</th><th className="w-[120px] px-2">Result</th></tr></thead>
-              <tbody>{EVALUATION_CASES.map((item) => <tr key={item.id} className="border-b border-slate-100 transition hover:bg-slate-50"><td className="px-3 py-2.5 text-slate-500">{item.id}</td><td className="max-w-[420px] truncate px-2">{item.query}</td><td className="px-2 text-slate-600">{item.type}</td><td className="px-2"><span className="inline-flex items-center gap-1.5">{item.pass ? <CheckCircle2 size={13} className="text-emerald-500" /> : <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-rose-500 text-[8px] text-rose-500">×</span>}{item.pass ? "Pass" : "Fail"}</span></td><td className="px-2 tabular-nums">{item.recall.toFixed(2)}</td><td className="px-2">{item.firstGoldRank ?? "—"}</td><td className={`px-2 ${item.pass ? "text-emerald-600" : "text-slate-500"}`}>{item.pass ? "Relevant" : "Not relevant"}</td></tr>)}</tbody>
-            </table>
-          </div>
-        </section>
-
-        <div className="grid gap-3 xl:grid-cols-2">
-          <section className="rounded-[10px] border border-slate-200 p-4">
-            <h2 className="text-[13px] font-semibold">Failure Summary</h2>
-            <div className="mt-4 space-y-3"><FailureBar label="No relevant documents" count="5 (50%)" width="50%" /><FailureBar label="Wrong context" count="3 (30%)" width="30%" /><FailureBar label="Incomplete answer" count="1 (10%)" width="10%" /><FailureBar label="Irrelevant answer" count="1 (10%)" width="10%" /></div>
-          </section>
-          <section className="rounded-[10px] border border-slate-200 p-4">
-            <div className="flex items-center justify-between"><h2 className="text-[13px] font-semibold">Evaluation Summary</h2><Copy size={14} className="text-slate-400" /></div>
-            <ul className="mt-3 list-disc space-y-1.5 pl-4 text-[10px] leading-5 text-slate-700"><li>Overall performance improved by 8% in Recall@10 compared to the previous run.</li><li>Most failures are due to no relevant documents, indicating gaps in dataset coverage.</li><li>Factual and summary queries perform well, while policy-related queries need better retrieval.</li><li>Consider expanding the dataset with more policy and economic impact documents.</li><li>Latency decreased by 18%, meeting performance targets.</li></ul>
-          </section>
-        </div>
-      </div>
-    </ScrollSurface>
-  )
+function EvaluationTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[] }) {
+  const [datasetId, setDatasetId] = useState("")
+  const [configId, setConfigId] = useState("default")
+  const [cases, setCases] = useState<RagDebugCase[]>([])
+  const [report, setReport] = useState<RagDebugEvaluationResponse["report"] | null>(null)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState("")
+  useEffect(() => { if (datasets.length && !datasets.some((item) => item.dataset_id === datasetId)) setDatasetId(datasets[0].dataset_id) }, [datasets, datasetId])
+  useEffect(() => { if (configs.length && !configs.some((item) => item.config_id === configId)) setConfigId(configs[0].config_id) }, [configs, configId])
+  useEffect(() => { if (!datasetId) { setCases([]); return } listRagDebugCases(datasetId).then(setCases).catch((reason) => setError(errorText(reason))) }, [datasetId])
+  async function run() { if (!datasetId || running) return; setRunning(true); setError(""); try { const result = await evaluateRagDebugDataset({ dataset_id: datasetId, config_id: configId, top_k: 20 }); setReport(result.report) } catch (reason) { setError(errorText(reason)) } finally { setRunning(false) } }
+  const retrieval = report?.retrieval ?? {}
+  const rows = report?.cases ?? []
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_140px]"><Field label="Evaluation Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name} · {item.case_count} cases</option>)}</select></Field><Field label="RAG Config"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !cases.length || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Evaluating" : "Run evaluation"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-4"><MetricCard title="Recall@10" value={percent(retrieval.recall_at_10)} delta={report ? `${Number(retrieval.evaluated_cases ?? 0)} cases` : "—"} detail="Relevant chunks found in the top ten." icon={<Target size={15} />} /><MetricCard title="MRR" value={percent(retrieval.mrr)} delta={report ? "measured" : "—"} detail="Mean reciprocal rank after reranking." icon={<BarChart3 size={15} />} /><MetricCard title="nDCG@10" value={percent(retrieval.ndcg_at_10)} delta={report ? "graded" : "—"} detail="Position-aware relevance quality." icon={<CheckCircle2 size={15} />} /><MetricCard title="No-answer" value={percent(retrieval.no_answer_accuracy)} delta={report ? `${Number(retrieval.no_answer_cases ?? 0)} cases` : "—"} detail="Correctly abstained cases." icon={<HelpCircle size={15} />} /></div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Case Results</h2><p className="mt-1 text-[10px] text-slate-500">Metrics are calculated from the selected dataset and real retrieval responses.</p></div><span className="text-[10px] text-slate-400">{cases.length} cases</span></div>{!cases.length ? <EmptyState title="No evaluation cases" description="Create or import cases in Datasets before running an evaluation." /> : <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Query</th><th className="w-28 px-2">Type</th><th className="w-24 px-2">Recall@10</th><th className="w-20 px-2">MRR</th><th className="w-20 px-2">Status</th></tr></thead><tbody>{cases.map((item, index) => { const metric = rows[index] ?? {}; const recall = Number(metric.recall_at_10 ?? 0); return <tr key={item.case_id} className="border-t border-slate-100"><td className="max-w-[480px] truncate px-3 py-2.5 font-medium">{item.query}</td><td className="px-2 text-slate-500">{item.query_type}</td><td className="px-2">{report ? percent(recall) : "—"}</td><td className="px-2">{report ? percent(Number(metric.reciprocal_rank ?? 0)) : "—"}</td><td className="px-2">{report ? <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 size={12} />Measured</span> : <span className="text-slate-400">Pending</span>}</td></tr> })}</tbody></table></div>}</section></div></ScrollSurface>
 }
 
-function CompareTab() {
-  const [baseline, setBaseline] = useState("Default (v1)")
-  const [candidate, setCandidate] = useState("Coastal RAG (v2)")
-  const [dataset, setDataset] = useState("Coastal Adaptation (n=200)")
-  const [comparing, setComparing] = useState(false)
-  const [selectedId, setSelectedId] = useState(1)
-  const [run, setRun] = useState(0)
-
-  const selected = COMPARE_CASES.find((item) => item.id === selectedId) ?? COMPARE_CASES[0]
-  const delta = selected.aRank - selected.bRank
-
-  function compare() {
-    setComparing(true)
-    window.setTimeout(() => {
-      setRun((value) => value + 1)
-      setComparing(false)
-    }, 800)
-  }
-
-  return (
-    <ScrollSurface>
-      <div className="mx-auto max-w-[1240px] space-y-3">
-        <section className="grid items-end gap-4 rounded-[10px] border border-slate-200 p-4 lg:grid-cols-[1fr_1fr_1fr_140px]">
-          <Field label="Baseline (A)"><select value={baseline} onChange={(event) => setBaseline(event.target.value)} className={selectClass}><option>Default (v1)</option><option>Dense only</option></select></Field>
-          <Field label="Candidate (B)"><select value={candidate} onChange={(event) => setCandidate(event.target.value)} className={selectClass}><option>Coastal RAG (v2)</option><option>Hybrid + Rerank</option></select></Field>
-          <Field label="Dataset"><select value={dataset} onChange={(event) => setDataset(event.target.value)} className={selectClass}><option>Coastal Adaptation (n=200)</option><option>Academic RAG Core (n=120)</option></select></Field>
-          <PrimaryButton onClick={compare} disabled={comparing}>{comparing ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{comparing ? "Comparing" : "Compare"}</PrimaryButton>
-        </section>
-
-        <div className={`grid gap-3 md:grid-cols-2 xl:grid-cols-4 ${comparing ? "opacity-60" : ""}`}>
-          <CompareMetric title="Recall@10" a="0.612" b={(0.684 + run * .001).toFixed(3)} delta="+0.072" percent="↑ 11.8%" />
-          <CompareMetric title="MRR" a="0.421" b={(0.509 + run * .001).toFixed(3)} delta="+0.088" percent="↑ 20.9%" />
-          <CompareMetric title="Context Recall" a="0.708" b={(0.781 + run * .001).toFixed(3)} delta="+0.073" percent="↑ 10.3%" />
-          <CompareMetric title="P95 Latency (ms)" a="412" b={`${356 - run}`} delta="−56" percent="↓ 13.6%" />
-        </div>
-
-        <section className="overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-          <PanelHeader title="Compared Cases" right={<div className="flex items-center gap-2"><span>5 of 200</span><PaginationButton disabled><ChevronLeft size={14} /></PaginationButton><PaginationButton><ChevronRight size={14} /></PaginationButton></div>} />
-          <table className="w-full text-left text-[10px]">
-            <thead className="border-b border-slate-200 text-slate-600"><tr><th className="w-10 px-3 py-2">#</th><th className="px-2">Query</th><th className="w-[100px] px-2">A Rank</th><th className="w-[100px] px-2">B Rank</th><th className="w-[110px] px-2">Delta</th><th className="w-[130px] px-2">Outcome</th></tr></thead>
-            <tbody>{COMPARE_CASES.map((item) => { const itemDelta = item.aRank - item.bRank; const better = itemDelta > 0 ? "B better" : itemDelta < 0 ? "A better" : "Tie"; return <tr key={item.id} onClick={() => setSelectedId(item.id)} className={`cursor-pointer border-b border-slate-100 transition ${selectedId === item.id ? "bg-slate-50" : "hover:bg-slate-50/60"}`}><td className="px-3 py-2.5 text-slate-500">{item.id}</td><td className="px-2">{item.query}</td><td className="px-2">{item.aRank}</td><td className="px-2">{item.bRank}</td><td className={`px-2 font-medium ${itemDelta > 0 ? "text-emerald-600" : itemDelta < 0 ? "text-rose-500" : "text-slate-500"}`}>{itemDelta > 0 ? `↑ ${itemDelta}` : itemDelta < 0 ? `↓ ${Math.abs(itemDelta)}` : "0"}</td><td className="px-2"><span className={`rounded-md px-2 py-1 text-[9px] font-medium ${better === "B better" ? "bg-emerald-50 text-emerald-700" : better === "A better" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>{better}</span></td></tr> })}</tbody>
-          </table>
-        </section>
-
-        <section className="rounded-[10px] border border-slate-200 p-3">
-          <div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Query Comparison</h2><p className="mt-1 text-[10px] text-slate-700">{selected.query}</p></div><div className="flex items-center gap-2 text-[10px] text-slate-500"><span>1 of 200</span><PaginationButton disabled><ChevronLeft size={14} /></PaginationButton><PaginationButton><ChevronRight size={14} /></PaginationButton></div></div>
-          <div className="mt-3 grid gap-3 xl:grid-cols-2">
-            <QueryComparisonCard label="Baseline (A)" config={baseline} rank={selected.aRank} latency={412} rows={ROWS.slice(2, 5)} />
-            <QueryComparisonCard label="Candidate (B)" config={candidate} rank={selected.bRank} latency={356} rows={ROWS.slice(0, 3)} highlight={delta > 0} />
-          </div>
-        </section>
-      </div>
-    </ScrollSurface>
-  )
+function CompareTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[] }) {
+  const [datasetId, setDatasetId] = useState("")
+  const [baselineId, setBaselineId] = useState("default")
+  const [candidateId, setCandidateId] = useState("")
+  const [result, setResult] = useState<RagDebugCompareResponse | null>(null)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState("")
+  useEffect(() => { if (datasets.length && !datasets.some((item) => item.dataset_id === datasetId)) setDatasetId(datasets[0].dataset_id) }, [datasets, datasetId])
+  useEffect(() => { if (configs.length) { if (!configs.some((item) => item.config_id === baselineId)) setBaselineId(configs[0].config_id); if (!candidateId || !configs.some((item) => item.config_id === candidateId)) setCandidateId(configs.find((item) => item.config_id !== baselineId)?.config_id ?? configs[0].config_id) } }, [configs, baselineId, candidateId])
+  async function run() { if (!datasetId || !candidateId || running) return; setRunning(true); setError(""); try { setResult(await compareRagDebugDataset({ dataset_id: datasetId, baseline_config_id: baselineId, candidate_config_id: candidateId, top_k: 20 })) } catch (reason) { setError(errorText(reason)) } finally { setRunning(false) } }
+  const metrics = result?.metrics ?? {}
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_1fr_140px]"><Field label="Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name}</option>)}</select></Field><Field label="Baseline"><select value={baselineId} onChange={(event) => setBaselineId(event.target.value)} className={selectClass}>{configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>)}</select></Field><Field label="Candidate"><select value={candidateId} onChange={(event) => setCandidateId(event.target.value)} className={selectClass}>{configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>)}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !candidateId || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Comparing" : "Compare"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-3"><CompareMetric title="Recall@10" a={percent(Number(metrics.baseline_recall_at_10 ?? 0))} b={percent(Number(metrics.candidate_recall_at_10 ?? 0))} delta={signedPercent(Number(metrics.recall_delta ?? 0))} percent="Candidate − baseline" /><CompareMetric title="Evaluated cases" a={String(metrics.evaluated_cases ?? "—")} b={String(metrics.evaluated_cases ?? "—")} delta="—" percent="Same dataset" /><CompareMetric title="Result" a="Baseline" b="Candidate" delta={Number(metrics.recall_delta ?? 0) >= 0 ? "Improved" : "Regressed"} percent="Top-10 recall" /></div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Query Comparison</h2><p className="mt-1 text-[10px] text-slate-500">Each row is generated by running the same query through both profiles.</p></div><span className="text-[10px] text-slate-400">{result?.cases.length ?? 0} comparisons</span></div>{!result?.cases.length ? <EmptyState title="Run a comparison" description="Choose a dataset and two profiles to see rank and latency changes." /> : <div className="mt-3 space-y-2">{result.cases.map((item) => <div key={item.case_id} className="grid gap-2 rounded-[8px] border border-slate-100 px-3 py-3 md:grid-cols-[minmax(0,1fr)_100px_100px_100px]"><div className="min-w-0"><p className="truncate text-[11px] font-semibold">{item.query}</p><p className="mt-1 text-[9px] text-slate-500">{item.case_id} · {item.baseline_latency_ms.toFixed(0)} ms / {item.candidate_latency_ms.toFixed(0)} ms</p></div><MiniStat label="Baseline rank" value={item.baseline_rank ? String(item.baseline_rank) : "—"} /><MiniStat label="Candidate rank" value={item.candidate_rank ? String(item.candidate_rank) : "—"} /><span className={`self-center text-[10px] font-medium ${item.candidate_rank && (!item.baseline_rank || item.candidate_rank < item.baseline_rank) ? "text-emerald-600" : "text-slate-500"}`}>{item.candidate_rank && item.baseline_rank ? item.candidate_rank - item.baseline_rank : "No gold hit"}</span></div>)}</div>}</section></div></ScrollSurface>
 }
 
-function DatasetsTab() {
-  const [dataset, setDataset] = useState("Coastal Adaptation (v1)")
-  const [cases, setCases] = useState(DATASET_CASES)
-  const [selectedId, setSelectedId] = useState(1)
-  const [query, setQuery] = useState("")
-  const [type, setType] = useState("All types")
-  const [answerable, setAnswerable] = useState("All answerable")
-  const [tag, setTag] = useState("All tags")
-  const [draft, setDraft] = useState<DatasetCase>(() => ({ ...DATASET_CASES[0], goldChunks: [...DATASET_CASES[0].goldChunks], tags: [...DATASET_CASES[0].tags] }))
-  const [dirty, setDirty] = useState(false)
+function DatasetsTab({ datasets, onDatasetsChanged }: { datasets: RagDebugDataset[]; onDatasetsChanged: () => Promise<void> }) {
+  const [datasetId, setDatasetId] = useState("")
+  const [cases, setCases] = useState<RagDebugCase[]>([])
+  const [selectedId, setSelectedId] = useState("")
+  const [draft, setDraft] = useState<RagDebugCase | null>(null)
   const [notice, setNotice] = useState("")
-  const importRef = useRef<HTMLInputElement>(null)
-
-  const visibleCases = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return cases.filter((item) => {
-      if (needle && !`${item.query} ${item.tags.join(" ")}`.toLowerCase().includes(needle)) return false
-      if (type !== "All types" && item.type !== type) return false
-      if (answerable === "Answerable" && !item.answerable) return false
-      if (answerable === "Not answerable" && item.answerable) return false
-      if (tag !== "All tags" && !item.tags.includes(tag)) return false
-      return true
-    })
-  }, [answerable, cases, query, tag, type])
-
-  useEffect(() => {
-    if (!notice) return
-    const timer = window.setTimeout(() => setNotice(""), 1800)
-    return () => window.clearTimeout(timer)
-  }, [notice])
-
-  function selectCase(item: DatasetCase) {
-    setSelectedId(item.id)
-    setDraft({ ...item, goldChunks: [...item.goldChunks], tags: [...item.tags] })
-    setDirty(false)
-  }
-
-  function patch(patchValue: Partial<DatasetCase>) {
-    setDraft((current) => ({ ...current, ...patchValue }))
-    setDirty(true)
-  }
-
-  function save() {
-    setCases((current) => current.map((item) => item.id === draft.id ? { ...draft, updated: "Just now" } : item))
-    setDirty(false)
-    setNotice("Case saved locally")
-  }
-
-  function removeCase() {
-    const next = cases.filter((item) => item.id !== selectedId)
-    setCases(next)
-    const replacement = next[0]
-    if (replacement) selectCase(replacement)
-    setNotice("Case removed")
-  }
-
-  function createDataset() {
-    setDataset("Untitled Dataset")
-    setNotice("New mock dataset created")
-  }
-
-  return (
-    <ScrollSurface>
-      <div className="mx-auto max-w-[1240px] space-y-3">
-        <section className="flex flex-wrap items-end gap-3 rounded-[10px] border border-slate-200 p-4">
-          <div className="min-w-[260px] flex-1"><Field label="Dataset"><select value={dataset} onChange={(event) => setDataset(event.target.value)} className={selectClass}><option>Coastal Adaptation (v1)</option><option>Academic RAG Core</option><option>Untitled Dataset</option></select></Field></div>
-          <div className="flex h-10 items-center border-l border-slate-200 pl-4 text-[12px] font-semibold">42 cases</div>
-          <div className="hidden h-10 items-center gap-2 text-[9px] text-slate-500 xl:flex"><span className="rounded-full bg-slate-100 px-3 py-1">Created Feb 12, 2024</span><span>│</span><span className="rounded-full bg-slate-100 px-3 py-1">Updated Mar 1, 2024</span><span>│</span><span className="rounded-full bg-slate-100 px-3 py-1">Public</span></div>
-          <div className="ml-auto flex items-center gap-2">
-            <input ref={importRef} type="file" accept=".json,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) setNotice(`Imported ${file.name} locally`) }} />
-            <SecondaryButton onClick={() => importRef.current?.click()}><Upload size={14} />Import</SecondaryButton>
-            <PrimaryButton onClick={createDataset}><Plus size={15} />New Dataset</PrimaryButton>
-            <button type="button" className="rounded-[8px] p-2 text-slate-600 hover:bg-slate-100" aria-label="More dataset actions"><MoreHorizontal size={16} /></button>
-          </div>
-        </section>
-
-        <div className="grid min-h-[620px] gap-3 xl:grid-cols-[minmax(0,1fr)_430px]">
-          <section className="overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-            <div className="border-b border-slate-100 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="text-[14px] font-semibold">Evaluation Cases</h2><p className="mt-0.5 text-[10px] text-slate-500">Manage evaluation cases for this dataset. Each case includes a query, gold references, and expected answer.</p></div><span className="text-[10px] text-slate-500">42 cases</span></div>
-              <div className="mt-3 grid gap-2 md:grid-cols-[1fr_120px_150px_130px_72px]">
-                <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search queries, tags…" className={inputClass("h-9 w-full pl-8 text-[10px]")} /></div>
-                <select value={type} onChange={(event) => setType(event.target.value)} className={smallSelectClass}><option>All types</option><option>Factual</option><option>Analytical</option><option>Comparative</option><option>Creative</option></select>
-                <select value={answerable} onChange={(event) => setAnswerable(event.target.value)} className={smallSelectClass}><option>All answerable</option><option>Answerable</option><option>Not answerable</option></select>
-                <select value={tag} onChange={(event) => setTag(event.target.value)} className={smallSelectClass}><option>All tags</option><option>adaptation</option><option>policy</option><option>sea-level</option></select>
-                <button type="button" onClick={() => { setQuery(""); setType("All types"); setAnswerable("All answerable"); setTag("All tags") }} className="rounded-[8px] border border-slate-200 text-[10px] hover:bg-slate-50">Reset</button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[9px]">
-                <thead className="border-b border-slate-200 text-slate-600"><tr><th className="w-8 px-3 py-2"><span className="block h-3 w-3 rounded border border-slate-300" /></th><th className="px-2">Query</th><th className="w-[100px] px-2">Query Type</th><th className="w-[85px] px-2">Gold Chunks</th><th className="w-[85px] px-2">Gold Answer</th><th className="w-[90px] px-2">Answerable</th><th className="w-[110px] px-2">Tags</th><th className="w-[90px] px-2">Updated</th></tr></thead>
-                <tbody>{visibleCases.map((item) => <tr key={item.id} onClick={() => selectCase(item)} className={`cursor-pointer border-b border-slate-100 transition ${selectedId === item.id ? "bg-slate-100" : "hover:bg-slate-50"}`}><td className="px-3 py-2.5"><span className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${selectedId === item.id ? "border-slate-950 bg-slate-950 text-white" : "border-slate-300"}`}>{selectedId === item.id && <Check size={9} />}</span></td><td className="max-w-[260px] truncate px-2">{item.query}</td><td className="px-2">{item.type}</td><td className="px-2 text-center">{item.goldChunks.length}</td><td className="px-2">{item.answer ? "Yes" : "No"}</td><td className="px-2">{item.answerable ? <CheckCircle2 size={13} className="text-emerald-500" /> : "—"}</td><td className="px-2"><span className="rounded-full bg-slate-100 px-2 py-1">{item.tags[0]}</span></td><td className="px-2 text-slate-500">{item.updated}</td></tr>)}</tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-[10px] text-slate-500"><span>1–10 of 42 cases</span><div className="flex items-center gap-2"><ChevronLeft size={14} /><PaginationButton active>1</PaginationButton><PaginationButton>2</PaginationButton><PaginationButton>3</PaginationButton><PaginationButton>4</PaginationButton><PaginationButton>5</PaginationButton><ChevronRight size={14} /></div><div className="flex items-center gap-2"><span>Rows per page</span><select className="rounded-[7px] border border-slate-200 bg-white px-2 py-1.5"><option>10</option><option>25</option></select></div></div>
-          </section>
-
-          <aside className="overflow-hidden rounded-[10px] border border-slate-200 bg-white">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3"><h2 className="text-[13px] font-semibold">Case Details</h2><div className="flex items-center gap-2 text-[10px] text-slate-500"><ChevronLeft size={14} /><span>1 of 42</span><button type="button" className="rounded border border-slate-200 p-1.5"><ChevronRight size={14} /></button></div></div>
-            <div className="ait-scroll-page max-h-[570px] space-y-3 overflow-y-auto p-4">
-              <EditorLabel label="Query" required><textarea value={draft.query} onChange={(event) => patch({ query: event.target.value })} rows={2} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel>
-              <EditorLabel label="Query Type" required><div className="flex flex-wrap gap-2">{(["Factual", "Analytical", "Comparative", "Creative"] as DatasetCase["type"][]).map((item) => <button key={item} type="button" onClick={() => patch({ type: item })} className={`rounded-full border px-3 py-1.5 text-[10px] transition ${draft.type === item ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white hover:bg-slate-50"}`}>{item}</button>)}</div></EditorLabel>
-              <EditorLabel label="Gold Chunks" required><div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-[8px] border border-slate-200 px-2 py-1.5">{draft.goldChunks.map((chunk) => <span key={chunk} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[9px]">{chunk}<button type="button" onClick={() => patch({ goldChunks: draft.goldChunks.filter((value) => value !== chunk) })} className="text-slate-400">×</button></span>)}<ChevronDown size={13} className="ml-auto text-slate-400" /></div></EditorLabel>
-              <EditorLabel label="Expected Answer" required><textarea value={draft.answer} onChange={(event) => patch({ answer: event.target.value })} rows={5} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel>
-              <div className="flex items-center gap-3"><span className="text-[10px] font-medium">Answerable <span className="text-rose-500">*</span></span><button type="button" role="switch" aria-checked={draft.answerable} onClick={() => patch({ answerable: !draft.answerable })} className={`relative h-5 w-9 rounded-full transition-colors ${draft.answerable ? "bg-slate-950" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${draft.answerable ? "translate-x-[18px]" : "translate-x-0.5"}`} /></button><span className="text-[10px]">{draft.answerable ? "Yes" : "No"}</span></div>
-              <EditorLabel label="Tags"><div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-[8px] border border-slate-200 px-2 py-1.5">{draft.tags.map((item) => <span key={item} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[9px]">{item}<button type="button" onClick={() => patch({ tags: draft.tags.filter((value) => value !== item) })} className="text-slate-400">×</button></span>)}<ChevronDown size={13} className="ml-auto text-slate-400" /></div></EditorLabel>
-              <EditorLabel label="Notes"><textarea value={draft.notes} onChange={(event) => patch({ notes: event.target.value })} rows={3} placeholder="Add notes about this case (optional)…" className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel>
-              <div className="grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 text-[8px] text-slate-500"><div><span className="block">Created</span><strong className="mt-1 block font-medium text-slate-700">Feb 12, 2024, 10:24 AM</strong></div><div><span className="block">Updated</span><strong className="mt-1 block font-medium text-slate-700">Mar 1, 2024, 3:18 PM</strong></div><div><span className="block">Created by</span><strong className="mt-1 block font-medium text-slate-700">You</strong></div></div>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 p-3"><SecondaryButton onClick={removeCase}><Trash2 size={13} />Delete</SecondaryButton><button type="button" disabled={!dirty} onClick={save} className="inline-flex h-9 items-center justify-center gap-2 rounded-[8px] bg-slate-950 px-4 text-[10px] font-semibold text-white transition hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400"><Save size={13} />Save Changes</button></div>
-          </aside>
-        </div>
-      </div>
-      {notice && <div className="fixed bottom-6 right-6 z-50 rounded-[10px] bg-slate-950 px-4 py-2.5 text-[11px] font-medium text-white shadow-xl animate-[ragToast_.2s_ease-out]">{notice}</div>}
-    </ScrollSurface>
-  )
+  const [error, setError] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (datasets.length && !datasets.some((item) => item.dataset_id === datasetId)) setDatasetId(datasets[0].dataset_id) }, [datasets, datasetId])
+  useEffect(() => { if (!datasetId) { setCases([]); setDraft(null); return } listRagDebugCases(datasetId).then((items) => { setCases(items); setSelectedId(items[0]?.case_id ?? ""); setDraft(items[0] ?? null) }).catch((reason) => setError(errorText(reason))) }, [datasetId])
+  useEffect(() => { const selected = cases.find((item) => item.case_id === selectedId); if (selected) setDraft(selected) }, [cases, selectedId])
+  const dataset = datasets.find((item) => item.dataset_id === datasetId)
+  async function newDataset() { const name = window.prompt("Dataset name", "RAG evaluation set"); if (!name?.trim()) return; try { const created = await createRagDebugDataset({ name }); await onDatasetsChanged(); setDatasetId(created.dataset_id); setNotice("Dataset created.") } catch (reason) { setError(errorText(reason)) } }
+  async function removeDataset() { if (!datasetId || !window.confirm("Delete this dataset and its cases?")) return; try { await deleteRagDebugDataset(datasetId); await onDatasetsChanged(); setDatasetId(""); setNotice("Dataset deleted.") } catch (reason) { setError(errorText(reason)) } }
+  async function save() { if (!datasetId || !draft) return; try { const saved = cases.some((item) => item.case_id === draft.case_id) ? await updateRagDebugCase(datasetId, draft.case_id, draft) : await saveRagDebugCase(datasetId, draft); setCases((items) => [...items.filter((item) => item.case_id !== saved.case_id), saved]); setSelectedId(saved.case_id); setNotice("Case saved.") } catch (reason) { setError(errorText(reason)) } }
+  async function removeCase() { if (!datasetId || !draft || !window.confirm("Delete this evaluation case?")) return; try { await deleteRagDebugCase(datasetId, draft.case_id); const next = cases.filter((item) => item.case_id !== draft.case_id); setCases(next); setDraft(next[0] ?? null); setSelectedId(next[0]?.case_id ?? ""); setNotice("Case deleted.") } catch (reason) { setError(errorText(reason)) } }
+  async function importFile(file: File) { const content = await file.text(); const format = file.name.toLowerCase().endsWith(".jsonl") ? "jsonl" : "json"; try { const created = await importRagDebugDataset({ name: file.name.replace(/\.(jsonl?|txt)$/i, "") || "Imported dataset", content, format }); await onDatasetsChanged(); setDatasetId(created.dataset_id); setNotice(`${created.case_count} cases imported.`) } catch (reason) { setError(errorText(reason)) } }
+  async function exportFile() { if (!datasetId) return; try { const result = await exportRagDebugDataset(datasetId); const url = URL.createObjectURL(new Blob([result.content], { type: "application/json" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${result.dataset.name}.json`; anchor.click(); URL.revokeObjectURL(url) } catch (reason) { setError(errorText(reason)) } }
+  function createCase() { setDraft({ case_id: `case-${Date.now()}`, query: "", categories: [], relevant_chunk_ids: [], relevance_grades: {}, claims: [], no_answer: false, metadata: {}, query_type: "Factual", expected_answer: "", answerable: true, tags: [], notes: "", updated_at: "" }); setSelectedId("") }
+  function patchDraft(update: Partial<RagDebugCase>) { setDraft((value) => value ? { ...value, ...update } : value) }
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-slate-200 p-4"><div><h2 className="text-[13px] font-semibold">Evaluation Datasets</h2><p className="mt-1 text-[10px] text-slate-500">Persist retrieval test cases locally and reuse them for evaluation and comparison.</p></div><div className="flex gap-2"><SecondaryButton onClick={newDataset}><Plus size={13} />New dataset</SecondaryButton><SecondaryButton onClick={() => inputRef.current?.click()}><Upload size={13} />Import JSON/JSONL</SecondaryButton><input ref={inputRef} type="file" accept=".json,.jsonl,application/json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); event.currentTarget.value = "" }} /><SecondaryButton onClick={() => void exportFile()} disabled={!datasetId}><Download size={13} />Export</SecondaryButton></div></section><div className="grid min-h-[520px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]"><section className="rounded-[10px] border border-slate-200 p-3"><PanelHeader title="Evaluation Cases" right={dataset ? `${cases.length} cases` : undefined} />{datasets.length === 0 ? <EmptyState title="No datasets" description="Create a dataset or import JSON/JSONL cases." /> : <div className="mt-3 space-y-1">{datasets.map((item) => <button key={item.dataset_id} type="button" onClick={() => setDatasetId(item.dataset_id)} className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] ${datasetId === item.dataset_id ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}><Database size={13} /><span className="min-w-0 flex-1 truncate">{item.name}</span><span className="text-slate-400">{item.case_count}</span></button>)}{dataset && <div className="mt-4 border-t border-slate-100 pt-3"><button type="button" onClick={createCase} className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] text-slate-600 hover:bg-slate-50"><Plus size={13} />New case</button><button type="button" onClick={() => void removeDataset()} className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] text-rose-600 hover:bg-rose-50"><Trash2 size={13} />Delete dataset</button></div>}{cases.map((item) => <button key={item.case_id} type="button" onClick={() => setSelectedId(item.case_id)} className={`mt-1 block w-full truncate rounded-[7px] px-2 py-2 text-left text-[10px] ${selectedId === item.case_id ? "bg-slate-50 font-semibold" : "text-slate-600 hover:bg-slate-50"}`}>{item.query || item.case_id}</button>)}</div>}</section><section className="rounded-[10px] border border-slate-200">{draft ? <><PanelHeader title="Case Details" right={<span>{draft.case_id}</span>} /><div className="ait-scroll-page max-h-[560px] space-y-3 overflow-y-auto p-4"><EditorLabel label="Query" required><textarea value={draft.query} onChange={(event) => patchDraft({ query: event.target.value })} rows={3} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel><EditorLabel label="Query Type"><select value={draft.query_type} onChange={(event) => patchDraft({ query_type: event.target.value })} className={selectClass}><option>Factual</option><option>Analytical</option><option>Comparative</option><option>Creative</option></select></EditorLabel><EditorLabel label="Gold Chunk IDs"><input value={draft.relevant_chunk_ids.join(", ")} onChange={(event) => patchDraft({ relevant_chunk_ids: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="chunk_id_1, chunk_id_2" className={inputClass("h-9 w-full text-[10px]")} /></EditorLabel><EditorLabel label="Expected Answer"><textarea value={draft.expected_answer} onChange={(event) => patchDraft({ expected_answer: event.target.value })} rows={5} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel><label className="flex items-center gap-2 text-[10px] text-slate-700"><input type="checkbox" checked={draft.answerable} onChange={(event) => patchDraft({ answerable: event.target.checked, no_answer: !event.target.checked })} className="accent-slate-950" />Answerable</label><EditorLabel label="Tags"><input value={draft.tags.join(", ")} onChange={(event) => patchDraft({ tags: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="retrieval, multilingual" className={inputClass("h-9 w-full text-[10px]")} /></EditorLabel><EditorLabel label="Notes"><textarea value={draft.notes} onChange={(event) => patchDraft({ notes: event.target.value })} rows={3} className={inputClass("w-full resize-none text-[10px]")} /></EditorLabel></div><div className="flex items-center justify-end gap-2 border-t border-slate-100 p-3"><SecondaryButton onClick={() => void removeCase()}><Trash2 size={13} />Delete</SecondaryButton><PrimaryButton onClick={() => void save()}><Save size={13} />Save Changes</PrimaryButton></div></> : <EmptyState title="Select or create a case" description="Cases are stored in the local RAG Debug Studio database." />}</section></div>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}{notice && <div className="rounded-[10px] bg-slate-950 px-4 py-2.5 text-[11px] text-white">{notice}</div>}</div></ScrollSurface>
 }
 
-function ScrollSurface({ children }: { children: ReactNode }) {
-  return <div className="ait-scroll-page h-full min-h-0 overflow-y-auto px-8 py-5">{children}</div>
-}
-
+function StagePill({ stage, active }: { stage: RagDebugStage; active: boolean }) { const icon = stage.status === "complete" ? <CheckCircle2 size={13} className="text-emerald-600" /> : stage.status === "failed" ? <AlertCircle size={13} className="text-rose-600" /> : stage.status === "active" || active ? <LoaderCircle size={13} className="animate-spin text-slate-950" /> : <span className="h-2 w-2 rounded-full border border-slate-300" />; return <div className={`flex min-w-0 items-center gap-1.5 rounded-[7px] border px-2 py-2 ${active ? "border-slate-950 bg-slate-50" : "border-slate-100"}`} title={stage.note}><span className="shrink-0">{icon}</span><span className="min-w-0 truncate text-[9px] font-medium">{stage.label}</span></div> }
+function ResultTable({ rows, selectedId, onSelect }: { rows: RagDebugCandidate[]; selectedId: string; onSelect: (id: string) => void }) { return <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full table-fixed text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="w-8 px-2 py-2">#</th><th className="w-[135px] px-2">Chunk ID</th><th className="w-[70px] px-2">Score</th><th className="w-[64px] px-2">Δ Rank</th><th className="px-2">Source</th><th className="w-[90px] px-2">Section</th></tr></thead><tbody>{rows.map((row, index) => { const delta = (row.before ?? row.after ?? index + 1) - (row.after ?? index + 1); return <tr key={row.id} onClick={() => onSelect(row.id)} className={`cursor-pointer border-t border-slate-100 transition ${selectedId === row.id ? "bg-slate-100" : "hover:bg-slate-50"}`}><td className="px-2 py-2.5 text-slate-500">{row.after ?? index + 1}</td><td className="truncate px-2 font-medium">{row.id}</td><td className="px-2 tabular-nums">{formatScore(row.rerank ?? row.fusion ?? row.dense ?? row.bm25)}</td><td className="px-2">{delta === 0 ? <span className="text-slate-400">—</span> : delta > 0 ? <span className="inline-flex items-center gap-1 text-emerald-600"><ArrowUp size={10} />{delta}</span> : <span className="inline-flex items-center gap-1 text-rose-500"><ArrowDown size={10} />{Math.abs(delta)}</span>}</td><td className="truncate px-2 text-slate-600">{row.source || row.document_id}</td><td className="truncate px-2 text-slate-600">{row.section || "—"}</td></tr> })}</tbody></table></div> }
+function ChunkDetail({ row, index, total, previous, next }: { row: RagDebugCandidate; index: number; total: number; previous: () => void; next: () => void }) { const [copied, setCopied] = useState(false); function copy() { if (navigator.clipboard) void navigator.clipboard.writeText(row.id); setCopied(true); window.setTimeout(() => setCopied(false), 800) }; return <div><div className="flex items-center justify-between border-b border-slate-100 pb-3"><h2 className="text-[13px] font-semibold">Chunk Detail</h2><div className="flex items-center gap-1 text-[10px] text-slate-500"><button type="button" onClick={previous} className="rounded border border-slate-200 p-1"><ChevronLeft size={13} /></button><span>{index + 1} of {total}</span><button type="button" onClick={next} className="rounded border border-slate-200 p-1"><ChevronRight size={13} /></button></div></div><dl className="grid grid-cols-[92px_1fr] gap-x-2 gap-y-2 border-b border-slate-100 py-3 text-[10px]"><dt className="text-slate-500">Chunk ID</dt><dd className="flex items-center gap-1 font-medium"><span className="truncate">{row.id}</span><button type="button" onClick={copy} aria-label="Copy chunk ID" className="text-slate-400">{copied ? <Check size={11} /> : <Copy size={11} />}</button></dd><dt className="text-slate-500">Source</dt><dd>{row.source || row.document_id}</dd><dt className="text-slate-500">Section</dt><dd className="truncate">{row.section || "—"}</dd><dt className="text-slate-500">Page</dt><dd>{row.page ?? "—"}</dd><dt className="text-slate-500">Tokens</dt><dd>{row.tokens}</dd><dt className="text-slate-500">Score</dt><dd>{formatScore(row.rerank ?? row.fusion ?? row.dense ?? row.bm25)}</dd><dt className="text-slate-500">Original Rank</dt><dd>{row.before ?? "—"}</dd><dt className="text-slate-500">Rerank Position</dt><dd>{row.after ?? "—"}</dd></dl><h3 className="mt-3 text-[11px] font-semibold">Chunk Text</h3><div className="ait-scroll-page mt-2 max-h-[230px] overflow-y-auto rounded-[8px] bg-slate-50 px-3 py-2.5 text-[10px] leading-[1.6] text-slate-700">{row.text || "No text returned by the index."}</div></div> }
+function ChunkRecordDetail({ chunk }: { chunk: RagDebugChunk }) { const [copied, setCopied] = useState(false); function copy() { if (navigator.clipboard) void navigator.clipboard.writeText(chunk.id); setCopied(true); window.setTimeout(() => setCopied(false), 800) }; return <div><div className="flex items-center justify-between border-b border-slate-100 pb-3"><h2 className="text-[13px] font-semibold">Chunk Detail</h2><button type="button" aria-label="Copy chunk ID" onClick={copy} className="text-slate-400">{copied ? <Check size={13} /> : <Copy size={13} />}</button></div><dl className="grid grid-cols-[92px_1fr] gap-x-2 gap-y-2 border-b border-slate-100 py-3 text-[10px]"><dt className="text-slate-500">Chunk ID</dt><dd className="truncate font-medium">{chunk.id}</dd><dt className="text-slate-500">Document</dt><dd>{chunk.document_id}</dd><dt className="text-slate-500">Section</dt><dd>{chunk.section || "—"}</dd><dt className="text-slate-500">Page</dt><dd>{chunk.page ?? "—"}</dd><dt className="text-slate-500">Type</dt><dd>{chunk.type || "—"}</dd><dt className="text-slate-500">Tokens</dt><dd>{chunk.tokens}</dd><dt className="text-slate-500">Overlap</dt><dd>{chunk.overlap || "—"}</dd><dt className="text-slate-500">Character range</dt><dd>{chunk.start.toLocaleString()} – {chunk.end.toLocaleString()}</dd><dt className="text-slate-500">Embedding model</dt><dd className="truncate">{chunk.embedding || "—"}</dd></dl><h3 className="mt-3 text-[11px] font-semibold">Chunk Text</h3><div className="ait-scroll-page mt-2 max-h-[290px] overflow-y-auto rounded-[8px] bg-slate-50 px-3 py-3 text-[10px] leading-[1.7] text-slate-700">{chunk.text}</div></div> }
+function MetricCard({ title, value, delta, detail, icon }: { title: string; value: string; delta: string; detail: string; icon: ReactNode }) { return <section className="rounded-[10px] border border-slate-200 p-4 transition hover:shadow-[0_4px_16px_rgba(15,23,42,.05)]"><div className="flex items-start justify-between"><h2 className="text-[12px] font-semibold">{title}</h2><span className="text-slate-600">{icon}</span></div><div className="mt-2 flex items-end gap-3"><span className="text-[25px] font-semibold tracking-tight">{value}</span><span className="mb-1 text-[11px] font-medium text-emerald-600">{delta}</span></div><p className="mt-1 text-[10px] text-slate-500">{detail}</p></section> }
+function CompareMetric({ title, a, b, delta, percent: label }: { title: string; a: string; b: string; delta: string; percent: string }) { return <section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center gap-1"><h2 className="text-[12px] font-semibold">{title}</h2><HelpCircle size={12} className="text-slate-400" /></div><div className="mt-3 grid grid-cols-[1fr_1fr_1.15fr] divide-x divide-slate-100"><div><p className="text-[9px] text-slate-500">A</p><p className="mt-1 text-[18px] font-semibold">{a}</p></div><div className="pl-4"><p className="text-[9px] text-slate-500">B</p><p className="mt-1 text-[18px] font-semibold">{b}</p></div><div className="pl-4"><p className="text-[9px] text-slate-500">Δ</p><p className="mt-1 text-[18px] font-semibold text-emerald-600">{delta}</p><p className="text-[10px] text-emerald-600">{label}</p></div></div></section> }
+function MiniStat({ label, value }: { label: string; value: string }) { return <div className="px-3 first:pl-0"><p className="text-[9px] text-slate-500">{label}</p><p className="mt-1 text-[13px] font-semibold">{value}</p></div> }
+function ScrollSurface({ children }: { children: ReactNode }) { return <div className="ait-scroll-page h-full min-h-0 overflow-y-auto px-8 py-5">{children}</div> }
 const inputClass = (extra = "") => `rounded-[8px] border border-slate-200 bg-white px-3 text-[12px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 ${extra}`
 const selectClass = "h-10 w-full rounded-[8px] border border-slate-200 bg-white px-3 text-[12px] text-slate-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5"
-const smallSelectClass = "h-9 w-full rounded-[8px] border border-slate-200 bg-white px-2 text-[10px] text-slate-700 outline-none"
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="block"><span className="mb-1.5 block text-[11px] font-semibold text-slate-700">{label}</span>{children}</label>
-}
-
-function EditorLabel({ label, required = false, children }: { label: string; required?: boolean; children: ReactNode }) {
-  return <label className="block"><span className="mb-1.5 block text-[10px] font-medium text-slate-800">{label}{required && <span className="text-rose-500"> *</span>}</span>{children}</label>
-}
-
-function PrimaryButton({ children, onClick, disabled = false }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) {
-  return <button type="button" onClick={onClick} disabled={disabled} className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-slate-950 px-4 text-[11px] font-semibold text-white transition hover:bg-slate-800 active:scale-[.985] disabled:bg-slate-300">{children}</button>
-}
-
-function SecondaryButton({ children, onClick }: { children: ReactNode; onClick?: () => void }) {
-  return <button type="button" onClick={onClick} className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] border border-slate-300 bg-white px-4 text-[11px] font-semibold text-slate-800 transition hover:bg-slate-50 active:scale-[.985]">{children}</button>
-}
-
-function PanelHeader({ title, right }: { title: string; right?: ReactNode }) {
-  return <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3"><h2 className="text-[13px] font-semibold">{title}</h2><div className="text-[10px] text-slate-500">{right}</div></div>
-}
-
-function PaginationButton({ children, active = false, disabled = false, onClick }: { children: ReactNode; active?: boolean; disabled?: boolean; onClick?: () => void }) {
-  return <button type="button" onClick={onClick} disabled={disabled} className={`flex h-7 min-w-7 items-center justify-center rounded-[7px] px-2 text-[10px] transition ${active ? "bg-slate-950 text-white" : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50"} disabled:opacity-30`}>{children}</button>
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return <div className="flex min-h-[220px] flex-col items-center justify-center text-center"><Search size={22} className="text-slate-300" /><p className="mt-3 text-[12px] font-semibold text-slate-700">{title}</p><p className="mt-1 text-[10px] text-slate-500">{description}</p></div>
-}
-
-function TreeSection({ label, count, open, active = false, onToggle, children }: { label: string; count: number; open: boolean; active?: boolean; onToggle: () => void; children?: ReactNode }) {
-  return <div className="mt-1"><button type="button" onClick={onToggle} className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left transition ${active ? "bg-slate-100" : "hover:bg-slate-50"}`}><ChevronRight size={12} className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`} /><span className="min-w-0 flex-1 truncate font-medium">{label}</span><span className="text-slate-400">{count}</span></button><div className={`grid transition-[grid-template-rows,opacity] duration-200 ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}><div className="overflow-hidden pl-7">{children}</div></div></div>
-}
-
-function TreeLeaf({ label, count }: { label: string; count: number }) {
-  return <button type="button" className="flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left text-slate-600 hover:bg-slate-50"><span className="min-w-0 flex-1 truncate">{label}</span><span className="text-slate-400">{count}</span></button>
-}
-
-function ChunkRecordDetail({ chunk }: { chunk: ChunkRecord }) {
-  const [copied, setCopied] = useState(false)
-  function copy() {
-    if (navigator.clipboard) void navigator.clipboard.writeText(chunk.id)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 800)
-  }
-  return <div className="p-4"><dl className="grid grid-cols-[115px_minmax(0,1fr)] gap-x-3 gap-y-2 text-[10px]"><dt className="text-slate-500">Chunk ID</dt><dd className="flex items-center gap-1 font-medium"><span className="truncate">{chunk.id}</span><button type="button" onClick={copy} className="text-slate-400">{copied ? <Check size={11} /> : <Copy size={11} />}</button></dd><dt className="text-slate-500">Document</dt><dd>unep_2023.pdf</dd><dt className="text-slate-500">Section</dt><dd>{chunk.section}</dd><dt className="text-slate-500">Page</dt><dd>{chunk.page}</dd><dt className="text-slate-500">Type</dt><dd>{chunk.type}</dd><dt className="text-slate-500">Tokens</dt><dd>{chunk.tokens}</dd><dt className="text-slate-500">Overlap</dt><dd>{chunk.overlap} tokens</dd><dt className="text-slate-500">Character range</dt><dd>{chunk.start.toLocaleString()} – {chunk.end.toLocaleString()}</dd><dt className="text-slate-500">Embedding model</dt><dd className="truncate">{chunk.embedding}</dd></dl><div className="mt-4 border-t border-slate-100 pt-4"><div className="flex items-center justify-between"><h3 className="text-[12px] font-semibold">Chunk Text</h3><Copy size={14} className="text-slate-400" /></div><div className="ait-scroll-page mt-3 max-h-[290px] overflow-y-auto rounded-[8px] bg-slate-50 px-3 py-3 text-[10px] leading-[1.7] text-slate-700">{chunk.text}</div></div></div>
-}
-
-function MetricCard({ title, value, delta, detail, icon }: { title: string; value: string; delta: string; detail: string; icon: ReactNode }) {
-  return <section className="rounded-[10px] border border-slate-200 p-4 transition hover:shadow-[0_4px_16px_rgba(15,23,42,.05)]"><div className="flex items-start justify-between"><h2 className="text-[12px] font-semibold">{title}</h2><span className="text-slate-600">{icon}</span></div><div className="mt-2 flex items-end gap-3"><span className="text-[25px] font-semibold tracking-tight">{value}</span><span className="mb-1 text-[11px] font-medium text-emerald-600">{delta}</span></div><p className="mt-1 text-[10px] text-slate-500">{detail}</p></section>
-}
-
-function CompareMetric({ title, a, b, delta, percent }: { title: string; a: string; b: string; delta: string; percent: string }) {
-  return <section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center gap-1"><h2 className="text-[12px] font-semibold">{title}</h2><HelpCircle size={12} className="text-slate-400" /></div><div className="mt-3 grid grid-cols-[1fr_1fr_1.15fr] divide-x divide-slate-100"><div><p className="text-[9px] text-slate-500">A</p><p className="mt-1 text-[18px] font-semibold">{a}</p></div><div className="pl-4"><p className="text-[9px] text-slate-500">B</p><p className="mt-1 text-[18px] font-semibold">{b}</p></div><div className="pl-4"><p className="text-[9px] text-slate-500">Δ</p><p className="mt-1 text-[18px] font-semibold text-emerald-600">{delta}</p><p className="text-[10px] text-emerald-600">{percent}</p></div></div></section>
-}
-
-function FailureBar({ label, count, width }: { label: string; count: string; width: string }) {
-  return <div className="grid grid-cols-[145px_minmax(0,1fr)_70px] items-center gap-3 text-[10px]"><span className="text-slate-600">{label}</span><div className="h-3 bg-slate-100"><div className="h-full bg-slate-950 transition-[width] duration-500" style={{ width }} /></div><span className="font-medium">{count}</span></div>
-}
-
-function QueryComparisonCard({ label, config, rank, latency, rows, highlight = false }: { label: string; config: string; rank: number; latency: number; rows: Candidate[]; highlight?: boolean }) {
-  return <div className={`rounded-[9px] border p-3 ${highlight ? "border-emerald-200 bg-emerald-50/20" : "border-slate-200"}`}><div className="flex items-center gap-2 border-b border-slate-100 pb-2"><h3 className="text-[11px] font-semibold">{label}</h3><span className="text-[10px] text-slate-500">{config}</span></div><div className="grid grid-cols-4 divide-x divide-slate-100 py-3"><MiniStat label="Top Rank" value={String(rank)} /><MiniStat label="Retrieved Chunks" value="10" /><MiniStat label="Latency" value={`${latency} ms`} /><MiniStat label="Answer Status" value="Answered" check /></div><p className="mb-2 text-[10px] font-semibold">Top Retrieved Results</p><table className="w-full text-left text-[9px]"><thead className="text-slate-500"><tr><th className="w-8">#</th><th>Chunk ID</th><th className="w-20">Score</th><th>Source</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.id} className="border-t border-slate-100"><td className="py-1.5">{index + 1}</td><td>{row.id}</td><td>{row.rerank.toFixed(3)}</td><td>{row.source}</td></tr>)}</tbody></table></div>
-}
-
-function MiniStat({ label, value, check = false }: { label: string; value: string; check?: boolean }) {
-  return <div className="px-3 first:pl-0"><p className="text-[9px] text-slate-500">{label}</p><p className="mt-1 flex items-center gap-1 text-[13px] font-semibold">{check && <CheckCircle2 size={13} className="text-emerald-500" />}{value}</p></div>
-}
-
-function ResultTable({ stage, rows, selectedId, onSelect }: { stage: StageKey; rows: Candidate[]; selectedId: string; onSelect: (id: string) => void }) {
-  const title = stage === "dense" ? "Dense Retrieval Results" : stage === "bm25" ? "BM25 Retrieval Results" : stage === "fusion" ? "Fusion Results" : "Reranker Results"
-  return <><div className="flex items-center justify-between border-b border-slate-100 px-1 pb-3"><div><h2 className="text-[13px] font-semibold">{title}</h2><p className="mt-0.5 text-[10px] text-slate-500">Click a row to inspect the chunk.</p></div><span className="text-[10px] text-slate-400">{rows.length} results</span></div><div className="mt-2 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full table-fixed text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="w-8 px-2 py-2">#</th><th className="w-[135px] px-2">Chunk ID</th><th className="w-[70px] px-2">Score</th><th className="w-[64px] px-2">Δ Rank</th><th className="px-2">Source</th><th className="w-[70px] px-2">Section</th></tr></thead><tbody>{rows.map((row, index) => { const delta = row.before - row.after; return <tr key={row.id} onClick={() => onSelect(row.id)} className={`cursor-pointer border-t border-slate-100 transition ${selectedId === row.id ? "bg-slate-100" : "hover:bg-slate-50"}`}><td className="px-2 py-2.5 text-slate-500">{index + 1}</td><td className="truncate px-2 font-medium">{row.id}</td><td className="px-2 tabular-nums">{scoreFor(row, stage).toFixed(stage === "bm25" ? 2 : 3)}</td><td className="px-2">{stage !== "rerank" || delta === 0 ? <span className="text-slate-400">–</span> : delta > 0 ? <span className="inline-flex items-center gap-1 text-emerald-600"><ArrowUp size={10} />{delta}</span> : <span className="inline-flex items-center gap-1 text-rose-500"><ArrowDown size={10} />{Math.abs(delta)}</span>}</td><td className="truncate px-2 text-slate-600">{row.source}</td><td className="truncate px-2 text-slate-600">{row.section.split(" ")[0]}</td></tr> })}</tbody></table></div></>
-}
-
-function StageSummary({ stage, query }: { stage: StageKey; query: string }) {
-  const data: Record<string, Array<[string, string]>> = {
-    query: [["Original query", query], ["Intent", "Research synthesis · coastal adaptation"]],
-    rewrite: [["Standalone query", "Key challenges and adaptation strategies for climate risks in coastal cities"], ["Sub-query", "coastal city flood adaptation infrastructure nature-based solutions"]],
-    context: [["Anchor chunks", "6"], ["Supplemental neighbors", "4"], ["Estimated context", "3,842 tokens"]],
-    answer: [["Answer preview", "Coastal cities face compound physical, financial, governance, and equity challenges. Effective adaptation combines resilient infrastructure, nature-based solutions, flexible pathways, and sustained local capacity."], ["Citations", "4 evidence anchors"]],
-  }
-  return <><div className="border-b border-slate-100 pb-3"><h2 className="text-[13px] font-semibold">{STAGES.find((item) => item.key === stage)?.label}</h2></div><div className="mt-3 space-y-2">{(data[stage] ?? []).map(([label, value]) => <div key={label} className="rounded-[8px] border border-slate-100 bg-slate-50/60 px-3 py-3"><p className="text-[9px] font-semibold uppercase tracking-[.08em] text-slate-400">{label}</p><p className="mt-1.5 text-[11px] leading-5 text-slate-700">{value}</p></div>)}</div></>
-}
-
-function ChunkDetail({ row, index, total, previous, next }: { row: Candidate; index: number; total: number; previous: () => void; next: () => void }) {
-  const [copied, setCopied] = useState(false)
-  const delta = row.before - row.after
-  const copy = () => { if (navigator.clipboard) void navigator.clipboard.writeText(row.id); setCopied(true); window.setTimeout(() => setCopied(false), 800) }
-  return <div><div className="flex items-center justify-between border-b border-slate-100 pb-3"><h2 className="text-[13px] font-semibold">Chunk Detail</h2><div className="flex items-center gap-1 text-[10px] text-slate-500"><button type="button" onClick={previous} className="rounded border border-slate-200 p-1"><ChevronLeft size={13} /></button><span>{index + 1} of {total}</span><button type="button" onClick={next} className="rounded border border-slate-200 p-1"><ChevronRight size={13} /></button></div></div><dl className="grid grid-cols-[92px_1fr] gap-x-2 gap-y-2 border-b border-slate-100 py-3 text-[10px]"><dt className="text-slate-500">Chunk ID</dt><dd className="flex items-center gap-1 font-medium"><span className="truncate">{row.id}</span><button type="button" onClick={copy} aria-label="Copy chunk ID" className="text-slate-400">{copied ? <Check size={11} /> : <Copy size={11} />}</button></dd><dt className="text-slate-500">Source</dt><dd>{row.source}</dd><dt className="text-slate-500">Section</dt><dd className="truncate">{row.section}</dd><dt className="text-slate-500">Page</dt><dd>{row.page}</dd><dt className="text-slate-500">Tokens</dt><dd>{row.tokens}</dd><dt className="text-slate-500">Score</dt><dd>{row.rerank.toFixed(3)}</dd><dt className="text-slate-500">Original Rank</dt><dd>{row.before}</dd><dt className="text-slate-500">Rerank Position</dt><dd className="flex items-center gap-1">{row.after}{delta > 0 && <span className="inline-flex items-center text-emerald-600">(<ArrowUp size={9} />{delta})</span>}</dd></dl><h3 className="mt-3 text-[11px] font-semibold">Chunk Text</h3><div className="ait-scroll-page mt-2 max-h-[180px] overflow-y-auto rounded-[8px] bg-slate-50 px-3 py-2.5 text-[10px] leading-[1.6] text-slate-700">{row.text}</div></div>
-}
+const smallSelectClass = "mt-1 h-9 w-full rounded-[8px] border border-slate-200 bg-white px-2 text-[10px] text-slate-700 outline-none"
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block min-w-0"><span className="mb-1.5 block text-[11px] font-semibold text-slate-700">{label}</span>{children}</label> }
+function EditorLabel({ label, required = false, children }: { label: string; required?: boolean; children: ReactNode }) { return <label className="block"><span className="mb-1.5 block text-[10px] font-medium text-slate-800">{label}{required && <span className="text-rose-500"> *</span>}</span>{children}</label> }
+function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label className="text-[10px] text-slate-600">{label}<input type="number" min={1} value={value} onChange={(event) => onChange(Math.max(1, Number(event.target.value) || 1))} className={inputClass("mt-1 h-9 w-full text-[10px]")} /></label> }
+function PrimaryButton({ children, onClick, disabled = false }: { children: ReactNode; onClick?: () => void | Promise<void>; disabled?: boolean }) { return <button type="button" onClick={() => void onClick?.()} disabled={disabled} className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-slate-950 px-4 text-[11px] font-semibold text-white transition hover:bg-slate-800 active:scale-[.985] disabled:bg-slate-300">{children}</button> }
+function SecondaryButton({ children, onClick, disabled = false }: { children: ReactNode; onClick?: () => void | Promise<void>; disabled?: boolean }) { return <button type="button" onClick={() => void onClick?.()} disabled={disabled} className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] border border-slate-300 bg-white px-4 text-[11px] font-semibold text-slate-800 transition hover:bg-slate-50 active:scale-[.985] disabled:opacity-40">{children}</button> }
+function PanelHeader({ title, right }: { title: string; right?: ReactNode }) { return <div className="flex items-center justify-between border-b border-slate-100 px-1 pb-3"><h2 className="text-[13px] font-semibold">{title}</h2><div className="text-[10px] text-slate-500">{right}</div></div> }
+function PaginationButton({ children, disabled, onClick }: { children: ReactNode; disabled?: boolean; onClick?: () => void }) { return <button type="button" disabled={disabled} onClick={onClick} className="flex h-7 min-w-7 items-center justify-center rounded-[7px] px-2 text-[10px] text-slate-600 hover:bg-slate-50 disabled:opacity-30">{children}</button> }
+function EmptyState({ title, description, loading = false }: { title: string; description: string; loading?: boolean }) { return <div className="flex min-h-[220px] flex-col items-center justify-center text-center"><span className="text-slate-300">{loading ? <LoaderCircle size={22} className="animate-spin" /> : <Search size={22} />}</span><p className="mt-3 text-[12px] font-semibold text-slate-700">{title}</p><p className="mt-1 max-w-[300px] text-[10px] text-slate-500">{description}</p></div> }
+function formatScore(value: number | null | undefined) { return value == null || !Number.isFinite(value) ? "—" : value.toFixed(Math.abs(value) > 2 ? 2 : 3) }
+function formatMs(value: number) { return Number.isFinite(value) && value > 0 ? `${value.toFixed(0)} ms` : "—" }
+function percent(value: unknown) { const number = Number(value ?? 0); return Number.isFinite(number) ? `${(number * 100).toFixed(0)}%` : "—" }
+function signedPercent(value: number) { return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%` }
+function errorText(reason: unknown) { return reason instanceof Error ? reason.message : "Request failed." }

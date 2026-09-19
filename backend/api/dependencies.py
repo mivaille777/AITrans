@@ -24,6 +24,8 @@ from backend.services.quick_action_service import QuickActionService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.research_note_service import ResearchNoteService
 from backend.services.research_workspace_service import ResearchWorkspaceService
+from backend.services.rag_debug_service import RagDebugService
+from backend.services.rag_debug_store_service import RagDebugStoreService
 from backend.services.translation_service import TranslationService
 
 _translation_service: TranslationService | None = None
@@ -52,6 +54,10 @@ _agent_tool_registry: AgentToolRegistry | None = None
 _agent_tool_registry_lock = Lock()
 _product_agent_service: ProductAgentService | None = None
 _product_agent_service_lock = Lock()
+_rag_debug_store_service: RagDebugStoreService | None = None
+_rag_debug_store_service_lock = Lock()
+_rag_debug_service: RagDebugService | None = None
+_rag_debug_service_lock = Lock()
 
 
 def get_translation_service() -> TranslationService:
@@ -299,5 +305,34 @@ def close_product_agent_service() -> None:
     with _product_agent_service_lock:
         service = _product_agent_service
         _product_agent_service = None
+    if service is not None:
+        service.close()
+
+
+def get_rag_debug_store_service() -> RagDebugStoreService:
+    global _rag_debug_store_service
+    if _rag_debug_store_service is not None:
+        return _rag_debug_store_service
+    with _rag_debug_store_service_lock:
+        if _rag_debug_store_service is None:
+            _rag_debug_store_service = RagDebugStoreService()
+        return _rag_debug_store_service
+
+
+def get_rag_debug_service() -> RagDebugService:
+    global _rag_debug_service
+    if _rag_debug_service is not None:
+        return _rag_debug_service
+    with _rag_debug_service_lock:
+        if _rag_debug_service is None:
+            _rag_debug_service = RagDebugService(store=get_rag_debug_store_service())
+        return _rag_debug_service
+
+
+def close_rag_debug_service() -> None:
+    global _rag_debug_service
+    with _rag_debug_service_lock:
+        service = _rag_debug_service
+        _rag_debug_service = None
     if service is not None:
         service.close()

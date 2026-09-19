@@ -36,11 +36,13 @@ from backend.api.memory_dependencies import close_memory_coordinator
 from backend.api.overlay import router as overlay_router
 from backend.api.quick_actions import router as quick_actions_router
 from backend.api.rag_models import router as rag_models_router
+from backend.api.rag_debug import router as rag_debug_router
 from backend.api.reading import router as reading_router
 from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
 from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
 from backend.api.translation import router as translation_router
+from backend.api.dependencies import close_rag_debug_service
 from backend.api.translation_cascade import router as translation_cascade_router
 from backend.api.writing import router as writing_router
 from backend.core.middleware import RequestLoggingMiddleware
@@ -89,6 +91,7 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        close_rag_debug_service()
         close_curator_commit_service()
         close_memory_coordinator()
         close_agent_checkpoint_service()
@@ -135,6 +138,7 @@ def create_app():
         knowledge_relation_suggestions_router,
         llm_settings_router,
         rag_models_router,
+        rag_debug_router,
         companion_router,
         companion_stream_router,
         conversations_router,
