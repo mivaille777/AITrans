@@ -8,21 +8,33 @@ on:
         required: true
         default: WebReBuild
         type: string
+      scope:
+        description: Verification scope
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - backend
+          - frontend
+          - tauri
 
 permissions:
   contents: read
 
 concurrency:
-  group: manual-tests-${{ inputs.target_ref }}
+  group: manual-tests-${{ inputs.target_ref }}-${{ inputs.scope }}
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Windows Python 3.11
+  backend:
+    if: ${{ inputs.scope == 'all' || inputs.scope == 'backend' }}
+    name: Backend verification
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     env:
+      QT_QPA_PLATFORM: offscreen
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -38,33 +50,63 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Show Python environment
-        shell: pwsh
-        run: |
-          python --version
-          python -m pip --version
-
-      - name: Upgrade pip
-        shell: pwsh
-        run: python -m pip install --upgrade pip
-
       - name: Prepare test results directory
         shell: pwsh
         run: New-Item -ItemType Directory -Force test-results | Out-Null
 
-      - name: Run full pytest suite
+      - name: Run backend verification
         shell: pwsh
-        run: .\scripts\test.ps1 -Install -PytestArgs '--junitxml=test-results/pytest.xml'
-
-      - name: Run FastAPI smoke test
-        shell: pwsh
-        run: python -c "from backend.main import create_app; assert create_app().title == 'AITranslator API'"
+        run: .\scripts\verify.ps1 -Scope Backend -Install -PytestArgs '--junitxml=test-results/pytest.xml'
 
       - name: Upload pytest report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: pytest-results-${{ github.run_id }}
+          name: manual-backend-${{ github.run_id }}
           path: test-results/pytest.xml
           if-no-files-found: warn
           retention-days: 14
+
+  frontend:
+    if: ${{ inputs.scope == 'all' || inputs.scope == 'frontend' }}
+    name: Frontend verification
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out target ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref }}
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Run frontend verification
+        shell: pwsh
+        run: .\scripts\verify.ps1 -Scope Frontend -Install
+
+  tauri:
+    if: ${{ inputs.scope == 'all' || inputs.scope == 'tauri' }}
+    name: Tauri verification
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out target ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Run Tauri verification
+        shell: pwsh
+        run: .\scripts\verify.ps1 -Scope Tauri

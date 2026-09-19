@@ -93,7 +93,7 @@ fn llm_credential_preview(provider: &str) -> Result<String, String> {
                 String::new()
             } else {
                 let suffix: String = characters.iter().rev().take(4).rev().collect();
-                let mask = "•".repeat(characters.len().saturating_sub(suffix.chars().count()).min(12).max(4));
+                let mask = "•".repeat(characters.len().saturating_sub(suffix.chars().count()).clamp(4, 12));
                 format!("{mask}{suffix} · {} chars", characters.len())
             }
         }
