@@ -47,10 +47,10 @@ The normal CI workflow verifies:
 - Python dependency consistency and Ruff correctness checks;
 - Python 3.12 compatibility smoke tests;
 - React lint, Vitest/type checks, and production build;
-- Rust formatting, Clippy, tests, and locked Tauri build;
+- Rust formatting visibility plus blocking Clippy, tests, and locked Tauri build;
 - a final `CI quality gate` job that succeeds only when every required layer succeeds.
 
-GPU/model tests remain opt-in because they require suitable hardware and local models.
+Rust formatting is currently advisory while the existing Tauri baseline is normalized; Clippy, Rust tests, and locked builds are blocking. GPU/model tests remain opt-in because they require suitable hardware and local models.
 
 ## Pull request expectations
 
