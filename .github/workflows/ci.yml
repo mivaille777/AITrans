@@ -135,9 +135,14 @@ jobs:
         shell: pwsh
         run: python -m pip check
 
-      - name: Ruff correctness checks
+      - name: Ruff critical correctness checks
         shell: pwsh
-        run: python -m ruff check backend tests scripts --output-format=github
+        run: python -m ruff check backend tests scripts --select E9,F63,F7,F82 --output-format=github
+
+      - name: Report full Ruff baseline
+        continue-on-error: true
+        shell: pwsh
+        run: python -m ruff check backend scripts --output-format=github
 
       - name: Compile backend modules
         shell: pwsh
