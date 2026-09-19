@@ -44,7 +44,7 @@ The backend verification intentionally requires Python 3.11 because that is the 
 The normal CI workflow verifies:
 
 - full Python 3.11 pytest suite and Agent/RAG regression benchmarks;
-- Python dependency consistency and Ruff correctness checks;
+- Python dependency consistency and blocking Ruff critical-correctness checks, with the broader Ruff baseline reported as advisory;
 - Python 3.12 compatibility smoke tests;
 - React lint, Vitest/type checks, and production build;
 - Rust formatting visibility plus blocking Clippy, tests, and locked Tauri build;
