@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+from backend.agent_core.orchestration.router import ResearchTaskRouter
+from backend.models.agent_orchestration import OrchestrationLane
+from backend.models.agent_tasks import TaskRole
+
+
+def test_selected_translation_stays_fast_even_in_force_mode() -> None:
+    route = ResearchTaskRouter().route(
+        "翻译这段文字",
+        {"source_text": "Gaussian process"},
+        mode="force",
+    )
+
+    assert route.lane is OrchestrationLane.FAST
+    assert route.primary_role is None
+
+
+def test_summary_then_translation_uses_document_artifact_before_language_tool() -> None:
+    route = ResearchTaskRouter().route(
+        "先总结这篇论文，再把摘要翻译成英文",
+        {"source_text": "full raw paper text"},
+    )
+
+    assert route.lane is OrchestrationLane.SINGLE
+    assert route.primary_role is TaskRole.DOCUMENT
+
+
+def test_explicit_save_keeps_existing_write_confirmation_path() -> None:
+    route = ResearchTaskRouter().route(
+        "Save this passage.",
+        {"source_text": "Gaussian process"},
+        mode="force",
+    )
+
+    assert route.lane is OrchestrationLane.FAST
+    assert route.primary_role is None
+    assert route.reason_code == "confirmed_product_write"
+
+
+def test_single_document_understanding_uses_one_document_specialist() -> None:
+    route = ResearchTaskRouter().route(
+        "总结这篇论文的方法",
+        {"knowledge_document_ids": ["doc-a"]},
+    )
+
+    assert route.lane is OrchestrationLane.SINGLE
+    assert route.primary_role is TaskRole.DOCUMENT
+
+
+def test_cross_document_comparison_uses_research_workflow() -> None:
+    route = ResearchTaskRouter().route(
+        "比较两篇论文的实验结果",
+        {"knowledge_document_ids": ["doc-a", "doc-b"]},
+    )
+
+    assert route.lane is OrchestrationLane.WORKFLOW
+    assert route.primary_role is TaskRole.RESEARCH
+
+
+def test_scoped_writing_request_uses_writer_workflow() -> None:
+    route = ResearchTaskRouter().route(
+        "基于这些论文起草 Related Work 章节",
+        {"knowledge_document_ids": ["doc-a", "doc-b"]},
+    )
+
+    assert route.lane is OrchestrationLane.WORKFLOW
+    assert route.primary_role is TaskRole.WRITER
+
+
+def test_off_mode_disables_specialists_without_changing_scope() -> None:
+    route = ResearchTaskRouter().route(
+        "比较论文",
+        {"knowledge_document_ids": ["doc-a", "doc-b"]},
+        mode="off",
+    )
+
+    assert route.lane is OrchestrationLane.FAST
+    assert route.reason_code == "multi_agent_disabled"
+
+
+def test_comparison_without_two_sources_reports_missing_information() -> None:
+    route = ResearchTaskRouter().route("比较这些论文", {})
+
+    assert route.lane is OrchestrationLane.WORKFLOW
+    assert route.missing_information == ["at_least_two_documents"]

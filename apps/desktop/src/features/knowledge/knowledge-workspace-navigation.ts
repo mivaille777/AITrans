@@ -1,13 +1,21 @@
-export type KnowledgeView = "canvas" | "graph" | "library" | "reader"
-export type KnowledgePrimaryView = Exclude<KnowledgeView, "reader">
+export type KnowledgeView = "canvas" | "graph" | "library"
+export type KnowledgePrimaryView = KnowledgeView
+
+export function resolveLegacyKnowledgeReaderPaperId(searchParams: URLSearchParams): string {
+  if (searchParams.get("view") !== "reader") return ""
+  return (searchParams.get("paper") ?? "").trim()
+}
 
 export function resolveKnowledgeView(searchParams: URLSearchParams): KnowledgeView {
   const requestedView = searchParams.get("view")
-  const paperItemId = searchParams.get("paper") ?? ""
 
-  if (paperItemId && requestedView === "reader") return "reader"
   if (requestedView === "graph") return "graph"
-  if (searchParams.has("document") || searchParams.has("item") || requestedView === "library") {
+  if (
+    searchParams.has("document") ||
+    searchParams.has("item") ||
+    requestedView === "library" ||
+    requestedView === "reader"
+  ) {
     return "library"
   }
   return "canvas"
@@ -24,16 +32,6 @@ export function buildKnowledgeViewParams(
   if (nextView !== "graph") next.delete("focus")
   if (nextView === "canvas") next.delete("view")
   else next.set("view", nextView)
-  return next
-}
-
-export function buildOpenPaperParams(searchParams: URLSearchParams, itemId: string) {
-  const next = new URLSearchParams(searchParams)
-  next.set("view", "reader")
-  next.set("paper", itemId)
-  next.delete("document")
-  next.delete("item")
-  next.delete("focus")
   return next
 }
 
@@ -54,12 +52,5 @@ export function buildOpenLibraryItemParams(searchParams: URLSearchParams, itemId
   next.delete("paper")
   next.delete("document")
   next.delete("focus")
-  return next
-}
-
-export function buildCloseReaderParams(searchParams: URLSearchParams) {
-  const next = new URLSearchParams(searchParams)
-  next.set("view", "library")
-  next.delete("paper")
   return next
 }

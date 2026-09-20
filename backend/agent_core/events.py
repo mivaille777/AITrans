@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -23,6 +23,23 @@ class AgentEventType(str, Enum):
     MULTI_AGENT_SPECIALIST_FAILED = "multi_agent_specialist_failed"
     MULTI_AGENT_SPECIALIST_SKIPPED = "multi_agent_specialist_skipped"
     MULTI_AGENT_COMPLETED = "multi_agent_completed"
+    TASK_PLANNED = "task_planned"
+    TASK_READY = "task_ready"
+    TASK_STARTED = "task_started"
+    TASK_PROGRESS = "task_progress"
+    TASK_COMPLETED = "task_completed"
+    TASK_PARTIAL = "task_partial"
+    TASK_FAILED = "task_failed"
+    TASK_BLOCKED = "task_blocked"
+    TASK_CANCELLED = "task_cancelled"
+    TASK_SKIPPED = "task_skipped"
+    TASK_RETRYING = "task_retrying"
+    PLAN_REVISED = "plan_revised"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    ARTIFACT_VERIFIED = "artifact_verified"
+    ARTIFACT_REJECTED = "artifact_rejected"
+    WORKFLOW_PARTIAL = "workflow_partial"
+    WORKFLOW_RESUMED = "workflow_resumed"
     PLAN_READY = "plan_ready"
     REACT_STARTED = "react_started"
     DECISION_READY = "decision_ready"
@@ -53,6 +70,7 @@ class AgentEvent(BaseModel):
     run_id: str = ""
     trace_id: str = ""
     elapsed_ms: int = Field(default=0, ge=0)
+    sequence: int = Field(default=-1, ge=-1)
     timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )

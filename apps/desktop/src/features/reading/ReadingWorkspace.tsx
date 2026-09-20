@@ -1,106 +1,166 @@
-import { BookOpenText, ChevronDown } from "lucide-react"
+import {
+  BookOpenCheck,
+  ChevronLeft,
+  ChevronRight,
+  Minus,
+  Plus,
+  RotateCcw,
+} from "lucide-react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type WheelEvent,
+} from "react"
 
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
-import AcademicDocumentWorkspacePanel from "./AcademicDocumentWorkspacePanel"
-import BrowserReadingContextPanel from "./BrowserReadingContextPanel"
-import { useAcademicDocumentWorkspace } from "./useAcademicDocumentWorkspace"
+import UnifiedReadingWorkspace from "./UnifiedReadingWorkspace"
+import "./reading-document-viewport.css"
 
-export default function ReadingWorkspace({
-  workspace,
-}: {
-  workspace: TranslationWorkspaceController
-}) {
-  const academicWorkspace = useAcademicDocumentWorkspace(workspace)
-  const selection = workspace.readingSelection
-  const browserPage = workspace.browserPage
-  const isBrowserSelection = selection?.source_kind === "browser"
-  const title = selection?.resource_title || (isBrowserSelection ? browserPage?.title : "") || "—"
-  const section = selection?.section_heading || (isBrowserSelection ? browserPage?.heading : "") || "—"
-  const locator = selection?.resource_url || selection?.local_locator || (isBrowserSelection ? browserPage?.url : "") || "—"
-  const hasNearbyContext = Boolean(selection?.context_before || selection?.context_after)
+const DOCUMENT_ZOOM_KEY = "aitrans.reading.documentZoom"
+const MIN_DOCUMENT_ZOOM = 0.75
+const MAX_DOCUMENT_ZOOM = 1.6
+const DOCUMENT_ZOOM_STEP = 0.1
+
+function clampZoom(value: number): number {
+  return Math.min(MAX_DOCUMENT_ZOOM, Math.max(MIN_DOCUMENT_ZOOM, value))
+}
+
+function readDocumentZoom(): number {
+  if (typeof window === "undefined") return 1
+  const stored = Number(window.localStorage.getItem(DOCUMENT_ZOOM_KEY))
+  return Number.isFinite(stored) ? clampZoom(stored) : 1
+}
+
+export default function ReadingWorkspace({ workspace }: { workspace: TranslationWorkspaceController }) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [documentZoom, setDocumentZoom] = useState(readDocumentZoom)
+  const [textReaderActive, setTextReaderActive] = useState(false)
+  const [evidenceCollapsed, setEvidenceCollapsed] = useState(false)
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    const detectReader = () => {
+      setTextReaderActive(Boolean(root.querySelector("main > .ait-scroll-panel")))
+    }
+
+    detectReader()
+    const observer = new MutationObserver(detectReader)
+    observer.observe(root, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [])
+
+  function changeZoom(next: number) {
+    const value = clampZoom(Number(next.toFixed(2)))
+    setDocumentZoom(value)
+    window.localStorage.setItem(DOCUMENT_ZOOM_KEY, String(value))
+  }
+
+  function handleReaderWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!textReaderActive || !event.ctrlKey || event.deltaY === 0) return
+    if (!(event.target instanceof Element)) return
+    const scroller = event.target.closest(".ait-scroll-panel")
+    if (!scroller || scroller.parentElement?.tagName !== "MAIN") return
+
+    event.preventDefault()
+    changeZoom(
+      documentZoom + (event.deltaY < 0 ? DOCUMENT_ZOOM_STEP : -DOCUMENT_ZOOM_STEP),
+    )
+  }
+
+  const readingStyle = {
+    "--ait-reading-document-zoom": documentZoom,
+  } as CSSProperties
 
   return (
-    <div className="space-y-4">
-      <AcademicDocumentWorkspacePanel controller={academicWorkspace} />
+    <div
+      ref={rootRef}
+      onWheelCapture={handleReaderWheel}
+      className={`ait-reading-workspace relative h-full min-h-0 overflow-hidden ${
+        textReaderActive ? "is-text-reader" : "is-pdf-reader"
+      } ${evidenceCollapsed ? "evidence-collapsed" : "evidence-expanded"}`}
+      style={readingStyle}
+    >
+      <UnifiedReadingWorkspace workspace={workspace} />
 
-      <BrowserReadingContextPanel
-        browserStatus={workspace.browserStatus}
-        readingSelection={selection}
-        browserPage={browserPage}
-        followBrowserSelection={workspace.followBrowserSelection}
-        autoTranslateSelection={workspace.autoTranslateSelection}
-        autoTranslating={workspace.autoTranslating}
-        onFollowBrowserSelectionChange={workspace.setFollowBrowserSelection}
-        onAutoTranslateSelectionChange={workspace.setAutoTranslateSelection}
-      />
+      {!evidenceCollapsed && (
+        <button
+          type="button"
+          aria-label="Collapse Evidence & Actions"
+          title="Collapse Evidence & Actions"
+          onClick={() => setEvidenceCollapsed(true)}
+          className="ait-reading-evidence-collapse flex h-8 w-8 items-center justify-center rounded-[7px] text-[#555] transition hover:bg-[#f0f0f0]"
+        >
+          <ChevronRight size={15} />
+        </button>
+      )}
 
-      <details className="group overflow-hidden rounded-[16px] border border-slate-200/70 bg-white">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 text-xs font-medium text-slate-600 hover:bg-slate-50/70">
-          <span className="flex items-center gap-2">
-            <BookOpenText size={14} className="text-slate-400" />
-            External browser / desktop reading selection
-            {selection && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-semibold uppercase text-emerald-700">{selection.source_kind || "reading"}</span>}
+      {evidenceCollapsed && (
+        <div className="ait-reading-evidence-rail flex min-h-0 flex-col items-center border-l border-[#e6e6e6] bg-white py-3">
+          <button
+            type="button"
+            aria-label="Expand Evidence & Actions"
+            title="Expand Evidence & Actions"
+            onClick={() => setEvidenceCollapsed(false)}
+            className="flex h-9 w-9 items-center justify-center rounded-[7px] text-[#3f3f3f] hover:bg-[#eeeeee]"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <div
+            className="mt-3 flex h-9 w-9 items-center justify-center rounded-[7px] text-[#555]"
+            title="Evidence & Actions"
+          >
+            <BookOpenCheck size={17} />
+          </div>
+          <span
+            className="mt-3 select-none text-[9px] font-medium tracking-[0.08em] text-[#777] [writing-mode:vertical-rl]"
+            title="Evidence & Actions"
+          >
+            Evidence &amp; Actions
           </span>
-          <ChevronDown size={14} className="text-slate-400 transition group-open:rotate-180" />
-        </summary>
-
-        <div className="border-t border-slate-100 p-4">
-          {selection ? (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,.6fr)]">
-              <div>
-                <p className="whitespace-pre-wrap rounded-[14px] border border-slate-200/70 bg-slate-50/55 p-4 text-sm leading-7 text-slate-700">{selection.text}</p>
-                {hasNearbyContext && (
-                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                    <ContextBlock label="Before" value={selection.context_before} />
-                    <ContextBlock label="After" value={selection.context_after} />
-                  </div>
-                )}
-              </div>
-              <dl className="grid grid-cols-2 gap-2 text-sm">
-                <MetadataRow label="Title" value={title} span />
-                <MetadataRow label="Section" value={section} span />
-                <MetadataRow label="Source" value={selection.source_kind || "—"} />
-                <MetadataRow label="Application" value={selection.application || "—"} />
-                <MetadataRow label="Page" value={selection.page_number ? String(selection.page_number) : "—"} />
-                <MetadataRow label="Provider" value={selection.provider || "—"} />
-                <MetadataRow label="Locator" value={locator} mono span />
-              </dl>
-            </div>
-          ) : (
-            <p className="text-xs leading-5 text-slate-500">
-              Select text in a browser, PDF, Word document, or another supported desktop app. External selections share the same reading contract but stay secondary to the indexed-document workspace.
-            </p>
-          )}
         </div>
-      </details>
-    </div>
-  )
-}
+      )}
 
-function ContextBlock({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[13px] border border-slate-200/60 bg-white p-3">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-2 line-clamp-5 text-xs leading-5 text-slate-600">{value || "No nearby context captured."}</p>
-    </div>
-  )
-}
-
-function MetadataRow({
-  label,
-  value,
-  mono = false,
-  span = false,
-}: {
-  label: string
-  value: string
-  mono?: boolean
-  span?: boolean
-}) {
-  return (
-    <div className={`rounded-[12px] border border-slate-200/60 bg-slate-50/45 px-3 py-2.5 ${span ? "col-span-2" : ""}`}>
-      <dt className="text-[9px] font-medium uppercase tracking-[0.12em] text-slate-400">{label}</dt>
-      <dd className={`mt-1 break-words text-slate-700 ${mono ? "font-mono text-[10px]" : "text-xs"}`}>{value}</dd>
+      {textReaderActive && (
+        <div
+          className="ait-reading-document-zoom flex items-center gap-1 rounded-[9px] border border-[#d9d9d9] bg-white/95 p-1 shadow-[0_8px_24px_rgba(0,0,0,.10)] backdrop-blur-sm"
+          aria-label="Document zoom controls"
+        >
+          <button
+            type="button"
+            aria-label="Zoom document out"
+            title="Zoom out"
+            disabled={documentZoom <= MIN_DOCUMENT_ZOOM}
+            onClick={() => changeZoom(documentZoom - DOCUMENT_ZOOM_STEP)}
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#444] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+          >
+            <Minus size={14} />
+          </button>
+          <button
+            type="button"
+            aria-label="Reset document zoom"
+            title="Reset zoom"
+            onClick={() => changeZoom(1)}
+            className="flex h-8 min-w-[54px] items-center justify-center gap-1 rounded-[7px] px-2 text-[10.5px] font-medium text-[#555] transition hover:bg-[#f1f1f1]"
+          >
+            <RotateCcw size={11} />
+            {Math.round(documentZoom * 100)}%
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom document in"
+            title="Zoom in"
+            disabled={documentZoom >= MAX_DOCUMENT_ZOOM}
+            onClick={() => changeZoom(documentZoom + DOCUMENT_ZOOM_STEP)}
+            className="flex h-8 w-8 items-center justify-center rounded-[7px] text-[#444] transition hover:bg-[#f1f1f1] disabled:opacity-30"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

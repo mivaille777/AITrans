@@ -10,6 +10,14 @@ export interface PaperSelectionContext {
   contextAfter: string
 }
 
+export type PaperReaderSelectionSource = "text" | "pdf"
+
+export interface PaperReaderSelectionTarget {
+  source: PaperReaderSelectionSource
+  text: string
+  pageNumber?: number | null
+}
+
 export type DerivedPaperCardType = Extract<
   KnowledgeItemType,
   "note" | "concept" | "highlight" | "evidence"
@@ -23,6 +31,41 @@ export function resolvePaperReaderSectionId(
   const preferred = preferredSectionId.trim()
   if (preferred && sections.some((section) => section.section_id === preferred)) return preferred
   return sections[0]?.section_id ?? ""
+}
+
+export function resolvePaperReaderSectionForPage(
+  sections: KnowledgeDocumentOutlineSection[],
+  pageNumber: number,
+): KnowledgeDocumentOutlineSection | null {
+  if (!sections.length || !Number.isFinite(pageNumber) || pageNumber < 1) return null
+  const page = Math.round(pageNumber)
+  const containing = sections.filter((section) => {
+    const start = section.page_start
+    const end = section.page_end ?? start
+    return start != null && end != null && page >= start && page <= end
+  })
+
+  if (containing.length) {
+    return [...containing].sort((left, right) => {
+      if (left.reference_section !== right.reference_section) return left.reference_section ? 1 : -1
+      if (left.synthetic !== right.synthetic) return left.synthetic ? 1 : -1
+      const leftSpan = (left.page_end ?? left.page_start ?? page) - (left.page_start ?? page)
+      const rightSpan = (right.page_end ?? right.page_start ?? page) - (right.page_start ?? page)
+      if (leftSpan !== rightSpan) return leftSpan - rightSpan
+      return right.level - left.level
+    })[0] ?? null
+  }
+
+  const before = sections
+    .filter((section) => section.page_start != null && section.page_start <= page)
+    .sort((left, right) => (right.page_start ?? 0) - (left.page_start ?? 0))[0]
+  if (before) return before
+
+  return sections
+    .filter((section) => section.page_start != null)
+    .sort((left, right) => (left.page_start ?? Number.MAX_SAFE_INTEGER) - (right.page_start ?? Number.MAX_SAFE_INTEGER))[0]
+    ?? sections[0]
+    ?? null
 }
 
 export function paperPageLabel(pageStart: number | null, pageEnd: number | null): string {

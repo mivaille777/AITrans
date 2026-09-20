@@ -1,0 +1,243 @@
+.ait-reading-workspace main > .ait-scroll-panel {
+  height: 100%;
+  min-height: 0;
+  overflow-x: auto !important;
+  overflow-y: scroll !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
+.ait-reading-workspace main > .ait-scroll-panel > div {
+  box-sizing: border-box;
+  width: min(820px, calc(100% - 40px)) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 100%;
+  margin-inline: auto;
+  margin-bottom: 72px;
+  zoom: var(--ait-reading-document-zoom, 1);
+}
+
+.ait-reading-workspace main > .ait-scroll-panel h3,
+.ait-reading-workspace main > .ait-scroll-panel article {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ait-reading-workspace main > .ait-scroll-panel article {
+  white-space: pre-wrap;
+}
+
+.ait-reading-workspace main > .ait-scroll-panel pre,
+.ait-reading-workspace main > .ait-scroll-panel code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The document header has a single source of page navigation: the PDF toolbar.
+   Text/Markdown/Word readers do not invent a page number. */
+.ait-reading-workspace main > header > div:last-child > span {
+  display: none;
+}
+
+.ait-reading-workspace.is-text-reader aside:last-child .ait-scroll-panel > section:nth-of-type(2) > p:last-child {
+  display: none;
+}
+
+/* Text-based document zoom lives in the same top control band rather than
+   floating over the document body. PDF owns an inline zoom group immediately
+   to the right of its page controls inside PdfReaderSurface. */
+.ait-reading-workspace .ait-reading-document-zoom {
+  position: absolute;
+  top: 14px;
+  right: 376px;
+  bottom: auto;
+  z-index: 45;
+}
+
+/* The Reading grid must stay constrained to the visible app viewport. A tall
+   PDF canvas or a long side panel must never enlarge the implicit grid row. */
+.ait-reading-workspace > section,
+.ait-reading-workspace > section > div.grid {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ait-reading-workspace > section > div.grid {
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
+.ait-reading-workspace > section > div.grid > aside,
+.ait-reading-workspace > section > div.grid > main {
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* All Documents, Outline, and Evidence & Actions each own a dedicated vertical
+   scroll region. The explicit zero-height flex basis is intentional: it forces
+   the list/tree/action body to remain inside the current window and overflow
+   internally, instead of growing the whole Reading grid beyond the viewport. */
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel {
+  flex: 1 1 0% !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #ababab #f7f7f7;
+}
+
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar-track,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar-track,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar-track {
+  background: #f7f7f7;
+}
+
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar-thumb,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar-thumb,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar-thumb {
+  min-height: 34px;
+  border: 2px solid #f7f7f7;
+  border-radius: 999px;
+  background: #ababab;
+}
+
+.ait-reading-workspace > section > div.grid > aside:first-child > div.ait-scroll-panel::-webkit-scrollbar-thumb:hover,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div.ait-scroll-panel::-webkit-scrollbar-thumb:hover,
+.ait-reading-workspace > section > div.grid > aside:last-child > div.ait-scroll-panel::-webkit-scrollbar-thumb:hover {
+  background: #858585;
+}
+
+/* Keep the fixed side-panel controls visible while their content bodies scroll. */
+.ait-reading-workspace > section > div.grid > aside:first-child > div:first-child,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div:first-child,
+.ait-reading-workspace > section > div.grid > aside:last-child > div:first-child,
+.ait-reading-workspace > section > div.grid > aside:first-child > div:last-child,
+.ait-reading-workspace > section > div.grid > aside:nth-child(2) > div:last-child {
+  flex-shrink: 0;
+  background: #fff;
+  position: relative;
+  z-index: 8;
+}
+
+/* Keep the horizontal document-type filter independent from vertical sidebar
+   scrolling. It may still pan left/right when there are more type chips. */
+.ait-reading-workspace > section > div.grid > aside:first-child > div:first-child .ait-scroll-panel {
+  height: auto !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  touch-action: pan-x;
+  scrollbar-gutter: auto;
+}
+
+/* Keep the PDF flex surface inside the center column instead of allowing its
+   intrinsic page height to grow the grid row. */
+.ait-reading-workspace main > div.relative.flex.min-h-0.flex-1.flex-col {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* PDF owns both axes. Always reserve scrollbar space so zoomed pages can be
+   panned vertically and horizontally with visible scroll affordances. */
+.ait-reading-workspace .ait-pdf-scroll-surface {
+  min-height: 0;
+  overflow-x: scroll !important;
+  overflow-y: scroll !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-color: #a8a8a8 #f0f0f0;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-track {
+  background: #f0f0f0;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-thumb {
+  min-width: 36px;
+  min-height: 36px;
+  border: 2px solid #f0f0f0;
+  border-radius: 999px;
+  background: #a8a8a8;
+}
+
+.ait-reading-workspace .ait-pdf-scroll-surface::-webkit-scrollbar-thumb:hover {
+  background: #858585;
+}
+
+/* Evidence & Actions uses the same collapsible rail language as All Documents
+   and Outline. The expanded collapse affordance sits inside its header area. */
+.ait-reading-workspace .ait-reading-evidence-collapse {
+  position: absolute;
+  top: 16px;
+  right: 8px;
+  z-index: 92;
+}
+
+.ait-reading-workspace .ait-reading-evidence-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 48px;
+  z-index: 95;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid > aside:last-child {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* UnifiedReadingWorkspace currently computes the first two track widths inline.
+   When the right rail collapses, override only this state and preserve all four
+   combinations of the existing All Documents / Outline collapsed states. */
+.ait-reading-workspace.evidence-collapsed > section > div.grid {
+  grid-template-columns: 290px 250px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid:has(> aside:first-child button[aria-label="Expand All Documents"]) {
+  grid-template-columns: 48px 250px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid:has(> aside:nth-child(2) button[aria-label="Expand Outline"]) {
+  grid-template-columns: 290px 48px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed > section > div.grid:has(> aside:first-child button[aria-label="Expand All Documents"]):has(> aside:nth-child(2) button[aria-label="Expand Outline"]) {
+  grid-template-columns: 48px 48px minmax(360px, 1fr) 48px !important;
+}
+
+.ait-reading-workspace.evidence-collapsed .ait-reading-document-zoom {
+  right: 104px;
+}
+
+@media (max-width: 1180px) {
+  .ait-reading-workspace.evidence-expanded .ait-reading-document-zoom {
+    right: 372px;
+  }
+}

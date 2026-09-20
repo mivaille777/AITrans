@@ -1,4 +1,4 @@
-import type { AgentKnowledgeContext, AgentRunRequest } from "../../../api/agent"
+import type { AgentKnowledgeContext, AgentRunRequest, AgentWorkflowAction } from "../../../api/agent"
 import type { ReadingContextFields } from "../../../api/types"
 import type { AgentContextMode } from "./agent-context-mode"
 
@@ -6,6 +6,7 @@ export interface BuildAgentRunRequestInput {
   context: ReadingContextFields
   contextMode?: AgentContextMode
   sessionId: string
+  clientId?: string
   traceId: string
   requestId: number
   userMessage: string
@@ -16,15 +17,19 @@ export interface BuildAgentRunRequestInput {
   conversationId: string
   workspaceId?: string
   confirmedWriteTools?: string[]
+  enabledTools?: string[]
   knowledgeDocumentIds?: string[]
   researchSourceIds?: string[]
   knowledgeContext?: AgentKnowledgeContext | null
+  temporary?: boolean
+  workflowAction?: AgentWorkflowAction
 }
 
 export function buildAgentRunRequest({
   context,
   contextMode = "general",
   sessionId,
+  clientId = sessionId,
   traceId,
   requestId,
   userMessage,
@@ -35,14 +40,17 @@ export function buildAgentRunRequest({
   conversationId,
   workspaceId = "",
   confirmedWriteTools = [],
+  enabledTools = [],
   knowledgeDocumentIds = [],
   researchSourceIds = [],
   knowledgeContext = null,
+  temporary = false,
+  workflowAction = "",
 }: BuildAgentRunRequestInput): AgentRunRequest {
   return {
     ...context,
     session_id: sessionId,
-    client_id: sessionId,
+    client_id: clientId,
     client_surface: "main",
     context_mode: contextMode,
     trace_id: traceId,
@@ -55,9 +63,12 @@ export function buildAgentRunRequest({
     conversation_id: conversationId,
     workspace_id: workspaceId,
     confirmed_write_tools: confirmedWriteTools,
+    enabled_tools: enabledTools,
     knowledge_document_ids: knowledgeDocumentIds,
     research_source_ids: researchSourceIds,
     knowledge_context: knowledgeContext,
     request_id: requestId,
+    temporary,
+    workflow_action: workflowAction,
   }
 }

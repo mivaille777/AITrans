@@ -86,6 +86,9 @@ class ProductAgentRuntimeAdapter:
     @staticmethod
     def build_payload(state: AgentState) -> dict[str, Any]:
         context = state.browser_context
+        derived_language_input = str(
+            context.get("derived_language_input", "") or ""
+        ).strip()
         confirmed = context.get("confirmed_write_tools", ())
         if not isinstance(confirmed, (list, tuple, set, frozenset)):
             confirmed = ()
@@ -100,7 +103,7 @@ class ProductAgentRuntimeAdapter:
             "trace_id": state.trace_id,
             "user_message": state.user_input,
             "context_mode": str(context.get("context_mode", "reading") or "reading"),
-            "source_text": state.selected_text,
+            "source_text": derived_language_input or state.selected_text,
             "translated_text": str(context.get("translated_text", "") or ""),
             "source_language": str(context.get("source_language", "auto") or "auto"),
             "target_language": str(context.get("target_language", "zh-CN") or "zh-CN"),
@@ -115,9 +118,17 @@ class ProductAgentRuntimeAdapter:
             "conversation_id": state.conversation.conversation_id,
             "history": history,
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
+            "enabled_tools": _scope_values(context.get("enabled_tools", ())),
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
             "research_source_ids": _scope_values(context.get("research_source_ids", ())),
             "knowledge_context": _structured(context.get("knowledge_context")),
+            "memory_language_preferences": [
+                dict(item)
+                for item in context.get("memory_language_preferences", ())[:32]
+                if isinstance(item, dict)
+            ]
+            if isinstance(context.get("memory_language_preferences"), list)
+            else [],
             "knowledge_item_id": str(context.get("knowledge_item_id", "") or "").strip(),
             "knowledge_writeback_type": str(context.get("knowledge_writeback_type", "") or "").strip(),
             "knowledge_writeback_operation": str(context.get("knowledge_writeback_operation", "") or "").strip(),
@@ -204,6 +215,10 @@ class ProductAgentRuntimeAdapter:
         return emitted, forward
 
     def begin_conversation(self, state: AgentState):
+        if bool(state.browser_context.get("temporary", False)):
+            state.conversation.conversation_id = ""
+            state.conversation.history = []
+            return None
         service = self._conversation_service
         if service is None:
             return None

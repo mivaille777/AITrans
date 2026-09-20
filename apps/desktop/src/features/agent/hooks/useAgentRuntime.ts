@@ -2,10 +2,13 @@ import { useEffect, useId, useMemo, useRef, useState } from "react"
 
 import type {
   AgentKnowledgeContext,
+  AgentRunSnapshot,
   AgentRunRequest,
   AgentRunTraceResponse,
   AgentTraceEvent,
+  AgentWorkflowAction,
 } from "../../../api/agent"
+import { getAgentRunSnapshot } from "../../../api/agent"
 import {
   streamAgentRun,
   type AgentStreamHandle,
@@ -14,12 +17,19 @@ import { attachResearchProjectMember } from "../../../api/research"
 import type { ReadingContextFields } from "../../../api/types"
 import type { TranslationWorkspaceController } from "../../translation/useTranslationWorkspace"
 import { deriveAgentDecision } from "../decision/agent-decision"
+import {
+  buildAgentResumeRequest,
+  clearPendingAgentRun,
+  readPendingAgentRun,
+  rememberPendingAgentRun,
+} from "../runtime/agent-checkpoint-recovery"
 import type { AgentContextMode } from "../runtime/agent-context-mode"
 import {
   inferAgentContextMode,
   resolveAgentContext,
 } from "../runtime/agent-context-resolver"
 import { buildAgentRunRequest } from "../runtime/agent-run-request"
+import { mergeAgentEvents } from "../runtime/agent-event-replay"
 import { deriveAgentWorkspaceState } from "../state/agent-workspace-state"
 
 export function useAgentRuntime(
@@ -34,6 +44,9 @@ export function useAgentRuntime(
   const [cancelledMessage, setCancelledMessage] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
   const [fallbackReason, setFallbackReason] = useState("")
+  const [temporary, setTemporary] = useState(false)
+  const [workflowAction, setWorkflowAction] = useState<AgentWorkflowAction>("")
+  const [runSnapshot, setRunSnapshot] = useState<AgentRunSnapshot | null>(null)
   const [observabilityRefresh, setObservabilityRefresh] = useState(0)
   const reactInstanceId = useId()
   const sessionId = `agent-workspace-${reactInstanceId.replace(/[^a-zA-Z0-9_-]/g, "")}`
@@ -42,6 +55,11 @@ export function useAgentRuntime(
   const requestId = useRef(0)
   const lastPayload = useRef<AgentRunRequest | null>(null)
   const streamHandle = useRef<AgentStreamHandle | null>(null)
+  const activeRunId = useRef("")
+  const recoveryAttempted = useRef(false)
+  const initialTargetLanguage = useRef(workspace.targetLanguage)
+  const transportRecoveryCount = useRef(0)
+  const activeWorkspaceId = useRef(workspace.activeResearchWorkspaceId)
 
   useEffect(() => {
     return () => {
@@ -49,6 +67,29 @@ export function useAgentRuntime(
       streamHandle.current = null
     }
   }, [])
+
+  /* oxlint-disable react-hooks/set-state-in-effect -- changing workspace is a security boundary that clears stale scoped UI state */
+  useEffect(() => {
+    if (activeWorkspaceId.current === workspace.activeResearchWorkspaceId) return
+    activeWorkspaceId.current = workspace.activeResearchWorkspaceId
+    streamHandle.current?.cancel()
+    streamHandle.current?.close()
+    streamHandle.current = null
+    clearPendingAgentRun(activeRunId.current)
+    activeRunId.current = ""
+    conversationId.current = ""
+    conversationMode.current = null
+    lastPayload.current = null
+    setTrace(null)
+    setLiveEvents([])
+    setRunSnapshot(null)
+    setPending(false)
+    setCancelRequested(false)
+    setCancelledMessage("")
+    setErrorMessage("")
+    setFallbackReason("")
+  }, [workspace.activeResearchWorkspaceId])
+  /* oxlint-enable react-hooks/set-state-in-effect */
 
   const academic = workspace.academicReadingContext
   const reading = workspace.readingSelection
@@ -181,23 +222,34 @@ export function useAgentRuntime(
     }
   }
 
-  function execute(payload: AgentRunRequest) {
+  function execute(payload: AgentRunRequest, preserveEvents = false) {
     streamHandle.current?.close()
     streamHandle.current = null
+    if (!payload.resume_run_id) {
+      clearPendingAgentRun()
+    }
     setPending(true)
     setCancelRequested(false)
     setCancelledMessage("")
     setErrorMessage("")
     setFallbackReason("")
-    setLiveEvents([])
+    if (!preserveEvents) {
+      transportRecoveryCount.current = 0
+      setLiveEvents([])
+      setRunSnapshot(null)
+    }
+    activeRunId.current = payload.resume_run_id || ""
 
     streamHandle.current = streamAgentRun(payload, {
       onEvent(event) {
+        if (event.type === "accepted") {
+          activeRunId.current = event.run_id
+          rememberPendingAgentRun(event, Date.now(), Boolean(payload.temporary))
+          return
+        }
+
         if (event.type === "activity") {
-          setLiveEvents((current) => {
-            if (current.some((item) => item.sequence === event.event.sequence)) return current
-            return [...current, event.event].sort((left, right) => left.sequence - right.sequence)
-          })
+          setLiveEvents((current) => mergeAgentEvents(current, [event.event], event.run_id))
           return
         }
 
@@ -207,6 +259,8 @@ export function useAgentRuntime(
         }
 
         if (event.type === "cancelled") {
+          clearPendingAgentRun(event.run_id || activeRunId.current)
+          activeRunId.current = ""
           setCancelledMessage(event.message || "Agent run cancelled.")
           setFallbackReason("")
           setCancelRequested(false)
@@ -217,10 +271,25 @@ export function useAgentRuntime(
         }
 
         if (event.type === "done") {
+          clearPendingAgentRun(event.run_id || activeRunId.current)
+          activeRunId.current = ""
           rememberConversation(event.trace.run.conversation_id || "")
           associateTraceWithWorkspace(event.trace)
-          setTrace(event.trace)
-          setLiveEvents(event.trace.events)
+          setTrace((current) => ({
+            ...event.trace,
+            events: mergeAgentEvents(
+              current?.run_id === event.run_id ? current.events : liveEvents,
+              event.trace.events,
+              event.run_id,
+            ),
+          }))
+          setLiveEvents((current) => mergeAgentEvents(current, event.trace.events, event.run_id))
+          void getAgentRunSnapshot(event.run_id)
+            .then((snapshot) => {
+              setRunSnapshot(snapshot)
+              setLiveEvents((current) => mergeAgentEvents(current, snapshot.events, snapshot.run_id))
+            })
+            .catch(() => undefined)
           setFallbackReason("")
           setCancelRequested(false)
           setPending(false)
@@ -230,6 +299,8 @@ export function useAgentRuntime(
         }
 
         if (event.type === "error") {
+          clearPendingAgentRun(event.run_id || activeRunId.current)
+          activeRunId.current = ""
           setErrorMessage(event.message || "Agent run failed.")
           setFallbackReason(event.fallback_reason || "")
           setCancelRequested(false)
@@ -239,14 +310,63 @@ export function useAgentRuntime(
         }
       },
       onTransportError(error) {
-        setErrorMessage(error.message || "Agent stream failed.")
-        setFallbackReason("")
-        setCancelRequested(false)
-        setPending(false)
+        const runId = activeRunId.current
         streamHandle.current = null
+        if (!runId || payload.temporary || transportRecoveryCount.current >= 2) {
+          setErrorMessage(error.message || "Agent stream failed.")
+          setFallbackReason("")
+          setCancelRequested(false)
+          setPending(false)
+          return
+        }
+        transportRecoveryCount.current += 1
+        setErrorMessage("Connection interrupted. Recovering the authoritative run state…")
+        void getAgentRunSnapshot(runId)
+          .then((snapshot) => {
+            setRunSnapshot(snapshot)
+            setLiveEvents((current) => mergeAgentEvents(current, snapshot.events, runId))
+            if (!snapshot.resumable) {
+              clearPendingAgentRun(runId)
+              activeRunId.current = ""
+              setPending(false)
+              setErrorMessage(snapshot.status === "completed" ? "" : `Agent run ended with status: ${snapshot.status}.`)
+              return
+            }
+            const resume = buildAgentResumeRequest({
+              runId,
+              traceId: snapshot.trace_id || payload.trace_id || "",
+              sessionId: payload.session_id,
+              requestId: payload.request_id ?? 0,
+              acceptedAt: Date.now(),
+            }, initialTargetLanguage.current)
+            lastPayload.current = resume
+            setErrorMessage("")
+            execute(resume, true)
+          })
+          .catch(() => {
+            setErrorMessage(error.message || "Agent stream failed.")
+            setFallbackReason("")
+            setCancelRequested(false)
+            setPending(false)
+          })
       },
     })
   }
+
+  /* oxlint-disable react-hooks/exhaustive-deps -- checkpoint recovery is one-shot per mounted runtime */
+  useEffect(() => {
+    if (recoveryAttempted.current) return
+    recoveryAttempted.current = true
+    const pendingRun = readPendingAgentRun()
+    if (!pendingRun) return
+
+    requestId.current = Math.max(requestId.current, pendingRun.requestId)
+    const payload = buildAgentResumeRequest(pendingRun, initialTargetLanguage.current)
+    lastPayload.current = payload
+    const timer = window.setTimeout(() => execute(payload), 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   function submitPrompt() {
     const userMessage = prompt.trim()
@@ -299,6 +419,8 @@ export function useAgentRuntime(
       knowledgeDocumentIds: workspace.researchRetrievalScope.knowledgeDocumentIds,
       researchSourceIds: workspace.researchRetrievalScope.researchSourceIds,
       knowledgeContext,
+      temporary,
+      workflowAction,
     })
     lastPayload.current = payload
     execute(payload)
@@ -322,8 +444,34 @@ export function useAgentRuntime(
 
   function cancelRun() {
     if (!pending || cancelRequested) return
+    clearPendingAgentRun(activeRunId.current)
     setCancelRequested(true)
     streamHandle.current?.cancel()
+  }
+
+  function setTemporaryMode(enabled: boolean) {
+    if (pending) return
+    setTemporary(enabled)
+    conversationId.current = ""
+    conversationMode.current = null
+    lastPayload.current = null
+    clearPendingAgentRun()
+  }
+
+  function retryTask(taskId: string) {
+    const runId = runSnapshot?.run_id || viewState.runId
+    if (!runId || pending || !runSnapshot?.retryable_task_ids.includes(taskId)) return
+    requestId.current += 1
+    const payload = buildAgentResumeRequest({
+      runId,
+      traceId: runSnapshot.trace_id || viewState.traceId,
+      sessionId,
+      requestId: requestId.current,
+      acceptedAt: Date.now(),
+    }, workspace.targetLanguage, taskId)
+    lastPayload.current = payload
+    transportRecoveryCount.current = 0
+    execute(payload, true)
   }
 
   return {
@@ -338,8 +486,14 @@ export function useAgentRuntime(
     pending,
     cancelRequested,
     observabilityRefresh,
+    temporary,
+    workflowAction,
+    setWorkflowAction,
+    runSnapshot,
+    setTemporaryMode,
     submitPrompt,
     confirmWriteTool,
     cancelRun,
+    retryTask,
   }
 }

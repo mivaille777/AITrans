@@ -1,15 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEvent, AgentEventType
-from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
+from backend.agent_core.exceptions import (
+    AgentBudgetExceededError,
+    AgentCancelledError,
+    AgentRuntimeError,
+)
 from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.state import AgentState
 
 AgentEventSink = Callable[[AgentEvent], None]
 AgentRunRecorder = Callable[[AgentState, tuple[AgentEvent, ...]], None]
+AgentEventRecorder = Callable[[AgentState, AgentEvent, int], int | None]
 
 
 def _fallback_reason(exc: Exception) -> str:
@@ -45,6 +51,7 @@ class AgentRuntime:
         collaboration_adapter: Any | None = None,
         workflow_adapter: Callable[[AgentState], AgentState] | None = None,
         run_recorder: AgentRunRecorder | None = None,
+        event_recorder: AgentEventRecorder | None = None,
     ) -> None:
         self.context_provider = context_provider
         self.planner = planner
@@ -52,10 +59,17 @@ class AgentRuntime:
         self.collaboration_adapter = collaboration_adapter
         self.workflow_adapter = workflow_adapter
         self.run_recorder = run_recorder
+        self.event_recorder = event_recorder
         self.events: list[AgentEvent] = []
         self._event_sink: AgentEventSink | None = None
         self._active_state: AgentState | None = None
         self._control: AgentRunControl | None = None
+        configure_preworkflow = getattr(workflow_adapter, "configure_preworkflow", None)
+        if callable(configure_preworkflow):
+            configure_preworkflow(
+                context_provider=context_provider,
+                collaboration_adapter=collaboration_adapter,
+            )
 
     def _emit(self, event_type: AgentEventType, payload: dict[str, Any]) -> None:
         state = self._active_state
@@ -68,18 +82,38 @@ class AgentRuntime:
             elapsed_ms=control.elapsed_ms if control is not None else 0,
         )
         self.events.append(event)
+        event.sequence = len(self.events) - 1
+        temporary = bool(
+            state is not None and state.browser_context.get("temporary", False)
+        )
+        if self.event_recorder is not None and state is not None and not temporary:
+            try:
+                persisted_sequence = self.event_recorder(
+                    state, event, len(self.events) - 1
+                )
+                if persisted_sequence is not None:
+                    event.sequence = max(0, int(persisted_sequence))
+            except Exception:  # noqa: BLE001,S110 - observer is best effort
+                # Live trace durability is observational and cannot fail the run.
+                pass
         if self._event_sink is not None:
             try:
                 self._event_sink(event)
-            except Exception:
+            except Exception:  # noqa: BLE001,S110 - transport is best effort
                 # Observability/transport is deliberately best-effort. A closed
                 # WebSocket or broken debug sink must not change Agent behavior.
                 pass
 
-    def _run_collaboration(self, state: AgentState, control: AgentRunControl) -> AgentState:
+    def _run_collaboration(
+        self, state: AgentState, control: AgentRunControl
+    ) -> AgentState:
         adapter = self.collaboration_adapter
         if adapter is None:
             return state
+
+        prepare_state = getattr(adapter, "prepare_state", None)
+        if callable(prepare_state):
+            state = prepare_state(state)
 
         should_run = getattr(adapter, "should_run", None)
         if callable(should_run) and not bool(should_run(state)):
@@ -93,13 +127,64 @@ class AgentRuntime:
         state.sync_contract()
         return state
 
+    def restore_checkpoint(self, run_id: str) -> AgentState:
+        """Return the latest persisted graph state for an explicit resume."""
+
+        loader = getattr(self.workflow_adapter, "checkpoint_state", None)
+        state = loader(run_id) if callable(loader) else None
+        if not isinstance(state, AgentState):
+            raise AgentRuntimeError(
+                f"No resumable Agent checkpoint exists for run {run_id!r}.",
+                stage="checkpoint",
+                fallback_reason="checkpoint_not_found",
+            )
+        context = dict(state.browser_context)
+        context["confirmed_write_tools"] = []
+        state.browser_context = context
+        state.sync_contract()
+        return state
+
+    def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
+        """Reopen one failed orchestration task through the configured workflow."""
+
+        prepare = getattr(self.workflow_adapter, "prepare_task_retry", None)
+        if not callable(prepare):
+            raise AgentRuntimeError(
+                "The configured Agent workflow does not support task retry.",
+                stage="checkpoint",
+                fallback_reason="task_retry_unavailable",
+            )
+        retried = tuple(prepare(state, task_id))
+        context = dict(state.browser_context)
+        # A confirmation authorizes one concrete write attempt only. A resumed
+        # or retried task must request a fresh confirmation if it reaches a write.
+        context["confirmed_write_tools"] = []
+        context["retry_task_id"] = str(task_id or "").strip()
+        state.browser_context = context
+        state.sync_contract()
+        return retried
+
     def execute(
         self,
         state: AgentState,
         *,
         event_sink: AgentEventSink | None = None,
         control: AgentRunControl | None = None,
+        resume: bool = False,
     ) -> AgentState:
+        resume_context = {
+            key: state.browser_context[key]
+            for key in ("confirmed_write_tools", "enabled_tools")
+            if key in state.browser_context
+        }
+        if resume:
+            state = self.restore_checkpoint(state.run_id)
+            if resume_context:
+                state.browser_context = {
+                    **state.browser_context,
+                    **resume_context,
+                }
+                state.sync_contract()
         previous_sink = self._event_sink
         previous_state = self._active_state
         previous_control = self._control
@@ -118,32 +203,70 @@ class AgentRuntime:
                     "session_id": state.session_id,
                     "run_id": state.run_id,
                     "trace_id": state.trace_id,
-                    "budget_ms": int(active_control.policy.total_timeout_seconds * 1000),
+                    "budget_ms": int(
+                        active_control.policy.total_timeout_seconds * 1000
+                    ),
+                    "resumed": resume,
                 },
             )
 
-            active_control.checkpoint("context_resolution")
-            if self.context_provider:
-                state.apply_reading_context(self.context_provider(state))
-            else:
-                state.sync_contract()
-            active_control.checkpoint("context_ready")
-            public_context = {
-                key: value
-                for key, value in state.browser_context.items()
-                if key != "knowledge_context"
-            }
-            self._emit(AgentEventType.CONTEXT_READY, public_context)
-            knowledge_diagnostics = knowledge_context_diagnostics(
-                state.browser_context.get("knowledge_context")
-            )
-            if knowledge_diagnostics:
-                self._emit(
-                    AgentEventType.KNOWLEDGE_CONTEXT_READY,
-                    knowledge_diagnostics,
+            if resume:
+                resume_with_events = getattr(
+                    self.workflow_adapter,
+                    "resume_with_events",
+                    None,
                 )
+                if not callable(resume_with_events):
+                    raise AgentRuntimeError(
+                        "The configured Agent workflow cannot resume checkpoints.",
+                        stage="checkpoint",
+                        fallback_reason="checkpoint_unavailable",
+                    )
+                state = resume_with_events(
+                    state,
+                    self._emit,
+                    control=active_control,
+                )
+                state.sync_contract()
+                self._active_state = state
+                self._emit(
+                    AgentEventType.AGENT_END,
+                    {
+                        "intent": state.intent,
+                        "status": state.response.get("status", ""),
+                        "ui_mode": state.ui_mode,
+                        "total_duration_ms": active_control.elapsed_ms,
+                        "resumed": True,
+                    },
+                )
+                return state
 
-            state = self._run_collaboration(state, active_control)
+            manages_preworkflow = bool(
+                getattr(self.workflow_adapter, "manages_preworkflow", False)
+            )
+            if not manages_preworkflow:
+                active_control.checkpoint("context_resolution")
+                if self.context_provider:
+                    state.apply_reading_context(self.context_provider(state))
+                else:
+                    state.sync_contract()
+                active_control.checkpoint("context_ready")
+                public_context = {
+                    key: value
+                    for key, value in state.browser_context.items()
+                    if key != "knowledge_context"
+                }
+                self._emit(AgentEventType.CONTEXT_READY, public_context)
+                knowledge_diagnostics = knowledge_context_diagnostics(
+                    state.browser_context.get("knowledge_context")
+                )
+                if knowledge_diagnostics:
+                    self._emit(
+                        AgentEventType.KNOWLEDGE_CONTEXT_READY,
+                        knowledge_diagnostics,
+                    )
+
+                state = self._run_collaboration(state, active_control)
 
             if self.workflow_adapter is not None:
                 previous_call_count = len(state.tool_calls)
@@ -202,7 +325,10 @@ class AgentRuntime:
             state.sync_contract()
             self._emit(
                 AgentEventType.AGENT_END,
-                {"intent": state.intent, "total_duration_ms": active_control.elapsed_ms},
+                {
+                    "intent": state.intent,
+                    "total_duration_ms": active_control.elapsed_ms,
+                },
             )
             return state
         except AgentCancelledError as exc:
@@ -221,7 +347,9 @@ class AgentRuntime:
                     "intent": state.intent,
                     "status": "cancelled",
                     "ui_mode": state.ui_mode,
-                    "total_duration_ms": self._control.elapsed_ms if self._control else 0,
+                    "total_duration_ms": self._control.elapsed_ms
+                    if self._control
+                    else 0,
                 },
             )
             raise
@@ -242,15 +370,18 @@ class AgentRuntime:
                     "intent": state.intent,
                     "status": "failed",
                     "ui_mode": state.ui_mode,
-                    "total_duration_ms": self._control.elapsed_ms if self._control else 0,
+                    "total_duration_ms": self._control.elapsed_ms
+                    if self._control
+                    else 0,
                 },
             )
             raise
         finally:
-            if self.run_recorder is not None:
+            temporary = bool(state.browser_context.get("temporary", False))
+            if self.run_recorder is not None and not temporary:
                 try:
                     self.run_recorder(state, tuple(self.events))
-                except Exception:
+                except Exception:  # noqa: BLE001,S110 - persistence is best effort
                     # Persistence is diagnostic only. Disk/SQLite failures must
                     # not change Agent success, failure, cancellation or safety.
                     pass

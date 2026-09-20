@@ -5,9 +5,28 @@ from typing import Annotated
 from fastapi import Depends
 
 from backend.agent_core.context import ReadingContextProvider
+from backend.agent_core.orchestration import (
+    AuthoritativeScopeResolver,
+    CoordinatorMemoryPort,
+    ScopedEvidenceService,
+    build_artifact_store,
+)
+from backend.agent_core.orchestration.migration import build_migration_bridge
+from backend.agent_core.orchestration.parallel_executor import (
+    ParallelTaskGraphExecutor,
+    SQLiteTaskCheckpointStore,
+)
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
+from backend.agent_graph.academic_writer_graph import (
+    AcademicWriterGraph,
+    FallbackAcademicWriterProvider,
+)
+from backend.agent_graph.document_analyst_graph import DocumentAnalystGraph
+from backend.agent_graph.knowledge_curator_graph import KnowledgeCuratorGraph
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.research_synthesizer_graph import ResearchSynthesizerGraph
+from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
 from backend.api.agent_observability_dependencies import get_agent_trace_store_service
 from backend.api.dependencies import (
     get_companion_ownership_service,
@@ -15,19 +34,32 @@ from backend.api.dependencies import (
     get_product_agent_service,
     get_reading_selection_resolver,
     get_research_note_service,
+    get_research_workspace_service,
+    get_retrieval_service,
     get_translation_service,
 )
+from backend.api.evidence_review_dependencies import (
+    get_agent_literature_synthesis_service,
+    get_evidence_review_service,
+)
+from backend.api.knowledge_board_dependencies import get_knowledge_board_service
+from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
+from backend.api.llm_dependencies import get_llm_gateway
+from backend.api.memory_dependencies import get_memory_coordinator
+from backend.models.agent_tasks import TaskRole
+from backend.services.academic_writer_service import AcademicWriterService
+from backend.services.agent_checkpoint_service import AgentCheckpointService
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.agent_trace_store_service import AgentTraceStoreService
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
 from backend.services.conversation_store_service import ConversationStoreService
-from backend.services.multi_agent_runtime_bridge import MultiAgentRuntimeBridge
 from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceService
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.research_note_service import ResearchNoteService
+from backend.services.research_orchestration_service import ResearchOrchestrationService
 from backend.services.translation_service import TranslationService
 
 ProductAgentServiceDependency = Annotated[
@@ -46,9 +78,47 @@ TranslationServiceDependency = Annotated[
     TranslationService,
     Depends(get_translation_service),
 ]
+ResearchWorkspaceDependency = Annotated[
+    object,
+    Depends(get_research_workspace_service),
+]
+KnowledgeWorkspaceDependency = Annotated[
+    object,
+    Depends(get_knowledge_workspace_service),
+]
+KnowledgeBoardDependency = Annotated[
+    object,
+    Depends(get_knowledge_board_service),
+]
+
+
+class _LazyRetrievalService:
+    """Avoid opening the process-wide Qdrant store for non-retrieval Agent runs."""
+
+    @staticmethod
+    def retrieve(*args, **kwargs):
+        return get_retrieval_service().retrieve(*args, **kwargs)
+
+
+class _LazyEvidenceReviewService:
+    @staticmethod
+    def snapshot(*args, **kwargs):
+        return get_evidence_review_service().snapshot(*args, **kwargs)
+
+
+class _LazyLiteratureSynthesisService:
+    @staticmethod
+    def generate(*args, **kwargs):
+        return get_agent_literature_synthesis_service().generate(*args, **kwargs)
+
+
 AgentTraceStoreDependency = Annotated[
     AgentTraceStoreService | None,
     Depends(get_agent_trace_store_service),
+]
+AgentCheckpointDependency = Annotated[
+    AgentCheckpointService | None,
+    Depends(get_agent_checkpoint_service),
 ]
 ConversationStoreDependency = Annotated[
     ConversationStoreService,
@@ -80,30 +150,124 @@ def get_agent_runtime(
     research_service: ResearchNoteServiceDependency = None,
     translation_service: TranslationServiceDependency = None,
     trace_store: AgentTraceStoreDependency = None,
+    checkpoint_service: AgentCheckpointDependency = None,
+    research_workspace: ResearchWorkspaceDependency = None,
+    knowledge_workspace: KnowledgeWorkspaceDependency = None,
+    knowledge_boards: KnowledgeBoardDependency = None,
 ) -> AgentRuntime:
     """Build one request-scoped canonical Agent Runtime.
 
-    Multi-agent collaboration is an advisory pre-workflow stage inside the same
-    reliability/telemetry boundary. Stage 5.9 backs Research and Translation
-    specialists with the existing production services, while Reading consumes
-    the frozen document/knowledge context. ReadingAgentGraph remains authoritative
-    for tools, confirmation, ReAct, evidence, grounding, synthesis, and response.
+    `AITRANS_MULTI_AGENT_ENGINE` is the MA10 migration switch. `typed` keeps the
+    new task-DAG orchestration, `legacy` retains the historical collaboration
+    bridge, and `off` disables collaboration while leaving the canonical
+    ReadingAgentGraph/direct language and tool paths intact.
     """
 
     adapter = ProductAgentRuntimeAdapter(
         service,
         conversation_service=conversation_service,
     )
-    graph = ReadingAgentGraph(adapter)
     collaboration_service = MultiAgentWorkspaceService(
         research_service=research_service,
         translation_service=translation_service,
     )
-    return AgentRuntime(
+    scope_resolver = AuthoritativeScopeResolver(
+        research_workspaces=research_workspace,
+        knowledge_workspace=knowledge_workspace,
+        knowledge_boards=knowledge_boards,
+        research_notes=research_service,
+    )
+    evidence_service = ScopedEvidenceService(
+        rag_retriever=_LazyRetrievalService(),
+        research_notes=research_service,
+        knowledge_workspace=knowledge_workspace,
+    )
+    artifact_store = build_artifact_store()
+    temporary_artifact_store = build_artifact_store(temporary=True)
+    document_analyst = DocumentAnalystGraph(
+        evidence_service=evidence_service,
+        artifact_store=artifact_store,
+    )
+    research_synthesizer = ResearchSynthesizerGraph(
+        artifact_store=artifact_store,
+        evidence_review_service=_LazyEvidenceReviewService(),
+    )
+    writer_provider = FallbackAcademicWriterProvider(
+        AcademicWriterService(
+            text_service=get_llm_gateway().create_text_service("academic_writer")
+        )
+    )
+    writer = AcademicWriterGraph(
+        artifact_store=artifact_store,
+        provider=writer_provider,
+        literature_synthesis_service=_LazyLiteratureSynthesisService(),
+    )
+    curator = KnowledgeCuratorGraph(
+        artifact_store=artifact_store,
+        knowledge_workspace=knowledge_workspace,
+    )
+    temporary_writer = AcademicWriterGraph(
+        artifact_store=temporary_artifact_store,
+        provider=writer_provider,
+        literature_synthesis_service=_LazyLiteratureSynthesisService(),
+    )
+    temporary_executor = ParallelTaskGraphExecutor(
+        {
+            TaskRole.DOCUMENT: DocumentAnalystGraph(
+                evidence_service=evidence_service,
+                artifact_store=temporary_artifact_store,
+            ),
+            TaskRole.RESEARCH: ResearchSynthesizerGraph(
+                artifact_store=temporary_artifact_store,
+                evidence_review_service=_LazyEvidenceReviewService(),
+            ),
+            TaskRole.WRITER: temporary_writer,
+            TaskRole.CURATOR: KnowledgeCuratorGraph(
+                artifact_store=temporary_artifact_store,
+                knowledge_workspace=knowledge_workspace,
+            ),
+        },
+        artifact_store=temporary_artifact_store,
+    )
+    memory_port = CoordinatorMemoryPort(
+        get_memory_coordinator(),
+        artifact_store=artifact_store,
+    )
+    orchestration_service = ResearchOrchestrationService(
+        scope_resolver=scope_resolver,
+        executor=ParallelTaskGraphExecutor(
+            {
+                TaskRole.DOCUMENT: document_analyst,
+                TaskRole.RESEARCH: research_synthesizer,
+                TaskRole.WRITER: writer,
+                TaskRole.CURATOR: curator,
+            },
+            checkpoint_store=(
+                SQLiteTaskCheckpointStore(checkpoint_service.storage_path)
+                if checkpoint_service is not None
+                else None
+            ),
+            artifact_store=artifact_store,
+        ),
+        memory_port=memory_port,
+        temporary_executor=temporary_executor,
+    )
+    collaboration_adapter = build_migration_bridge(
+        collaboration_service,
+        orchestrator=orchestration_service,
+    )
+    graph = ReadingAgentGraph(
+        adapter,
+        checkpointer=(
+            checkpoint_service.checkpointer if checkpoint_service is not None else None
+        ),
         context_provider=ReadingContextProvider(resolver),
-        collaboration_adapter=MultiAgentRuntimeBridge(collaboration_service),
+        collaboration_adapter=collaboration_adapter,
+    )
+    return AgentRuntime(
         workflow_adapter=graph,
         run_recorder=trace_store.record if trace_store is not None else None,
+        event_recorder=trace_store.append_event if trace_store is not None else None,
     )
 
 

@@ -24,9 +24,15 @@ class AgentContextBuilder:
         query: str,
         top_k: int = 5,
         evidence: list[dict[str, Any]] | None = None,
+        *,
+        allowed_node_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         if evidence is None:
-            evidence = self.retriever.retrieve(query, top_k=top_k)
+            evidence = self.retriever.retrieve(
+                query,
+                top_k=top_k,
+                allowed_node_ids=allowed_node_ids,
+            )
 
         citations = [
             {

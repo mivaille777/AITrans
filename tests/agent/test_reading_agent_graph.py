@@ -132,6 +132,8 @@ def test_reading_agent_graph_compiles_explicit_react_nodes() -> None:
     graph = ReadingAgentGraph(ProductAgentRuntimeAdapter(FakeProductAgentService()))
 
     assert graph.node_names == (
+        "resolve_context",
+        "run_collaboration",
         "prepare_conversation",
         "route_request",
         "execute_direct",

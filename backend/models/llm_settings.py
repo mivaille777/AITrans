@@ -6,7 +6,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AIProviderName = Literal["deepseek", "openai_compatible"]
+AIProviderName = Literal[
+    "deepseek",
+    "openai",
+    "google",
+    "mistral",
+    "groq",
+    "openrouter",
+    "together",
+    "qwen",
+    "openai_compatible",
+]
 class LLMProviderOption(BaseModel):
     id: AIProviderName
     label: str
@@ -20,6 +30,18 @@ class LLMSettingsResponse(BaseModel):
     model: str
     base_url: str
     providers: list[LLMProviderOption] = Field(default_factory=list)
+
+
+class LLMModelOption(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+
+
+class LLMModelsResponse(BaseModel):
+    provider: AIProviderName
+    current_model: str = ""
+    available: bool = False
+    models: list[LLMModelOption] = Field(default_factory=list)
+    detail: str = ""
 
 
 class LLMSettingsUpdateRequest(BaseModel):
@@ -40,6 +62,8 @@ class LLMRuntimeStatusResponse(BaseModel):
 
 __all__ = [
     "AIProviderName",
+    "LLMModelOption",
+    "LLMModelsResponse",
     "LLMProviderOption",
     "LLMRuntimeStatusResponse",
     "LLMSettingsResponse",

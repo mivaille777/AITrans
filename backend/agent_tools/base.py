@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
 
 AgentToolEffect = Literal["read", "compute", "write"]
 AgentToolRetryPolicy = Literal["safe", "never"]
@@ -36,6 +36,9 @@ class AgentToolInvocationContext(AgentToolModel):
     knowledge_writeback_type: str = Field(default="", max_length=64)
     knowledge_writeback_operation: str = Field(default="", max_length=128)
     knowledge_relation_type: str = Field(default="", max_length=128)
+    memory_preferences: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=32
+    )
 
     def reading_payload(self) -> dict[str, Any]:
         return {
@@ -135,9 +138,7 @@ class TypedAgentToolDefinition:
 
     def parse_args(self, payload: dict[str, Any]) -> BaseModel:
         candidate = {
-            key: payload[key]
-            for key in self.args_model.model_fields
-            if key in payload
+            key: payload[key] for key in self.args_model.model_fields if key in payload
         }
         try:
             return self.args_model.model_validate(candidate)
@@ -163,7 +164,7 @@ class TypedAgentToolDefinition:
         """Validate one executor result against the Tool-owned public contract."""
 
         if not isinstance(result, AgentToolExecutionResult):
-            raise ValueError(
+            raise TypeError(
                 f"Agent tool {self.spec.name} returned an invalid execution result object."
             )
         if result.tool_name != self.spec.name:

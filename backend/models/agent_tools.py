@@ -16,6 +16,14 @@ AgentRunStatus = Literal["completed", "confirmation_required"]
 AgentPlanAction = Literal["answer", "tool"]
 AgentClientSurface = Literal["main", "overlay", "unknown"]
 AgentContextMode = Literal["general", "reading", "knowledge", "research", "translation"]
+AgentWorkflowAction = Literal[
+    "",
+    "quick_read",
+    "analyze_visuals",
+    "compare_papers",
+    "curate_knowledge",
+    "draft_section",
+]
 AgentTraceEventType = Literal[
     "agent_start",
     "context_ready",
@@ -32,6 +40,23 @@ AgentTraceEventType = Literal[
     "multi_agent_specialist_failed",
     "multi_agent_specialist_skipped",
     "multi_agent_completed",
+    "task_planned",
+    "task_ready",
+    "task_started",
+    "task_progress",
+    "task_completed",
+    "task_partial",
+    "task_failed",
+    "task_blocked",
+    "task_cancelled",
+    "task_skipped",
+    "task_retrying",
+    "plan_revised",
+    "budget_exhausted",
+    "artifact_verified",
+    "artifact_rejected",
+    "workflow_partial",
+    "workflow_resumed",
     "plan_ready",
     "react_started",
     "decision_ready",
@@ -86,7 +111,9 @@ class AgentKnowledgeRelationContext(BaseModel):
 class AgentKnowledgeContext(BaseModel):
     canvas: AgentKnowledgeCanvasContext | None = None
     cards: list[AgentKnowledgeCardContext] = Field(default_factory=list, max_length=60)
-    relations: list[AgentKnowledgeRelationContext] = Field(default_factory=list, max_length=60)
+    relations: list[AgentKnowledgeRelationContext] = Field(
+        default_factory=list, max_length=60
+    )
 
 
 class AgentToolDefinition(BaseModel):
@@ -131,7 +158,7 @@ class AgentPlan(BaseModel):
     arguments: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_tool_action(self) -> "AgentPlan":
+    def validate_tool_action(self) -> AgentPlan:
         if self.action == "tool" and not self.tool_name.strip():
             raise ValueError("Agent tool plan requires tool_name.")
         if self.action == "answer":
@@ -147,6 +174,7 @@ class AgentRunRequest(ReadingContextPayload):
     source_text: str = Field(default="", max_length=20_000)
     session_id: str = Field(default="agent-session", min_length=1, max_length=128)
     trace_id: str = Field(default="", max_length=128)
+    resume_run_id: str = Field(default="", max_length=128)
     client_id: str = Field(default="", max_length=128)
     client_surface: AgentClientSurface = "unknown"
     context_mode: AgentContextMode = "reading"
@@ -155,6 +183,7 @@ class AgentRunRequest(ReadingContextPayload):
     conversation_id: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
+    enabled_tools: list[str] = Field(default_factory=list, max_length=64)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
     research_source_ids: list[str] = Field(default_factory=list, max_length=100)
     knowledge_context: AgentKnowledgeContext | None = None
@@ -163,9 +192,14 @@ class AgentRunRequest(ReadingContextPayload):
     knowledge_writeback_operation: str = Field(default="", max_length=128)
     knowledge_relation_type: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
+    temporary: bool = False
+    workflow_action: AgentWorkflowAction = ""
+    retry_task_id: str = Field(default="", max_length=256)
 
 
 class AgentRunResponse(BaseModel):
+    run_id: str = ""
+    trace_id: str = ""
     status: AgentRunStatus
     plan: AgentPlan
     multi_step_plan: AgentPlanContext | None = None
@@ -197,3 +231,16 @@ class AgentRunTraceResponse(BaseModel):
     total_duration_ms: int = Field(default=0, ge=0)
     run: AgentRunResponse
     events: list[AgentTraceEvent] = Field(default_factory=list)
+
+
+class AgentRunSnapshotResponse(BaseModel):
+    run_id: str
+    trace_id: str
+    status: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+    plan: dict[str, Any] = Field(default_factory=dict)
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[AgentTraceEvent] = Field(default_factory=list)
+    resumable: bool = False
+    retryable_task_ids: list[str] = Field(default_factory=list)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 
-import { runAgentTrace, type AgentRunRequest } from "../../api/agent"
+import { runAgentTrace, type AgentRunRequest, type AgentWorkflowAction } from "../../api/agent"
 import { Button } from "../../shared/ui/Button"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import { AgentHeader } from "../companion/components/AgentHeader"
@@ -13,7 +13,8 @@ import { agentWorkspaceAreas } from "./agent-workspace-layout"
 import { AgentContextObservabilityCard } from "./components/AgentContextObservabilityCard"
 import { AgentDecisionPanel } from "./components/AgentDecisionPanel"
 import { AgentTimeline } from "./components/AgentTimeline"
-import { MultiAgentTracePanel } from "./components/MultiAgentTracePanel"
+import { TaskExecutionPanel } from "./components/TaskExecutionPanel"
+import { ResearchArtifactPanel } from "./components/ResearchArtifactPanel"
 import { useAgentRuntime } from "./hooks/useAgentRuntime"
 import {
   resolveKnowledgeAgentContext,
@@ -24,6 +25,7 @@ interface AgentNavigationState {
   agentDraftPrompt?: string
   autoSubmitAgentPrompt?: boolean
   knowledgeAgentContext?: KnowledgeAgentContext
+  agentWorkflowAction?: AgentWorkflowAction
 }
 
 export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceController }) {
@@ -32,6 +34,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
   const navigationState = (location.state ?? null) as AgentNavigationState | null
   const draftPrompt = navigationState?.agentDraftPrompt?.trim() ?? ""
   const autoSubmitDraft = Boolean(navigationState?.autoSubmitAgentPrompt)
+  const requestedWorkflowAction = navigationState?.agentWorkflowAction ?? ""
   const knowledgeAgentContext = navigationState?.knowledgeAgentContext ?? null
   const resolvedKnowledgeContext = useMemo(
     () => resolveKnowledgeAgentContext(knowledgeAgentContext),
@@ -69,7 +72,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
     runtimeWorkspace,
     resolvedKnowledgeContext?.knowledgeContext ?? null,
   )
-  const { pending, prompt, setPrompt, sourceText, submitPrompt } = runtime
+  const { pending, prompt, setPrompt, setWorkflowAction, sourceText, submitPrompt } = runtime
   const appliedDraftRef = useRef("")
   const submittedDraftRef = useRef("")
   const lastRuntimeRunRef = useRef("")
@@ -81,15 +84,17 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
     if (!draftPrompt || appliedDraftRef.current === draftPrompt) return
     appliedDraftRef.current = draftPrompt
     setPrompt(draftPrompt)
-  }, [draftPrompt, setPrompt])
+    setWorkflowAction?.(requestedWorkflowAction)
+  }, [draftPrompt, requestedWorkflowAction, setPrompt, setWorkflowAction])
 
   useEffect(() => {
-    if (!autoSubmitDraft || !draftPrompt || !sourceText) return
+    if (!autoSubmitDraft || !draftPrompt) return
+    if (["quick_read", "analyze_visuals"].includes(requestedWorkflowAction) && !sourceText) return
     if (prompt !== draftPrompt || pending) return
     if (submittedDraftRef.current === draftPrompt) return
     submittedDraftRef.current = draftPrompt
     submitPrompt()
-  }, [autoSubmitDraft, draftPrompt, pending, prompt, sourceText, submitPrompt])
+  }, [autoSubmitDraft, draftPrompt, pending, prompt, requestedWorkflowAction, sourceText, submitPrompt])
 
   useEffect(() => {
     const runId = runtime.viewState.runId
@@ -214,7 +219,14 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         />
       </div>
 
-      <MultiAgentTracePanel events={runtime.traceEvents} running={runtimeRunning} />
+      <TaskExecutionPanel
+        events={runtime.traceEvents}
+        snapshot={runtime.runSnapshot}
+        running={runtimeRunning}
+        onRetry={runtime.retryTask}
+      />
+
+      <ResearchArtifactPanel snapshot={runtime.runSnapshot} />
 
       <AgentDecisionPanel
         notice={runtime.decision}
@@ -272,6 +284,15 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
       />
 
       <div className="sticky bottom-0 z-20 rounded-[18px] border border-slate-200/80 bg-white/95 p-3 shadow-[0_-12px_34px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+        <label className="mb-2 flex items-center gap-2 px-1 text-[11px] text-slate-500">
+          <input
+            type="checkbox"
+            checked={runtime.temporary}
+            disabled={runtime.pending}
+            onChange={(event) => runtime.setTemporaryMode(event.target.checked)}
+          />
+          临时会话：不读取长期记忆，不保存聊天、checkpoint、trace 或恢复记录
+        </label>
         <AgentInputComposer
           value={runtime.prompt}
           onChange={runtime.setPrompt}

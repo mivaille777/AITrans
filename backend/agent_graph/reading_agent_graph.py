@@ -2,27 +2,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, Callable, TypedDict
+from typing import Any, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 
+from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEventType
 from backend.agent_core.exceptions import AgentRuntimeError
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
-from backend.agent_core.reliability import AgentRunControl, run_react_decision_with_timeout
-from backend.agent_core.state import AgentState
+from backend.agent_core.reliability import (
+    AgentRunControl,
+    run_react_decision_with_timeout,
+)
+from backend.agent_core.state import AgentState, migrate_agent_state_payload
 from backend.models.agent_react import (
     AgentEvidenceGateAssessment,
     AgentObservation,
-    AgentRetrievalObservation,
     AgentReActDecision,
+    AgentRetrievalObservation,
 )
-from backend.models.agent_runtime import AgentEvidenceItem, AgentPlanStep, AgentRouteDecision
+from backend.models.agent_runtime import (
+    AgentEvidenceItem,
+    AgentPlanStep,
+    AgentRouteDecision,
+)
 from backend.services.agent_evidence_gate_service import AgentEvidenceGateService
 from backend.services.agent_react_decision_service import AgentReActDecisionService
-
 
 GraphEventSink = Callable[[AgentEventType, dict[str, Any]], None]
 _KNOWLEDGE_SEARCH_TOOL = "search_knowledge_base"
@@ -48,7 +57,7 @@ class ReadingAgentRuntimeContext(TypedDict, total=False):
 def _coerce_agent_state(value: AgentState | dict[str, Any]) -> AgentState:
     if isinstance(value, AgentState):
         return value
-    return AgentState.model_validate(value)
+    return AgentState.model_validate(migrate_agent_state_payload(value))
 
 
 def _dump_agent_state(state: AgentState) -> dict[str, Any]:
@@ -107,7 +116,7 @@ def _run_local_fingerprint(state: AgentState, payload: object) -> str:
         separators=(",", ":"),
         default=str,
     )
-    material = f"{state.run_id}\0{canonical}".encode("utf-8")
+    material = f"{state.run_id}\0{canonical}".encode()
     return hashlib.sha256(material).hexdigest()[:20]
 
 
@@ -179,7 +188,7 @@ def _cumulative_knowledge_evidence(state: AgentState) -> list[AgentEvidenceItem]
                     if isinstance(raw, AgentEvidenceItem)
                     else AgentEvidenceItem.model_validate(raw)
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001,S112 - discard malformed legacy evidence
                 continue
             if item.evidence_id and item.evidence_id not in seen:
                 evidence.append(item)
@@ -207,9 +216,7 @@ def _retrieval_observation(
     results = data.get("results", ())
     result_count = len(results) if isinstance(results, (list, tuple)) else 0
     query = str(
-        data.get("query", "")
-        or decision.arguments.get("query", "")
-        or ""
+        data.get("query", "") or decision.arguments.get("query", "") or ""
     ).strip()
     return AgentRetrievalObservation(
         query=query,
@@ -238,6 +245,8 @@ class ReadingAgentGraph:
     """
 
     node_names = (
+        "resolve_context",
+        "run_collaboration",
         "prepare_conversation",
         "route_request",
         "execute_direct",
@@ -253,14 +262,26 @@ class ReadingAgentGraph:
         adapter: ProductAgentRuntimeAdapter,
         react_decision_service: AgentReActDecisionService | Any | None = None,
         evidence_gate_service: AgentEvidenceGateService | Any | None = None,
+        checkpointer: BaseCheckpointSaver[str] | None = None,
+        context_provider: Callable[[AgentState], dict[str, Any]] | None = None,
+        collaboration_adapter: Any | None = None,
     ) -> None:
         self._adapter = adapter
-        self._react_decision_service = react_decision_service or AgentReActDecisionService()
-        self._evidence_gate_service = evidence_gate_service or AgentEvidenceGateService()
+        self._react_decision_service = (
+            react_decision_service or AgentReActDecisionService()
+        )
+        self._evidence_gate_service = (
+            evidence_gate_service or AgentEvidenceGateService()
+        )
+        self._checkpointer = checkpointer
+        self._context_provider = context_provider
+        self._collaboration_adapter = collaboration_adapter
         builder = StateGraph(
             ReadingAgentGraphState,
             context_schema=ReadingAgentRuntimeContext,
         )
+        builder.add_node("resolve_context", self._resolve_context)
+        builder.add_node("run_collaboration", self._run_collaboration)
         builder.add_node("prepare_conversation", self._prepare_conversation)
         builder.add_node("route_request", self._route_request)
         builder.add_node("execute_direct", self._execute_direct)
@@ -270,12 +291,20 @@ class ReadingAgentGraph:
         builder.add_node("finalize_react", self._finalize_react)
         builder.add_node("finalize_conversation", self._finalize_conversation)
 
-        builder.add_edge(START, "prepare_conversation")
-        builder.add_edge("prepare_conversation", "route_request")
+        builder.add_edge(START, "resolve_context")
+        # Acquire durable conversation ownership before specialists read scope or
+        # memory, so two windows cannot launch competing task graphs.
+        builder.add_edge("resolve_context", "prepare_conversation")
+        builder.add_edge("prepare_conversation", "run_collaboration")
+        builder.add_edge("run_collaboration", "route_request")
         builder.add_conditional_edges(
             "route_request",
             self._route_branch,
-            {"complex": "start_react", "direct": "execute_direct"},
+            {
+                "complex": "start_react",
+                "direct": "execute_direct",
+                "completed": "finalize_conversation",
+            },
         )
         builder.add_edge("execute_direct", "finalize_conversation")
         builder.add_edge("start_react", "decide_react")
@@ -299,11 +328,95 @@ class ReadingAgentGraph:
         )
         builder.add_edge("finalize_react", "finalize_conversation")
         builder.add_edge("finalize_conversation", END)
-        self._compiled = builder.compile()
+        self._compiled = builder.compile(checkpointer=checkpointer)
+        self._temporary_compiled = builder.compile()
 
     @property
     def compiled_graph(self):
         return self._compiled
+
+    @property
+    def manages_preworkflow(self) -> bool:
+        return True
+
+    def configure_preworkflow(
+        self,
+        *,
+        context_provider: Callable[[AgentState], dict[str, Any]] | None = None,
+        collaboration_adapter: Any | None = None,
+    ) -> None:
+        """Adopt legacy runtime adapters so existing compositions stay valid."""
+
+        if context_provider is not None:
+            self._context_provider = context_provider
+        if collaboration_adapter is not None:
+            self._collaboration_adapter = collaboration_adapter
+
+    @staticmethod
+    def _checkpoint_config(run_id: str) -> dict[str, dict[str, str]]:
+        return {"configurable": {"thread_id": str(run_id).strip()}}
+
+    def checkpoint_state(self, run_id: str) -> AgentState | None:
+        """Load the latest durable state for one Agent run, if it exists."""
+
+        normalized_run_id = str(run_id).strip()
+        if self._checkpointer is None or not normalized_run_id:
+            return None
+        snapshot = self._compiled.get_state(self._checkpoint_config(normalized_run_id))
+        unknown_nodes = sorted(set(snapshot.next) - set(self.node_names))
+        if unknown_nodes:
+            raise AgentRuntimeError(
+                f"Checkpoint references unsupported graph nodes: {unknown_nodes}",
+                stage="checkpoint",
+                fallback_reason="checkpoint_graph_version_unsupported",
+            )
+        payload = snapshot.values.get("agent_state") if snapshot.values else None
+        if not isinstance(payload, dict):
+            return None
+        state = _coerce_agent_state(payload)
+        pending_write = self._pending_checkpoint_write_tool(state, snapshot.next)
+        if pending_write:
+            raise AgentRuntimeError(
+                (
+                    f"Checkpoint for run {normalized_run_id!r} is waiting to execute "
+                    f"write tool {pending_write!r}; automatic replay is blocked."
+                ),
+                stage="checkpoint",
+                fallback_reason="write_checkpoint_requires_manual_recovery",
+            )
+        return state
+
+    def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
+        adapter = self._collaboration_adapter
+        prepare = getattr(adapter, "prepare_task_retry", None)
+        if not callable(prepare):
+            raise AgentRuntimeError(
+                "Task retry is unavailable for this Agent workflow.",
+                stage="checkpoint",
+                fallback_reason="task_retry_unavailable",
+            )
+        return tuple(prepare(state, task_id))
+
+    def _pending_checkpoint_write_tool(
+        self,
+        state: AgentState,
+        next_nodes: tuple[str, ...],
+    ) -> str:
+        if not {"execute_direct", "execute_react_tool"}.intersection(next_nodes):
+            return ""
+
+        tool_name = state.route.tool_name
+        if "execute_react_tool" in next_nodes and state.react.decisions:
+            tool_name = state.react.decisions[-1].tool_name
+        if not tool_name:
+            return ""
+        for spec in self._registered_tools():
+            if (
+                str(getattr(spec, "name", "") or "") == tool_name
+                and str(getattr(spec, "effect", "") or "") == "write"
+            ):
+                return tool_name
+        return ""
 
     @staticmethod
     def _runtime(
@@ -329,6 +442,83 @@ class ReadingAgentGraph:
             return tuple(list_tools())
         return ()
 
+    def _resolve_context(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        emit, control = self._runtime(runtime)
+        control.checkpoint("context_resolution")
+        if self._context_provider is not None:
+            state.apply_reading_context(self._context_provider(state))
+        else:
+            state.sync_contract()
+        control.checkpoint("context_ready")
+
+        emitted: set[AgentEventType] = set()
+        if emit is not None:
+            public_context = {
+                key: value
+                for key, value in state.browser_context.items()
+                if key != "knowledge_context"
+            }
+            emit(AgentEventType.CONTEXT_READY, public_context)
+            emitted.add(AgentEventType.CONTEXT_READY)
+            knowledge_diagnostics = knowledge_context_diagnostics(
+                state.browser_context.get("knowledge_context")
+            )
+            if knowledge_diagnostics:
+                emit(
+                    AgentEventType.KNOWLEDGE_CONTEXT_READY,
+                    knowledge_diagnostics,
+                )
+                emitted.add(AgentEventType.KNOWLEDGE_CONTEXT_READY)
+        return {
+            "agent_state": _dump_agent_state(state),
+            "emitted_event_types": _merge_emitted(
+                graph_state.get("emitted_event_types", ()), emitted
+            ),
+        }
+
+    def _run_collaboration(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        adapter = self._collaboration_adapter
+        if adapter is None:
+            return {"agent_state": _dump_agent_state(state)}
+
+        emit, control = self._runtime(runtime)
+        prepare_state = getattr(adapter, "prepare_state", None)
+        if callable(prepare_state):
+            state = prepare_state(state)
+        should_run = getattr(adapter, "should_run", None)
+        if callable(should_run) and not bool(should_run(state)):
+            return {"agent_state": _dump_agent_state(state)}
+
+        emitted: set[AgentEventType] = set()
+
+        def forward(event_type: AgentEventType, payload: dict[str, Any]) -> None:
+            emitted.add(event_type)
+            if emit is not None:
+                emit(event_type, payload)
+
+        eventful_run = getattr(adapter, "run_with_events", None)
+        if callable(eventful_run):
+            state = eventful_run(state, forward, control=control)
+        elif callable(adapter):
+            state = adapter(state)
+        state.sync_contract()
+        return {
+            "agent_state": _dump_agent_state(state),
+            "emitted_event_types": _merge_emitted(
+                graph_state.get("emitted_event_types", ()), emitted
+            ),
+        }
+
     def _emit_react_limit(
         self,
         state: AgentState,
@@ -350,7 +540,9 @@ class ReadingAgentGraph:
         )
         return {AgentEventType.REACT_LIMIT_REACHED}
 
-    def _prepare_conversation(self, graph_state: ReadingAgentGraphState) -> dict[str, Any]:
+    def _prepare_conversation(
+        self, graph_state: ReadingAgentGraphState
+    ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         conversation_run = self._adapter.begin_conversation(state)
         return {
@@ -365,6 +557,22 @@ class ReadingAgentGraph:
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         _, control = self._runtime(runtime)
+        if (
+            state.browser_context.get("orchestration_direct_delivery")
+            and state.response_state.status == "completed"
+        ):
+            route = AgentRouteDecision(
+                kind="answer",
+                source="deterministic",
+                intent="orchestration_direct_delivery",
+                user_visible_reason="A completed bounded task result already satisfies the request.",
+            )
+            state.apply_route(route)
+            return {
+                "agent_state": _dump_agent_state(state),
+                "route": route.model_dump(mode="json"),
+                "route_metadata": {"direct_delivery": True},
+            }
         try:
             route, metadata = self._adapter.resolve_route(state, control=control)
         except Exception as exc:
@@ -378,6 +586,12 @@ class ReadingAgentGraph:
 
     @staticmethod
     def _route_branch(graph_state: ReadingAgentGraphState) -> str:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        if (
+            state.browser_context.get("orchestration_direct_delivery")
+            and state.response_state.status == "completed"
+        ):
+            return "completed"
         route = AgentRouteDecision.model_validate(graph_state.get("route", {}))
         return "complex" if route.kind == "complex" else "direct"
 
@@ -562,9 +776,7 @@ class ReadingAgentGraph:
 
         if _is_repeated_react_action(state, decision):
             emitted.update(
-                self._emit_react_limit(
-                    state, emit, reason="repeated_action_detected"
-                )
+                self._emit_react_limit(state, emit, reason="repeated_action_detected")
             )
         elif (
             decision.kind == "tool"
@@ -626,11 +838,9 @@ class ReadingAgentGraph:
                     graph_state.get("emitted_event_types", ()), emitted
                 ),
             }
-        if (
-            decision.tool_name == _KNOWLEDGE_SEARCH_TOOL
-            and _knowledge_search_count(state)
-            >= min(control.policy.max_knowledge_searches, control.policy.max_tool_calls)
-        ):
+        if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL and _knowledge_search_count(
+            state
+        ) >= min(control.policy.max_knowledge_searches, control.policy.max_tool_calls):
             emitted = self._emit_react_limit(
                 state, emit, reason="knowledge_search_budget_exhausted"
             )
@@ -756,15 +966,11 @@ class ReadingAgentGraph:
 
         if len(state.tool_calls) >= control.policy.max_tool_calls:
             emitted.update(
-                self._emit_react_limit(
-                    state, emit, reason="tool_call_budget_exhausted"
-                )
+                self._emit_react_limit(state, emit, reason="tool_call_budget_exhausted")
             )
         elif state.react.iteration >= control.policy.max_react_iterations:
             emitted.update(
-                self._emit_react_limit(
-                    state, emit, reason="iteration_budget_exhausted"
-                )
+                self._emit_react_limit(state, emit, reason="iteration_budget_exhausted")
             )
 
         return {
@@ -804,7 +1010,11 @@ class ReadingAgentGraph:
                 )
             else:
                 decision: AgentReActDecision | None = state.react.last_decision
-                if decision is None or decision.kind != "final" or not decision.final_answer:
+                if (
+                    decision is None
+                    or decision.kind != "final"
+                    or not decision.final_answer
+                ):
                     raise AgentRuntimeError(
                         "ReAct reached its execution limit before producing an answer or observation.",
                         stage="react_finalize",
@@ -816,7 +1026,8 @@ class ReadingAgentGraph:
                         "status": "completed",
                         "output_text": decision.final_answer,
                         "provider": str(
-                            getattr(self._react_decision_service, "provider_name", "") or ""
+                            getattr(self._react_decision_service, "provider_name", "")
+                            or ""
                         ),
                         "model": str(
                             getattr(self._react_decision_service, "model", "") or ""
@@ -833,7 +1044,8 @@ class ReadingAgentGraph:
                             "model": state.response_state.model,
                             "request_id": state.execution.request_id,
                             "prompt_id": str(
-                                getattr(self._react_decision_service, "prompt_id", "") or ""
+                                getattr(self._react_decision_service, "prompt_id", "")
+                                or ""
                             ),
                             "grounded": False,
                         },
@@ -869,6 +1081,7 @@ class ReadingAgentGraph:
         *,
         emit: GraphEventSink | None,
         control: AgentRunControl | None,
+        resume: bool = False,
     ) -> tuple[AgentState, set[AgentEventType]]:
         initial: ReadingAgentGraphState = {
             "agent_state": _dump_agent_state(state),
@@ -877,8 +1090,27 @@ class ReadingAgentGraph:
             "route_metadata": {},
             "emitted_event_types": [],
         }
-        result = self._compiled.invoke(
-            initial,
+        temporary = bool(state.browser_context.get("temporary", False))
+        if resume and temporary:
+            raise AgentRuntimeError(
+                "Temporary Agent runs cannot be resumed across process boundaries.",
+                stage="checkpoint",
+                fallback_reason="temporary_checkpoint_unavailable",
+            )
+        if resume and self._checkpointer is None:
+            raise AgentRuntimeError(
+                "Agent checkpoint persistence is unavailable.",
+                stage="checkpoint",
+                fallback_reason="checkpoint_unavailable",
+            )
+        graph = self._temporary_compiled if temporary else self._compiled
+        result = graph.invoke(
+            None if resume else initial,
+            config=(
+                self._checkpoint_config(state.run_id)
+                if self._checkpointer is not None and not temporary
+                else None
+            ),
             context={
                 "event_sink": emit,
                 "control": control or AgentRunControl(),
@@ -904,6 +1136,24 @@ class ReadingAgentGraph:
         control: AgentRunControl | None = None,
     ) -> AgentState:
         final_state, emitted = self._invoke(state, emit=emit, control=control)
+        self._adapter.emit_compatibility_events(final_state, emitted, emit)
+        return final_state
+
+    def resume_with_events(
+        self,
+        state: AgentState,
+        emit: GraphEventSink,
+        *,
+        control: AgentRunControl | None = None,
+    ) -> AgentState:
+        """Continue a previously checkpointed run from its latest graph step."""
+
+        final_state, emitted = self._invoke(
+            state,
+            emit=emit,
+            control=control,
+            resume=True,
+        )
         self._adapter.emit_compatibility_events(final_state, emitted, emit)
         return final_state
 

@@ -5,6 +5,7 @@ from time import sleep
 from fastapi.testclient import TestClient
 
 from backend.agent_core.events import AgentEvent, AgentEventType
+from backend.agent_core.exceptions import AgentRuntimeError
 from backend.agent_core.state import AgentState
 from backend.api.agent import run_product_agent, run_product_agent_trace
 from backend.api.agent_dependencies import get_agent_runtime
@@ -169,6 +170,44 @@ class EvidenceRuntime(FakeRuntime):
         return state
 
 
+class ResumeRuntime(FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.restored_run_ids: list[str] = []
+        self.resume_flags: list[bool] = []
+
+    def restore_checkpoint(self, run_id: str) -> AgentState:
+        self.restored_run_ids.append(run_id)
+        return AgentState(
+            run_id=run_id,
+            trace_id="trace-restored",
+            session_id="session-restored",
+            user_input="Persisted request",
+            selected_text="Persisted context",
+            browser_context={"request_id": 12},
+        )
+
+    def execute(
+        self,
+        state: AgentState,
+        *,
+        event_sink=None,
+        control=None,
+        resume: bool = False,
+    ) -> AgentState:
+        self.resume_flags.append(resume)
+        return super().execute(state, event_sink=event_sink, control=control)
+
+
+class MissingResumeRuntime(FakeRuntime):
+    def restore_checkpoint(self, run_id: str) -> AgentState:
+        raise AgentRuntimeError(
+            f"No resumable checkpoint for {run_id}.",
+            stage="checkpoint",
+            fallback_reason="checkpoint_not_found",
+        )
+
+
 def _request() -> AgentRunRequest:
     return AgentRunRequest(
         session_id="session-12",
@@ -288,6 +327,20 @@ def test_agent_trace_http_endpoint_is_additive_to_existing_run_api() -> None:
     assert body["events"][-1]["event_type"] == "agent_end"
 
 
+def test_agent_trace_http_endpoint_explicitly_resumes_persisted_run() -> None:
+    runtime = ResumeRuntime()
+    payload = _request().model_copy(update={"resume_run_id": "run-restored"})
+
+    response = run_product_agent_trace(payload, runtime)
+
+    assert runtime.restored_run_ids == ["run-restored"]
+    assert runtime.resume_flags == [True]
+    assert response.run_id == "run-restored"
+    assert response.trace_id == "trace-restored"
+    assert response.run.run_id == "run-restored"
+    assert response.run.trace_id == "trace-restored"
+
+
 def test_agent_websocket_streams_activity_before_terminal_trace() -> None:
     runtime = FakeRuntime()
     app = create_app()
@@ -325,6 +378,53 @@ def test_agent_websocket_streams_activity_before_terminal_trace() -> None:
     assert terminal["type"] == "done"
     assert terminal["trace_id"] == "trace-api-12"
     assert terminal["trace"]["run"]["output_text"] == "贝叶斯优化"
+
+
+def test_agent_websocket_resumes_with_persisted_run_identity() -> None:
+    runtime = ResumeRuntime()
+    app = create_app()
+    app.dependency_overrides[get_agent_runtime] = lambda: runtime
+    client = TestClient(app)
+    payload = _request().model_copy(update={"resume_run_id": "run-restored"})
+
+    with client.websocket_connect("/api/agent/stream") as websocket:
+        websocket.send_json({"type": "start", "request": payload.model_dump()})
+        accepted = websocket.receive_json()
+        assert accepted["type"] == "accepted"
+        assert accepted["run_id"] == "run-restored"
+        assert accepted["trace_id"] == "trace-restored"
+
+        while True:
+            event = websocket.receive_json()
+            if event["type"] == "done":
+                assert event["run_id"] == "run-restored"
+                assert event["trace_id"] == "trace-restored"
+                break
+
+    assert runtime.restored_run_ids == ["run-restored"]
+    assert runtime.resume_flags == [True]
+
+
+def test_agent_websocket_resume_error_preserves_request_identity() -> None:
+    app = create_app()
+    app.dependency_overrides[get_agent_runtime] = lambda: MissingResumeRuntime()
+    client = TestClient(app)
+    payload = _request().model_copy(update={"resume_run_id": "run-missing"})
+
+    with client.websocket_connect("/api/agent/stream") as websocket:
+        websocket.send_json({"type": "start", "request": payload.model_dump()})
+        event = websocket.receive_json()
+
+    assert event == {
+        "type": "error",
+        "request_id": 12,
+        "session_id": "session-12",
+        "run_id": "run-missing",
+        "trace_id": "trace-api-12",
+        "code": "provider_or_runtime",
+        "fallback_reason": "checkpoint_not_found",
+        "message": "No resumable checkpoint for run-missing.",
+    }
 
 
 def test_agent_websocket_confirmation_never_streams_tool_result() -> None:

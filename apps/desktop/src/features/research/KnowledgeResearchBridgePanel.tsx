@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { BookOpenCheck, LoaderCircle, MessageCircle, Sparkles } from "lucide-react"
+import { ArrowUpRight, BookOpenCheck, LoaderCircle, MessageCircle, Sparkles } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 
@@ -32,12 +32,15 @@ function pageLabel(item: KnowledgeItem): string {
 
 export default function KnowledgeResearchBridgePanel({
   workspace,
+  previewLimit = 3,
 }: {
   workspace: TranslationWorkspaceController
+  previewLimit?: number
 }) {
   const navigate = useNavigate()
   const [openingItemId, setOpeningItemId] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
+  const [showAll, setShowAll] = useState(false)
   const itemsQuery = useQuery({
     queryKey: queryKeys.knowledge.items,
     queryFn: listKnowledgeItems,
@@ -50,6 +53,7 @@ export default function KnowledgeResearchBridgePanel({
       .slice(0, 12),
     [itemsQuery.data?.items],
   )
+  const visibleCards = showAll ? cards : cards.slice(0, previewLimit)
 
   async function openInChat(item: KnowledgeItem) {
     setOpeningItemId(item.item_id)
@@ -103,7 +107,7 @@ export default function KnowledgeResearchBridgePanel({
         </div>
       ) : (
         <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {cards.map((item) => {
+          {visibleCards.map((item) => {
             const section = metadataText(item, "section_heading")
             const page = pageLabel(item)
             const documents = knowledgeCardDocumentIds(item)
@@ -126,6 +130,22 @@ export default function KnowledgeResearchBridgePanel({
               </article>
             )
           })}
+        </div>
+      )}
+
+      {cards.length > previewLimit && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+          <p className="text-[11px] text-slate-500">
+            {showAll ? `Showing ${cards.length} recent cards.` : `${cards.length - visibleCards.length} more cards are available in Knowledge.`}
+          </p>
+          <div className="flex gap-2">
+            <Button size="xs" variant="ghost" onClick={() => setShowAll((value) => !value)}>
+              {showAll ? "Show preview" : `Show all ${cards.length}`}
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => navigate("/knowledge?view=library")}>
+              <ArrowUpRight size={11} /> Knowledge
+            </Button>
+          </div>
         </div>
       )}
 

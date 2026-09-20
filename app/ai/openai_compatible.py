@@ -25,7 +25,11 @@ from app.ai.errors import (
 )
 from app.ai.provider import DeepSeekTextProvider
 from app.ai.runtime_status import track_llm_request
-from app.ai.secrets import ProviderCredentialStore, get_provider_api_key
+from app.ai.secrets import (
+    ProviderCredentialStore,
+    get_provider_api_key,
+    normalize_provider_name,
+)
 
 DEFAULT_COMPATIBLE_TIMEOUT_SECONDS = 15.0
 DEFAULT_COMPATIBLE_MAX_RETRIES = 1
@@ -39,11 +43,13 @@ class OpenAICompatibleClient:
         *,
         base_url: str,
         model: str,
+        provider: str = "openai_compatible",
         timeout: float = DEFAULT_COMPATIBLE_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_COMPATIBLE_MAX_RETRIES,
         sdk_client: Any | None = None,
         credential_store: ProviderCredentialStore | Any | None = None,
     ) -> None:
+        self.provider_name = normalize_provider_name(provider)
         self.base_url = self._validate_base_url(base_url)
         self.model = self._validate_model(model)
         self.timeout = self._validate_timeout(timeout)
@@ -54,7 +60,7 @@ class OpenAICompatibleClient:
             self._client = sdk_client
         else:
             resolved_api_key = get_provider_api_key(
-                "openai_compatible",
+                self.provider_name,
                 credential_store=credential_store,
             )
             self._client = OpenAI(
@@ -149,9 +155,9 @@ class OpenAICompatibleClient:
         return max_tokens
 
     def _complete_request(self, request: dict[str, Any]) -> str:
-        route_key = f"openai_compatible|{self.model}|{self.base_url}"
+        route_key = f"{self.provider_name}|{self.model}|{self.base_url}"
         with track_llm_request(
-            provider="openai_compatible",
+            provider=self.provider_name,
             model=self.model,
             route_key=route_key,
         ):
@@ -264,6 +270,10 @@ class OpenAICompatibleTextProvider(DeepSeekTextProvider):
     """Reuse the hardened translation/polish pipeline with a custom backend."""
 
     name = "openai_compatible"
+
+    def __init__(self, client: Any | None = None, *, name: str = "openai_compatible", **kwargs: Any) -> None:
+        super().__init__(client=client, **kwargs)
+        self.name = normalize_provider_name(name)
 
 
 __all__ = [

@@ -78,12 +78,8 @@ class DeepSeekClient:
     @staticmethod
     def _validate_model(model: object) -> str:
         candidate = str(model).strip()
-        if candidate not in SUPPORTED_DEEPSEEK_MODELS:
-            supported = ", ".join(sorted(SUPPORTED_DEEPSEEK_MODELS))
-            raise AIConfigurationError(
-                f"Unsupported DeepSeek model: {candidate or '<empty>'}. "
-                f"Supported models: {supported}."
-            )
+        if not candidate:
+            raise AIConfigurationError("DeepSeek model must not be empty.")
         return candidate
 
     @staticmethod

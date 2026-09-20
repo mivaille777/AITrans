@@ -26,6 +26,8 @@ const trace: AgentRunTraceResponse = {
   ui_mode: "translation",
   total_duration_ms: 600,
   run: {
+    run_id: "run-1",
+    trace_id: "trace-1",
     status: "completed",
     conversation_id: "conversation-1",
     plan: {

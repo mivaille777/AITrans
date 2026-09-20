@@ -130,6 +130,19 @@ export interface KnowledgeCardMetadata extends Record<string, unknown> {
   sources?: KnowledgeEvidenceSource[]
   provenance?: KnowledgeCardProvenance | string
   tags?: string[]
+  paper_item_id?: string
+  document_id?: string
+  section_id?: string
+  section_heading?: string
+  page_start?: number | null
+  page_end?: number | null
+  selection_text?: string
+  selection_source?: "text" | "pdf"
+  pdf_page_number?: number | null
+  context_before?: string
+  context_after?: string
+  evidence_kind?: string
+  relation_type?: string
 }
 
 export interface KnowledgeItem {

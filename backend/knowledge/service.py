@@ -15,7 +15,6 @@ from backend.knowledge.domain import (
 )
 from backend.knowledge.repository import KnowledgeRepository
 
-
 _UNSET = object()
 
 
@@ -48,6 +47,7 @@ class KnowledgeWorkspaceService:
     def create_item(
         self,
         *,
+        item_id: str | None = None,
         item_type: KnowledgeItemType,
         title: str,
         summary: str = "",
@@ -56,7 +56,7 @@ class KnowledgeWorkspaceService:
         metadata: dict[str, Any] | None = None,
     ) -> KnowledgeItem:
         item = KnowledgeItem(
-            item_id=_new_id("ki"),
+            item_id=str(item_id or "").strip() or _new_id("ki"),
             item_type=item_type,
             title=title.strip(),
             summary=summary,
@@ -269,6 +269,9 @@ class KnowledgeWorkspaceService:
 
     def list_collections(self) -> list[KnowledgeCollection]:
         return self._repository.list_collections()
+
+    def get_collection(self, collection_id: str) -> KnowledgeCollection | None:
+        return self._repository.get_collection(collection_id)
 
     def delete_collection(self, collection_id: str) -> bool:
         return self._repository.delete_collection(collection_id)

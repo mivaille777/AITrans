@@ -88,7 +88,12 @@ class BaseFileParser:
 
 
 def compose_blocks(blocks: list[ParsedBlock]) -> tuple[str, list[DocumentSection]]:
-    """Render linear blocks and derive section spans from heading blocks."""
+    """Render linear blocks and derive section spans from heading blocks.
+
+    Markdown section ranges meet exactly at the next heading start. This keeps
+    the source span contiguous, avoids whitespace-only synthetic sections in the
+    document tree, and preserves the original heading hierarchy for Reading.
+    """
     clean_blocks = [
         ParsedBlock(text=block.text.strip(), heading_level=block.heading_level)
         for block in blocks
@@ -118,8 +123,7 @@ def compose_blocks(blocks: list[ParsedBlock]) -> tuple[str, list[DocumentSection
         block = clean_blocks[block_index]
         start = positions[block_index][0]
         if heading_position + 1 < len(heading_indices):
-            next_start = positions[heading_indices[heading_position + 1]][0]
-            end = len(text[:next_start].rstrip())
+            end = positions[heading_indices[heading_position + 1]][0]
         else:
             end = len(text)
         sections.append(

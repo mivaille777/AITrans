@@ -1,6 +1,15 @@
 import { apiGet, apiPut } from "./client"
 
-export type LlmProviderId = "deepseek" | "openai_compatible"
+export type LlmProviderId =
+  | "deepseek"
+  | "openai"
+  | "google"
+  | "mistral"
+  | "groq"
+  | "openrouter"
+  | "together"
+  | "qwen"
+  | "openai_compatible"
 
 export interface LlmProviderOption {
   id: LlmProviderId
@@ -15,6 +24,18 @@ export interface LlmSettings {
   model: string
   base_url: string
   providers: LlmProviderOption[]
+}
+
+export interface LlmModelOption {
+  id: string
+}
+
+export interface LlmModelsResponse {
+  provider: LlmProviderId
+  current_model: string
+  available: boolean
+  models: LlmModelOption[]
+  detail: string
 }
 
 export interface LlmSettingsUpdate {
@@ -41,6 +62,10 @@ export function getLlmSettings(): Promise<LlmSettings> {
 
 export function getLlmRuntimeStatus(): Promise<LlmRuntimeStatus> {
   return apiGet<LlmRuntimeStatus>(`${LLM_SETTINGS_PATH}/status`)
+}
+
+export function getAvailableLlmModels(): Promise<LlmModelsResponse> {
+  return apiGet<LlmModelsResponse>(`${LLM_SETTINGS_PATH}/models`)
 }
 
 export function updateLlmSettings(payload: LlmSettingsUpdate): Promise<LlmSettings> {

@@ -1,5 +1,5 @@
 import { AlertCircle, FilePlus2, LibraryBig, Plus, RefreshCw, Search } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { desktop } from "../../desktop"
@@ -37,10 +37,14 @@ export default function KnowledgeLibraryPanel({
   library,
   onOpenPaper,
   onOpenGraph,
+  focusSearchRequest = 0,
+  createCardRequest = 0,
 }: {
   library: KnowledgeLibraryController
   onOpenPaper?: (itemId: string) => void
   onOpenGraph?: (itemId: string) => void
+  focusSearchRequest?: number
+  createCardRequest?: number
 }) {
   const {
     documentsQuery,
@@ -63,11 +67,20 @@ export default function KnowledgeLibraryPanel({
   const [selectedItem, setSelectedItem] = useState<KnowledgeItem | null>(null)
   const [removeTarget, setRemoveTarget] = useState<KnowledgeDocument | null>(null)
   const [openError, setOpenError] = useState("")
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const actionError = addMutation.error ?? createItemMutation.error ?? deleteItemMutation.error ?? deleteMutation.error ?? reindexMutation.error
   const requestedDocument = documents.find((document) => document.document_id === searchParams.get("document")) ?? null
   const requestedItem = items.find((item) => item.item_id === searchParams.get("item")) ?? null
   const activeDocument = selectedDocument ?? requestedDocument
   const activeItem = selectedItem ?? requestedItem
+
+  useEffect(() => {
+    if (focusSearchRequest > 0) searchInputRef.current?.focus()
+  }, [focusSearchRequest])
+
+  useEffect(() => {
+    if (createCardRequest > 0) setCreateOpen(true)
+  }, [createCardRequest])
 
   const documentsById = useMemo(
     () => new Map(documents.map((document) => [document.document_id, document] as const)),
@@ -154,7 +167,7 @@ export default function KnowledgeLibraryPanel({
         {items.length > 0 && (
           <div className="border-b border-slate-100 px-5 py-3 lg:px-7">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <label className="flex min-w-0 flex-1 items-center gap-2 rounded-[13px] border border-slate-200 bg-white px-3 py-2 lg:max-w-md"><Search size={14} className="text-slate-400" /><input className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search cards, summaries and sources…" /></label>
+              <label className="flex min-w-0 flex-1 items-center gap-2 rounded-[13px] border border-slate-200 bg-white px-3 py-2 lg:max-w-md"><Search size={14} className="text-slate-400" /><input ref={searchInputRef} className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search cards, summaries and sources…" /></label>
               <div className="ait-scroll-panel flex max-w-full gap-1 overflow-x-auto rounded-[12px] bg-slate-100 p-1" aria-label="Knowledge card type filter">{filters.map((value) => <button key={value} type="button" aria-label={value} className={`shrink-0 rounded-[9px] px-2.5 py-1.5 text-[10px] font-medium ${filter === value ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`} onClick={() => setFilter(value)}>{value === "all" ? "All" : knowledgeCardLabel(value)}</button>)}</div>
             </div>
             <p className="mt-2 text-[10px] text-slate-400">{visibleItems.length} of {items.length} cards · {documents.length} indexed resources</p>

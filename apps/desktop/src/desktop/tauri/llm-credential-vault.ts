@@ -6,6 +6,11 @@ export type LlmCredentialStatus = {
   configured: boolean
 }
 
+export type LlmCredentialPreview = {
+  configured: boolean
+  masked: string
+}
+
 export function hasTauriCredentialVault(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 }
@@ -13,6 +18,11 @@ export function hasTauriCredentialVault(): boolean {
 export function getLlmCredentialStatus(provider: LlmProviderId): Promise<LlmCredentialStatus> {
   return invoke<boolean>("get_llm_credential_status", { provider })
     .then((configured) => ({ configured }))
+}
+
+export function getLlmCredentialPreview(provider: LlmProviderId): Promise<LlmCredentialPreview> {
+  return invoke<string>("get_llm_credential_preview", { provider })
+    .then((masked) => ({ configured: Boolean(masked), masked }))
 }
 
 export function saveLlmCredential(provider: LlmProviderId, apiKey: string): Promise<void> {

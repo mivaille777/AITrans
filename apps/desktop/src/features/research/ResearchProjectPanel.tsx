@@ -12,8 +12,10 @@ const WORKSPACES_KEY = ["research", "project-workspaces"] as const
 
 export default function ResearchProjectPanel({
   workspace,
+  compact = false,
 }: {
   workspace: TranslationWorkspaceController
+  compact?: boolean
 }) {
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
@@ -65,6 +67,66 @@ export default function ResearchProjectPanel({
       research_goal: goal.trim(),
       description: description.trim(),
     })
+  }
+
+  if (compact) {
+    return (
+      <section className="h-full rounded-[18px] border border-slate-200/70 bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,0.04)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-slate-400">Current research project</p>
+            <h2 className="mt-1 text-base font-semibold tracking-tight text-slate-900">{active?.name || "Choose a project to keep work connected"}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreating((value) => !value)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+          >
+            <Plus size={13} />
+            New
+          </button>
+        </div>
+
+        <select
+          aria-label="Active research project"
+          value={workspace.activeResearchWorkspaceId}
+          onChange={(event) => selectWorkspace(event.target.value)}
+          className="mt-4 w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-xs font-medium text-slate-700 outline-none transition focus:border-slate-400"
+        >
+          <option value="">Global research context</option>
+          {projects.map((project) => (
+            <option key={project.workspace_id} value={project.workspace_id}>{project.name}</option>
+          ))}
+        </select>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+          {active ? (
+            <>
+              <Target size={13} className="text-slate-400" />
+              <span className="line-clamp-1 flex-1">{active.research_goal || "Add a goal when the project needs direction."}</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-1">{active.document_count} docs</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-1">{active.note_count} notes</span>
+            </>
+          ) : <span>Choose a project to persist a trusted evidence scope and writing drafts.</span>}
+        </div>
+
+        {creating ? (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Project name" maxLength={200} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400" />
+              <input value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="Research goal" maxLength={8000} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400" />
+            </div>
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Optional project description" maxLength={4000} rows={2} className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400" />
+            <div className="mt-2 flex justify-end">
+              <button type="button" onClick={createProject} disabled={!name.trim() || createMutation.isPending} className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40">
+                {createMutation.isPending ? "Creating…" : "Create project"}
+              </button>
+            </div>
+            {createMutation.isError ? <p className="mt-2 text-[11px] text-rose-600">{createMutation.error instanceof Error ? createMutation.error.message : "Unable to create project."}</p> : null}
+          </div>
+        ) : null}
+      </section>
+    )
   }
 
   return (

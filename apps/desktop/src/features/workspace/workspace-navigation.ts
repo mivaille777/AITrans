@@ -10,6 +10,7 @@ export type WorkspaceRoutePath =
 export interface WorkspaceRouteMeta {
   path: WorkspaceRoutePath
   label: string
+  sidebarLabel?: string
   description: string
 }
 
@@ -17,17 +18,19 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
     path: "/chat",
     label: "AI Chat",
+    sidebarLabel: "Chat",
     description: "Continue reasoning from a frozen reading or research context.",
   },
   {
     path: "/agent",
     label: "Agent Workspace",
+    sidebarLabel: "Agent",
     description: "Run Agent tasks with visible context, execution trace, tool activity, and results.",
   },
   {
     path: "/reading",
     label: "Reading",
-    description: "Inspect the active selection, document identity, section, and nearby context.",
+    description: "Read indexed papers, inspect live selections, and turn passages into evidence, notes, translations, or AI context.",
   },
   {
     path: "/research",
@@ -37,7 +40,7 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   {
     path: "/knowledge",
     label: "Knowledge",
-    description: "Import local documents and manage their retrieval index.",
+    description: "Organize cards, documents, canvases, graphs, and relations while Reading owns document-reading actions.",
   },
   {
     path: "/translation",
@@ -51,6 +54,20 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
   },
 ] as const
 
+const sidebarRouteOrder: readonly WorkspaceRoutePath[] = [
+  "/chat",
+  "/reading",
+  "/research",
+  "/knowledge",
+  "/agent",
+]
+
+export const workspaceSidebarRoutes: readonly WorkspaceRouteMeta[] = sidebarRouteOrder.map((path) => {
+  const route = workspaceRoutes.find((candidate) => candidate.path === path)
+  if (!route) throw new Error(`Missing workspace sidebar route: ${path}`)
+  return route
+})
+
 const fallbackRoute = workspaceRoutes[0]
 
 export function getWorkspaceRouteMeta(pathname: string): WorkspaceRouteMeta {
@@ -62,5 +79,5 @@ export function getWorkspaceRouteMeta(pathname: string): WorkspaceRouteMeta {
  * workspace <main> element scroll the whole page.
  */
 export function workspaceRouteUsesFixedHeight(pathname: string): boolean {
-  return pathname === "/chat"
+  return pathname === "/chat" || pathname === "/research" || pathname === "/knowledge" || pathname === "/settings"
 }

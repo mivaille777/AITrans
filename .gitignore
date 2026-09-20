@@ -42,9 +42,7 @@ Windows桌面划词翻译软件_架构技术路线与Codex分步提示词.md
 # Local runtime data
 
 data/
-models/
-!backend/models/
-!backend/models/llm_settings.py
+/models/
 .cache/
 
 # RAG local storage
@@ -60,3 +58,8 @@ config/rag/
 
 *.pkl
 *.pickle
+
+# Generated diagnostic reports
+
+runtime/diagnose/*
+!runtime/diagnose/.gitkeep

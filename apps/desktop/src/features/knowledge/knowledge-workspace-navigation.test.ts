@@ -1,25 +1,29 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  buildCloseReaderParams,
   buildKnowledgeViewParams,
   buildOpenGraphParams,
   buildOpenLibraryItemParams,
-  buildOpenPaperParams,
   resolveKnowledgeView,
+  resolveLegacyKnowledgeReaderPaperId,
 } from "./knowledge-workspace-navigation"
 
 describe("knowledge workspace navigation", () => {
-  it("resolves the active workspace view from URL state", () => {
+  it("keeps Knowledge limited to canvas, graph, and library views", () => {
     expect(resolveKnowledgeView(new URLSearchParams())).toBe("canvas")
     expect(resolveKnowledgeView(new URLSearchParams("view=graph"))).toBe("graph")
     expect(resolveKnowledgeView(new URLSearchParams("document=doc-1"))).toBe("library")
     expect(resolveKnowledgeView(new URLSearchParams("item=item-1"))).toBe("library")
-    expect(resolveKnowledgeView(new URLSearchParams("view=reader&paper=paper-1"))).toBe("reader")
-    expect(resolveKnowledgeView(new URLSearchParams("view=reader"))).toBe("canvas")
+    expect(resolveKnowledgeView(new URLSearchParams("view=reader&paper=paper-1"))).toBe("library")
   })
 
-  it("switches primary views without carrying incompatible selection state", () => {
+  it("recognizes legacy Knowledge reader links for compatibility redirect", () => {
+    expect(resolveLegacyKnowledgeReaderPaperId(new URLSearchParams("view=reader&paper=paper-1"))).toBe("paper-1")
+    expect(resolveLegacyKnowledgeReaderPaperId(new URLSearchParams("view=reader"))).toBe("")
+    expect(resolveLegacyKnowledgeReaderPaperId(new URLSearchParams("view=library&paper=paper-1"))).toBe("")
+  })
+
+  it("switches primary views without carrying reader or selection state", () => {
     const current = new URLSearchParams("view=reader&paper=paper-1&document=doc-1&item=item-1&focus=focus-1")
 
     expect(buildKnowledgeViewParams(current, "canvas").toString()).toBe("")
@@ -27,16 +31,10 @@ describe("knowledge workspace navigation", () => {
     expect(buildKnowledgeViewParams(current, "graph").toString()).toBe("view=graph&focus=focus-1")
   })
 
-  it("builds stable deep links for reader, graph, and library items", () => {
-    const current = new URLSearchParams("view=library&document=doc-1&item=item-1&focus=old")
+  it("builds stable graph and library-item deep links", () => {
+    const current = new URLSearchParams("view=library&document=doc-1&item=item-1&focus=old&paper=legacy")
 
-    expect(buildOpenPaperParams(current, "paper-2").toString()).toBe("view=reader&paper=paper-2")
     expect(buildOpenGraphParams(current, "item-2").toString()).toBe("view=graph&focus=item-2")
     expect(buildOpenLibraryItemParams(current, "item-3").toString()).toBe("view=library&item=item-3")
-  })
-
-  it("returns from reader to the library while preserving unrelated query state", () => {
-    const current = new URLSearchParams("view=reader&paper=paper-1&source=agent")
-    expect(buildCloseReaderParams(current).toString()).toBe("view=library&source=agent")
   })
 })

@@ -21,6 +21,7 @@ from backend.knowledge.service import KnowledgeWorkspaceService
 from backend.knowledge.suggestion_repository import (
     SqliteKnowledgeRelationSuggestionRepository,
 )
+from backend.models.agent_tasks import ScopeContext, ScopeMode
 
 KNOWLEDGE_RELATION_SUGGESTION_SYSTEM_PROMPT = """You are AITranslator's bounded knowledge-graph relation proposer.
 You may propose semantic relations only; you never execute or write graph changes.
@@ -185,7 +186,20 @@ class KnowledgeRelationSuggestionService:
         focus_item_id: str,
         candidate_item_ids: list[str] | None = None,
         max_suggestions: int = 4,
+        scope: ScopeContext | None = None,
     ) -> list[KnowledgeRelationSuggestion]:
+        if scope is not None and scope.mode is ScopeMode.RESTRICTED:
+            allowed_ids = set(scope.allowed_item_ids)
+            if focus_item_id not in allowed_ids:
+                raise ValueError("focus knowledge item is outside the authoritative scope")
+            if candidate_item_ids is None:
+                candidate_item_ids = sorted(allowed_ids - {focus_item_id})
+            else:
+                unknown = set(candidate_item_ids) - allowed_ids
+                if unknown:
+                    raise ValueError(
+                        "candidate knowledge item is outside the authoritative scope"
+                    )
         bounded_max = max(1, min(6, int(max_suggestions)))
         items = self._candidate_items(
             focus_item_id=focus_item_id,
@@ -309,6 +323,15 @@ class KnowledgeRelationSuggestionService:
         suggestion = self.get(suggestion_id)
         if suggestion is None:
             raise ValueError("knowledge relation suggestion does not exist")
+        if suggestion.status is KnowledgeRelationSuggestionStatus.ACCEPTED:
+            relation = (
+                self._workspace.get_relation(suggestion.accepted_relation_id)
+                if suggestion.accepted_relation_id
+                else None
+            )
+            if relation is None:
+                raise ValueError("accepted knowledge relation no longer exists")
+            return suggestion, relation
         if suggestion.status is not KnowledgeRelationSuggestionStatus.PENDING:
             raise ValueError("knowledge relation suggestion is no longer pending")
 
@@ -364,6 +387,8 @@ class KnowledgeRelationSuggestionService:
         suggestion = self.get(suggestion_id)
         if suggestion is None:
             raise ValueError("knowledge relation suggestion does not exist")
+        if suggestion.status is KnowledgeRelationSuggestionStatus.REJECTED:
+            return suggestion
         if suggestion.status is not KnowledgeRelationSuggestionStatus.PENDING:
             raise ValueError("knowledge relation suggestion is no longer pending")
         rejected = suggestion.model_copy(
@@ -381,6 +406,6 @@ class KnowledgeRelationSuggestionService:
 
 
 __all__ = [
-    "KnowledgeRelationSuggestionService",
     "KNOWLEDGE_RELATION_SUGGESTION_PROMPT",
+    "KnowledgeRelationSuggestionService",
 ]

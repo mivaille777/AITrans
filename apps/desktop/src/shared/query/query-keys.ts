@@ -1,7 +1,9 @@
 export const queryKeys = {
   health: ["health"] as const,
   llm: {
+    settings: ["llm", "settings"] as const,
     status: ["llm", "status"] as const,
+    models: (provider: string, baseUrl: string) => ["llm", "models", provider, baseUrl] as const,
   },
   translation: {
     status: ["translation", "status"] as const,
@@ -24,6 +26,9 @@ export const queryKeys = {
     handoff: ["companion", "handoff"] as const,
     chatStatus: ["companion", "chat-status"] as const,
     ownership: (conversationId: string) => ["companion", "ownership", conversationId] as const,
+  },
+  agent: {
+    tools: ["agent", "tools"] as const,
   },
   conversations: {
     list: (limit: number) => ["conversations", "list", limit] as const,

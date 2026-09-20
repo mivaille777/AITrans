@@ -23,10 +23,16 @@ from backend.agent_core.exceptions import (
     AgentRuntimeError,
     AgentToolTimeoutError,
 )
+from backend.agent_core.orchestration import build_artifact_store
+from backend.agent_core.orchestration.parallel_executor import (
+    TaskCheckpointConflictError,
+    TaskRunLeaseError,
+)
 from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
 from backend.api.agent_dependencies import get_agent_runtime
+from backend.api.agent_observability_dependencies import get_agent_trace_store_service
 from backend.api.dependencies import (
     get_agent_tool_registry,
     get_research_note_service,
@@ -36,6 +42,7 @@ from backend.models.agent_tools import (
     AgentPlan,
     AgentRunRequest,
     AgentRunResponse,
+    AgentRunSnapshotResponse,
     AgentRunTraceResponse,
     AgentToolCatalogResponse,
     AgentToolDefinition,
@@ -48,7 +55,11 @@ from backend.services.agent_tool_registry import (
     AgentToolExecutionResult,
     AgentToolRegistry,
 )
-from backend.services.research_note_service import ResearchNoteService, research_source_id
+from backend.services.agent_trace_store_service import AgentTraceStoreService
+from backend.services.research_note_service import (
+    ResearchNoteService,
+    research_source_id,
+)
 from backend.services.research_workspace_service import ResearchWorkspaceService
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -67,6 +78,10 @@ ResearchWorkspaceDependency = Annotated[
 ResearchNoteDependency = Annotated[
     ResearchNoteService,
     Depends(get_research_note_service),
+]
+AgentTraceStoreDependency = Annotated[
+    AgentTraceStoreService,
+    Depends(get_agent_trace_store_service),
 ]
 
 
@@ -169,6 +184,29 @@ def _state_from_run_request(
     return AgentState(**kwargs)
 
 
+def _apply_resume_request_context(
+    state: AgentState,
+    payload: AgentRunRequest,
+) -> AgentState:
+    """Carry only explicit per-request safety scope into a resumed run.
+
+    Checkpoint restore intentionally clears one-shot write approvals. The
+    approval request must therefore be overlaid onto the restored state before
+    the runtime rehydrates its durable checkpoint. Tool scope is carried too so
+    a resumed Chat Agent cannot widen beyond the tools selected for the run.
+    """
+
+    if not payload.resume_run_id.strip():
+        return state
+    context = dict(state.browser_context)
+    context["confirmed_write_tools"] = list(payload.confirmed_write_tools)
+    if payload.enabled_tools:
+        context["enabled_tools"] = list(payload.enabled_tools)
+    state.browser_context = context
+    state.sync_contract()
+    return state
+
+
 def _associate_workspace_result(
     payload: AgentRunRequest,
     state: AgentState,
@@ -211,6 +249,8 @@ def _run_response(state: AgentState) -> AgentRunResponse:
         else AgentPlan.model_validate(state.planned_action)
     )
     return AgentRunResponse(
+        run_id=state.run_id,
+        trace_id=state.trace_id,
         status=str(response.get("status", "completed") or "completed"),
         plan=compatibility_plan,
         multi_step_plan=multi_step,
@@ -233,15 +273,41 @@ def _execute_runtime(
     research_notes: ResearchNoteService | None = None,
 ) -> AgentState:
     try:
-        state = _state_from_run_request(
-            payload,
-            workspace_service=workspace_service,
-            research_notes=research_notes,
+        resume_run_id = payload.resume_run_id.strip()
+        if resume_run_id and payload.temporary:
+            raise AgentRuntimeError(
+                "Temporary Agent runs do not have persistent checkpoints.",
+                stage="checkpoint",
+                fallback_reason="temporary_checkpoint_unavailable",
+            )
+        if payload.retry_task_id and not resume_run_id:
+            raise ValueError("retry_task_id requires resume_run_id")
+        state = (
+            runtime.restore_checkpoint(resume_run_id)
+            if resume_run_id
+            else _state_from_run_request(
+                payload,
+                workspace_service=workspace_service,
+                research_notes=research_notes,
+            )
         )
-        result = runtime.execute(state)
+        state = _apply_resume_request_context(state, payload)
+        retrying = bool(resume_run_id and payload.retry_task_id.strip())
+        if retrying:
+            runtime.prepare_task_retry(state, payload.retry_task_id)
+        result = (
+            runtime.execute(state, resume=not retrying)
+            if resume_run_id
+            else runtime.execute(state)
+        )
         _associate_workspace_result(payload, result, workspace_service)
         return result
     except AgentConversationBusyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except (TaskCheckpointConflictError, TaskRunLeaseError) as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -252,11 +318,17 @@ def _execute_runtime(
             detail=str(exc),
         ) from exc
     except (AgentBudgetExceededError, AgentToolTimeoutError) as exc:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
+        ) from exc
     except AgentRuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
     except AIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -266,13 +338,87 @@ def _execute_runtime(
 
 def _trace_event(sequence: int, event: AgentEvent) -> AgentTraceEvent:
     return AgentTraceEvent(
-        sequence=sequence,
+        sequence=event.sequence if event.sequence >= 0 else sequence,
         event_type=event.event_type.value,
         timestamp=event.timestamp,
         run_id=event.run_id,
         trace_id=event.trace_id,
         elapsed_ms=event.elapsed_ms,
         payload=event.payload,
+    )
+
+
+def _snapshot_artifacts(state: AgentState) -> list[dict[str, Any]]:
+    store = build_artifact_store()
+    artifacts: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for result in state.orchestration_results:
+        for raw_ref in list(result.get("artifact_refs", []) or []):
+            if not isinstance(raw_ref, dict):
+                continue
+            artifact_id = str(raw_ref.get("artifact_id", "") or "").strip()
+            version = int(raw_ref.get("version", 0) or 0)
+            key = (artifact_id, version)
+            if not artifact_id or version < 1 or key in seen:
+                continue
+            seen.add(key)
+            artifact = store.get(artifact_id, version)
+            if artifact is not None:
+                artifacts.append(artifact.model_dump(mode="json"))
+    return artifacts
+
+
+@router.get("/runs/{run_id}/snapshot", response_model=AgentRunSnapshotResponse)
+def get_agent_run_snapshot(
+    run_id: str,
+    runtime: AgentRuntimeDependency,
+    trace_store: AgentTraceStoreDependency,
+) -> AgentRunSnapshotResponse:
+    try:
+        state = runtime.restore_checkpoint(run_id)
+    except AgentRuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    stored = trace_store.get_run(run_id)
+    stored_events = trace_store.list_events(run_id)
+    results = [dict(item) for item in state.orchestration_results]
+    retryable = sorted(
+        str(item.get("task_id", "") or "")
+        for item in results
+        if str(item.get("status", "") or "")
+        in {"failed", "partial", "blocked", "cancelled", "skipped"}
+        and str(item.get("task_id", "") or "").strip()
+    )
+    response_status = str(state.response.get("status", "") or "")
+    status_value = (
+        stored.status
+        if stored is not None and stored.status
+        else response_status
+        or state.orchestration_status
+        or "running"
+    )
+    events = [
+        AgentTraceEvent(
+            sequence=event.sequence,
+            event_type=event.event_type,
+            timestamp=event.timestamp,
+            run_id=state.run_id,
+            trace_id=state.trace_id,
+            elapsed_ms=event.elapsed_ms,
+            payload=event.payload,
+        )
+        for event in stored_events
+    ]
+    return AgentRunSnapshotResponse(
+        run_id=state.run_id,
+        trace_id=state.trace_id,
+        status=status_value,
+        scope=dict(state.orchestration_scope),
+        plan=dict(state.orchestration_plan),
+        results=results,
+        artifacts=_snapshot_artifacts(state),
+        events=events,
+        resumable=status_value not in {"completed", "failed", "cancelled"},
+        retryable_task_ids=retryable,
     )
 
 
@@ -285,7 +431,9 @@ def _trace_response(state: AgentState, runtime: AgentRuntime) -> AgentRunTraceRe
         ui_mode=state.ui_mode,
         total_duration_ms=total_duration_ms,
         run=_run_response(state),
-        events=[_trace_event(index, event) for index, event in enumerate(runtime.events)],
+        events=[
+            _trace_event(index, event) for index, event in enumerate(runtime.events)
+        ],
     )
 
 
@@ -294,6 +442,10 @@ def _stream_error_code(exc: Exception) -> str:
         return "cancelled"
     if isinstance(exc, AgentConversationBusyError):
         return exc.reason
+    if isinstance(exc, TaskRunLeaseError):
+        return "task_retry_active"
+    if isinstance(exc, TaskCheckpointConflictError):
+        return "task_retry_conflict"
     if isinstance(exc, AgentBudgetExceededError):
         return "budget_exceeded"
     if isinstance(exc, AgentToolTimeoutError):
@@ -328,7 +480,9 @@ def execute_agent_tool(
     try:
         result = registry.execute(tool_name, **payload.model_dump())
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -340,7 +494,9 @@ def execute_agent_tool(
             detail=str(exc),
         ) from exc
     except AIError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
 
     return _tool_response(result)
 
@@ -413,25 +569,60 @@ async def stream_product_agent(
             )
             return
 
+        raw_request = incoming.get("request")
+        raw_identity = raw_request if isinstance(raw_request, dict) else {}
         try:
-            payload = AgentRunRequest.model_validate(incoming.get("request"))
-            state = _state_from_run_request(
-                payload,
-                workspace_service=workspace_service,
-                research_notes=research_notes,
+            error_request_id = max(0, int(raw_identity.get("request_id", 0) or 0))
+        except (TypeError, ValueError):
+            error_request_id = 0
+        error_session_id = str(raw_identity.get("session_id", "") or "")
+        error_run_id = str(raw_identity.get("resume_run_id", "") or "")
+        error_trace_id = str(raw_identity.get("trace_id", "") or "")
+
+        try:
+            payload = AgentRunRequest.model_validate(raw_request)
+            resume_run_id = payload.resume_run_id.strip()
+            if payload.temporary and resume_run_id:
+                raise AgentRuntimeError(
+                    "Temporary Agent runs do not have persistent checkpoints.",
+                    stage="checkpoint",
+                    fallback_reason="temporary_checkpoint_unavailable",
+                )
+            if payload.retry_task_id and not resume_run_id:
+                raise ValueError("retry_task_id requires resume_run_id")
+            state = (
+                runtime.restore_checkpoint(resume_run_id)
+                if resume_run_id
+                else _state_from_run_request(
+                    payload,
+                    workspace_service=workspace_service,
+                    research_notes=research_notes,
+                )
             )
-        except (ValidationError, ValueError) as exc:
+            state = _apply_resume_request_context(state, payload)
+            retrying = bool(resume_run_id and payload.retry_task_id.strip())
+            if retrying:
+                runtime.prepare_task_retry(state, payload.retry_task_id)
+        except (
+            ValidationError,
+            TypeError,
+            ValueError,
+            AgentRuntimeError,
+            TaskCheckpointConflictError,
+            TaskRunLeaseError,
+        ) as exc:
             message = str(exc)
             if isinstance(exc, ValidationError) and exc.errors():
                 message = str(exc.errors()[0].get("msg") or "Invalid Agent request.")
             await websocket.send_json(
                 {
                     "type": "error",
-                    "request_id": 0,
-                    "session_id": "",
-                    "run_id": "",
-                    "trace_id": "",
-                    "code": "invalid_request",
+                    "request_id": error_request_id,
+                    "session_id": error_session_id,
+                    "run_id": error_run_id,
+                    "trace_id": error_trace_id,
+                    "code": _stream_error_code(exc),
+                    "fallback_reason": str(getattr(exc, "fallback_reason", "") or ""),
                     "message": message or "Invalid Agent request.",
                 }
             )
@@ -456,7 +647,7 @@ async def stream_product_agent(
             loop.call_soon_threadsafe(queue.put_nowait, event)
 
         def observe(event: AgentEvent) -> None:
-            sequence = max(0, len(runtime.events) - 1)
+            sequence = event.sequence if event.sequence >= 0 else max(0, len(runtime.events) - 1)
             enqueue(
                 {
                     "type": "activity",
@@ -470,11 +661,13 @@ async def stream_product_agent(
 
         def produce() -> None:
             try:
-                result_state = runtime.execute(
-                    state,
-                    event_sink=observe,
-                    control=control,
-                )
+                execution_options: dict[str, Any] = {
+                    "event_sink": observe,
+                    "control": control,
+                }
+                if resume_run_id and not retrying:
+                    execution_options["resume"] = True
+                result_state = runtime.execute(state, **execution_options)
                 _associate_workspace_result(payload, result_state, workspace_service)
                 trace = _trace_response(result_state, runtime)
                 enqueue(
@@ -498,7 +691,7 @@ async def stream_product_agent(
                         "message": str(exc) or "Agent run cancelled.",
                     }
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - stream terminal envelope
                 enqueue(
                     {
                         "type": "error",

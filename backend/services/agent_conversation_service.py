@@ -11,6 +11,7 @@ from backend.services.conversation_store_service import (
     ConversationStoreService,
     StoredConversation,
 )
+from backend.services.conversation_grounding_service import save_message_grounding
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +249,16 @@ class AgentConversationService:
                 provider=str(state.response.get("provider", "") or ""),
                 model=str(state.response.get("model", "") or ""),
             )
+            evidence = tuple(state.evidence or ())
+            citations = tuple(state.citations or ())
+            if evidence or citations:
+                save_message_grounding(
+                    self._store.storage_path,
+                    run.assistant_message_id,
+                    knowledge_enabled=True,
+                    evidence=evidence,
+                    citations=citations,
+                )
         finally:
             self._release(run)
 

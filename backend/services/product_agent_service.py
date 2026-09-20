@@ -137,7 +137,9 @@ class ProductAgentService:
         self._registry = registry
         self._chat_service = chat_service
         self._router = router or AgentDeterministicRouterService()
-        self._semantic_router = semantic_router or planner or AgentSemanticRouterService()
+        self._semantic_router = (
+            semantic_router or planner or AgentSemanticRouterService()
+        )
         self._multi_step_planner = multi_step_planner or AgentMultiStepPlannerService()
         self._grounded_synthesis_service = (
             grounded_synthesis_service
@@ -181,6 +183,29 @@ class ProductAgentService:
                 continue
             history.append((role, content))
         return tuple(history[-32:])
+
+    def _tools_for_payload(self, payload: dict[str, Any]):
+        """Return the catalog allowed for this run.
+
+        An empty list intentionally means automatic mode and preserves the
+        existing catalog. A non-empty list is a hard boundary shared by route
+        selection, planning, and execution.
+        """
+        selected = _trusted_scope_ids(payload.get("enabled_tools", ()), limit=64)
+        tools = tuple(self._registry.list_tools())
+        if not selected:
+            return tools
+
+        available = {str(getattr(tool, "name", "") or "") for tool in tools}
+        unknown = sorted(set(selected) - available)
+        if unknown:
+            raise AgentRuntimeError(
+                f"Unknown enabled Agent tool(s): {', '.join(unknown)}",
+                stage="planner",
+                fallback_reason="invalid_enabled_tools",
+            )
+        selected_set = set(selected)
+        return tuple(tool for tool in tools if str(getattr(tool, "name", "") or "") in selected_set)
 
     @staticmethod
     def _chat_context_mode(payload: dict[str, Any]) -> str:
@@ -281,7 +306,7 @@ class ProductAgentService:
         history = self._conversation_history(payload)
         return self._resolve_route(
             control=active_control,
-            tools=self._registry.list_tools(),
+            tools=self._tools_for_payload(payload),
             user_message=str(payload["user_message"]),
             reading=reading,
             history=history,
@@ -299,8 +324,11 @@ class ProductAgentService:
         reading = self._reading_fields(payload)
         history = self._conversation_history(payload)
         plan = self._multi_step_planner.plan(
-            tools=self._registry.list_tools(),
-            max_steps=min(active_control.policy.max_plan_steps, active_control.policy.max_tool_calls),
+            tools=self._tools_for_payload(payload),
+            max_steps=min(
+                active_control.policy.max_plan_steps,
+                active_control.policy.max_tool_calls,
+            ),
             user_message=str(payload["user_message"]),
             history=history,
             **reading,
@@ -308,7 +336,9 @@ class ProductAgentService:
         active_control.checkpoint("multi_step_planner_result")
         return plan, {
             "duration_ms": _duration_ms(started),
-            "provider": str(getattr(self._multi_step_planner, "provider_name", "") or ""),
+            "provider": str(
+                getattr(self._multi_step_planner, "provider_name", "") or ""
+            ),
             "model": str(getattr(self._multi_step_planner, "model", "") or ""),
             "prompt_id": str(getattr(self._multi_step_planner, "prompt_id", "") or ""),
             "llm_called": True,
@@ -341,9 +371,18 @@ class ProductAgentService:
         event_sink: AgentLifecycleSink | None,
         request_id: int,
     ) -> tuple[AgentToolExecutionResult | None, bool]:
+        selected = set(_trusted_scope_ids(payload.get("enabled_tools", ()), limit=64))
+        if selected and plan.tool_name not in selected:
+            raise AgentToolError(
+                f"Agent tool {plan.tool_name} is outside the enabled tool scope.",
+                stage="tool",
+                fallback_reason="tool_outside_enabled_scope",
+            )
         spec = self._registry.get_tool(plan.tool_name)
         if spec is None:
-            raise RuntimeError(f"Validated route references missing tool: {plan.tool_name}")
+            raise RuntimeError(
+                f"Validated route references missing tool: {plan.tool_name}"
+            )
 
         self._emit(
             event_sink,
@@ -363,7 +402,11 @@ class ProductAgentService:
             for item in payload.get("confirmed_write_tools", ())
             if str(item).strip()
         }
-        if spec.effect == "write" and spec.requires_confirmation and spec.name not in confirmed:
+        if (
+            spec.effect == "write"
+            and spec.requires_confirmation
+            and spec.name not in confirmed
+        ):
             return None, True
 
         try:
@@ -382,6 +425,12 @@ class ProductAgentService:
             "request_id": request_id,
             **validated_arguments,
         }
+        if spec.name in {"translate_selection", "polish_selection"}:
+            preferences = payload.get("memory_language_preferences", [])
+            if isinstance(preferences, list):
+                execution_payload["memory_preferences"] = [
+                    dict(item) for item in preferences[:32] if isinstance(item, dict)
+                ]
         # Knowledge/Canvas context is prompt context for planning and synthesis,
         # not an implicit argument to registered product tools.
         execution_payload.pop("knowledge_context", None)
@@ -389,12 +438,16 @@ class ProductAgentService:
         if workspace_id:
             execution_payload["workspace_id"] = workspace_id
         if spec.name == "search_knowledge_base":
-            trusted_document_ids = _trusted_scope_ids(payload.get("knowledge_document_ids", ()))
+            trusted_document_ids = _trusted_scope_ids(
+                payload.get("knowledge_document_ids", ())
+            )
             if trusted_document_ids:
                 execution_payload["document_ids"] = trusted_document_ids
                 execution_payload["document_scope"] = ""
         elif spec.name == "search_research_notes":
-            trusted_source_ids = _trusted_scope_ids(payload.get("research_source_ids", ()))
+            trusted_source_ids = _trusted_scope_ids(
+                payload.get("research_source_ids", ())
+            )
             if trusted_source_ids:
                 execution_payload["source_ids"] = trusted_source_ids
 
@@ -662,7 +715,9 @@ class ProductAgentService:
                 "plan_type": "multi_step",
                 "observations": [
                     {
-                        "tool_name": str(item.get("tool_name", "") or item.get("name", "") or ""),
+                        "tool_name": str(
+                            item.get("tool_name", "") or item.get("name", "") or ""
+                        ),
                         "output_text": str(item.get("output_text", "") or ""),
                         "data": dict(item.get("data", {}) or {}),
                     }

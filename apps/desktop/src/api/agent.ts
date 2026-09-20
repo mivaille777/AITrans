@@ -1,4 +1,4 @@
-import { apiPost } from "./client"
+import { apiGet, apiPost } from "./client"
 import type { ReadingContextFields } from "./types"
 import type { AgentCitationRef, AgentEvidenceItem } from "../features/evidence/evidence-types"
 
@@ -11,6 +11,22 @@ export type AgentStepStatus = "pending" | "running" | "completed" | "failed" | "
 export type AgentToolEffect = "read" | "compute" | "write"
 export type AgentClientSurface = "main" | "overlay" | "unknown"
 export type AgentContextMode = "general" | "reading" | "knowledge" | "research" | "translation"
+export type AgentWorkflowAction = "" | "quick_read" | "analyze_visuals" | "compare_papers" | "curate_knowledge" | "draft_section"
+
+export interface AgentToolDefinition {
+  name: string
+  title: string
+  description: string
+  category: string
+  effect: AgentToolEffect
+  requires_reading_context: boolean
+  requires_confirmation: boolean
+  input_schema: Record<string, unknown>
+}
+
+export interface AgentToolCatalogResponse {
+  tools: AgentToolDefinition[]
+}
 
 export type AgentTraceEventType =
   | "agent_start"
@@ -28,6 +44,23 @@ export type AgentTraceEventType =
   | "multi_agent_specialist_failed"
   | "multi_agent_specialist_skipped"
   | "multi_agent_completed"
+  | "task_planned"
+  | "task_ready"
+  | "task_started"
+  | "task_progress"
+  | "task_completed"
+  | "task_partial"
+  | "task_failed"
+  | "task_blocked"
+  | "task_cancelled"
+  | "task_skipped"
+  | "task_retrying"
+  | "plan_revised"
+  | "budget_exhausted"
+  | "artifact_verified"
+  | "artifact_rejected"
+  | "workflow_partial"
+  | "workflow_resumed"
   | "plan_ready"
   | "react_started"
   | "decision_ready"
@@ -118,6 +151,7 @@ export interface AgentKnowledgeContext {
 export interface AgentRunRequest extends ReadingContextFields {
   session_id: string
   trace_id?: string
+  resume_run_id?: string
   client_id?: string
   client_surface?: AgentClientSurface
   context_mode?: AgentContextMode
@@ -130,13 +164,19 @@ export interface AgentRunRequest extends ReadingContextFields {
   conversation_id?: string
   workspace_id?: string
   confirmed_write_tools?: string[]
+  enabled_tools?: string[]
   knowledge_document_ids?: string[]
   research_source_ids?: string[]
   knowledge_context?: AgentKnowledgeContext | null
   request_id?: number
+  temporary?: boolean
+  workflow_action?: AgentWorkflowAction
+  retry_task_id?: string
 }
 
 export interface AgentRunResponse {
+  run_id: string
+  trace_id: string
   status: AgentRunStatus
   plan: AgentPlan
   multi_step_plan?: AgentMultiStepPlan | null
@@ -170,6 +210,64 @@ export interface AgentRunTraceResponse {
   events: AgentTraceEvent[]
 }
 
+export interface AgentTaskSpec {
+  task_id: string
+  role: "document" | "research" | "writer" | "curator"
+  objective: string
+  depends_on: string[]
+  required: boolean
+  expected_output_kind: string
+  plan_revision: number
+}
+
+export interface AgentTaskResult {
+  task_id: string
+  attempt_id: string
+  attempt_ordinal: number
+  status: string
+  artifact_refs: Array<{ artifact_id: string; version: number; kind: string; content_hash: string }>
+  evidence_refs: Array<Record<string, unknown>>
+  coverage?: number | null
+  unmet_requirements: string[]
+  warnings: string[]
+  error_code: string
+}
+
+export interface AgentArtifact {
+  artifact_id: string
+  version: number
+  producer_task_id: string
+  kind: string
+  scope_ref: string
+  content: Record<string, unknown>
+  evidence_refs: Array<Record<string, unknown>>
+  source_coverage: { complete: boolean; covered_refs: string[]; missing_refs: string[]; notes: string[] }
+  verification_status: string
+  verification_report: { issues?: Array<{ code: string; severity: string; message: string; evidence_ids: string[] }> }
+  [key: string]: unknown
+}
+
+export interface AgentRunSnapshot {
+  run_id: string
+  trace_id: string
+  status: string
+  scope: Record<string, unknown>
+  plan: { plan_id?: string; plan_revision?: number; tasks?: AgentTaskSpec[] }
+  results: AgentTaskResult[]
+  artifacts: AgentArtifact[]
+  events: AgentTraceEvent[]
+  resumable: boolean
+  retryable_task_ids: string[]
+}
+
 export function runAgentTrace(payload: AgentRunRequest): Promise<AgentRunTraceResponse> {
   return apiPost<AgentRunTraceResponse, AgentRunRequest>("/api/agent/run/trace", payload)
+}
+
+export function getAgentTools(): Promise<AgentToolCatalogResponse> {
+  return apiGet<AgentToolCatalogResponse>("/api/agent/tools")
+}
+
+export function getAgentRunSnapshot(runId: string): Promise<AgentRunSnapshot> {
+  return apiGet<AgentRunSnapshot>(`/api/agent/runs/${encodeURIComponent(runId)}/snapshot`)
 }

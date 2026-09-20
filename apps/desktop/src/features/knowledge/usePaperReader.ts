@@ -18,11 +18,14 @@ import {
   buildPaperSelectionContext,
   buildSelectionCardTitle,
   resolveDerivedPaperRelationType,
+  resolvePaperReaderSectionForPage,
   resolvePaperReaderSectionId,
   type DerivedPaperCardType,
   type DerivedPaperRelationType,
+  type PaperReaderSelectionTarget,
 } from "./paper-reader-state"
 import type {
+  KnowledgeDocumentSection,
   KnowledgeItem,
   KnowledgeRelation,
 } from "./knowledge-types"
@@ -32,10 +35,10 @@ const READER_CARD_TEXT_LIMIT = 50_000
 const READER_AGENT_TEXT_LIMIT = 12_000
 const READER_TRANSLATION_TEXT_LIMIT = 8_000
 const EMPTY_ITEMS: KnowledgeItem[] = []
+const READER_QUERY_STALE_TIME = 5 * 60 * 1000
 
-interface DerivedCardRequest {
+interface DerivedCardRequest extends PaperReaderSelectionTarget {
   itemType: DerivedPaperCardType
-  text: string
   relationType?: DerivedPaperRelationType
 }
 
@@ -84,7 +87,7 @@ export function usePaperReader(
     queryKey: ["knowledge", "paper-reader", "outline", document?.document_id ?? "none"],
     queryFn: () => getKnowledgeDocumentOutline(document?.document_id as string),
     enabled: Boolean(document?.document_id && document.status === "ready"),
-    staleTime: 5 * 60 * 1000,
+    staleTime: READER_QUERY_STALE_TIME,
   })
 
   const sections = outlineQuery.data?.sections ?? []
@@ -94,7 +97,7 @@ export function usePaperReader(
     queryKey: ["knowledge", "paper-reader", "section", document?.document_id ?? "none", activeSectionId],
     queryFn: () => getKnowledgeDocumentSection(document?.document_id as string, activeSectionId),
     enabled: Boolean(document?.document_id && activeSectionId && document.status === "ready"),
-    staleTime: 5 * 60 * 1000,
+    staleTime: READER_QUERY_STALE_TIME,
   })
 
   const relationsQuery = useQuery({
@@ -128,6 +131,23 @@ export function usePaperReader(
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.items }),
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.relations }),
     ])
+  }
+
+  async function resolveSelectionSection(
+    selection: PaperReaderSelectionTarget,
+  ): Promise<KnowledgeDocumentSection | null> {
+    if (!document) return null
+    if (selection.source !== "pdf" || !selection.pageNumber) return sectionQuery.data ?? null
+
+    const outlineSection = resolvePaperReaderSectionForPage(sections, selection.pageNumber)
+    if (!outlineSection) return sectionQuery.data ?? null
+    if (sectionQuery.data?.section_id === outlineSection.section_id) return sectionQuery.data
+
+    return queryClient.fetchQuery({
+      queryKey: ["knowledge", "paper-reader", "section", document.document_id, outlineSection.section_id],
+      queryFn: () => getKnowledgeDocumentSection(document.document_id, outlineSection.section_id),
+      staleTime: READER_QUERY_STALE_TIME,
+    })
   }
 
   async function createLinkedCard({
@@ -171,12 +191,13 @@ export function usePaperReader(
   }
 
   const createDerivedMutation = useMutation({
-    mutationFn: async ({ itemType, text, relationType }: DerivedCardRequest) => {
+    mutationFn: async ({ itemType, text, relationType, source, pageNumber }: DerivedCardRequest) => {
       if (!paper || !document) throw new Error("This paper is not attached to an indexed document.")
-      const section = sectionQuery.data
+      const selection: PaperReaderSelectionTarget = { source, text, pageNumber }
+      const selectionSection = await resolveSelectionSection(selection)
       const normalizedText = text.trim().slice(0, READER_CARD_TEXT_LIMIT)
-      const selectionContext = section
-        ? buildPaperSelectionContext(section, normalizedText)
+      const selectionContext = selectionSection
+        ? buildPaperSelectionContext(selectionSection, normalizedText)
         : { text: normalizedText, contextBefore: "", contextAfter: "" }
       const resolvedRelationType = resolveDerivedPaperRelationType(itemType, relationType)
       const titleFallback = resolvedRelationType === "reading_note"
@@ -188,6 +209,7 @@ export function usePaperReader(
             : itemType === "evidence"
               ? "Paper evidence"
               : "Paper note"
+      const pdfPageNumber = source === "pdf" && pageNumber ? Math.max(1, Math.round(pageNumber)) : null
       return createLinkedCard({
         itemType,
         title: buildSelectionCardTitle(normalizedText, titleFallback),
@@ -195,9 +217,25 @@ export function usePaperReader(
         relationType: resolvedRelationType,
         metadata: {
           selection_text: selectionContext.text,
+          selection_source: source,
+          pdf_page_number: pdfPageNumber,
           context_before: selectionContext.contextBefore,
           context_after: selectionContext.contextAfter,
-          evidence_kind: itemType === "evidence" ? "paper_selection" : undefined,
+          section_id: selectionSection?.section_id ?? "",
+          section_heading: selectionSection?.heading ?? "",
+          page_start: selectionSection?.page_start ?? pdfPageNumber,
+          page_end: selectionSection?.page_end ?? pdfPageNumber,
+          provenance: source === "pdf" ? "paper_reader_pdf_selection" : "paper_reader_selection",
+          evidence_kind: itemType === "evidence"
+            ? source === "pdf" ? "paper_pdf_selection" : "paper_selection"
+            : undefined,
+          sources: itemType === "evidence" ? [{
+            document_id: document.document_id,
+            quote: selectionContext.text,
+            page: pdfPageNumber ?? selectionSection?.page_start ?? undefined,
+            section: selectionSection?.heading ?? "",
+            source_uri: document.source_uri,
+          }] : undefined,
         },
       })
     },
@@ -251,18 +289,28 @@ export function usePaperReader(
     })
   }
 
-  function attachSelectionToAgent(selectedText: string) {
-    if (!paper || !document || !sectionQuery.data) return false
-    const boundedSelection = selectedText.trim().slice(0, READER_AGENT_TEXT_LIMIT)
-    const context = buildPaperSelectionContext(sectionQuery.data, boundedSelection)
+  async function attachSelectionToAgent(selection: PaperReaderSelectionTarget) {
+    if (!paper || !document) return false
+    const boundedSelection = selection.text.trim().slice(0, READER_AGENT_TEXT_LIMIT)
+    if (!boundedSelection) return false
+    const selectionSection = await resolveSelectionSection({ ...selection, text: boundedSelection })
+    if (!selectionSection) return false
+    const context = buildPaperSelectionContext(selectionSection, boundedSelection)
     if (!context.text) return false
+    const pdfPageNumber = selection.source === "pdf" && selection.pageNumber
+      ? Math.max(1, Math.round(selection.pageNumber))
+      : null
     workspace.useAcademicReadingContext({
-      context_id: `knowledge:${document.document_id}:${sectionQuery.data.section_id}:selection`,
+      context_id: pdfPageNumber
+        ? `knowledge:${document.document_id}:${selectionSection.section_id}:pdf:${pdfPageNumber}:selection`
+        : `knowledge:${document.document_id}:${selectionSection.section_id}:selection`,
       document_id: document.document_id,
       text: context.text,
       resource_url: document.source_uri,
       resource_title: paper.title,
-      section_heading: sectionQuery.data.heading,
+      section_heading: pdfPageNumber
+        ? `${selectionSection.heading || "Document section"} · PDF page ${pdfPageNumber}`
+        : selectionSection.heading,
       context_before: context.contextBefore,
       context_after: context.contextAfter,
       source_kind: "knowledge_document",

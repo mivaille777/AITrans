@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from backend.models.agent_tasks import ScopeContext, ScopeMode
+
 
 class KnowledgeInjector:
     """Inject Knowledge Runtime outputs into a shared multi-agent context.
@@ -13,8 +15,9 @@ class KnowledgeInjector:
     multi-agent layer stays decoupled from the concrete knowledge runtime.
     """
 
-    def __init__(self, knowledge_runtime=None, *, top_k: int = 5):
+    def __init__(self, knowledge_runtime=None, *, evidence_service=None, top_k: int = 5):
         self.knowledge_runtime = knowledge_runtime
+        self.evidence_service = evidence_service
         self.top_k = max(1, int(top_k))
 
     @staticmethod
@@ -32,7 +35,75 @@ class KnowledgeInjector:
         )
 
     def inject(self, query: str, context: Any):
-        if self.knowledge_runtime is None or context is None:
+        if context is None:
+            return context
+
+        runtime = getattr(context, "runtime", {}) or {}
+        raw_scope = runtime.get("scope_context")
+        scope: ScopeContext | None = None
+        if isinstance(raw_scope, ScopeContext):
+            scope = raw_scope
+        elif isinstance(raw_scope, Mapping):
+            scope = ScopeContext.model_validate(raw_scope)
+
+        if self.evidence_service is not None and scope is not None:
+            packets = self.evidence_service.retrieve_packets(
+                query=query,
+                scope=scope,
+                limit=self.top_k,
+            )
+            context.knowledge_context = "\n".join(
+                f"[{packet.evidence_ref.evidence_id}] {packet.text}"
+                for packet in packets
+                if packet.text
+            )
+            for packet in packets:
+                context.add_citation(
+                    {
+                        "id": packet.evidence_ref.evidence_id,
+                        "title": packet.title,
+                        "source_type": packet.evidence_ref.source_type,
+                        "source_id": packet.evidence_ref.source_id,
+                        "source_version": packet.evidence_ref.source_version,
+                        "locator": dict(packet.evidence_ref.locator),
+                        "status": packet.status.value,
+                        "score": packet.relevance_score,
+                    }
+                )
+            context.memory["evidence_packets"] = [
+                packet.model_dump(mode="json") for packet in packets
+            ]
+            citation_builder = getattr(self.evidence_service, "build_citations", None)
+            if callable(citation_builder):
+                context.memory["evidence_citations"] = [
+                    citation.model_dump(mode="json")
+                    for citation in citation_builder(packets)
+                ]
+            context.memory["knowledge_query"] = str(query or "")
+            context.memory["knowledge_citation_count"] = len(context.citations)
+            return context
+
+        has_restricted_hint = bool(
+            scope is not None and scope.mode is ScopeMode.RESTRICTED
+        ) or any(
+            runtime.get(key)
+            for key in (
+                "workspace_id",
+                "knowledge_document_ids",
+                "research_source_ids",
+                "research_note_ids",
+                "knowledge_item_ids",
+            )
+        )
+        if has_restricted_hint:
+            # Legacy Knowledge Runtime has no authoritative document/note scope.
+            # Disable it rather than leaking a whole graph into a scoped request.
+            context.memory["knowledge_retrieval_status"] = "scoped_runtime_unavailable"
+            context.memory["knowledge_query"] = str(query or "")
+            context.memory["knowledge_citation_count"] = len(context.citations)
+            return context
+
+        if self.knowledge_runtime is None:
             return context
 
         result = self.knowledge_runtime.build_context(query, top_k=self.top_k)

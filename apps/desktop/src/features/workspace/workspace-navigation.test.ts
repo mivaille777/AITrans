@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   getWorkspaceRouteMeta,
   workspaceRoutes,
+  workspaceSidebarRoutes,
   workspaceRouteUsesFixedHeight,
 } from "./workspace-navigation"
 
@@ -25,14 +26,26 @@ describe("workspace navigation", () => {
     expect(getWorkspaceRouteMeta("/chat").label).toBe("AI Chat")
   })
 
+  it("keeps Translation available as a route but out of the global sidebar", () => {
+    expect(workspaceSidebarRoutes.map((route) => route.path)).toEqual([
+      "/chat",
+      "/reading",
+      "/research",
+      "/knowledge",
+      "/agent",
+    ])
+    expect(workspaceSidebarRoutes.some((route) => route.path === "/translation")).toBe(false)
+  })
+
   it("falls back to AI Chat for unknown routes", () => {
     expect(getWorkspaceRouteMeta("/unknown").path).toBe("/chat")
   })
 
-  it("reserves whole-workspace scrolling for chat's internal panes", () => {
+  it("lets full-height workspaces own their internal scrolling", () => {
     expect(workspaceRouteUsesFixedHeight("/chat")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/research")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/knowledge")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/settings")).toBe(true)
     expect(workspaceRouteUsesFixedHeight("/translation")).toBe(false)
-    expect(workspaceRouteUsesFixedHeight("/knowledge")).toBe(false)
-    expect(workspaceRouteUsesFixedHeight("/settings")).toBe(false)
   })
 })

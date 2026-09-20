@@ -118,4 +118,7 @@ The graph fills the remaining `AgentState` defaults. If the selected action need
 
 `LANGSMITH_TRACING=false` is the default launcher behavior. Do not enable remote tracing for private reading content unless you intentionally want that trace data sent to LangSmith.
 
-The SQLite Conversation store remains the AITrans source of truth. Studio threads/checkpoints are debugging state and must not replace the production Conversation lifecycle.
+The SQLite Conversation store remains the source of truth for user-visible chat
+history. Studio server threads/checkpoints are debugging state and are separate
+from the production local `config/agent_checkpoints.sqlite3` saver, which exists
+only to resume interrupted Agent graph execution.
