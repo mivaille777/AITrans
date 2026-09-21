@@ -26,6 +26,11 @@ type ConversationContextMenuState = {
   y: number
 }
 
+type ConversationDeleteDialogState = {
+  conversationId: string
+  title: string
+}
+
 function formatConversationTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ""
@@ -54,7 +59,9 @@ export default function ConversationHistoryPanel({
   const [pinnedConversationIds, setPinnedConversationIds] = useState<Set<string>>(() => new Set())
   const [unreadConversationIds, setUnreadConversationIds] = useState<Set<string>>(() => new Set())
   const [contextMenu, setContextMenu] = useState<ConversationContextMenuState | null>(null)
+  const [deleteDialog, setDeleteDialog] = useState<ConversationDeleteDialogState | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
+  const deleteCancelButtonRef = useRef<HTMLButtonElement | null>(null)
   const conversationsQuery = useQuery({
     queryKey: queryKeys.conversations.list(HISTORY_LIMIT),
     queryFn: () => getConversations(HISTORY_LIMIT),
@@ -74,6 +81,7 @@ export default function ConversationHistoryPanel({
   const deleteMutation = useMutation({
     mutationFn: deleteConversation,
     onSuccess: (result) => {
+      setDeleteDialog(null)
       void queryClient.invalidateQueries({ queryKey: ["conversations"] })
       if (result.deleted && result.conversation_id === activeConversationId) {
         onDeletedActive()
@@ -117,6 +125,20 @@ export default function ConversationHistoryPanel({
     }
   }, [contextMenu])
 
+  useEffect(() => {
+    if (!deleteDialog) return
+    if (!deleteMutation.isPending) deleteCancelButtonRef.current?.focus()
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || deleteMutation.isPending) return
+      event.preventDefault()
+      setDeleteDialog(null)
+    }
+
+    window.addEventListener("keydown", handleEscape)
+    return () => window.removeEventListener("keydown", handleEscape)
+  }, [deleteDialog, deleteMutation.isPending])
+
   function beginRename(conversationId: string, title: string) {
     setEditingId(conversationId)
     setEditingTitle(title)
@@ -128,9 +150,20 @@ export default function ConversationHistoryPanel({
     renameMutation.mutate({ conversationId, title: normalized })
   }
 
-  function remove(conversationId: string, title: string) {
-    if (!window.confirm(`Delete “${title}”?`)) return
-    deleteMutation.mutate(conversationId)
+  function requestDelete(conversationId: string, title: string) {
+    deleteMutation.reset()
+    setContextMenu(null)
+    setDeleteDialog({ conversationId, title })
+  }
+
+  function cancelDelete() {
+    if (deleteMutation.isPending) return
+    setDeleteDialog(null)
+  }
+
+  function confirmDelete() {
+    if (!deleteDialog || deleteMutation.isPending) return
+    deleteMutation.mutate(deleteDialog.conversationId)
   }
 
   function openContextMenu(event: ReactMouseEvent, conversation: ConversationSummary) {
@@ -367,12 +400,9 @@ export default function ConversationHistoryPanel({
           />
           <ConversationContextMenuItem
             icon={<Trash2 size={17} />}
-            label="Permanently delete"
+            label="Delete conversation"
             danger
-            onClick={() => {
-              remove(contextMenu.conversationId, contextMenu.title)
-              setContextMenu(null)
-            }}
+            onClick={() => requestDelete(contextMenu.conversationId, contextMenu.title)}
           />
 
           <div className="ait-chat-context-menu-divider" />
@@ -394,6 +424,64 @@ export default function ConversationHistoryPanel({
 
           <div className="ait-chat-context-menu-divider" />
           <ConversationContextMenuItem icon={<GitBranch size={17} />} label="Branch" trailing={<ChevronRight size={16} />} disabled />
+        </div>,
+        document.body,
+      )}
+      {deleteDialog && createPortal(
+        <div
+          className="ait-chat-delete-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) cancelDelete()
+          }}
+        >
+          <section
+            className="ait-chat-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="ait-chat-delete-dialog-title"
+            aria-describedby="ait-chat-delete-dialog-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="ait-chat-delete-dialog-heading">
+              <span className="ait-chat-delete-dialog-icon" aria-hidden="true">
+                <Trash2 size={19} strokeWidth={1.9} />
+              </span>
+              <div className="ait-chat-delete-dialog-copy">
+                <h3 id="ait-chat-delete-dialog-title">Delete this conversation?</h3>
+                <p id="ait-chat-delete-dialog-description">
+                  <strong>“{deleteDialog.title}”</strong> will be permanently removed from your chat history.
+                  This action can’t be undone.
+                </p>
+              </div>
+            </div>
+
+            {deleteMutation.isError && (
+              <p className="ait-chat-delete-dialog-error" role="alert">
+                Couldn’t delete this conversation. Please try again.
+              </p>
+            )}
+
+            <footer className="ait-chat-delete-dialog-actions">
+              <button
+                ref={deleteCancelButtonRef}
+                type="button"
+                className="ait-chat-delete-dialog-button"
+                disabled={deleteMutation.isPending}
+                onClick={cancelDelete}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ait-chat-delete-dialog-button is-danger"
+                disabled={deleteMutation.isPending}
+                onClick={confirmDelete}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </button>
+            </footer>
+          </section>
         </div>,
         document.body,
       )}
