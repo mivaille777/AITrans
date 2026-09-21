@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
@@ -86,9 +86,35 @@ describe("ConversationHistoryPanel compact interaction", () => {
 
     expect(screen.getByRole("menu")).not.toBeNull()
     expect(screen.getByRole("menuitem", { name: /Rename/ })).not.toBeNull()
-    expect(screen.getByRole("menuitem", { name: "Permanently delete" })).not.toBeNull()
+    expect(screen.getByRole("menuitem", { name: "Delete conversation" })).not.toBeNull()
 
     await user.click(screen.getByRole("menuitem", { name: /Rename/ }))
     expect(screen.getByDisplayValue("Design systems for research")).not.toBeNull()
+  })
+
+  it("uses an in-app destructive confirmation instead of the browser confirm", async () => {
+    const user = userEvent.setup()
+    renderPanel()
+
+    const title = await screen.findByText("Design systems for research")
+    await user.pointer({ target: title, keys: "[MouseRight]" })
+    await user.click(screen.getByRole("menuitem", { name: "Delete conversation" }))
+
+    const dialog = screen.getByRole("alertdialog", { name: "Delete this conversation?" })
+    expect(dialog).not.toBeNull()
+    expect(screen.getByText(/permanently removed from your chat history/i)).not.toBeNull()
+    expect(deleteConversation).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+    expect(deleteConversation).not.toHaveBeenCalled()
+
+    await user.pointer({ target: title, keys: "[MouseRight]" })
+    await user.click(screen.getByRole("menuitem", { name: "Delete conversation" }))
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+
+    await waitFor(() => {
+      expect(deleteConversation).toHaveBeenCalledWith("conversation-1")
+    })
   })
 })
