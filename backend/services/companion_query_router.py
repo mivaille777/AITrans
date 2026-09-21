@@ -23,13 +23,13 @@ _CATALOG_PATTERNS = (
     r"(?:资料库|知识库)(?:里|中)?(?:的)?(?:文档|论文|文件)(?:有)?哪些",
     r"(?:我)?(?:导入|上传|保存)(?:了)?哪些(?:论文|文档|文件)",
     r"(?:我)?有哪些(?:论文|文档|文件)",
-    r"(?:list|show).*(?:knowledge base|documents?|papers?|files?)",
-    r"what(?:'s| is)?.*knowledge base",
+    r"\b(?:list|show)\b.*\b(?:knowledge base|documents?|papers?|files?)\b",
+    r"\bwhat(?:'s| is)?\b.*\bknowledge base\b",
 )
 _DOCUMENT_PATTERNS = (
     r"(?:这|该)(?:一)?篇(?:论文|文档|文章)",
     r"(?:这|该)(?:个)?(?:文档|文件)",
-    r"thiss+(?:paper|document|file|article)",
+    r"\bthis\s+(?:paper|document|file|article)\b",
 )
 _WHITESPACE = re.compile(r"\s+")
 
