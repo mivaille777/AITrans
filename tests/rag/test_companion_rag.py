@@ -150,3 +150,74 @@ def test_companion_rag_degrades_without_fabricating_evidence() -> None:
     assert result.citations == ()
     assert result.knowledge_fallback_reason == "retrieval_unavailable"
     assert "do not cite" in chat.request.tool_context
+
+
+
+class CatalogLibraryStub:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def list_documents(self):
+        self.calls += 1
+        return [
+            SimpleNamespace(
+                document_id="doc-1",
+                title="Control Paper",
+                status=SimpleNamespace(value="ready"),
+                chunk_ids=["c1", "c2"],
+                section_count=7,
+                source_uri="file:///private/path/control.pdf",
+                content_hash="should-not-leak",
+                embedding_model="private-model",
+            ),
+            SimpleNamespace(
+                document_id="doc-2",
+                title="Notes",
+                status=SimpleNamespace(value="failed"),
+                chunk_ids=[],
+                section_count=2,
+                source_uri="file:///private/path/notes.md",
+                content_hash="should-not-leak",
+                embedding_model="private-model",
+            ),
+        ]
+
+
+class CatalogRetrievalProbe:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def retrieve(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("catalog route must not call retrieval")
+
+
+def test_companion_catalog_route_renders_manifest_without_retrieval_or_llm() -> None:
+    library = CatalogLibraryStub()
+    retrieval = CatalogRetrievalProbe()
+    chat = ChatStub()
+    service = CompanionChatService(
+        chat_service=chat,
+        retrieval_service=retrieval,
+        knowledge_library_service=library,
+    )
+
+    result = service.send(
+        session_id="catalog-1",
+        user_message="资料库里有什么？",
+        context_mode="general",
+        knowledge_enabled=True,
+        knowledge_document_ids=(),
+    )
+
+    assert library.calls == 1
+    assert retrieval.calls == 0
+    assert result.provider == "local"
+    assert result.model == "deterministic"
+    assert "Control Paper" in result.output_text
+    assert "Notes" in result.output_text
+    assert "Chunks：2" in result.output_text
+    assert "Sections：7" in result.output_text
+    assert "private/path" not in result.output_text
+    assert "should-not-leak" not in result.output_text
+    assert "private-model" not in result.output_text

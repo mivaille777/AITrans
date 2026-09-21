@@ -30,10 +30,6 @@ class ChatStub:
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Baseline regression: Knowledge ON currently forces identity queries through RAG.",
-)
 def test_knowledge_enabled_identity_query_should_skip_retrieval() -> None:
     retrieval = RetrievalProbe()
     service = CompanionChatService(chat_service=ChatStub(), retrieval_service=retrieval)
@@ -49,10 +45,6 @@ def test_knowledge_enabled_identity_query_should_skip_retrieval() -> None:
     assert retrieval.calls == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Baseline regression: knowledge catalog intent currently falls through to vector retrieval.",
-)
 def test_knowledge_catalog_query_should_skip_vector_retrieval() -> None:
     retrieval = RetrievalProbe()
     service = CompanionChatService(chat_service=ChatStub(), retrieval_service=retrieval)

@@ -74,6 +74,7 @@ class CompanionChatService:
         retrieval_service: Any | None = None,
         query_planner: Any | None = None,
         query_router: CompanionQueryRouter | Any | None = None,
+        knowledge_library_service: Any | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -82,6 +83,7 @@ class CompanionChatService:
         self._retrieval_service = retrieval_service
         self._query_planner = query_planner
         self._query_router = query_router or CompanionQueryRouter()
+        self._knowledge_library_service = knowledge_library_service
         self._grounded_context_builder = GroundedContextBuilder()
 
     def prepare_execution(
@@ -106,7 +108,10 @@ class CompanionChatService:
         grounding = CompanionKnowledgeGrounding()
         tool_name = ""
         tool_context = ""
-        if plan.use_knowledge:
+        direct_output_text = ""
+        if plan.route.value == "knowledge_catalog":
+            direct_output_text = self._render_knowledge_catalog(plan.document_ids)
+        elif plan.use_knowledge:
             grounding = self.prepare_knowledge(
                 query,
                 plan.document_ids,
@@ -119,7 +124,60 @@ class CompanionChatService:
             grounding=grounding,
             tool_name=tool_name,
             tool_context=tool_context,
+            direct_output_text=direct_output_text,
         )
+
+    def _render_knowledge_catalog(self, document_ids: tuple[str, ...]) -> str:
+        library = self._knowledge_library_service
+        if library is None:
+            return "本地知识库目录当前不可用。"
+
+        records = list(library.list_documents())
+        selected = set(document_ids)
+        if selected:
+            records = [
+                record
+                for record in records
+                if str(getattr(record, "document_id", "")) in selected
+            ]
+
+        if not records:
+            return (
+                "当前选择范围内没有可用文档。"
+                if selected
+                else "当前知识库中还没有文档。"
+            )
+
+        ready_count = sum(
+            str(getattr(getattr(record, "status", ""), "value", getattr(record, "status", "")))
+            == "ready"
+            for record in records
+        )
+        lines = [
+            f"当前知识库共有 {len(records)} 个文档，其中 {ready_count} 个已就绪：",
+            "",
+        ]
+        for index, record in enumerate(records, start=1):
+            status = str(
+                getattr(
+                    getattr(record, "status", ""),
+                    "value",
+                    getattr(record, "status", ""),
+                )
+            ) or "unknown"
+            title = str(getattr(record, "title", "") or "").strip() or "Untitled document"
+            chunk_count = len(tuple(getattr(record, "chunk_ids", ()) or ()))
+            section_count = int(getattr(record, "section_count", 0) or 0)
+            lines.extend(
+                [
+                    f"{index}. {title}",
+                    f"   - 状态：{status}",
+                    f"   - Chunks：{chunk_count}",
+                    f"   - Sections：{section_count}",
+                    "",
+                ]
+            )
+        return "\n".join(lines).rstrip()
 
     def prepare_knowledge(
         self,
