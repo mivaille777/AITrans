@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from threading import Lock
 
-from backend.api.knowledge_dependencies import get_retrieval_service
+from backend.api.knowledge_dependencies import (
+    get_knowledge_library_service,
+    get_retrieval_service,
+)
 from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
 from backend.api.llm_dependencies import (
     build_rag_query_planner,
@@ -16,16 +19,17 @@ from backend.services.companion_handoff_service import CompanionHandoffService
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
+from backend.services.companion_query_router import CompanionQueryRouter
 from backend.services.conversation_lifecycle_service import ConversationLifecycleService
 from backend.services.conversation_store_service import ConversationStoreService
 from backend.services.overlay_state_service import OverlayStateService
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.quick_action_service import QuickActionService
+from backend.services.rag_debug_service import RagDebugService
+from backend.services.rag_debug_store_service import RagDebugStoreService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.research_note_service import ResearchNoteService
 from backend.services.research_workspace_service import ResearchWorkspaceService
-from backend.services.rag_debug_service import RagDebugService
-from backend.services.rag_debug_store_service import RagDebugStoreService
 from backend.services.translation_service import TranslationService
 
 _translation_service: TranslationService | None = None
@@ -257,8 +261,12 @@ def get_agent_tool_registry() -> AgentToolRegistry:
         if _agent_tool_registry is None:
             # Local imports avoid module cycles: research-memory and ledger
             # dependencies reuse the Note/Workspace singletons defined here.
-            from backend.api.evidence_ledger_dependencies import get_evidence_ledger_service
-            from backend.api.research_memory_dependencies import get_research_memory_service
+            from backend.api.evidence_ledger_dependencies import (
+                get_evidence_ledger_service,
+            )
+            from backend.api.research_memory_dependencies import (
+                get_research_memory_service,
+            )
             from backend.services.cross_document_research_service import (
                 CrossDocumentResearchService,
             )
