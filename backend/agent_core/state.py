@@ -23,6 +23,7 @@ from backend.models.agent_runtime import (
     AgentRequestContext,
     AgentResponseContext,
     AgentRouteDecision,
+    AgentRuntimeProfile,
 )
 
 CURRENT_AGENT_GRAPH_VERSION = "reading-agent-ma03-v1"
@@ -48,6 +49,11 @@ def migrate_agent_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
     migrated["checkpoint_source_graph_version"] = (
         graph_version if graph_version != CURRENT_AGENT_GRAPH_VERSION else ""
     )
+    run_id = str(migrated.get("run_id", "") or "").strip()
+    if run_id and not str(migrated.get("task_id", "") or "").strip():
+        legacy_identity = run_id.removeprefix("run-")
+        migrated["task_id"] = f"task-{legacy_identity}"
+    migrated.setdefault("runtime_profile", AgentRuntimeProfile.INTERACTIVE.value)
     migrated["graph_version"] = CURRENT_AGENT_GRAPH_VERSION
     migrated["state_schema_version"] = CURRENT_AGENT_STATE_SCHEMA_VERSION
     return migrated
@@ -55,6 +61,10 @@ def migrate_agent_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _run_id() -> str:
     return f"run-{uuid4().hex}"
+
+
+def _task_id() -> str:
+    return f"task-{uuid4().hex}"
 
 
 def _trace_id() -> str:
@@ -100,8 +110,10 @@ def _history_from_context(context: dict[str, Any]) -> list[AgentConversationMess
 class AgentState(BaseModel):
     """Shared state passed through the Agent execution lifecycle."""
 
-    run_id: str = Field(default_factory=_run_id)
-    trace_id: str = Field(default_factory=_trace_id)
+    task_id: str = Field(default_factory=_task_id, min_length=1, max_length=256)
+    run_id: str = Field(default_factory=_run_id, min_length=1, max_length=256)
+    trace_id: str = Field(default_factory=_trace_id, min_length=1, max_length=256)
+    runtime_profile: AgentRuntimeProfile = AgentRuntimeProfile.INTERACTIVE
     session_id: str | None = None
     user_input: str = ""
     selected_text: str = ""
@@ -154,10 +166,12 @@ class AgentState(BaseModel):
         )
 
         self.execution = AgentExecutionContext(
+            task_id=self.task_id,
             run_id=self.run_id,
             trace_id=self.trace_id,
             session_id=str(self.session_id or ""),
             request_id=request_id,
+            runtime_profile=self.runtime_profile,
         )
         mode = str(context.get("conversation_context_mode", "reading") or "reading").strip().lower()
         if mode not in {"general", "reading"}:

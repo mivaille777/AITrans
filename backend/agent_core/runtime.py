@@ -77,6 +77,7 @@ class AgentRuntime:
         event = AgentEvent(
             event_type=event_type,
             payload=payload,
+            task_id=state.task_id if state is not None else "",
             run_id=state.run_id if state is not None else "",
             trace_id=state.trace_id if state is not None else "",
             elapsed_ms=control.elapsed_ms if control is not None else 0,

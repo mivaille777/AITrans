@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 AgentConversationRole = Literal["user", "assistant", "system", "tool"]
 AgentRouteKind = Literal["unresolved", "answer", "tool", "complex"]
@@ -25,6 +25,11 @@ AgentResponseStatus = Literal[
 ]
 
 
+class AgentRuntimeProfile(str, Enum):
+    INTERACTIVE = "interactive"
+    LONG_TASK = "long_task"
+
+
 class AgentContractModel(BaseModel):
     """Base model for stable Agent runtime contracts."""
 
@@ -32,10 +37,12 @@ class AgentContractModel(BaseModel):
 
 
 class AgentExecutionContext(AgentContractModel):
+    task_id: str = ""
     run_id: str = ""
     trace_id: str = ""
     session_id: str = ""
     request_id: int = Field(default=0, ge=0)
+    runtime_profile: AgentRuntimeProfile = AgentRuntimeProfile.INTERACTIVE
 
 
 class AgentConversationMessage(AgentContractModel):
@@ -137,5 +144,6 @@ __all__ = [
     "AgentRouteDecision",
     "AgentRouteKind",
     "AgentRouteSource",
+    "AgentRuntimeProfile",
     "AgentStepStatus",
 ]

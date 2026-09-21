@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -65,10 +66,14 @@ class AgentEventType(str, Enum):
 
 
 class AgentEvent(BaseModel):
+    event_id: str = Field(default_factory=lambda: f"event-{uuid4().hex}")
     event_type: AgentEventType
     payload: dict[str, Any] = Field(default_factory=dict)
+    task_id: str = ""
     run_id: str = ""
     trace_id: str = ""
+    step_id: str = ""
+    tool_call_id: str = ""
     elapsed_ms: int = Field(default=0, ge=0)
     sequence: int = Field(default=-1, ge=-1)
     timestamp: str = Field(

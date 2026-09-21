@@ -21,6 +21,15 @@ class TaskModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
+class AgentTaskRecord(TaskModel):
+    """Canonical user-level task that may own one or more runtime runs."""
+
+    task_id: str = Field(min_length=1, max_length=256)
+    goal: str = Field(min_length=1, max_length=20_000)
+    workspace_id: str = Field(default="", max_length=256)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class TaskRole(str, Enum):
     DOCUMENT = "document"
     RESEARCH = "research"
@@ -371,6 +380,7 @@ class WorkspaceRunState(TaskModel):
 __all__ = [
     "MAX_TASKS_PER_PLAN",
     "TERMINAL_TASK_STATUSES",
+    "AgentTaskRecord",
     "ResourceUsage",
     "ScopeContext",
     "ScopeKind",
