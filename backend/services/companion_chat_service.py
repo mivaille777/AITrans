@@ -39,6 +39,15 @@ class CompanionKnowledgeGrounding:
 
 
 @dataclass(frozen=True, slots=True)
+class CompanionPreparedExecution:
+    plan: CompanionExecutionPlan
+    grounding: CompanionKnowledgeGrounding
+    tool_name: str = ""
+    tool_context: str = ""
+    direct_output_text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CompanionChatResult:
     session_id: str
     user_message: str
@@ -64,6 +73,7 @@ class CompanionChatService:
         reading_resolver: Any | None = None,
         retrieval_service: Any | None = None,
         query_planner: Any | None = None,
+        query_router: CompanionQueryRouter | Any | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -71,7 +81,45 @@ class CompanionChatService:
         self._reading_resolver = reading_resolver
         self._retrieval_service = retrieval_service
         self._query_planner = query_planner
+        self._query_router = query_router or CompanionQueryRouter()
         self._grounded_context_builder = GroundedContextBuilder()
+
+    def prepare_execution(
+        self,
+        *,
+        query: str,
+        knowledge_enabled: bool = False,
+        document_ids: tuple[str, ...] = (),
+        history: tuple[tuple[str, str], ...] = (),
+        context_mode: str = "general",
+        source_text: str = "",
+    ) -> CompanionPreparedExecution:
+        plan = self._query_router.route(
+            query,
+            knowledge_enabled=knowledge_enabled,
+            reading_attached=(
+                str(context_mode or "").strip().lower() == "reading"
+                and bool(str(source_text or "").strip())
+            ),
+            document_ids=document_ids,
+        )
+        grounding = CompanionKnowledgeGrounding()
+        tool_name = ""
+        tool_context = ""
+        if plan.use_knowledge:
+            grounding = self.prepare_knowledge(
+                query,
+                plan.document_ids,
+                history=history,
+            )
+            tool_name = "search_knowledge_base"
+            tool_context = grounding.tool_context
+        return CompanionPreparedExecution(
+            plan=plan,
+            grounding=grounding,
+            tool_name=tool_name,
+            tool_context=tool_context,
+        )
 
     def prepare_knowledge(
         self,
@@ -379,20 +427,30 @@ class CompanionChatService:
         raw_document_ids = payload.pop("knowledge_document_ids", ())
         document_ids = tuple(str(item) for item in raw_document_ids)
         history = tuple(payload.get("history", ()) or ())
-        grounding = (
-            self.prepare_knowledge(
-                str(payload.get("user_message", "")),
-                document_ids,
-                history=history,
-            )
-            if knowledge_enabled
-            else CompanionKnowledgeGrounding()
+        prepared = self.prepare_execution(
+            query=str(payload.get("user_message", "")),
+            knowledge_enabled=knowledge_enabled,
+            document_ids=document_ids,
+            history=history,
+            context_mode=str(payload.get("context_mode", "general") or "general"),
+            source_text=str(payload.get("source_text", "") or ""),
         )
-        if knowledge_enabled:
-            payload["tool_name"] = "search_knowledge_base"
-            payload["tool_context"] = grounding.tool_context
+        if prepared.tool_name:
+            payload["tool_name"] = prepared.tool_name
+            payload["tool_context"] = prepared.tool_context
         request = self._build_request(**self._with_resolved_reading(payload))
-        result = self._ensure_chat_service().execute(request)
+        if prepared.direct_output_text:
+            result = SimpleNamespace(
+                session_id=request.session_id,
+                user_message=request.user_message,
+                output_text=prepared.direct_output_text,
+                provider="local",
+                model="deterministic",
+                request_id=request.request_id,
+            )
+        else:
+            result = self._ensure_chat_service().execute(request)
+        grounding = prepared.grounding
         return CompanionChatResult(
             session_id=result.session_id,
             user_message=result.user_message,

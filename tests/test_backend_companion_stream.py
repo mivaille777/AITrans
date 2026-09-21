@@ -42,6 +42,38 @@ class StubStreamingCompanionChatService:
     provider_name = "stub-ai"
     model = "stub-model"
 
+    def prepare_execution(
+        self,
+        *,
+        query,
+        knowledge_enabled=False,
+        document_ids=(),
+        history=(),
+        context_mode="general",
+        source_text="",
+    ):
+        from backend.models.companion_routing import (
+            CompanionExecutionPlan,
+            CompanionQueryRoute,
+            GroundingPolicy,
+        )
+        from backend.services.companion_chat_service import (
+            CompanionKnowledgeGrounding,
+            CompanionPreparedExecution,
+        )
+
+        _ = (query, document_ids, history, context_mode, source_text)
+        return CompanionPreparedExecution(
+            plan=CompanionExecutionPlan(
+                route=CompanionQueryRoute.GENERAL,
+                grounding_policy=GroundingPolicy.NONE,
+                use_knowledge=False,
+                document_ids=(),
+                reason="test_stub",
+            ),
+            grounding=CompanionKnowledgeGrounding(),
+        )
+
     def stream(self, **_kwargs):
         yield "GP anchors "
         yield "localize the search."
@@ -50,6 +82,42 @@ class StubStreamingCompanionChatService:
 class GroundedStreamingCompanionChatService(StubStreamingCompanionChatService):
     def __init__(self) -> None:
         self.knowledge_history = ()
+
+    def prepare_execution(
+        self,
+        *,
+        query,
+        knowledge_enabled=False,
+        document_ids=(),
+        history=(),
+        context_mode="general",
+        source_text="",
+    ):
+        from backend.models.companion_routing import (
+            CompanionExecutionPlan,
+            CompanionQueryRoute,
+            GroundingPolicy,
+        )
+        from backend.services.companion_chat_service import CompanionPreparedExecution
+
+        _ = (context_mode, source_text)
+        grounding = self.prepare_knowledge(query, document_ids, history=history)
+        return CompanionPreparedExecution(
+            plan=CompanionExecutionPlan(
+                route=(
+                    CompanionQueryRoute.DOCUMENT_SCOPED_SEARCH
+                    if document_ids
+                    else CompanionQueryRoute.KNOWLEDGE_SEARCH
+                ),
+                grounding_policy=GroundingPolicy.EVIDENCE,
+                use_knowledge=knowledge_enabled,
+                document_ids=tuple(document_ids),
+                reason="test_grounded_stub",
+            ),
+            grounding=grounding,
+            tool_name="search_knowledge_base",
+            tool_context=grounding.tool_context,
+        )
 
     def prepare_knowledge(self, _query, _document_ids, *, history=()):
         self.knowledge_history = history
@@ -104,7 +172,7 @@ class InvalidCitationStreamingCompanionChatService(
         yield "GP anchors localize the search around prior evidence [9]."
 
 
-class SlowStreamingCompanionChatService:
+class SlowStreamingCompanionChatService(StubStreamingCompanionChatService):
     provider_name = "stub-ai"
     model = "stub-model"
 

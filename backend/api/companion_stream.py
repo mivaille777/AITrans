@@ -314,18 +314,20 @@ async def stream_companion_chat(
             last_flush = monotonic()
             try:
                 stream_kwargs = _stream_kwargs(payload)
-                grounding = None
-                prepare_knowledge = getattr(service, "prepare_knowledge", None)
-                if payload.knowledge_enabled and callable(prepare_knowledge):
-                    grounding = prepare_knowledge(
-                        payload.user_message,
-                        tuple(payload.knowledge_document_ids),
-                        history=tuple(
-                            (item.role, item.content) for item in payload.history
-                        ),
-                    )
-                    stream_kwargs["tool_name"] = "search_knowledge_base"
-                    stream_kwargs["tool_context"] = grounding.tool_context
+                prepared = service.prepare_execution(
+                    query=payload.user_message,
+                    knowledge_enabled=payload.knowledge_enabled,
+                    document_ids=tuple(payload.knowledge_document_ids),
+                    history=tuple(
+                        (item.role, item.content) for item in payload.history
+                    ),
+                    context_mode=payload.context_mode,
+                    source_text=payload.source_text,
+                )
+                grounding = prepared.grounding
+                if prepared.tool_name:
+                    stream_kwargs["tool_name"] = prepared.tool_name
+                    stream_kwargs["tool_context"] = prepared.tool_context
                 stream_kwargs.pop("knowledge_enabled", None)
                 stream_kwargs.pop("knowledge_document_ids", None)
                 for delta in service.stream(**stream_kwargs):
