@@ -125,3 +125,41 @@ def test_backward_compatible_send_returns_verified_answer_object() -> None:
     )
 
     assert answer.output_text == "The GP constrains the broad search region [1]."
+
+
+
+def test_evidence_fallback_is_bounded_and_readable() -> None:
+    evidence = [
+        AgentEvidenceItem(
+            evidence_id=f"evidence:{index}",
+            source_type="knowledge",
+            source_id=f"doc-{index}",
+            title=f"Paper {index}",
+            location=f"Page {index + 1} · Section Results",
+            excerpt=("long evidence sentence " * 200),
+            score=0.987654,
+            metadata={"dense_score": 0.99, "rerank_score": 0.98},
+        )
+        for index in range(5)
+    ]
+    citations = build_evidence_citations(evidence)
+    service = GroundedSynthesisService(
+        chat_service=StaticChat("Unsupported synthesis without usable citations.")
+    )
+
+    result = service.send_verified(
+        evidence=evidence,
+        citations=citations,
+        **_kwargs(),
+    )
+
+    output = result.answer.output_text
+    assert result.fallback_applied is True
+    assert output.startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
+    assert "Paper 0 · Page 1 · Section Results" in output
+    assert "Paper 3 · Page 4 · Section Results" in output
+    assert "Paper 4" not in output
+    assert len(output) < 2400
+    assert "dense_score" not in output
+    assert "rerank_score" not in output
+    assert "0.987654" not in output

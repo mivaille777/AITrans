@@ -23,6 +23,8 @@ _PARTIAL_MIN_PARAGRAPH_CITATION_COVERAGE = 1.0 / 3.0
 _PARTIAL_MIN_PARAGRAPH_SUPPORT_RATE = 0.60
 _PARTIAL_MIN_CITATION_COVERAGE = 1.0 / 3.0
 _PARTIAL_MIN_CITED_SUPPORT_RATE = 0.75
+_FALLBACK_MAX_EVIDENCE_ITEMS = 4
+_FALLBACK_MAX_EXCERPT_CHARS = 420
 
 
 def evidence_only_grounding_fallback(
@@ -38,13 +40,22 @@ def evidence_only_grounding_fallback(
             citation_by_evidence.setdefault(evidence_id, citation.label)
 
     lines = [GROUNDING_VERIFICATION_FALLBACK_PREFIX]
-    for item in evidence[:5]:
+    for item in evidence[:_FALLBACK_MAX_EVIDENCE_ITEMS]:
         excerpt = " ".join(item.excerpt.strip().split())
         if not excerpt:
             continue
+        if len(excerpt) > _FALLBACK_MAX_EXCERPT_CHARS:
+            excerpt = excerpt[: _FALLBACK_MAX_EXCERPT_CHARS - 1].rstrip() + "…"
         label = citation_by_evidence.get(item.evidence_id, "")
-        location = f"（{item.location}）" if item.location else ""
-        lines.append(f"- {excerpt}{location} {label}".rstrip())
+        title = str(item.title or "").strip() or "Untitled source"
+        location = str(item.location or "").strip()
+        source_line = f"- {title}"
+        if location:
+            source_line += f" · {location}"
+        if label:
+            source_line += f" {label}"
+        lines.append(source_line)
+        lines.append(f"  {excerpt}")
     if len(lines) == 1:
         return NO_KNOWLEDGE_EVIDENCE_MESSAGE
     return "\n".join(lines)
