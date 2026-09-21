@@ -127,7 +127,7 @@ export function companionHandoffRuntimeSeed(
     draft: handoff.suggested_prompt ?? "",
     sessionId: `companion-${handoff.handoff_id}`,
     scopeId: `handoff:${handoff.handoff_id}`,
-    knowledgeEnabled: Boolean(scoped.knowledge_enabled && knowledgeDocumentIds.length > 0),
+    knowledgeEnabled: Boolean(scoped.knowledge_enabled),
     knowledgeDocumentIds,
   }
 }

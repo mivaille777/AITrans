@@ -304,7 +304,7 @@ export function useCompanionConversationRuntime(
     setErrorMessage("")
     const nextKnowledgeDocumentIds = normalizedDocumentIds(next.knowledgeDocumentIds)
     setKnowledgeDocumentIds(nextKnowledgeDocumentIds)
-    setKnowledgeEnabled(Boolean(next.knowledgeEnabled && nextKnowledgeDocumentIds.length > 0))
+    setKnowledgeEnabled(Boolean(next.knowledgeEnabled))
     setTransport("companion")
     setAgentPhase("idle")
     setAgentRunId("")

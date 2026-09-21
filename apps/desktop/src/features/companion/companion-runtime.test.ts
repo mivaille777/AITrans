@@ -70,6 +70,38 @@ describe("companion runtime", () => {
     expect(restored?.citations?.[0]?.label).toBe("[1]")
   })
 
+  it("preserves Knowledge On with an empty document list as All documents", () => {
+    const handoff = {
+      revision: 4,
+      handoff_id: "handoff-all-documents",
+      created_at: "2026-09-21T00:00:00Z",
+      source_text: "selected source",
+      translated_text: "",
+      source_language: "en",
+      target_language: "zh-CN",
+      resource_url: "",
+      resource_title: "",
+      section_heading: "",
+      context_before: "",
+      context_after: "",
+      source_kind: "knowledge",
+      conversation_id: "",
+      ai_content: "",
+      ai_action: "",
+      suggested_prompt: "",
+      knowledge_enabled: true,
+      knowledge_document_ids: [],
+    } as CompanionHandoff & {
+      knowledge_enabled: boolean
+      knowledge_document_ids: string[]
+    }
+
+    const seed = companionHandoffRuntimeSeed(handoff)
+
+    expect(seed.knowledgeEnabled).toBe(true)
+    expect(seed.knowledgeDocumentIds).toEqual([])
+  })
+
   it("builds the same reading-grounded request contract for every surface", () => {
     const request = buildCompanionChatRequest({
       conversationId: "conversation-1",
