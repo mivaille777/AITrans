@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from app.ai.chat.models import (
@@ -16,6 +17,7 @@ from app.ai.chat.stream_service import ProviderStreamingAIChatService
 from app.ai.errors import AIConfigurationError
 from app.ai.service import AITextService
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+from backend.models.companion_routing import CompanionExecutionPlan, CompanionQueryRoute
 from backend.rag.citation_service import build_evidence_citations
 from backend.rag.context_builder import GroundedContextBuilder
 from backend.rag.evidence_builder import build_agent_evidence
@@ -27,7 +29,9 @@ from backend.rag.structure_retrieval import (
     detect_structural_intent,
     promote_structural_candidates,
 )
+from backend.services.companion_query_router import CompanionQueryRouter
 from backend.services.reading_context_adapter import to_reading_context
+from app.ai.chat.system_context import SYSTEM_CONTEXT, SystemContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,7 @@ class CompanionChatService:
         query_planner: Any | None = None,
         query_router: CompanionQueryRouter | Any | None = None,
         knowledge_library_service: Any | None = None,
+        system_context: SystemContext | Any | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -86,6 +91,7 @@ class CompanionChatService:
         self._query_planner = query_planner
         self._query_router = query_router or CompanionQueryRouter()
         self._knowledge_library_service = knowledge_library_service
+        self._system_context = system_context or SYSTEM_CONTEXT
         self._grounded_context_builder = GroundedContextBuilder()
 
     def prepare_execution(
@@ -115,7 +121,9 @@ class CompanionChatService:
         tool_context = ""
         direct_output_text = ""
         catalog_document_count = 0
-        if plan.route.value == "knowledge_catalog":
+        if plan.route is CompanionQueryRoute.SYSTEM_IDENTITY:
+            direct_output_text = self._system_context.identity_response(query)
+        elif plan.route is CompanionQueryRoute.KNOWLEDGE_CATALOG:
             direct_output_text, catalog_document_count = self._render_knowledge_catalog(
                 plan.document_ids
             )

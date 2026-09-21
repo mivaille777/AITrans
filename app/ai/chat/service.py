@@ -9,9 +9,10 @@ from app.ai.chat.models import ChatMessage, ChatRequest, ChatResult, ChatRole
 from app.ai.context_budget import ContextBudgetManager, ContextField
 from app.ai.errors import AIConfigurationError, AIError, AIResponseError
 from app.ai.knowledge_context import knowledge_context_json
+from app.ai.chat.system_context import SYSTEM_CONTEXT
 from app.ai.prompt_registry import PromptRegistry, PromptSpec
 
-CHAT_SYSTEM_PROMPT = """You are the conversational reading assistant built into AITranslator.
+CHAT_SYSTEM_PROMPT = f"""{SYSTEM_CONTEXT.prompt_identity}
 Answer the user's question directly and concisely.
 Use the selected source text, current translation, structured reading context, first-class knowledge context, and Agent tool observations as reference context when they are relevant.
 Structured reading context may include a page/document title, section heading, URL, and bounded text immediately before/after the selection. Use it to resolve local meaning and discourse relationships, but do not pretend it represents the full document.
@@ -30,7 +31,7 @@ MAX_HISTORY_MESSAGES_IN_PROMPT = 16
 DEFAULT_CHAT_CONTEXT_MAX_CHARS = 24_000
 CHAT_PROMPT = PromptSpec(
     name="chat.reading",
-    version="1.3.0",
+    version="1.4.0",
     system_prompt=CHAT_SYSTEM_PROMPT,
     temperature=DEFAULT_CHAT_TEMPERATURE,
     max_tokens=DEFAULT_CHAT_MAX_TOKENS,

@@ -31,7 +31,7 @@ _DOCUMENT_PATTERNS = (
     r"(?:这|该)(?:个)?(?:文档|文件)",
     r"thiss+(?:paper|document|file|article)",
 )
-_WHITESPACE = re.compile(r"s+")
+_WHITESPACE = re.compile(r"\s+")
 
 
 class CompanionQueryRouter:
