@@ -601,3 +601,68 @@ def test_companion_websocket_knowledge_phase_order(tmp_path) -> None:
         ("phase", "verifying"),
         ("done", None),
     ]
+
+
+def test_companion_websocket_identity_survives_rag_debug_startup_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import backend.api.companion_stream as companion_stream_api
+    from backend.services.companion_chat_service import CompanionChatService
+
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    service = CompanionChatService()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+
+    def fail_rag_debug():
+        raise OSError("debug store unavailable")
+
+    monkeypatch.setattr(
+        companion_stream_api,
+        "get_rag_debug_service",
+        fail_rag_debug,
+    )
+
+    payload = _payload(request_id=71)
+    payload["context_mode"] = "general"
+    payload["source_text"] = ""
+    payload["translated_text"] = ""
+    payload["resource_url"] = ""
+    payload["resource_title"] = ""
+    payload["section_heading"] = ""
+    payload["context_before"] = ""
+    payload["context_after"] = ""
+    payload["source_kind"] = ""
+    payload["user_message"] = "你是谁？"
+    payload["knowledge_enabled"] = False
+    payload["knowledge_document_ids"] = []
+
+    events = []
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    assert [event["type"] for event in events] == [
+        "accepted",
+        "phase",
+        "phase",
+        "delta",
+        "done",
+    ]
+    assert [event.get("phase") for event in events if event["type"] == "phase"] == [
+        "routing",
+        "generating",
+    ]
+    done = events[-1]
+    assert done["provider"] == "local"
+    assert done["model"] == "deterministic"
+    assert done["knowledge_enabled"] is False
+    assert "AITrans" in done["output_text"]
+    assert done["grounding_verification"] is None
