@@ -135,6 +135,13 @@ class AgentToolCallRecord(TaskModel):
     result_ref: str = Field(default="", max_length=512)
 
 
+class AgentWorkerLeaseRecord(TaskModel):
+    run_id: str = Field(min_length=1, max_length=256)
+    lease_owner: str = Field(min_length=1, max_length=256)
+    lease_expires_at: datetime
+    heartbeat_at: datetime
+
+
 def transition_run(run: AgentRunRecord, target: AgentRunStatus) -> AgentRunRecord:
     if run.status == target:
         return run.model_copy(deep=True)
@@ -168,6 +175,7 @@ __all__ = [
     "AgentStepRecord",
     "AgentToolCallRecord",
     "AgentToolCallStatus",
+    "AgentWorkerLeaseRecord",
     "InvalidRunTransitionError",
     "is_terminal_run",
     "is_terminal_step",

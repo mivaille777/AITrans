@@ -1,0 +1,580 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from app.infrastructure.paths import writable_config_dir
+from backend.agent_core.events import AgentEvent, AgentEventType
+from backend.models.agent_run import (
+    AgentRunRecord,
+    AgentRunStatus,
+    AgentStepRecord,
+    AgentToolCallRecord,
+    AgentWorkerLeaseRecord,
+    transition_run,
+)
+from backend.models.agent_tasks import AgentTaskRecord
+
+DEFAULT_AGENT_RUNTIME_FILENAME = "agent_runtime.sqlite3"
+AGENT_RUNTIME_SCHEMA_VERSION = 1
+
+
+class AgentRunStoreError(RuntimeError):
+    pass
+
+
+class AgentRunStoreConflictError(AgentRunStoreError):
+    pass
+
+
+class AgentRunStoreNotFoundError(AgentRunStoreError):
+    pass
+
+
+def _as_utc(value: datetime | None = None) -> datetime:
+    resolved = value or datetime.now(UTC)
+    if resolved.tzinfo is None:
+        return resolved.replace(tzinfo=UTC)
+    return resolved.astimezone(UTC)
+
+
+def _iso(value: datetime | None) -> str | None:
+    return _as_utc(value).isoformat() if value is not None else None
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    return datetime.fromisoformat(text) if text else None
+
+
+class AgentRunStore:
+    """Authoritative SQLite lifecycle store for Agent Runtime v1."""
+
+    def __init__(self, *, storage_path: str | Path | None = None) -> None:
+        self.storage_path = (
+            Path(storage_path)
+            if storage_path is not None
+            else writable_config_dir() / DEFAULT_AGENT_RUNTIME_FILENAME
+        )
+        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._closed = False
+        with closing(self._connect()) as connection:
+            self._ensure_schema(connection)
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise AgentRunStoreError("agent run store is closed")
+
+    def _connect(self) -> sqlite3.Connection:
+        self._ensure_open()
+        connection = sqlite3.connect(
+            self.storage_path,
+            timeout=30.0,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        return connection
+
+    @staticmethod
+    def _ensure_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS agent_runtime_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_tasks (
+                task_id TEXT PRIMARY KEY,
+                goal TEXT NOT NULL,
+                workspace_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                run_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                trace_id TEXT NOT NULL,
+                runtime_profile TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                FOREIGN KEY(task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_task_created
+                ON agent_runs(task_id, created_at ASC);
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_status_created
+                ON agent_runs(status, created_at ASC);
+
+            CREATE TABLE IF NOT EXISTS agent_steps (
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                PRIMARY KEY(run_id, step_id),
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_tool_calls (
+                tool_call_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                record_json TEXT NOT NULL,
+                FOREIGN KEY(run_id, step_id)
+                    REFERENCES agent_steps(run_id, step_id) ON DELETE CASCADE,
+                UNIQUE(run_id, idempotency_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run_step
+                ON agent_tool_calls(run_id, step_id);
+
+            CREATE TABLE IF NOT EXISTS agent_runtime_events (
+                event_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                trace_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                step_id TEXT NOT NULL DEFAULT '',
+                tool_call_id TEXT NOT NULL DEFAULT '',
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE,
+                UNIQUE(run_id, sequence)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_runtime_events_run_sequence
+                ON agent_runtime_events(run_id, sequence ASC);
+
+            CREATE TABLE IF NOT EXISTS agent_worker_leases (
+                run_id TEXT PRIMARY KEY,
+                lease_owner TEXT NOT NULL,
+                lease_expires_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_runtime_state(key, value)
+            VALUES('schema_version', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (str(AGENT_RUNTIME_SCHEMA_VERSION),),
+        )
+
+    @contextmanager
+    def _write_transaction(self) -> Iterator[sqlite3.Connection]:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield connection
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                connection.commit()
+
+    @staticmethod
+    def _insert_task(connection: sqlite3.Connection, task: AgentTaskRecord) -> None:
+        connection.execute(
+            """
+            INSERT INTO agent_tasks(task_id, goal, workspace_id, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (task.task_id, task.goal, task.workspace_id, _iso(task.created_at)),
+        )
+
+    @staticmethod
+    def _insert_run(connection: sqlite3.Connection, run: AgentRunRecord) -> None:
+        connection.execute(
+            """
+            INSERT INTO agent_runs(
+                run_id, task_id, trace_id, runtime_profile, status,
+                created_at, updated_at, started_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run.run_id,
+                run.task_id,
+                run.trace_id,
+                run.runtime_profile.value,
+                run.status.value,
+                _iso(run.created_at),
+                _iso(run.updated_at),
+                _iso(run.started_at),
+                _iso(run.finished_at),
+            ),
+        )
+
+    @staticmethod
+    def _task_from_row(row: sqlite3.Row) -> AgentTaskRecord:
+        return AgentTaskRecord(
+            task_id=str(row["task_id"]),
+            goal=str(row["goal"]),
+            workspace_id=str(row["workspace_id"]),
+            created_at=_parse_datetime(row["created_at"]),
+        )
+
+    @staticmethod
+    def _run_from_row(row: sqlite3.Row) -> AgentRunRecord:
+        return AgentRunRecord(
+            task_id=str(row["task_id"]),
+            run_id=str(row["run_id"]),
+            trace_id=str(row["trace_id"]),
+            runtime_profile=str(row["runtime_profile"]),
+            status=str(row["status"]),
+            created_at=_parse_datetime(row["created_at"]),
+            updated_at=_parse_datetime(row["updated_at"]),
+            started_at=_parse_datetime(row["started_at"]),
+            finished_at=_parse_datetime(row["finished_at"]),
+        )
+
+    def create_task(self, task: AgentTaskRecord) -> AgentTaskRecord:
+        try:
+            with self._write_transaction() as connection:
+                self._insert_task(connection, task)
+        except sqlite3.IntegrityError as exc:
+            raise AgentRunStoreConflictError(f"task already exists: {task.task_id}") from exc
+        return task.model_copy(deep=True)
+
+    def create_run(self, run: AgentRunRecord) -> AgentRunRecord:
+        try:
+            with self._write_transaction() as connection:
+                self._insert_run(connection, run)
+        except sqlite3.IntegrityError as exc:
+            raise AgentRunStoreConflictError(
+                f"run cannot be created: {run.run_id}"
+            ) from exc
+        return run.model_copy(deep=True)
+
+    def create_task_and_run(
+        self,
+        task: AgentTaskRecord,
+        run: AgentRunRecord,
+    ) -> tuple[AgentTaskRecord, AgentRunRecord]:
+        if run.task_id != task.task_id:
+            raise ValueError("run task_id must match the owning task")
+        try:
+            with self._write_transaction() as connection:
+                self._insert_task(connection, task)
+                self._insert_run(connection, run)
+        except sqlite3.IntegrityError as exc:
+            raise AgentRunStoreConflictError(
+                f"task or run already exists: {task.task_id}/{run.run_id}"
+            ) from exc
+        return task.model_copy(deep=True), run.model_copy(deep=True)
+
+    def get_task(self, task_id: str) -> AgentTaskRecord | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        return self._task_from_row(row) if row is not None else None
+
+    def get_run(self, run_id: str) -> AgentRunRecord | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return self._run_from_row(row) if row is not None else None
+
+    def transition_run(
+        self,
+        run_id: str,
+        *,
+        expected_status: AgentRunStatus,
+        target_status: AgentRunStatus,
+    ) -> AgentRunRecord:
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreNotFoundError(f"run not found: {run_id}")
+            current = self._run_from_row(row)
+            if current.status is not expected_status:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} status is {current.status.value}, "
+                    f"expected {expected_status.value}"
+                )
+            updated = transition_run(current, target_status)
+            cursor = connection.execute(
+                """
+                UPDATE agent_runs
+                SET status = ?, updated_at = ?, started_at = ?, finished_at = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    updated.status.value,
+                    _iso(updated.updated_at),
+                    _iso(updated.started_at),
+                    _iso(updated.finished_at),
+                    run_id,
+                    expected_status.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} changed during transition"
+                )
+        return updated
+
+    def claim_run(
+        self,
+        *,
+        lease_owner: str,
+        lease_seconds: float = 30.0,
+        now: datetime | None = None,
+    ) -> AgentRunRecord | None:
+        owner = str(lease_owner or "").strip()
+        if not owner:
+            raise ValueError("lease_owner is required")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        claimed_at = _as_utc(now)
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM agent_runs
+                WHERE status = ?
+                ORDER BY created_at ASC, run_id ASC
+                LIMIT 1
+                """,
+                (AgentRunStatus.QUEUED.value,),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._run_from_row(row)
+            updated = transition_run(current, AgentRunStatus.RUNNING).model_copy(
+                update={"started_at": claimed_at, "updated_at": claimed_at}
+            )
+            cursor = connection.execute(
+                """
+                UPDATE agent_runs
+                SET status = ?, updated_at = ?, started_at = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    updated.status.value,
+                    _iso(updated.updated_at),
+                    _iso(updated.started_at),
+                    updated.run_id,
+                    AgentRunStatus.QUEUED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            connection.execute(
+                """
+                INSERT INTO agent_worker_leases(
+                    run_id, lease_owner, lease_expires_at, heartbeat_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    updated.run_id,
+                    owner,
+                    _iso(claimed_at + timedelta(seconds=lease_seconds)),
+                    _iso(claimed_at),
+                ),
+            )
+        return updated
+
+    def get_lease(self, run_id: str) -> AgentWorkerLeaseRecord | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_worker_leases WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return AgentWorkerLeaseRecord(
+            run_id=str(row["run_id"]),
+            lease_owner=str(row["lease_owner"]),
+            lease_expires_at=_parse_datetime(row["lease_expires_at"]),
+            heartbeat_at=_parse_datetime(row["heartbeat_at"]),
+        )
+
+    def save_step(self, step: AgentStepRecord) -> AgentStepRecord:
+        payload = step.model_dump(mode="json", exclude={"step_id"})
+        try:
+            with self._write_transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO agent_steps(run_id, step_id, status, state_json)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(run_id, step_id) DO UPDATE SET
+                        status = excluded.status,
+                        state_json = excluded.state_json
+                    """,
+                    (
+                        step.run_id,
+                        step.step_id,
+                        step.status.value,
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise AgentRunStoreConflictError(
+                f"step cannot be saved: {step.run_id}/{step.step_id}"
+            ) from exc
+        return step.model_copy(deep=True)
+
+    def get_step(self, run_id: str, step_id: str) -> AgentStepRecord | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT state_json FROM agent_steps
+                WHERE run_id = ? AND step_id = ?
+                """,
+                (run_id, step_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return AgentStepRecord.model_validate_json(str(row["state_json"]))
+
+    def save_tool_call(self, call: AgentToolCallRecord) -> AgentToolCallRecord:
+        payload = call.model_dump(mode="json")
+        try:
+            with self._write_transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO agent_tool_calls(
+                        tool_call_id, run_id, step_id, status,
+                        idempotency_key, record_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(tool_call_id) DO UPDATE SET
+                        status = excluded.status,
+                        record_json = excluded.record_json
+                    """,
+                    (
+                        call.tool_call_id,
+                        call.run_id,
+                        call.step_id,
+                        call.status.value,
+                        call.idempotency_key,
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise AgentRunStoreConflictError(
+                f"tool call cannot be saved: {call.tool_call_id}"
+            ) from exc
+        return call.model_copy(deep=True)
+
+    def get_tool_call(self, tool_call_id: str) -> AgentToolCallRecord | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT record_json FROM agent_tool_calls WHERE tool_call_id = ?",
+                (tool_call_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return AgentToolCallRecord.model_validate_json(str(row["record_json"]))
+
+    def append_event(self, event: AgentEvent) -> AgentEvent:
+        if event.sequence < -1:
+            raise ValueError("event sequence cannot be less than -1")
+        with self._write_transaction() as connection:
+            run_row = connection.execute(
+                "SELECT task_id, trace_id FROM agent_runs WHERE run_id = ?",
+                (event.run_id,),
+            ).fetchone()
+            if run_row is None:
+                raise AgentRunStoreNotFoundError(f"run not found: {event.run_id}")
+            if event.task_id != str(run_row["task_id"]):
+                raise AgentRunStoreConflictError("event task_id does not match run")
+            if event.trace_id != str(run_row["trace_id"]):
+                raise AgentRunStoreConflictError("event trace_id does not match run")
+            sequence = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(MAX(sequence), -1) + 1
+                    FROM agent_runtime_events WHERE run_id = ?
+                    """,
+                    (event.run_id,),
+                ).fetchone()[0]
+            )
+            persisted = event.model_copy(update={"sequence": sequence}, deep=True)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO agent_runtime_events(
+                        event_id, run_id, sequence, task_id, trace_id,
+                        event_type, timestamp, elapsed_ms, step_id,
+                        tool_call_id, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        persisted.event_id,
+                        persisted.run_id,
+                        persisted.sequence,
+                        persisted.task_id,
+                        persisted.trace_id,
+                        persisted.event_type.value,
+                        persisted.timestamp,
+                        persisted.elapsed_ms,
+                        persisted.step_id,
+                        persisted.tool_call_id,
+                        json.dumps(persisted.payload, ensure_ascii=False, sort_keys=True),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise AgentRunStoreConflictError(
+                    f"event already exists: {persisted.event_id}"
+                ) from exc
+        return persisted
+
+    def list_events(self, run_id: str) -> tuple[AgentEvent, ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM agent_runtime_events
+                WHERE run_id = ? ORDER BY sequence ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(
+            AgentEvent(
+                event_id=str(row["event_id"]),
+                event_type=AgentEventType(str(row["event_type"])),
+                payload=json.loads(str(row["payload_json"])),
+                task_id=str(row["task_id"]),
+                run_id=str(row["run_id"]),
+                trace_id=str(row["trace_id"]),
+                step_id=str(row["step_id"]),
+                tool_call_id=str(row["tool_call_id"]),
+                elapsed_ms=int(row["elapsed_ms"]),
+                sequence=int(row["sequence"]),
+                timestamp=str(row["timestamp"]),
+            )
+            for row in rows
+        )
+
+    def close(self) -> None:
+        self._closed = True
+
+
+__all__ = [
+    "AGENT_RUNTIME_SCHEMA_VERSION",
+    "DEFAULT_AGENT_RUNTIME_FILENAME",
+    "AgentRunStore",
+    "AgentRunStoreConflictError",
+    "AgentRunStoreError",
+    "AgentRunStoreNotFoundError",
+]
