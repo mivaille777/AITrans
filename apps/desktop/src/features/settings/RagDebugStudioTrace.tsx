@@ -280,7 +280,7 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
                     </span>
                     {!item.retrieval_skipped && (
                       <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
-                        {totalRagMs.toFixed(1)} ms · {selectedChunks.length} chunks · {item.evidence.length} evidence · {item.citations.length} citations
+                        {totalRagMs.toFixed(1)} ms · {selectedChunks.length} chunks · {item.evidence?.length ?? 0} evidence · {item.citations?.length ?? 0} citations
                       </span>
                     )}
                     {reasonCodes.length > 0 && (
