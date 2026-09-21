@@ -41,6 +41,8 @@ export interface RagDebugCompanionTrace {
   verification_skipped: boolean
   catalog_document_count: number
   retrieval: Record<string, unknown>
+  evidence: Array<Record<string, unknown>>
+  citations: Array<Record<string, unknown>>
   verification: Record<string, unknown>
   fallback_applied: boolean
   created_at: string

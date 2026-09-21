@@ -34,6 +34,8 @@ class RagDebugCompanionTrace(RagDebugModel):
     verification_skipped: bool
     catalog_document_count: int = Field(default=0, ge=0)
     retrieval: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
     verification: dict[str, Any] = Field(default_factory=dict)
     fallback_applied: bool = False
     created_at: str

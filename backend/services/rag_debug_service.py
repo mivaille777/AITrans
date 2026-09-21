@@ -115,6 +115,8 @@ class RagDebugService:
         verification_skipped: bool,
         catalog_document_count: int = 0,
         retrieval: dict[str, Any] | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+        citations: list[dict[str, Any]] | None = None,
     ) -> str:
         trace_id = f"companion_{uuid4().hex[:20]}"
         scope = (
@@ -136,6 +138,8 @@ class RagDebugService:
             verification_skipped=bool(verification_skipped),
             catalog_document_count=max(0, int(catalog_document_count or 0)),
             retrieval=dict(retrieval or {}),
+            evidence=[dict(item) for item in (evidence or [])][:20],
+            citations=[dict(item) for item in (citations or [])][:20],
             created_at=datetime.now(UTC).isoformat(),
         )
         with self._lock:

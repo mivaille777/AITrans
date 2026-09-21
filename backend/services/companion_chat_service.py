@@ -347,6 +347,38 @@ class CompanionChatService:
                 ),
                 "reranked_candidates": len(result.candidates),
                 "evidence_count": len(bounded_evidence),
+                "embedding_ms": round(
+                    sum(float(item.metadata.get("embedding_ms", 0.0) or 0.0) for item in retrievals),
+                    3,
+                ),
+                "dense_search_ms": round(
+                    sum(float(item.metadata.get("dense_search_ms", 0.0) or 0.0) for item in retrievals),
+                    3,
+                ),
+                "sparse_search_ms": round(
+                    sum(float(item.metadata.get("sparse_search_ms", 0.0) or 0.0) for item in retrievals),
+                    3,
+                ),
+                "fusion_ms": round(
+                    sum(float(item.metadata.get("fusion_ms", 0.0) or 0.0) for item in retrievals),
+                    3,
+                ),
+                "rerank_ms": round(
+                    sum(float(item.metadata.get("rerank_ms", 0.0) or 0.0) for item in retrievals),
+                    3,
+                ),
+                "total_rag_ms": round(float(result.elapsed_ms or 0.0), 3),
+                "selected_chunks": [
+                    {
+                        "chunk_id": candidate.chunk.chunk_id,
+                        "document_id": candidate.chunk.document_id,
+                        "title": candidate.chunk.title,
+                        "section": candidate.chunk.section_heading,
+                        "page": candidate.chunk.page_number,
+                        "rank": candidate.rank,
+                    }
+                    for candidate in result.candidates[:12]
+                ],
             },
         )
 

@@ -241,6 +241,13 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
               <p className="rounded-md bg-slate-50 px-3 py-2 text-[11px] text-slate-500">No live Companion route traces yet.</p>
             ) : companionTraces.slice(0, 6).map((item) => {
               const verificationPassed = item.verification.passed
+              const reasonCodes = Array.isArray(item.verification.reason_codes)
+                ? item.verification.reason_codes.map(String)
+                : []
+              const selectedChunks = Array.isArray(item.retrieval.selected_chunks)
+                ? item.retrieval.selected_chunks
+                : []
+              const totalRagMs = Number(item.retrieval.total_rag_ms ?? 0)
               return (
                 <div key={item.trace_id} className="grid gap-2 rounded-md border border-slate-100 px-3 py-2.5 lg:grid-cols-[minmax(180px,1.3fr)_150px_150px_1fr]">
                   <div className="min-w-0">
@@ -257,6 +264,9 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                      {item.knowledge_enabled ? "Knowledge · " + item.document_scope : "Knowledge off"}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
                       {item.retrieval_skipped ? "Retrieval skipped" : "Retrieval used"}
                     </span>
                     <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
@@ -268,6 +278,16 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
                             ? "Fallback applied"
                             : "Verification failed"}
                     </span>
+                    {!item.retrieval_skipped && (
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                        {totalRagMs.toFixed(1)} ms · {selectedChunks.length} chunks · {item.evidence.length} evidence · {item.citations.length} citations
+                      </span>
+                    )}
+                    {reasonCodes.length > 0 && (
+                      <span className="basis-full text-[9px] text-slate-500">
+                        Verifier: {reasonCodes.join(", ")}
+                      </span>
+                    )}
                   </div>
                 </div>
               )

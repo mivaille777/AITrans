@@ -365,6 +365,14 @@ async def stream_companion_chat(
                         verification_skipped=not evidence_route,
                         catalog_document_count=prepared.catalog_document_count,
                         retrieval=dict(prepared.grounding.debug_metadata or {}),
+                        evidence=[
+                            item.model_dump(mode="json")
+                            for item in prepared.grounding.evidence
+                        ],
+                        citations=[
+                            item.model_dump(mode="json")
+                            for item in prepared.grounding.citations
+                        ],
                     )
                 except Exception:  # noqa: BLE001 - observability must not break chat
                     _logger.exception("Failed to record Companion routing trace.")
