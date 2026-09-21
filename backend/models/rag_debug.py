@@ -20,6 +20,25 @@ class RagDebugModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RagDebugCompanionTrace(RagDebugModel):
+    trace_id: str
+    request_id: int = Field(default=0, ge=0)
+    conversation_id: str = ""
+    query: str = ""
+    knowledge_enabled: bool = False
+    document_scope: str = "off"
+    route: str
+    route_reason: str = ""
+    grounding_policy: str
+    retrieval_skipped: bool
+    verification_skipped: bool
+    catalog_document_count: int = Field(default=0, ge=0)
+    retrieval: dict[str, Any] = Field(default_factory=dict)
+    verification: dict[str, Any] = Field(default_factory=dict)
+    fallback_applied: bool = False
+    created_at: str
+
+
 class RagDebugRunRequest(RagDebugModel):
     query: str = Field(min_length=1, max_length=4_000)
     config_id: str = Field(default="default", min_length=1, max_length=128)
@@ -256,6 +275,7 @@ class RagDebugCompareResponse(RagDebugModel):
 
 __all__ = [
     "RagDebugCase",
+    "RagDebugCompanionTrace",
     "RagDebugCandidate",
     "RagDebugChunk",
     "RagDebugChunkPage",

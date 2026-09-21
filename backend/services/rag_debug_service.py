@@ -4,6 +4,7 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, RLock
 from time import perf_counter
@@ -14,6 +15,7 @@ from typing import Any, Callable
 from backend.models.rag_debug import (
     RagDebugCandidate,
     RagDebugCase,
+    RagDebugCompanionTrace,
     RagDebugChunk,
     RagDebugChunkPage,
     RagDebugCompareCase,
@@ -91,10 +93,83 @@ class RagDebugService:
         self.store = store
         self._lock = RLock()
         self._runs: dict[str, _RunState] = {}
+        self._companion_traces: list[RagDebugCompanionTrace] = []
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-debug")
 
     def close(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+
+    def record_companion_route(
+        self,
+        *,
+        request_id: int,
+        conversation_id: str,
+        query: str,
+        knowledge_enabled: bool,
+        document_ids: tuple[str, ...],
+        route: str,
+        route_reason: str,
+        grounding_policy: str,
+        retrieval_skipped: bool,
+        verification_skipped: bool,
+        catalog_document_count: int = 0,
+        retrieval: dict[str, Any] | None = None,
+    ) -> str:
+        trace_id = f"companion_{uuid4().hex[:20]}"
+        scope = (
+            "selected"
+            if document_ids
+            else ("all" if knowledge_enabled else "off")
+        )
+        trace = RagDebugCompanionTrace(
+            trace_id=trace_id,
+            request_id=max(0, int(request_id or 0)),
+            conversation_id=str(conversation_id or "")[:128],
+            query=str(query or "")[:4000],
+            knowledge_enabled=bool(knowledge_enabled),
+            document_scope=scope,
+            route=str(route or ""),
+            route_reason=str(route_reason or ""),
+            grounding_policy=str(grounding_policy or ""),
+            retrieval_skipped=bool(retrieval_skipped),
+            verification_skipped=bool(verification_skipped),
+            catalog_document_count=max(0, int(catalog_document_count or 0)),
+            retrieval=dict(retrieval or {}),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        with self._lock:
+            self._companion_traces.insert(0, trace)
+            del self._companion_traces[100:]
+        return trace_id
+
+    def update_companion_verification(
+        self,
+        trace_id: str,
+        *,
+        verification: dict[str, Any] | None,
+        fallback_applied: bool,
+    ) -> None:
+        with self._lock:
+            for index, trace in enumerate(self._companion_traces):
+                if trace.trace_id != trace_id:
+                    continue
+                self._companion_traces[index] = trace.model_copy(
+                    update={
+                        "verification_skipped": False,
+                        "verification": dict(verification or {}),
+                        "fallback_applied": bool(fallback_applied),
+                    }
+                )
+                break
+
+    def list_companion_traces(self, *, limit: int = 20) -> list[RagDebugCompanionTrace]:
+        safe_limit = max(1, min(int(limit or 20), 100))
+        with self._lock:
+            return [
+                item.model_copy(deep=True)
+                for item in self._companion_traces[:safe_limit]
+            ]
 
     def ensure_default_config(self, runtime_config: RagConfig) -> RagDebugConfigProfile:
         return self.store.ensure_default_config(runtime_config)

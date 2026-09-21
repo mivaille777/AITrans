@@ -15,6 +15,7 @@ from backend.api.dependencies import (
     get_companion_chat_service,
     get_companion_ownership_service,
     get_conversation_store_service,
+    get_rag_debug_service,
 )
 from backend.models.companion import (
     CompanionChatStreamCancel,
@@ -29,6 +30,7 @@ from backend.services.conversation_grounding_service import save_message_groundi
 from backend.services.conversation_store_service import ConversationStoreService
 from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.grounded_synthesis_service import evidence_only_grounding_fallback
+from backend.services.rag_debug_service import RagDebugService
 
 router = APIRouter(tags=["companion-stream"])
 CompanionChatServiceDependency = Annotated[
@@ -42,6 +44,10 @@ ConversationStoreDependency = Annotated[
 CompanionOwnershipDependency = Annotated[
     CompanionConversationOwnershipService,
     Depends(get_companion_ownership_service),
+]
+RagDebugDependency = Annotated[
+    RagDebugService,
+    Depends(get_rag_debug_service),
 ]
 
 _TERMINAL_EVENT_TYPES = frozenset({"done", "error", "cancelled"})
@@ -149,6 +155,7 @@ async def stream_companion_chat(
     service: CompanionChatServiceDependency,
     store: ConversationStoreDependency,
     ownership: CompanionOwnershipDependency,
+    rag_debug: RagDebugDependency,
 ) -> None:
     await websocket.accept()
     cancel_event = Event()
@@ -343,6 +350,24 @@ async def stream_companion_chat(
                 evidence_route = (
                     prepared.plan.grounding_policy is GroundingPolicy.EVIDENCE
                 )
+                companion_trace_id = ""
+                try:
+                    companion_trace_id = rag_debug.record_companion_route(
+                        request_id=request_id,
+                        conversation_id=conversation_id,
+                        query=payload.user_message,
+                        knowledge_enabled=payload.knowledge_enabled,
+                        document_ids=tuple(payload.knowledge_document_ids),
+                        route=prepared.plan.route.value,
+                        route_reason=prepared.plan.reason,
+                        grounding_policy=prepared.plan.grounding_policy.value,
+                        retrieval_skipped=not prepared.plan.use_knowledge,
+                        verification_skipped=not evidence_route,
+                        catalog_document_count=prepared.catalog_document_count,
+                        retrieval=dict(prepared.grounding.debug_metadata or {}),
+                    )
+                except Exception:  # noqa: BLE001 - observability must not break chat
+                    _logger.exception("Failed to record Companion routing trace.")
                 if prepared.tool_name:
                     stream_kwargs["tool_name"] = prepared.tool_name
                     stream_kwargs["tool_context"] = prepared.tool_context
@@ -458,6 +483,17 @@ async def stream_companion_chat(
                         )
                     update_latest(text)
                     store.update_stream(assistant_message_id, text)
+                    if companion_trace_id:
+                        try:
+                            rag_debug.update_companion_verification(
+                                companion_trace_id,
+                                verification=verification_payload,
+                                fallback_applied=text != generated_text,
+                            )
+                        except Exception:  # noqa: BLE001 - observability must not break chat
+                            _logger.exception(
+                                "Failed to update Companion verification trace."
+                            )
                     if text != generated_text:
                         # accumulated_text is authoritative for delta rendering,
                         # so a hard fallback atomically replaces the provisional

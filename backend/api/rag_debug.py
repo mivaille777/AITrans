@@ -10,6 +10,7 @@ from backend.api.knowledge_dependencies import get_rag_runtime
 from backend.api.dependencies import get_companion_chat_service, get_rag_debug_service, get_rag_debug_store_service
 from backend.models.rag_debug import (
     RagDebugCase,
+    RagDebugCompanionTrace,
     RagDebugCompareRequest,
     RagDebugCompareResponse,
     RagDebugConfigCreate,
@@ -155,6 +156,14 @@ def delete_config(config_id: str, store: DebugStoreDependency) -> dict[str, Any]
     if not store.delete_config(config_id):
         raise _not_found("RAG config profile cannot be deleted or does not exist.")
     return {"config_id": config_id, "deleted": True}
+
+
+@router.get("/companion-traces", response_model=list[RagDebugCompanionTrace])
+def list_companion_traces(
+    service: DebugServiceDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[RagDebugCompanionTrace]:
+    return service.list_companion_traces(limit=limit)
 
 
 @router.get("/documents", response_model=list[RagDebugDocument])

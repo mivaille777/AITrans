@@ -84,6 +84,11 @@ vi.mock("../../api/rag-debug", () => {
     importRagDebugDataset: vi.fn(),
     listRagDebugCases: vi.fn().mockResolvedValue([evaluationCase]),
     listRagDebugChunks: vi.fn().mockResolvedValue({ chunks: [chunk], total: 1, page: 1, page_size: 50 }),
+    listRagDebugCompanionTraces: vi.fn().mockResolvedValue([
+      { trace_id: "route-1", request_id: 1, conversation_id: "c1", query: "你是谁", knowledge_enabled: true, document_scope: "all", route: "system_identity", route_reason: "matched_system_identity", grounding_policy: "none", retrieval_skipped: true, verification_skipped: true, catalog_document_count: 0, retrieval: {}, verification: {}, fallback_applied: false, created_at: "" },
+      { trace_id: "route-2", request_id: 2, conversation_id: "c1", query: "资料库有什么", knowledge_enabled: true, document_scope: "all", route: "knowledge_catalog", route_reason: "matched_knowledge_catalog", grounding_policy: "manifest", retrieval_skipped: true, verification_skipped: true, catalog_document_count: 3, retrieval: {}, verification: {}, fallback_applied: false, created_at: "" },
+      { trace_id: "route-3", request_id: 3, conversation_id: "c1", query: "资料库里的 PID tuning 怎么做", knowledge_enabled: true, document_scope: "all", route: "knowledge_search", route_reason: "knowledge_capability_enabled", grounding_policy: "evidence", retrieval_skipped: false, verification_skipped: false, catalog_document_count: 0, retrieval: { evidence_count: 5 }, verification: { passed: true }, fallback_applied: false, created_at: "" },
+    ]),
     listRagDebugConfigs: vi.fn().mockResolvedValue([config, { ...config, config_id: "candidate", name: "Candidate", active: false }]),
     listRagDebugDatasets: vi.fn().mockResolvedValue([dataset]),
     saveRagDebugCase: vi.fn(),
@@ -140,6 +145,16 @@ afterEach(() => {
 })
 
 describe("RagDebugStudio", () => {
+  it("shows live Companion routes with distinct routing policies", async () => {
+    render(<RagDebugStudioTrace />)
+
+    await waitFor(() => expect(screen.getByText("system_identity")).toBeTruthy())
+    expect(screen.getByText("knowledge_catalog")).toBeTruthy()
+    expect(screen.getByText("knowledge_search")).toBeTruthy()
+    expect(screen.getAllByText("Verification skipped").length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText("Verification passed")).toBeTruthy()
+  })
+
   it("renders all five interactive tabs", () => {
     render(<RagDebugStudioTrace />)
 

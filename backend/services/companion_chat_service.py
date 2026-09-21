@@ -36,6 +36,7 @@ class CompanionKnowledgeGrounding:
     citations: tuple[AgentCitationRef, ...] = ()
     tool_context: str = ""
     fallback_reason: str = ""
+    debug_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,7 @@ class CompanionPreparedExecution:
     tool_name: str = ""
     tool_context: str = ""
     direct_output_text: str = ""
+    catalog_document_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,8 +114,11 @@ class CompanionChatService:
         tool_name = ""
         tool_context = ""
         direct_output_text = ""
+        catalog_document_count = 0
         if plan.route.value == "knowledge_catalog":
-            direct_output_text = self._render_knowledge_catalog(plan.document_ids)
+            direct_output_text, catalog_document_count = self._render_knowledge_catalog(
+                plan.document_ids
+            )
         elif plan.use_knowledge:
             if callable(phase_callback):
                 phase_callback("retrieving", plan)
@@ -130,12 +135,15 @@ class CompanionChatService:
             tool_name=tool_name,
             tool_context=tool_context,
             direct_output_text=direct_output_text,
+            catalog_document_count=catalog_document_count,
         )
 
-    def _render_knowledge_catalog(self, document_ids: tuple[str, ...]) -> str:
+    def _render_knowledge_catalog(
+        self, document_ids: tuple[str, ...]
+    ) -> tuple[str, int]:
         library = self._knowledge_library_service
         if library is None:
-            return "本地知识库目录当前不可用。"
+            return "本地知识库目录当前不可用。", 0
 
         records = list(library.list_documents())
         selected = set(document_ids)
@@ -148,9 +156,12 @@ class CompanionChatService:
 
         if not records:
             return (
-                "当前选择范围内没有可用文档。"
-                if selected
-                else "当前知识库中还没有文档。"
+                (
+                    "当前选择范围内没有可用文档。"
+                    if selected
+                    else "当前知识库中还没有文档。"
+                ),
+                0,
             )
 
         ready_count = sum(
@@ -182,7 +193,7 @@ class CompanionChatService:
                     "",
                 ]
             )
-        return "\n".join(lines).rstrip()
+        return "\n".join(lines).rstrip(), len(records)
 
     def prepare_knowledge(
         self,
@@ -312,6 +323,23 @@ class CompanionChatService:
                 if bounded_evidence
                 else "context_budget_exhausted"
             ),
+            debug_metadata={
+                "retrieval_strategy": str(result.retrieval_strategy or ""),
+                "dense_candidates": sum(
+                    int(item.metadata.get("dense_count", 0) or 0)
+                    for item in retrievals
+                ),
+                "sparse_candidates": sum(
+                    int(item.metadata.get("sparse_count", 0) or 0)
+                    for item in retrievals
+                ),
+                "fused_candidates": sum(
+                    int(item.metadata.get("fusion_count", 0) or 0)
+                    for item in retrievals
+                ),
+                "reranked_candidates": len(result.candidates),
+                "evidence_count": len(bounded_evidence),
+            },
         )
 
     @staticmethod

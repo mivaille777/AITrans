@@ -27,6 +27,25 @@ export interface RagConfig {
   reranker: Record<string, unknown>
 }
 
+export interface RagDebugCompanionTrace {
+  trace_id: string
+  request_id: number
+  conversation_id: string
+  query: string
+  knowledge_enabled: boolean
+  document_scope: string
+  route: string
+  route_reason: string
+  grounding_policy: string
+  retrieval_skipped: boolean
+  verification_skipped: boolean
+  catalog_document_count: number
+  retrieval: Record<string, unknown>
+  verification: Record<string, unknown>
+  fallback_applied: boolean
+  created_at: string
+}
+
 export interface RagDebugConfigProfile {
   config_id: string
   name: string
@@ -201,6 +220,10 @@ export interface RagDebugRunAccepted {
 }
 
 const ROOT = "/api/rag/debug"
+
+export function listRagDebugCompanionTraces(limit = 20): Promise<RagDebugCompanionTrace[]> {
+  return apiGet(`${ROOT}/companion-traces?limit=${Math.max(1, Math.min(limit, 100))}`)
+}
 
 export function listRagDebugConfigs(): Promise<RagDebugConfigProfile[]> {
   return apiGet(`${ROOT}/configs`)

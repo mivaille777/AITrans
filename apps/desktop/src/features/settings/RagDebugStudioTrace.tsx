@@ -47,12 +47,14 @@ import {
   importRagDebugDataset,
   listRagDebugCases,
   listRagDebugChunks,
+  listRagDebugCompanionTraces,
   listRagDebugConfigs,
   listRagDebugDatasets,
   type RagConfig,
   type RagDebugCase,
   type RagDebugCandidate,
   type RagDebugChunk,
+  type RagDebugCompanionTrace,
   type RagDebugCompareResponse,
   type RagDebugConfigProfile,
   type RagDebugDataset,
@@ -145,12 +147,29 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
   const [selectedId, setSelectedId] = useState("")
   const [running, setRunning] = useState(false)
   const [notice, setNotice] = useState("")
+  const [companionTraces, setCompanionTraces] = useState<RagDebugCompanionTrace[]>([])
   const mounted = useRef(true)
 
   useEffect(() => () => { mounted.current = false }, [])
   useEffect(() => {
+    void listRagDebugCompanionTraces(12)
+      .then((items) => {
+        if (mounted.current) setCompanionTraces(items)
+      })
+      .catch(() => undefined)
+  }, [])
+  useEffect(() => {
     if (configs.length && !configs.some((item) => item.config_id === configId)) setConfigId(configs[0].config_id)
   }, [configs, configId])
+
+  async function refreshCompanionTraces() {
+    try {
+      const items = await listRagDebugCompanionTraces(12)
+      if (mounted.current) setCompanionTraces(items)
+    } catch {
+      // The standalone RAG trace remains usable when live Companion traces are unavailable.
+    }
+  }
 
   const selectedConfig = configs.find((item) => item.config_id === configId) ?? configs[0]
   const candidates = trace?.candidates ?? []
@@ -207,6 +226,55 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
   return (
     <ScrollSurface>
       <div className="mx-auto max-w-[1240px] space-y-4">
+        <section className="rounded-[10px] border border-slate-200 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[13px] font-semibold text-slate-900">Live Capability Routing</h2>
+              <p className="mt-1 text-[11px] text-slate-500">Recent AI Chat routes, grounding policy, retrieval, and verification decisions.</p>
+            </div>
+            <button type="button" onClick={() => void refreshCompanionTraces()} className="rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
+              Refresh routes
+            </button>
+          </div>
+          <div className="mt-3 grid gap-2">
+            {companionTraces.length === 0 ? (
+              <p className="rounded-md bg-slate-50 px-3 py-2 text-[11px] text-slate-500">No live Companion route traces yet.</p>
+            ) : companionTraces.slice(0, 6).map((item) => {
+              const verificationPassed = item.verification.passed
+              return (
+                <div key={item.trace_id} className="grid gap-2 rounded-md border border-slate-100 px-3 py-2.5 lg:grid-cols-[minmax(180px,1.3fr)_150px_150px_1fr]">
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] font-medium text-slate-900">{item.query}</p>
+                    <p className="mt-0.5 truncate text-[10px] text-slate-500">{item.route_reason}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] uppercase tracking-wide text-slate-400">Route</p>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-800">{item.route}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] uppercase tracking-wide text-slate-400">Grounding</p>
+                    <p className="mt-0.5 text-[11px] text-slate-700">{item.grounding_policy}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                      {item.retrieval_skipped ? "Retrieval skipped" : "Retrieval used"}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                      {item.verification_skipped
+                        ? "Verification skipped"
+                        : verificationPassed === true
+                          ? "Verification passed"
+                          : item.fallback_applied
+                            ? "Fallback applied"
+                            : "Verification failed"}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
         <section className="rounded-[10px] border border-slate-200 p-4">
           <div className="flex items-center justify-between gap-3">
             <label className="text-[12px] font-semibold text-slate-800">Query</label>
