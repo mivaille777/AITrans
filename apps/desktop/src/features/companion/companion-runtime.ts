@@ -11,6 +11,12 @@ import type {
 import type { AgentCitationRef, AgentEvidenceItem } from "../evidence/evidence-types"
 
 export type CompanionMessageStatus = "complete" | "streaming" | "cancelled" | "error"
+export type CompanionGenerationPhase =
+  | "routing"
+  | "retrieving"
+  | "generating"
+  | "verifying"
+  | "complete"
 export type CompanionTransport = "companion" | "agent"
 export type CompanionAgentPhase =
   | "idle"
@@ -29,6 +35,7 @@ export interface CompanionRuntimeMessage extends CompanionChatMessage {
   model?: string
   serverMessageId?: string
   errorCode?: string
+  generationPhase?: CompanionGenerationPhase
   knowledgeEnabled?: boolean
   knowledgeFallbackReason?: string
   evidence?: AgentEvidenceItem[]
@@ -163,6 +170,7 @@ export function restoreCompanionMessages(
       model: message.model,
       serverMessageId: message.message_id,
       errorCode: message.error_code,
+      generationPhase: message.status === "complete" ? "complete" : undefined,
       knowledgeEnabled: grounded.knowledge_enabled ?? false,
       knowledgeFallbackReason: grounded.knowledge_fallback_reason ?? "",
       evidence: grounded.evidence ?? [],

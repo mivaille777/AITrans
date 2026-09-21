@@ -617,6 +617,23 @@ export function useCompanionConversationRuntime(
       return
     }
 
+    if (event.type === "phase") {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === localAssistantId
+            || Boolean(event.message_id && message.serverMessageId === event.message_id)
+            ? {
+                ...message,
+                serverMessageId: event.message_id || message.serverMessageId,
+                generationPhase: event.phase,
+                status: "streaming",
+              }
+            : message,
+        ),
+      )
+      return
+    }
+
     if (event.type === "delta") {
       setMessages((current) =>
         current.map((message) =>
@@ -649,6 +666,7 @@ export function useCompanionConversationRuntime(
                 knowledgeFallbackReason: event.knowledge_fallback_reason,
                 evidence: event.evidence,
                 citations: event.citations,
+                generationPhase: "complete",
                 status: "complete",
               }
             : message,

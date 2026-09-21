@@ -315,6 +315,21 @@ export interface CompanionChatStatusResponse {
   detail: string
 }
 
+export type CompanionGenerationPhase =
+  | "routing"
+  | "retrieving"
+  | "generating"
+  | "verifying"
+
+export interface CompanionChatStreamPhase {
+  type: "phase"
+  phase: CompanionGenerationPhase
+  route: string
+  request_id: number
+  conversation_id: string
+  message_id: string
+}
+
 export interface CompanionChatStreamAccepted {
   type: "accepted"
   request_id: number
@@ -363,6 +378,7 @@ export interface CompanionChatStreamCancelled {
 }
 
 export type CompanionChatStreamEvent =
+  | CompanionChatStreamPhase
   | CompanionChatStreamAccepted
   | CompanionChatStreamDelta
   | CompanionChatStreamDone

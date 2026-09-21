@@ -95,6 +95,7 @@ class CompanionChatService:
         history: tuple[tuple[str, str], ...] = (),
         context_mode: str = "general",
         source_text: str = "",
+        phase_callback: Any | None = None,
     ) -> CompanionPreparedExecution:
         plan = self._query_router.route(
             query,
@@ -105,6 +106,8 @@ class CompanionChatService:
             ),
             document_ids=document_ids,
         )
+        if callable(phase_callback):
+            phase_callback("routing", plan)
         grounding = CompanionKnowledgeGrounding()
         tool_name = ""
         tool_context = ""
@@ -112,6 +115,8 @@ class CompanionChatService:
         if plan.route.value == "knowledge_catalog":
             direct_output_text = self._render_knowledge_catalog(plan.document_ids)
         elif plan.use_knowledge:
+            if callable(phase_callback):
+                phase_callback("retrieving", plan)
             grounding = self.prepare_knowledge(
                 query,
                 plan.document_ids,

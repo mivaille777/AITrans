@@ -314,6 +314,20 @@ async def stream_companion_chat(
             last_flush = monotonic()
             try:
                 stream_kwargs = _stream_kwargs(payload)
+
+                def emit_phase(phase: str, plan: Any) -> None:
+                    route = getattr(getattr(plan, "route", ""), "value", "")
+                    emit(
+                        {
+                            "type": "phase",
+                            "phase": phase,
+                            "route": str(route or ""),
+                            "request_id": request_id,
+                            "conversation_id": conversation_id,
+                            "message_id": assistant_message_id,
+                        }
+                    )
+
                 prepared = service.prepare_execution(
                     query=payload.user_message,
                     knowledge_enabled=payload.knowledge_enabled,
@@ -323,6 +337,7 @@ async def stream_companion_chat(
                     ),
                     context_mode=payload.context_mode,
                     source_text=payload.source_text,
+                    phase_callback=emit_phase,
                 )
                 grounding = prepared.grounding
                 evidence_route = (
@@ -341,6 +356,7 @@ async def stream_companion_chat(
                     if direct_output
                     else service.stream(**stream_kwargs)
                 )
+                emit_phase("generating", prepared.plan)
                 for delta in stream_parts:
                     if cancel_event.is_set():
                         return
@@ -402,6 +418,7 @@ async def stream_companion_chat(
                 grounding_citations = tuple(getattr(grounding, "citations", ()) or ())
                 verification_payload: dict[str, Any] | None = None
                 if evidence_route:
+                    emit_phase("verifying", prepared.plan)
                     verification = AgentClaimEvidenceVerifier().verify(
                         output_text=text,
                         evidence=grounding_evidence,

@@ -24,6 +24,7 @@ import {
   EMPTY_COMPANION_CONTEXT,
   previousCompanionUserMessage,
   type CompanionContextSnapshot,
+  type CompanionGenerationPhase,
   type CompanionRuntimeMessage,
 } from "./companion-runtime"
 import { companionLayoutClassNames } from "./companion-layout"
@@ -32,6 +33,21 @@ import { AgentToolsControl } from "./components/AgentToolsControl"
 import { AgentRunInspector } from "./components/AgentRunInspector"
 import { KnowledgeRetrievalControl } from "./components/KnowledgeRetrievalControl"
 import { useCompanionConversationRuntime } from "./useCompanionConversationRuntime"
+
+function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase): string {
+  switch (phase) {
+    case "routing":
+      return "Routing…"
+    case "retrieving":
+      return "Searching knowledge…"
+    case "verifying":
+      return "Verifying sources…"
+    case "generating":
+      return "Generating…"
+    default:
+      return "Generating…"
+  }
+}
 
 export default function CompanionWorkspaceV2() {
   const queryClient = useQueryClient()
@@ -664,7 +680,7 @@ export default function CompanionWorkspaceV2() {
                       ) : message.status === "streaming" ? (
                         <div className="flex items-center gap-2 text-slate-400">
                           <span className="h-3 w-3 animate-spin rounded-full border border-slate-300 border-t-slate-700" />
-                          Waiting for the first token…
+                          {companionGenerationPhaseLabel(message.generationPhase)}
                         </div>
                       ) : (
                         <p className="text-slate-400">
@@ -672,7 +688,11 @@ export default function CompanionWorkspaceV2() {
                         </p>
                       )}
                       <div className="ait-chat-message-meta">
-                        {message.status === "streaming" && <Badge className="ait-chat-message-badge" tone="info">Streaming</Badge>}
+                        {message.status === "streaming" && (
+                          <Badge className="ait-chat-message-badge" tone="info">
+                            {companionGenerationPhaseLabel(message.generationPhase)}
+                          </Badge>
+                        )}
                         {message.status === "cancelled" && <Badge className="ait-chat-message-badge" tone="warning">Stopped</Badge>}
                         {message.status === "error" && <Badge className="ait-chat-message-badge" tone="danger">Failed</Badge>}
                         {message.status === "complete" && message.provider && (

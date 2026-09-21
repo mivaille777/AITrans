@@ -18,6 +18,13 @@ from backend.services.grounded_synthesis_service import (
 )
 
 
+def _receive_non_phase(websocket):
+    while True:
+        event = websocket.receive_json()
+        if event.get("type") != "phase":
+            return event
+
+
 def _payload(*, request_id: int = 11, conversation_id: str = "") -> dict[str, object]:
     return {
         "conversation_id": conversation_id,
@@ -51,6 +58,7 @@ class StubStreamingCompanionChatService:
         history=(),
         context_mode="general",
         source_text="",
+        phase_callback=None,
     ):
         from backend.models.companion_routing import (
             CompanionExecutionPlan,
@@ -63,14 +71,17 @@ class StubStreamingCompanionChatService:
         )
 
         _ = (query, document_ids, history, context_mode, source_text)
+        plan = CompanionExecutionPlan(
+            route=CompanionQueryRoute.GENERAL,
+            grounding_policy=GroundingPolicy.NONE,
+            use_knowledge=False,
+            document_ids=(),
+            reason="test_stub",
+        )
+        if callable(phase_callback):
+            phase_callback("routing", plan)
         return CompanionPreparedExecution(
-            plan=CompanionExecutionPlan(
-                route=CompanionQueryRoute.GENERAL,
-                grounding_policy=GroundingPolicy.NONE,
-                use_knowledge=False,
-                document_ids=(),
-                reason="test_stub",
-            ),
+            plan=plan,
             grounding=CompanionKnowledgeGrounding(),
         )
 
@@ -92,6 +103,7 @@ class GroundedStreamingCompanionChatService(StubStreamingCompanionChatService):
         history=(),
         context_mode="general",
         source_text="",
+        phase_callback=None,
     ):
         from backend.models.companion_routing import (
             CompanionExecutionPlan,
@@ -101,19 +113,23 @@ class GroundedStreamingCompanionChatService(StubStreamingCompanionChatService):
         from backend.services.companion_chat_service import CompanionPreparedExecution
 
         _ = (context_mode, source_text)
+        plan = CompanionExecutionPlan(
+            route=(
+                CompanionQueryRoute.DOCUMENT_SCOPED_SEARCH
+                if document_ids
+                else CompanionQueryRoute.KNOWLEDGE_SEARCH
+            ),
+            grounding_policy=GroundingPolicy.EVIDENCE,
+            use_knowledge=knowledge_enabled,
+            document_ids=tuple(document_ids),
+            reason="test_grounded_stub",
+        )
+        if callable(phase_callback):
+            phase_callback("routing", plan)
+            phase_callback("retrieving", plan)
         grounding = self.prepare_knowledge(query, document_ids, history=history)
         return CompanionPreparedExecution(
-            plan=CompanionExecutionPlan(
-                route=(
-                    CompanionQueryRoute.DOCUMENT_SCOPED_SEARCH
-                    if document_ids
-                    else CompanionQueryRoute.KNOWLEDGE_SEARCH
-                ),
-                grounding_policy=GroundingPolicy.EVIDENCE,
-                use_knowledge=knowledge_enabled,
-                document_ids=tuple(document_ids),
-                reason="test_grounded_stub",
-            ),
+            plan=plan,
             grounding=grounding,
             tool_name="search_knowledge_base",
             tool_context=grounding.tool_context,
@@ -200,10 +216,10 @@ def test_companion_websocket_streams_and_commits_completed_exchange(tmp_path) ->
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": _payload()})
-            accepted = websocket.receive_json()
-            first = websocket.receive_json()
-            second = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            first = _receive_non_phase(websocket)
+            second = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     conversation_id = accepted["conversation_id"]
     assert accepted["type"] == "accepted"
@@ -249,9 +265,9 @@ def test_companion_websocket_persists_completed_knowledge_grounding(tmp_path) ->
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            accepted = websocket.receive_json()
-            delta = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            delta = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     assert delta["type"] == "delta"
     assert delta["accumulated_text"] == (
@@ -282,11 +298,11 @@ def test_companion_websocket_streams_knowledge_before_final_verification(tmp_pat
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            accepted = websocket.receive_json()
-            first = websocket.receive_json()
-            second = websocket.receive_json()
-            third = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            first = _receive_non_phase(websocket)
+            second = _receive_non_phase(websocket)
+            third = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     assert accepted["type"] == "accepted"
     assert first["type"] == "delta"
@@ -318,9 +334,9 @@ def test_companion_websocket_preserves_paragraph_grounded_synthesis(tmp_path) ->
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            accepted = websocket.receive_json()
-            delta = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            delta = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     expected = (
         "GP anchors localize the search around prior evidence. "
@@ -351,10 +367,10 @@ def test_companion_websocket_keeps_invalid_citation_as_hard_fallback(tmp_path) -
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            accepted = websocket.receive_json()
-            provisional = websocket.receive_json()
-            replacement = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            provisional = _receive_non_phase(websocket)
+            replacement = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     assert provisional["type"] == "delta"
     assert provisional["accumulated_text"] == (
@@ -389,9 +405,9 @@ def test_companion_websocket_cancel_commits_terminal_cancelled_message(tmp_path)
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": _payload(request_id=22)})
-            accepted = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
             websocket.send_json({"type": "cancel", "request_id": 22})
-            terminal = websocket.receive_json()
+            terminal = _receive_non_phase(websocket)
 
     assert accepted["type"] == "accepted"
     assert terminal == {
@@ -432,10 +448,10 @@ def test_companion_websocket_skips_retrieval_and_verifier_for_identity_with_know
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            accepted = websocket.receive_json()
-            first = websocket.receive_json()
-            second = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            first = _receive_non_phase(websocket)
+            second = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     assert accepted["type"] == "accepted"
     assert first["type"] == "delta"
@@ -449,6 +465,7 @@ def test_companion_websocket_skips_retrieval_and_verifier_for_identity_with_know
 
 class CatalogStreamingCompanionChatService(StubStreamingCompanionChatService):
     def prepare_execution(self, **_kwargs):
+        phase_callback = _kwargs.get("phase_callback")
         from backend.models.companion_routing import (
             CompanionExecutionPlan,
             CompanionQueryRoute,
@@ -459,14 +476,17 @@ class CatalogStreamingCompanionChatService(StubStreamingCompanionChatService):
             CompanionPreparedExecution,
         )
 
+        plan = CompanionExecutionPlan(
+            route=CompanionQueryRoute.KNOWLEDGE_CATALOG,
+            grounding_policy=GroundingPolicy.MANIFEST,
+            use_knowledge=False,
+            document_ids=(),
+            reason="test_catalog",
+        )
+        if callable(phase_callback):
+            phase_callback("routing", plan)
         return CompanionPreparedExecution(
-            plan=CompanionExecutionPlan(
-                route=CompanionQueryRoute.KNOWLEDGE_CATALOG,
-                grounding_policy=GroundingPolicy.MANIFEST,
-                use_knowledge=False,
-                document_ids=(),
-                reason="test_catalog",
-            ),
+            plan=plan,
             grounding=CompanionKnowledgeGrounding(),
             direct_output_text="当前知识库共有 1 个文档：\n\n1. Control Paper",
         )
@@ -498,9 +518,9 @@ def test_companion_websocket_catalog_direct_output_skips_verifier_and_llm(tmp_pa
     with TestClient(app) as client:
         with client.websocket_connect("/ws/companion/chat") as websocket:
             websocket.send_json({"type": "start", "request": payload})
-            accepted = websocket.receive_json()
-            delta = websocket.receive_json()
-            done = websocket.receive_json()
+            accepted = _receive_non_phase(websocket)
+            delta = _receive_non_phase(websocket)
+            done = _receive_non_phase(websocket)
 
     assert accepted["type"] == "accepted"
     assert delta["type"] == "delta"
@@ -510,3 +530,74 @@ def test_companion_websocket_catalog_direct_output_skips_verifier_and_llm(tmp_pa
     assert done["model"] == "deterministic"
     assert done["grounding_verification"] is None
     assert done["output_text"] == delta["accumulated_text"]
+
+
+
+def test_companion_websocket_general_phase_order(tmp_path) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    app.dependency_overrides[get_companion_chat_service] = (
+        lambda: StubStreamingCompanionChatService()
+    )
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _payload(request_id=61)
+    payload["context_mode"] = "general"
+
+    events = []
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    assert [
+        (event["type"], event.get("phase"))
+        for event in events
+    ] == [
+        ("accepted", None),
+        ("phase", "routing"),
+        ("phase", "generating"),
+        ("delta", None),
+        ("delta", None),
+        ("done", None),
+    ]
+    assert [event.get("route") for event in events if event["type"] == "phase"] == [
+        "general",
+        "general",
+    ]
+
+
+def test_companion_websocket_knowledge_phase_order(tmp_path) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    app.dependency_overrides[get_companion_chat_service] = (
+        lambda: GroundedStreamingCompanionChatService()
+    )
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _grounded_payload(62)
+
+    events = []
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            while True:
+                event = websocket.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    assert [
+        (event["type"], event.get("phase"))
+        for event in events
+    ] == [
+        ("accepted", None),
+        ("phase", "routing"),
+        ("phase", "retrieving"),
+        ("phase", "generating"),
+        ("delta", None),
+        ("phase", "verifying"),
+        ("done", None),
+    ]
