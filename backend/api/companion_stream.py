@@ -31,8 +31,6 @@ from backend.services.conversation_grounding_service import save_message_groundi
 from backend.services.conversation_store_service import ConversationStoreService
 from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.grounded_synthesis_service import evidence_only_grounding_fallback
-from backend.services.rag_debug_service import RagDebugService
-
 router = APIRouter(tags=["companion-stream"])
 CompanionChatServiceDependency = Annotated[
     CompanionChatService,
@@ -46,11 +44,6 @@ CompanionOwnershipDependency = Annotated[
     CompanionConversationOwnershipService,
     Depends(get_companion_ownership_service),
 ]
-RagDebugDependency = Annotated[
-    RagDebugService,
-    Depends(get_rag_debug_service),
-]
-
 _TERMINAL_EVENT_TYPES = frozenset({"done", "error", "cancelled"})
 _STREAM_FLUSH_INTERVAL_SECONDS = 0.25
 _STREAM_FLUSH_CHARACTER_STEP = 256
@@ -156,7 +149,6 @@ async def stream_companion_chat(
     service: CompanionChatServiceDependency,
     store: ConversationStoreDependency,
     ownership: CompanionOwnershipDependency,
-    rag_debug: RagDebugDependency,
 ) -> None:
     await websocket.accept()
     cancel_event = Event()
@@ -320,7 +312,16 @@ async def stream_companion_chat(
             accumulated: list[str] = []
             persisted_length = 0
             last_flush = monotonic()
+            rag_debug = None
             try:
+                # RAG Debug is observability only. Initialize it after the
+                # WebSocket handshake so local debug-store failures can never
+                # prevent AI Chat from connecting.
+                try:
+                    rag_debug = get_rag_debug_service()
+                except Exception:  # noqa: BLE001 - observability must not break chat
+                    _logger.exception("RAG Debug unavailable; continuing without chat tracing.")
+
                 stream_kwargs = _stream_kwargs(payload)
 
                 def emit_phase(phase: str, plan: Any) -> None:
@@ -353,7 +354,8 @@ async def stream_companion_chat(
                 )
                 companion_trace_id = ""
                 try:
-                    companion_trace_id = rag_debug.record_companion_route(
+                    if rag_debug is not None:
+                        companion_trace_id = rag_debug.record_companion_route(
                         request_id=request_id,
                         conversation_id=conversation_id,
                         query=payload.user_message,
