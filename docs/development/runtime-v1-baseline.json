@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "initiative": "AITrans Agent Runtime v1",
+  "stage": "Stage 0 - Baseline Freeze",
+  "recorded_at": "2026-09-21T23:07:14.7580385+08:00",
+  "branch": "WebReBuild",
+  "commit": "81003128fecaec3a0b37cd17ef41942db99b8eae",
+  "environment": {
+    "os": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.7",
+    "python_executable": "C:\\Users\\mivaille\\anaconda3\\envs\\aitrans\\python.exe",
+    "langgraph": "1.2.11",
+    "langgraph_checkpoint": "4.2.0",
+    "fastapi": "0.141.1",
+    "pydantic": "2.13.4",
+    "node": "24.11.1",
+    "npm": "11.6.2",
+    "rustc": "1.97.1",
+    "cargo": "1.97.1"
+  },
+  "gates": [
+    {
+      "id": "python-agent",
+      "command": "python -m pytest tests/agent -q",
+      "status": "failed",
+      "exit_code": 1,
+      "passed": 426,
+      "failed": 1,
+      "skipped": 0,
+      "duration_seconds": 38.61
+    },
+    {
+      "id": "python-multi-agent",
+      "command": "python -m pytest tests/multi_agent -q",
+      "status": "passed",
+      "exit_code": 0,
+      "passed": 197,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 18.27
+    },
+    {
+      "id": "python-integration",
+      "command": "python -m pytest tests/integration -q",
+      "status": "no_tests_collected",
+      "exit_code": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 0.04
+    },
+    {
+      "id": "python-full",
+      "command": "python -m pytest tests -q",
+      "status": "failed",
+      "exit_code": 1,
+      "passed": 1348,
+      "failed": 4,
+      "skipped": 2,
+      "duration_seconds": 91.85
+    },
+    {
+      "id": "frontend-lint",
+      "command": "npm run lint",
+      "status": "passed_with_warnings",
+      "exit_code": 0,
+      "warnings": 27
+    },
+    {
+      "id": "frontend-test",
+      "command": "npm run test",
+      "status": "failed",
+      "exit_code": 1,
+      "test_files_passed": 70,
+      "test_files_failed": 1,
+      "passed": 292,
+      "failed": 1,
+      "duration_seconds": 36.45
+    },
+    {
+      "id": "frontend-build",
+      "command": "npm run build",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "id": "tauri-check",
+      "command": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 19.55
+    }
+  ],
+  "known_issues": [
+    {
+      "id": "BASE-001",
+      "gate": "python-agent",
+      "test": "tests/agent/test_agent_runtime_config.py::test_runtime_config_exposes_only_safe_routing_metadata",
+      "summary": "The assertion expects chat.reading@1.3.0 while the runtime exposes chat.reading@1.4.0."
+    },
+    {
+      "id": "BASE-002",
+      "gate": "python-full",
+      "test": "tests/test_ai_chat.py::test_chat_service_reuses_configured_text_provider_client",
+      "summary": "The assertion expects the legacy conversational reading assistant prompt text after the system identity prompt changed."
+    },
+    {
+      "id": "BASE-003",
+      "gate": "python-full",
+      "test": "tests/test_backend_companion_ownership.py::test_backend_allows_only_one_active_stream_per_conversation",
+      "summary": "The stream test double implements stream() but not the prepare_execution() contract now used by the backend."
+    },
+    {
+      "id": "BASE-004",
+      "gate": "python-full",
+      "test": "tests/test_companion_runtime_integration.py::test_batch4_companion_conversation_lifecycle_across_windows",
+      "summary": "The stream test double implements stream() but not the prepare_execution() contract, so the stream emits an error before delta."
+    },
+    {
+      "id": "BASE-005",
+      "gate": "frontend-test",
+      "test": "apps/desktop/src/features/companion/ConversationHistoryPanel.test.tsx",
+      "summary": "The mutation mock assertion omits the React Query mutation context argument supplied by the current library version."
+    },
+    {
+      "id": "BASE-006",
+      "gate": "python-integration",
+      "summary": "The tests/integration directory exists but currently contains no collectable pytest tests."
+    }
+  ],
+  "notes": [
+    "GPU RAG integration tests were skipped because AITRANS_RUN_RAG_GPU_TESTS was not enabled.",
+    "Stage 0 records pre-existing failures and does not change production or test behavior."
+  ]
+}
