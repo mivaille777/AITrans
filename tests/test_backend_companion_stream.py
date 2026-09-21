@@ -404,3 +404,109 @@ def test_companion_websocket_cancel_commits_terminal_cancelled_message(tmp_path)
     assert stored is not None
     assert stored.messages[-1].status == "cancelled"
     assert stored.messages[-1].error_code == "user_cancelled"
+
+
+
+def test_companion_websocket_skips_retrieval_and_verifier_for_identity_with_knowledge_on(
+    tmp_path,
+) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    service = StubStreamingCompanionChatService()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _payload(request_id=41)
+    payload["context_mode"] = "general"
+    payload["source_text"] = ""
+    payload["translated_text"] = ""
+    payload["resource_url"] = ""
+    payload["resource_title"] = ""
+    payload["section_heading"] = ""
+    payload["context_before"] = ""
+    payload["context_after"] = ""
+    payload["source_kind"] = ""
+    payload["user_message"] = "我是谁"
+    payload["knowledge_enabled"] = True
+    payload["knowledge_document_ids"] = []
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            accepted = websocket.receive_json()
+            first = websocket.receive_json()
+            second = websocket.receive_json()
+            done = websocket.receive_json()
+
+    assert accepted["type"] == "accepted"
+    assert first["type"] == "delta"
+    assert second["type"] == "delta"
+    assert done["type"] == "done"
+    assert done["output_text"] == "GP anchors localize the search."
+    assert done["grounding_verification"] is None
+    assert done["evidence"] == []
+    assert done["citations"] == []
+
+
+class CatalogStreamingCompanionChatService(StubStreamingCompanionChatService):
+    def prepare_execution(self, **_kwargs):
+        from backend.models.companion_routing import (
+            CompanionExecutionPlan,
+            CompanionQueryRoute,
+            GroundingPolicy,
+        )
+        from backend.services.companion_chat_service import (
+            CompanionKnowledgeGrounding,
+            CompanionPreparedExecution,
+        )
+
+        return CompanionPreparedExecution(
+            plan=CompanionExecutionPlan(
+                route=CompanionQueryRoute.KNOWLEDGE_CATALOG,
+                grounding_policy=GroundingPolicy.MANIFEST,
+                use_knowledge=False,
+                document_ids=(),
+                reason="test_catalog",
+            ),
+            grounding=CompanionKnowledgeGrounding(),
+            direct_output_text="当前知识库共有 1 个文档：\n\n1. Control Paper",
+        )
+
+    def stream(self, **_kwargs):
+        raise AssertionError("catalog direct output must not call the LLM stream")
+
+
+def test_companion_websocket_catalog_direct_output_skips_verifier_and_llm(tmp_path) -> None:
+    app = create_app()
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    service = CatalogStreamingCompanionChatService()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    payload = _payload(request_id=42)
+    payload["context_mode"] = "general"
+    payload["source_text"] = ""
+    payload["translated_text"] = ""
+    payload["resource_url"] = ""
+    payload["resource_title"] = ""
+    payload["section_heading"] = ""
+    payload["context_before"] = ""
+    payload["context_after"] = ""
+    payload["source_kind"] = ""
+    payload["user_message"] = "资料库里有什么？"
+    payload["knowledge_enabled"] = True
+    payload["knowledge_document_ids"] = []
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/companion/chat") as websocket:
+            websocket.send_json({"type": "start", "request": payload})
+            accepted = websocket.receive_json()
+            delta = websocket.receive_json()
+            done = websocket.receive_json()
+
+    assert accepted["type"] == "accepted"
+    assert delta["type"] == "delta"
+    assert "Control Paper" in delta["accumulated_text"]
+    assert done["type"] == "done"
+    assert done["provider"] == "local"
+    assert done["model"] == "deterministic"
+    assert done["grounding_verification"] is None
+    assert done["output_text"] == delta["accumulated_text"]

@@ -325,12 +325,23 @@ async def stream_companion_chat(
                     source_text=payload.source_text,
                 )
                 grounding = prepared.grounding
+                evidence_route = (
+                    prepared.plan.grounding_policy is GroundingPolicy.EVIDENCE
+                )
                 if prepared.tool_name:
                     stream_kwargs["tool_name"] = prepared.tool_name
                     stream_kwargs["tool_context"] = prepared.tool_context
                 stream_kwargs.pop("knowledge_enabled", None)
                 stream_kwargs.pop("knowledge_document_ids", None)
-                for delta in service.stream(**stream_kwargs):
+                direct_output = str(prepared.direct_output_text or "")
+                response_provider = "local" if direct_output else service.provider_name
+                response_model = "deterministic" if direct_output else service.model
+                stream_parts = (
+                    (direct_output,)
+                    if direct_output
+                    else service.stream(**stream_kwargs)
+                )
+                for delta in stream_parts:
                     if cancel_event.is_set():
                         return
                     ownership.touch(
@@ -340,8 +351,8 @@ async def stream_companion_chat(
                     )
                     accumulated.append(delta)
                     text = "".join(accumulated)
-                    if payload.knowledge_enabled:
-                        # Knowledge output is provisional until deterministic
+                    if evidence_route:
+                        # Evidence-grounded output is provisional until deterministic
                         # grounding verification completes. The desktop runtime
                         # renders accumulated_text as a replaceable streaming
                         # draft, while persistence remains untouched until the
@@ -390,7 +401,7 @@ async def stream_companion_chat(
                 grounding_evidence = tuple(getattr(grounding, "evidence", ()) or ())
                 grounding_citations = tuple(getattr(grounding, "citations", ()) or ())
                 verification_payload: dict[str, Any] | None = None
-                if payload.knowledge_enabled:
+                if evidence_route:
                     verification = AgentClaimEvidenceVerifier().verify(
                         output_text=text,
                         evidence=grounding_evidence,
@@ -447,10 +458,10 @@ async def stream_companion_chat(
                 commit_terminal(
                     "complete",
                     content=text,
-                    provider=service.provider_name,
-                    model=service.model,
+                    provider=response_provider,
+                    model=response_model,
                 )
-                if payload.knowledge_enabled:
+                if evidence_route:
                     try:
                         save_message_grounding(
                             store.storage_path,
@@ -472,8 +483,8 @@ async def stream_companion_chat(
                         "conversation_id": conversation_id,
                         "message_id": assistant_message_id,
                         "output_text": text,
-                        "provider": service.provider_name,
-                        "model": service.model,
+                        "provider": response_provider,
+                        "model": response_model,
                         "knowledge_enabled": payload.knowledge_enabled,
                         "knowledge_fallback_reason": grounding_fallback,
                         "evidence": [
