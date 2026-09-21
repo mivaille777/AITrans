@@ -31,6 +31,7 @@ from backend.services.conversation_grounding_service import save_message_groundi
 from backend.services.conversation_store_service import ConversationStoreService
 from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.grounded_synthesis_service import evidence_only_grounding_fallback
+
 router = APIRouter(tags=["companion-stream"])
 CompanionChatServiceDependency = Annotated[
     CompanionChatService,
@@ -356,27 +357,27 @@ async def stream_companion_chat(
                 try:
                     if rag_debug is not None:
                         companion_trace_id = rag_debug.record_companion_route(
-                        request_id=request_id,
-                        conversation_id=conversation_id,
-                        query=payload.user_message,
-                        knowledge_enabled=payload.knowledge_enabled,
-                        document_ids=tuple(payload.knowledge_document_ids),
-                        route=prepared.plan.route.value,
-                        route_reason=prepared.plan.reason,
-                        grounding_policy=prepared.plan.grounding_policy.value,
-                        retrieval_skipped=not prepared.plan.use_knowledge,
-                        verification_skipped=not evidence_route,
-                        catalog_document_count=prepared.catalog_document_count,
-                        retrieval=dict(prepared.grounding.debug_metadata or {}),
-                        evidence=[
-                            item.model_dump(mode="json")
-                            for item in prepared.grounding.evidence
-                        ],
-                        citations=[
-                            item.model_dump(mode="json")
-                            for item in prepared.grounding.citations
-                        ],
-                    )
+                            request_id=request_id,
+                            conversation_id=conversation_id,
+                            query=payload.user_message,
+                            knowledge_enabled=payload.knowledge_enabled,
+                            document_ids=tuple(payload.knowledge_document_ids),
+                            route=prepared.plan.route.value,
+                            route_reason=prepared.plan.reason,
+                            grounding_policy=prepared.plan.grounding_policy.value,
+                            retrieval_skipped=not prepared.plan.use_knowledge,
+                            verification_skipped=not evidence_route,
+                            catalog_document_count=prepared.catalog_document_count,
+                            retrieval=dict(prepared.grounding.debug_metadata or {}),
+                            evidence=[
+                                item.model_dump(mode="json")
+                                for item in prepared.grounding.evidence
+                            ],
+                            citations=[
+                                item.model_dump(mode="json")
+                                for item in prepared.grounding.citations
+                            ],
+                        )
                 except Exception:  # noqa: BLE001 - observability must not break chat
                     _logger.exception("Failed to record Companion routing trace.")
                 if prepared.tool_name:
