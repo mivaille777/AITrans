@@ -196,11 +196,11 @@ def get_companion_chat_service() -> CompanionChatService:
     with _companion_chat_service_lock:
         if _companion_chat_service is None:
             _companion_chat_service = CompanionChatService(
-                reading_resolver=get_reading_selection_resolver(),
-                retrieval_service=get_retrieval_service(),
-                query_planner=build_rag_query_planner(),
                 query_router=CompanionQueryRouter(),
-                knowledge_library_service=get_knowledge_library_service(),
+                reading_resolver_factory=get_reading_selection_resolver,
+                retrieval_service_factory=get_retrieval_service,
+                query_planner_factory=build_rag_query_planner,
+                knowledge_library_service_factory=get_knowledge_library_service,
             )
         return _companion_chat_service
 
