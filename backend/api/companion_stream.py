@@ -21,6 +21,7 @@ from backend.models.companion import (
     CompanionChatStreamCancel,
     CompanionChatStreamStart,
 )
+from backend.models.companion_routing import GroundingPolicy
 from backend.services.companion_chat_service import CompanionChatService
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
