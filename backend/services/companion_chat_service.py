@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -81,6 +81,10 @@ class CompanionChatService:
         query_planner: Any | None = None,
         query_router: CompanionQueryRouter | Any | None = None,
         knowledge_library_service: Any | None = None,
+        reading_resolver_factory: Callable[[], Any] | None = None,
+        retrieval_service_factory: Callable[[], Any] | None = None,
+        query_planner_factory: Callable[[], Any] | None = None,
+        knowledge_library_service_factory: Callable[[], Any] | None = None,
         system_context: SystemContext | Any | None = None,
     ) -> None:
         self._text_service = text_service
@@ -91,8 +95,55 @@ class CompanionChatService:
         self._query_planner = query_planner
         self._query_router = query_router or CompanionQueryRouter()
         self._knowledge_library_service = knowledge_library_service
+        self._reading_resolver_factory = reading_resolver_factory
+        self._retrieval_service_factory = retrieval_service_factory
+        self._query_planner_factory = query_planner_factory
+        self._knowledge_library_service_factory = knowledge_library_service_factory
         self._system_context = system_context or SYSTEM_CONTEXT
         self._grounded_context_builder = GroundedContextBuilder()
+
+    @staticmethod
+    def _resolve_optional_dependency(
+        current: Any | None,
+        factory: Callable[[], Any] | None,
+    ) -> Any | None:
+        if current is not None:
+            return current
+        if not callable(factory):
+            return None
+        return factory()
+
+    def _ensure_reading_resolver(self) -> Any | None:
+        if self._reading_resolver is None:
+            self._reading_resolver = self._resolve_optional_dependency(
+                self._reading_resolver,
+                self._reading_resolver_factory,
+            )
+        return self._reading_resolver
+
+    def _ensure_retrieval_service(self) -> Any | None:
+        if self._retrieval_service is None:
+            self._retrieval_service = self._resolve_optional_dependency(
+                self._retrieval_service,
+                self._retrieval_service_factory,
+            )
+        return self._retrieval_service
+
+    def _ensure_query_planner(self) -> Any | None:
+        if self._query_planner is None:
+            self._query_planner = self._resolve_optional_dependency(
+                self._query_planner,
+                self._query_planner_factory,
+            )
+        return self._query_planner
+
+    def _ensure_knowledge_library_service(self) -> Any | None:
+        if self._knowledge_library_service is None:
+            self._knowledge_library_service = self._resolve_optional_dependency(
+                self._knowledge_library_service,
+                self._knowledge_library_service_factory,
+            )
+        return self._knowledge_library_service
 
     def prepare_execution(
         self,
@@ -149,11 +200,17 @@ class CompanionChatService:
     def _render_knowledge_catalog(
         self, document_ids: tuple[str, ...]
     ) -> tuple[str, int]:
-        library = self._knowledge_library_service
+        try:
+            library = self._ensure_knowledge_library_service()
+        except Exception:
+            return "本地知识库目录当前不可用。", 0
         if library is None:
             return "本地知识库目录当前不可用。", 0
 
-        records = list(library.list_documents())
+        try:
+            records = list(library.list_documents())
+        except Exception:
+            return "本地知识库目录当前不可用。", 0
         selected = set(document_ids)
         if selected:
             records = [
@@ -210,7 +267,14 @@ class CompanionChatService:
         *,
         history: tuple[tuple[str, str], ...] = (),
     ) -> CompanionKnowledgeGrounding:
-        if self._retrieval_service is None:
+        try:
+            retrieval_service = self._ensure_retrieval_service()
+        except Exception as exc:
+            return CompanionKnowledgeGrounding(
+                tool_context="Knowledge retrieval was unavailable. Answer generally if possible and do not cite a source.",
+                fallback_reason=f"retrieval_init_failed:{str(exc) or exc.__class__.__name__}",
+            )
+        if retrieval_service is None:
             return CompanionKnowledgeGrounding(
                 tool_context="No relevant knowledge evidence was found. Answer generally if possible and do not cite a source.",
                 fallback_reason="retrieval_unavailable",
@@ -223,9 +287,13 @@ class CompanionChatService:
             if normalized_ids
             else None
         )
+        try:
+            query_planner = self._ensure_query_planner()
+        except Exception:
+            query_planner = None
         plan = (
-            self._query_planner.plan(query, history=history)
-            if self._query_planner is not None
+            query_planner.plan(query, history=history)
+            if query_planner is not None
             else RagQueryPlan(
                 original_query=query,
                 rewritten_query=query,
@@ -256,7 +324,7 @@ class CompanionChatService:
                     if structural_intent.name == "bibliography":
                         retrieve_kwargs["include_references"] = True
                 retrievals.append(
-                    self._retrieval_service.retrieve(
+                    retrieval_service.retrieve(
                         retrieval_query,
                         **retrieve_kwargs,
                     )
@@ -452,7 +520,10 @@ class CompanionChatService:
         if not source_text.strip():
             return payload
 
-        resolver = self._reading_resolver
+        try:
+            resolver = self._ensure_reading_resolver()
+        except Exception:
+            resolver = None
         resolve_for_text = getattr(resolver, "resolve_for_text", None)
         if not callable(resolve_for_text):
             return payload
