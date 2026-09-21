@@ -45,3 +45,42 @@ def test_prepare_execution_uses_evidence_contract_for_knowledge_search() -> None
     assert prepared.plan.use_knowledge is True
     assert prepared.tool_name == "search_knowledge_base"
     assert retrieval.calls >= 1
+
+
+def test_identity_route_does_not_initialize_optional_knowledge_services() -> None:
+    calls = {
+        "reading": 0,
+        "retrieval": 0,
+        "planner": 0,
+        "library": 0,
+    }
+
+    def fail(name: str):
+        def factory():
+            calls[name] += 1
+            raise AssertionError(f"{name} factory must not run for identity")
+
+        return factory
+
+    service = CompanionChatService(
+        reading_resolver_factory=fail("reading"),
+        retrieval_service_factory=fail("retrieval"),
+        query_planner_factory=fail("planner"),
+        knowledge_library_service_factory=fail("library"),
+    )
+
+    prepared = service.prepare_execution(
+        query="你是谁？",
+        knowledge_enabled=False,
+        context_mode="general",
+    )
+
+    assert prepared.plan.route is CompanionQueryRoute.SYSTEM_IDENTITY
+    assert prepared.direct_output_text
+    assert "AITrans" in prepared.direct_output_text
+    assert calls == {
+        "reading": 0,
+        "retrieval": 0,
+        "planner": 0,
+        "library": 0,
+    }
