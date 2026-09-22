@@ -335,6 +335,18 @@ def test_canonical_waiting_run_confirmation_requeues_recovery(tmp_path) -> None:
         "save_research_note"
     ]
 
+    claimed, recovering = store.claim_next_run(
+        lease_owner="confirmation-worker",
+        lease_seconds=30,
+    )
+    assert claimed.run_id == run.run_id
+    assert recovering is True
+    assert store.consume_run_confirmations(
+        run.run_id,
+        lease_owner="confirmation-worker",
+    ) == ("save_research_note",)
+    assert store.get_run_request(run.run_id)["confirmed_write_tools"] == []
+
 
 def test_run_request_survives_reopened_store_and_events_are_fenced(tmp_path) -> None:
     path = tmp_path / "agent_runtime.sqlite3"

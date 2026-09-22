@@ -646,6 +646,60 @@ class AgentRunStore:
                 )
         return updated
 
+
+    def consume_run_confirmations(
+        self, run_id: str, *, lease_owner: str
+    ) -> tuple[str, ...]:
+        """Consume one-shot write approvals after a worker has claimed recovery."""
+
+        owner = str(lease_owner or "").strip()
+        if not owner:
+            raise ValueError("lease_owner is required")
+        now = datetime.now(UTC)
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT r.request_json FROM agent_runs AS r
+                JOIN agent_worker_leases AS l ON l.run_id = r.run_id
+                WHERE r.run_id = ? AND r.status = ?
+                  AND l.lease_owner = ? AND l.lease_expires_at > ?
+                """,
+                (
+                    run_id,
+                    AgentRunStatus.RUNNING.value,
+                    owner,
+                    _iso(now),
+                ),
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} confirmation cannot be consumed by {owner}"
+                )
+            request_payload = json.loads(str(row["request_json"]))
+            raw_tools = request_payload.get("confirmed_write_tools", [])
+            tools = tuple(
+                str(tool).strip()
+                for tool in raw_tools
+                if str(tool).strip()
+            ) if isinstance(raw_tools, list) else ()
+            if not tools:
+                return ()
+            request_payload["confirmed_write_tools"] = []
+            connection.execute(
+                """
+                UPDATE agent_runs
+                SET request_json = ?, updated_at = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    json.dumps(request_payload, ensure_ascii=False, sort_keys=True),
+                    _iso(now),
+                    run_id,
+                    AgentRunStatus.RUNNING.value,
+                ),
+            )
+        return tools
+
     def update_checkpoint_metadata(
         self,
         run_id: str,

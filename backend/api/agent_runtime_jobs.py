@@ -355,6 +355,11 @@ async def execute_persisted_agent_run(
             )
             if recovering:
                 state = _apply_resume_request_context(state, request)
+                if request.confirmed_write_tools:
+                    store.consume_run_confirmations(
+                        run.run_id,
+                        lease_owner=lease_owner,
+                    )
         except AgentRuntimeError as exc:
             return AgentRunOutcome(
                 status=(
