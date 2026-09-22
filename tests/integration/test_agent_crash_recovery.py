@@ -66,6 +66,11 @@ if mode == "crash":
     state = AgentState(task_id=run.task_id, run_id=run.run_id, trace_id=run.trace_id)
     runtime.execute(state, event_sink=store.append_event)
 else:
+    recovered_ids = store.recover_expired_runs()
+    recovering_record = store.get_run("run-process-recovery")
+    assert recovering_record is not None
+    assert recovering_record.status is AgentRunStatus.RECOVERING
+
     async def execute(run, control, recovering):
         assert recovering
         state = runtime.restore_checkpoint(run.run_id)
@@ -79,8 +84,11 @@ else:
     worker = AgentRunWorker(store, execute, worker_id="process-b")
     completed = asyncio.run(worker.run_once())
     print(json.dumps({
+        "task_id": completed.task_id,
         "run_id": completed.run_id,
         "trace_id": completed.trace_id,
+        "pre_resume_status": recovering_record.status.value,
+        "recovered_ids": list(recovered_ids),
         "status": completed.status.value,
         "context_events": sum(
             event.event_type.value == "context_ready"
@@ -104,6 +112,20 @@ def test_crashed_process_reclaims_without_repeating_checkpointed_node(tmp_path) 
         check=False,
     )
     assert crash.returncode == 17, crash.stderr
+
+    from backend.models.agent_run import AgentRunStatus
+    from backend.services.agent_run_store import AgentRunStore
+
+    interrupted_store = AgentRunStore(storage_path=runtime_path)
+    interrupted = interrupted_store.get_run("run-process-recovery")
+    lease = interrupted_store.get_lease("run-process-recovery")
+    assert interrupted is not None
+    assert interrupted.status is AgentRunStatus.RUNNING
+    assert interrupted.run_id == "run-process-recovery"
+    assert interrupted.trace_id == "trace-process-recovery"
+    assert lease is not None and lease.lease_owner == "process-a"
+    interrupted_store.close()
+
     sleep(0.3)
     recovered = subprocess.run(
         [sys.executable, "-c", _PROCESS_CODE, "recover", runtime_path, checkpoint_path],
@@ -116,8 +138,11 @@ def test_crashed_process_reclaims_without_repeating_checkpointed_node(tmp_path) 
     assert recovered.returncode == 0, recovered.stderr
     result = json.loads(recovered.stdout.strip())
     assert result == {
+        "task_id": "task-process-recovery",
         "run_id": "run-process-recovery",
         "trace_id": "trace-process-recovery",
+        "pre_resume_status": "recovering",
+        "recovered_ids": ["run-process-recovery"],
         "status": "completed",
         "context_events": 1,
     }
