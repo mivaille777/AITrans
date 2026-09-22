@@ -74,6 +74,7 @@ export type AgentTraceEventType =
   | "tool_result"
   | "observation_ready"
   | "evidence_gate_evaluated"
+  | "evidence_sufficiency"
   | "react_limit_reached"
   | "rag_query_started"
   | "rag_query_rewritten"

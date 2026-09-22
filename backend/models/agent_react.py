@@ -97,6 +97,24 @@ class AgentEvidenceGateAssessment(AgentReActContractModel):
         return self
 
 
+class EvidenceSufficiency(AgentReActContractModel):
+    """Stable answerability assessment produced after each retrieval round."""
+
+    sufficient: bool = False
+    reason: str = Field(default="", max_length=256)
+    missing_information: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def normalize_sufficiency(self) -> "EvidenceSufficiency":
+        self.reason = self.reason.strip()
+        self.missing_information = [
+            str(item or "").strip()[:256]
+            for item in self.missing_information
+            if str(item or "").strip()
+        ][:16]
+        return self
+
+
 class AgentRetrievalObservation(AgentReActContractModel):
     """Compact retrieval metadata used by ReAct without exposing RAG internals."""
 
@@ -178,6 +196,7 @@ class AgentReActContext(AgentReActContractModel):
 __all__ = [
     "AgentEvidenceGateAction",
     "AgentEvidenceGateAssessment",
+    "EvidenceSufficiency",
     "AgentObservation",
     "AgentRetrievalObservation",
     "AgentReActContext",

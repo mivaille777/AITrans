@@ -24,6 +24,7 @@ from backend.models.agent_react import (
     AgentObservation,
     AgentReActDecision,
     AgentRetrievalObservation,
+    EvidenceSufficiency,
 )
 from backend.models.agent_runtime import (
     AgentEvidenceItem,
@@ -149,12 +150,13 @@ def _is_repeated_react_action(
 
 
 def _knowledge_search_count(state: AgentState) -> int:
-    return sum(
+    recorded = sum(
         str(item.get("name", "") or item.get("tool_name", "") or "")
         == _KNOWLEDGE_SEARCH_TOOL
         for item in state.tool_calls
         if isinstance(item, dict)
     )
+    return max(int(state.retrieval_attempt_count), recorded)
 
 
 def _prior_evidence_ids(state: AgentState) -> set[str]:
@@ -973,6 +975,9 @@ class ReadingAgentGraph:
                 ),
             }
 
+        if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL:
+            state.retrieval_attempt_count += 1
+
         step = AgentPlanStep(
             step_id=f"react-{decision.iteration}",
             tool_name=decision.tool_name,
@@ -986,6 +991,70 @@ class ReadingAgentGraph:
                 control=control,
             )
         except Exception as exc:
+            if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL:
+                state.evidence_sufficient = False
+                state.evidence_sufficiency = EvidenceSufficiency(
+                    sufficient=False,
+                    reason="retrieval_failed",
+                    missing_information=["retrievable evidence"],
+                )
+                observation = AgentObservation(
+                    iteration=decision.iteration,
+                    tool_name=decision.tool_name,
+                    success=False,
+                    summary="Knowledge retrieval failed; no new evidence was added.",
+                    error_code="retrieval_failed",
+                    evidence_ids=[item.evidence_id for item in state.evidence],
+                    citation_ids=[item.citation_id for item in state.citations],
+                )
+                state.record_react_observation(observation)
+                emitted: set[AgentEventType] = set()
+                if emit is not None:
+                    emit(
+                        AgentEventType.OBSERVATION_READY,
+                        {
+                            "observation_id": observation.observation_id,
+                            "iteration": observation.iteration,
+                            "tool_name": observation.tool_name,
+                            "success": False,
+                            "summary_chars": len(observation.summary),
+                            "error_code": observation.error_code,
+                            "evidence_count": len(observation.evidence_ids),
+                            "citation_count": len(observation.citation_ids),
+                        },
+                    )
+                    emitted.add(AgentEventType.OBSERVATION_READY)
+                    emit(
+                        AgentEventType.EVIDENCE_SUFFICIENCY,
+                        {
+                            "sufficient": False,
+                            "reason": "retrieval_failed",
+                            "missing_information": ["retrievable evidence"],
+                            "search_count": _knowledge_search_count(state),
+                        },
+                    )
+                    emitted.add(AgentEventType.EVIDENCE_SUFFICIENCY)
+                if state.react.iteration >= control.policy.max_react_iterations:
+                    emitted.update(
+                        self._emit_react_limit(
+                            state, emit, reason="iteration_budget_exhausted"
+                        )
+                    )
+                elif _knowledge_search_count(state) >= min(
+                    control.policy.max_knowledge_searches,
+                    control.policy.max_tool_calls,
+                ):
+                    emitted.update(
+                        self._emit_react_limit(
+                            state, emit, reason="knowledge_search_budget_exhausted"
+                        )
+                    )
+                return {
+                    "agent_state": _dump_agent_state(state),
+                    "emitted_event_types": _merge_emitted(
+                        graph_state.get("emitted_event_types", ()), emitted
+                    ),
+                }
             state.mark_react_status("failed")
             self._abort(graph_state, exc)
             raise
@@ -1018,6 +1087,22 @@ class ReadingAgentGraph:
                 search_count=search_count,
                 remaining_searches=max(0, max_searches - search_count),
             )
+            state.evidence_sufficient = bool(
+                gate.action == "stop" and "evidence_sufficient" in gate.reason_codes
+            )
+            state.evidence_sufficiency = EvidenceSufficiency(
+                sufficient=bool(state.evidence_sufficient),
+                reason=(
+                    "evidence_sufficient"
+                    if state.evidence_sufficient
+                    else (gate.reason_codes[0] if gate.reason_codes else "evidence_insufficient")
+                ),
+                missing_information=[
+                    reason
+                    for reason in gate.reason_codes
+                    if reason.startswith("insufficient_")
+                ],
+            )
             retrieval = retrieval.model_copy(update={"gate": gate})
             if emit is not None:
                 emit(
@@ -1040,6 +1125,18 @@ class ReadingAgentGraph:
                     },
                 )
                 emitted.add(AgentEventType.EVIDENCE_GATE_EVALUATED)
+                emit(
+                    AgentEventType.EVIDENCE_SUFFICIENCY,
+                    {
+                        "sufficient": state.evidence_sufficiency.sufficient,
+                        "reason": state.evidence_sufficiency.reason,
+                        "missing_information": list(
+                            state.evidence_sufficiency.missing_information
+                        ),
+                        "search_count": gate.search_count,
+                    },
+                )
+                emitted.add(AgentEventType.EVIDENCE_SUFFICIENCY)
 
         observation = AgentObservation(
             iteration=decision.iteration,
@@ -1137,42 +1234,72 @@ class ReadingAgentGraph:
                     or decision.kind != "final"
                     or not decision.final_answer
                 ):
-                    raise AgentRuntimeError(
-                        "ReAct reached its execution limit before producing an answer or observation.",
-                        stage="react_finalize",
-                        fallback_reason="react_limit_without_observation",
-                    )
-                state.ui_mode = "assistant"
-                state.apply_response(
-                    {
-                        "status": "completed",
-                        "output_text": decision.final_answer,
-                        "provider": str(
-                            getattr(self._react_decision_service, "provider_name", "")
-                            or ""
-                        ),
-                        "model": str(
-                            getattr(self._react_decision_service, "model", "") or ""
-                        ),
-                        "request_id": state.execution.request_id,
-                    }
-                )
-                if emit is not None:
-                    emit(
-                        AgentEventType.SYNTHESIS_READY,
+                    if state.evidence_sufficient is False:
+                        state.ui_mode = "assistant"
+                        state.apply_response(
+                            {
+                                "status": "completed",
+                                "output_text": (
+                                    "Knowledge retrieval did not produce sufficient "
+                                    "evidence to answer reliably."
+                                ),
+                                "provider": "deterministic-fallback",
+                                "model": "",
+                                "request_id": state.execution.request_id,
+                            }
+                        )
+                        if emit is not None:
+                            emit(
+                                AgentEventType.SYNTHESIS_READY,
+                                {
+                                    "source": "retrieval_fallback",
+                                    "provider": "deterministic-fallback",
+                                    "model": "",
+                                    "request_id": state.execution.request_id,
+                                    "prompt_id": "evidence-insufficient",
+                                    "grounded": False,
+                                    "evidence_sufficient": False,
+                                },
+                            )
+                            emitted.add(AgentEventType.SYNTHESIS_READY)
+                    else:
+                        raise AgentRuntimeError(
+                            "ReAct reached its execution limit before producing an answer or observation.",
+                            stage="react_finalize",
+                            fallback_reason="react_limit_without_observation",
+                        )
+                else:
+                    state.ui_mode = "assistant"
+                    state.apply_response(
                         {
-                            "source": "react_decision",
-                            "provider": state.response_state.provider,
-                            "model": state.response_state.model,
-                            "request_id": state.execution.request_id,
-                            "prompt_id": str(
-                                getattr(self._react_decision_service, "prompt_id", "")
+                            "status": "completed",
+                            "output_text": decision.final_answer,
+                            "provider": str(
+                                getattr(self._react_decision_service, "provider_name", "")
                                 or ""
                             ),
-                            "grounded": False,
-                        },
+                            "model": str(
+                                getattr(self._react_decision_service, "model", "") or ""
+                            ),
+                            "request_id": state.execution.request_id,
+                        }
                     )
-                    emitted.add(AgentEventType.SYNTHESIS_READY)
+                    if emit is not None:
+                        emit(
+                            AgentEventType.SYNTHESIS_READY,
+                            {
+                                "source": "react_decision",
+                                "provider": state.response_state.provider,
+                                "model": state.response_state.model,
+                                "request_id": state.execution.request_id,
+                                "prompt_id": str(
+                                    getattr(self._react_decision_service, "prompt_id", "")
+                                    or ""
+                                ),
+                                "grounded": False,
+                            },
+                        )
+                        emitted.add(AgentEventType.SYNTHESIS_READY)
         except Exception as exc:
             state.mark_react_status("failed")
             self._abort(graph_state, exc)

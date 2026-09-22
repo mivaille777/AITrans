@@ -536,10 +536,15 @@ class ProductAgentRuntimeAdapter:
         emitted, forward = self._event_forwarder(emit)
         payload = self.build_payload(state)
         if resolved_route is not None:
-            payload["_resolved_route"] = (
-                resolved_route.model_dump()
+            route_value = (
+                resolved_route
                 if isinstance(resolved_route, AgentRouteDecision)
-                else dict(resolved_route)
+                else AgentRouteDecision.model_validate(resolved_route)
+            )
+            if route_value.tool_name == "search_knowledge_base":
+                state.retrieval_attempt_count += 1
+            payload["_resolved_route"] = (
+                route_value.model_dump()
             )
             payload["_route_metadata"] = dict(route_metadata or {})
         result = self._service.run(

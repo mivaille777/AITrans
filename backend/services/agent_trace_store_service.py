@@ -251,6 +251,9 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
             "reason_codes",
         }
     ),
+    "evidence_sufficiency": frozenset(
+        {"sufficient", "reason", "missing_information", "search_count"}
+    ),
     "react_limit_reached": frozenset(
         {"iteration", "tool_call_count", "knowledge_search_count", "reason"}
     ),

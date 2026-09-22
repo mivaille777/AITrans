@@ -52,6 +52,7 @@ class AgentEventType(str, Enum):
     TOOL_RESULT = "tool_result"
     OBSERVATION_READY = "observation_ready"
     EVIDENCE_GATE_EVALUATED = "evidence_gate_evaluated"
+    EVIDENCE_SUFFICIENCY = "evidence_sufficiency"
     REACT_LIMIT_REACHED = "react_limit_reached"
     RAG_QUERY_STARTED = "rag_query_started"
     RAG_QUERY_REWRITTEN = "rag_query_rewritten"

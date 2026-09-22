@@ -10,6 +10,7 @@ from backend.models.agent_react import (
     AgentReActContext,
     AgentReActDecision,
     AgentReActStatus,
+    EvidenceSufficiency,
 )
 from backend.models.agent_runtime import (
     AgentCitationRef,
@@ -154,6 +155,7 @@ class AgentState(BaseModel):
     knowledge_scope: ResolvedKnowledgeScope = Field(default_factory=ResolvedKnowledgeScope)
     retrieval_attempt_count: int = Field(default=0, ge=0)
     evidence_sufficient: bool | None = None
+    evidence_sufficiency: EvidenceSufficiency | None = None
 
     @model_validator(mode="after")
     def initialize_contracts(self) -> AgentState:
