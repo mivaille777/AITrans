@@ -96,7 +96,10 @@ describe("PdfReaderSurface", () => {
     await waitFor(() => expect(getPage).toHaveBeenCalledWith(1))
     expect(createLocalPdfDocumentSource).toHaveBeenCalledWith("http://127.0.0.1:8000/paper.pdf")
 
-    const textNode = document.querySelector(".ait-pdf-text-layer span")?.firstChild
+    const textLayer = screen.getByLabelText("Selectable PDF text layer")
+    expect(textLayer).toHaveClass("textLayer")
+    expect(textLayer).toHaveStyle({ userSelect: "text", pointerEvents: "auto" })
+    const textNode = textLayer.querySelector("span")?.firstChild
     expect(textNode).not.toBeNull()
     const removeAllRanges = vi.fn()
     vi.spyOn(window, "getSelection").mockReturnValue({
@@ -110,7 +113,7 @@ describe("PdfReaderSurface", () => {
       }),
     } as unknown as Selection)
 
-    fireEvent.mouseUp(canvas.parentElement as HTMLElement)
+    fireEvent.mouseUp(textLayer)
     await waitFor(() => expect(onSelection).toHaveBeenLastCalledWith({
       source: "pdf",
       text: "selected PDF passage",

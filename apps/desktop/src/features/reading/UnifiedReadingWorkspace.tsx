@@ -38,6 +38,7 @@ import type {
 } from "../knowledge/knowledge-types"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import PdfReaderSurface, { type PdfReaderSelection } from "./PdfReaderSurface"
+import ReadingSelectionActionBar from "./ReadingSelectionActionBar"
 import { resolveReadingPaperId } from "./reading-navigation"
 import { useAcademicDocumentWorkspace } from "./useAcademicDocumentWorkspace"
 
@@ -51,6 +52,8 @@ type ReaderSelection = {
   source: "text" | "pdf"
   text: string
   pageNumber?: number | null
+  left?: number
+  top?: number
 }
 
 export default function UnifiedReadingWorkspace({
@@ -260,7 +263,13 @@ export default function UnifiedReadingWorkspace({
   function usePdfSelection(next: PdfReaderSelection | null) {
     setSelection(
       next
-        ? { source: "pdf", text: next.text, pageNumber: next.pageNumber }
+        ? {
+            source: "pdf",
+            text: next.text,
+            pageNumber: next.pageNumber,
+            left: next.left,
+            top: next.top,
+          }
         : null,
     )
   }
@@ -277,10 +286,15 @@ export default function UnifiedReadingWorkspace({
       if (!article.contains(range.commonAncestorContainer)) return
       const text = current.toString().replace(/\s+/g, " ").trim()
       if (!text) return
+      const rect = range.getBoundingClientRect()
+      const halfToolbarWidth = Math.min(280, Math.max(150, window.innerWidth / 2 - 16))
+      const center = rect.left + rect.width / 2
       setSelection({
         source: "text",
         text,
         pageNumber: activeSection?.page_start ?? null,
+        left: Math.min(window.innerWidth - halfToolbarWidth, Math.max(halfToolbarWidth, center)),
+        top: Math.max(68, rect.top - 10),
       })
     }, 0)
   }
@@ -1095,6 +1109,19 @@ export default function UnifiedReadingWorkspace({
           </div>
         </aside>
       </div>
+
+      {selection?.left !== undefined && selection?.top !== undefined && (
+        <ReadingSelectionActionBar
+          left={selection.left}
+          top={selection.top}
+          onEvidence={() => createSelectionCard("evidence")}
+          onHighlight={() => createSelectionCard("highlight")}
+          onNote={() => createSelectionCard("note")}
+          onConcept={() => createSelectionCard("concept")}
+          onTranslate={translateSelection}
+          onAskAi={explainWithAi}
+        />
+      )}
 
       {liveReadingOpen && (
         <LiveReadingDialog

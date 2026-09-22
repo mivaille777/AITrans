@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight, LoaderCircle, Minus, Plus, RotateCcw } from "lucide-react"
+import "pdfjs-dist/web/pdf_viewer.css"
 import { useEffect, useRef, useState, type WheelEvent } from "react"
 
 import { Button } from "../../shared/ui/Button"
@@ -334,9 +335,16 @@ export default function PdfReaderSurface({
             />
           </div>
         ) : (
-          <div className="relative mx-auto mb-4 w-fit bg-white shadow-[0_12px_40px_rgba(0,0,0,0.10)]" onMouseUp={captureSelection} onKeyUp={captureSelection}>
+          <div className="relative mx-auto mb-4 w-fit bg-white shadow-[0_12px_40px_rgba(0,0,0,0.10)]">
             <canvas ref={canvasRef} className="block" aria-label={`PDF page ${pageNumber}`} />
-            <div ref={textLayerRef} className="ait-pdf-text-layer textLayer" />
+            <div
+              ref={textLayerRef}
+              className="ait-pdf-text-layer textLayer"
+              aria-label="Selectable PDF text layer"
+              onMouseUp={captureSelection}
+              onKeyUp={captureSelection}
+              style={{ userSelect: "text", WebkitUserSelect: "text", pointerEvents: "auto" }}
+            />
           </div>
         )}
       </div>
