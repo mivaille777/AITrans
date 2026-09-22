@@ -55,6 +55,14 @@ def _request(
     }
 
 
+def _receive_type(socket, expected: str) -> dict[str, object]:
+    while True:
+        event = socket.receive_json()
+        if event["type"] == expected:
+            return event
+        assert event["type"] == "phase"
+
+
 class ControlledStreamingService:
     provider_name = "stub-ai"
     model = "stub-model"
@@ -115,8 +123,8 @@ def test_batch4_companion_conversation_lifecycle_across_windows(tmp_path) -> Non
             )
             overlay_accepted = overlay.receive_json()
             assert overlay_accepted["type"] == "accepted"
-            assert overlay.receive_json()["type"] == "delta"
-            assert overlay.receive_json()["type"] == "done"
+            assert _receive_type(overlay, "delta")["type"] == "delta"
+            assert _receive_type(overlay, "done")["type"] == "done"
 
         conversation_id = overlay_accepted["conversation_id"]
         persisted = client.get(f"/api/conversations/{conversation_id}")
@@ -185,7 +193,7 @@ def test_batch4_companion_conversation_lifecycle_across_windows(tmp_path) -> Non
             assert delete_conflict.status_code == 409
 
             main.send_json({"type": "cancel", "request_id": 2})
-            assert main.receive_json()["type"] == "cancelled"
+            assert _receive_type(main, "cancelled")["type"] == "cancelled"
             streaming.release.set()
 
         # Once the lease is released, normal conversation mutation resumes.

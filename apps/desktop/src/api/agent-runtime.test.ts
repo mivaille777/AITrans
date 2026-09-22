@@ -59,7 +59,7 @@ describe("durable agent runtime api", () => {
         budget_used_ms: 0,
       },
     ]
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(JSON.stringify(responses.shift()), {
         status: 200,
         headers: { "Content-Type": "application/json" },

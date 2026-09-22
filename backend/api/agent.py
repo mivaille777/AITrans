@@ -246,7 +246,14 @@ def _run_response(state: AgentState) -> AgentRunResponse:
             user_visible_reason=state.plan.goal or "Completed the multi-step plan.",
         )
         if multi_step is not None
-        else AgentPlan.model_validate(state.planned_action)
+        else (
+            AgentPlan.model_validate(state.planned_action)
+            if state.planned_action
+            else AgentPlan(
+                action="answer",
+                user_visible_reason="Completed the Agent run.",
+            )
+        )
     )
     return AgentRunResponse(
         run_id=state.run_id,

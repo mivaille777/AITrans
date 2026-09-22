@@ -54,6 +54,14 @@ def _payload(
     }
 
 
+def _receive_type(socket, expected: str) -> dict[str, object]:
+    while True:
+        event = socket.receive_json()
+        if event["type"] == expected:
+            return event
+        assert event["type"] == "phase"
+
+
 class BlockingStreamingService:
     provider_name = "stub-ai"
     model = "stub-model"
@@ -174,7 +182,7 @@ def test_backend_allows_only_one_active_stream_per_conversation(tmp_path) -> Non
             assert len(stored_while_busy.messages) == 2
 
             main_socket.send_json({"type": "cancel", "request_id": 1})
-            terminal = main_socket.receive_json()
+            terminal = _receive_type(main_socket, "cancelled")
             assert terminal["type"] == "cancelled"
             streaming.release.set()
 
@@ -200,5 +208,5 @@ def test_backend_allows_only_one_active_stream_per_conversation(tmp_path) -> Non
             )
             retried = overlay_retry.receive_json()
             assert retried["type"] == "accepted"
-            assert overlay_retry.receive_json()["type"] == "delta"
-            assert overlay_retry.receive_json()["type"] == "done"
+            assert _receive_type(overlay_retry, "delta")["type"] == "delta"
+            assert _receive_type(overlay_retry, "done")["type"] == "done"
