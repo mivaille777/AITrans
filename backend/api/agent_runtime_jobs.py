@@ -239,12 +239,17 @@ async def execute_persisted_agent_run(
         state.runtime_profile = run.runtime_profile
         state.sync_contract()
         try:
-            result = runtime.execute(
-                state,
-                control=control,
-                resume=recovering,
-                event_sink=lambda event: store.append_event(event, lease_owner=lease_owner),
+            from backend.services.agent_tool_execution_service import (
+                bind_tool_run_store,
             )
+
+            with bind_tool_run_store(store):
+                result = runtime.execute(
+                    state,
+                    control=control,
+                    resume=recovering,
+                    event_sink=lambda event: store.append_event(event, lease_owner=lease_owner),
+                )
         except AgentPauseRequestedError:
             record_checkpoint()
             raise

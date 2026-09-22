@@ -18,7 +18,11 @@ from backend.main import create_app
 from backend.models.agent_run import AgentRunStatus
 from backend.models.agent_runtime import AgentRuntimeProfile
 from backend.services.agent_run_scheduler import PROFILE_BUDGETS, AgentRunScheduler
-from backend.services.agent_run_store import AgentRunStore, AgentRunStoreConflictError
+from backend.services.agent_run_store import (
+    AGENT_RUNTIME_SCHEMA_VERSION,
+    AgentRunStore,
+    AgentRunStoreConflictError,
+)
 from backend.services.agent_run_worker import AgentRunWorker
 
 
@@ -346,4 +350,7 @@ def test_stage2_database_schema_upgrades_without_losing_runs(tmp_path) -> None:
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT value FROM agent_runtime_state WHERE key = 'schema_version'"
-        ).fetchone()[0] == "3"
+        ).fetchone()[0] == str(AGENT_RUNTIME_SCHEMA_VERSION)
+        assert "result_json" in {
+            row[1] for row in connection.execute("PRAGMA table_info(agent_tool_calls)")
+        }

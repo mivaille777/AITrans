@@ -33,6 +33,7 @@ from backend.services.agent_router_service import (
     AgentDeterministicRouterService,
     AgentSemanticRouterService,
 )
+from backend.services.agent_tool_execution_service import AgentToolExecutionService
 from backend.services.agent_tool_registry import (
     AgentToolExecutionResult,
     AgentToolRegistry,
@@ -384,18 +385,17 @@ class ProductAgentService:
                 f"Validated route references missing tool: {plan.tool_name}"
             )
 
-        self._emit(
-            event_sink,
-            "tool_call",
-            {
-                "name": spec.name,
-                "arguments": dict(plan.arguments),
-                "effect": spec.effect,
-                "requires_confirmation": spec.requires_confirmation,
-                "route_source": route.source,
-                "request_id": request_id,
-            },
-        )
+        call_event = {
+            "name": spec.name,
+            "arguments": dict(plan.arguments),
+            "effect": spec.effect,
+            "requires_confirmation": spec.requires_confirmation,
+            "route_source": route.source,
+            "request_id": request_id,
+            "step_id": str(payload.get("step_id", "direct") or "direct"),
+        }
+        get_definition = getattr(self._registry, "get_definition", None)
+        typed = callable(get_definition) and get_definition(spec.name) is not None
 
         confirmed = {
             str(item).strip()
@@ -407,6 +407,7 @@ class ProductAgentService:
             and spec.requires_confirmation
             and spec.name not in confirmed
         ):
+            self._emit(event_sink, "tool_call", call_event)
             return None, True
 
         try:
@@ -452,13 +453,52 @@ class ProductAgentService:
                 execution_payload["source_ids"] = trusted_source_ids
 
         tool_started = monotonic()
-        if spec.effect == "write":
+        if typed:
+            call_id = ""
+
+            def remember_call(value: str) -> None:
+                nonlocal call_id
+                call_id = value
+                self._emit(event_sink, "tool_call", {
+                    **call_event, "tool_call_id": value,
+                })
+
+            def emit_retry(attempt: int, maximum: int, error: Exception, tool_call_id: str) -> None:
+                self._emit(event_sink, "retry", {
+                    "tool_name": spec.name, "attempt": attempt,
+                    "max_attempts": maximum,
+                    "reason": str(error) or type(error).__name__,
+                    "request_id": request_id,
+                    "tool_call_id": tool_call_id,
+                    "step_id": str(payload.get("step_id", "direct") or "direct"),
+                })
+
+            try:
+                tool_result = AgentToolExecutionService(self._registry).execute(
+                    spec.name, execution_payload, control=control,
+                    run_id=str(payload.get("run_id", "") or ""),
+                    step_id=str(payload.get("step_id", "direct") or "direct"),
+                    emit_retry=emit_retry, on_call=remember_call,
+                    write_confirmed=spec.name in confirmed,
+                )
+            except Exception as exc:
+                self._emit(event_sink, "failure", {
+                    "stage": "tool", "tool_name": spec.name,
+                    "error_type": type(exc).__name__,
+                    "tool_call_id": call_id,
+                    "step_id": str(payload.get("step_id", "direct") or "direct"),
+                })
+                raise
+        elif spec.effect == "write":
+            self._emit(event_sink, "tool_call", call_event)
             control.checkpoint(f"write_tool:{spec.name}")
             tool_result = self._registry.execute(spec.name, **execution_payload)
         elif not self._allows_safe_retry(spec.name, effect=spec.effect):
+            self._emit(event_sink, "tool_call", call_event)
             control.checkpoint(f"tool:{spec.name}")
             tool_result = self._registry.execute(spec.name, **execution_payload)
         else:
+            self._emit(event_sink, "tool_call", call_event)
             max_attempts = 1 + control.policy.max_safe_retries
             tool_result: AgentToolExecutionResult | None = None
             last_error: Exception | None = None
@@ -537,6 +577,8 @@ class ProductAgentService:
                 "request_id": tool_result.request_id,
                 "data": trace_data,
                 "duration_ms": _duration_ms(tool_started),
+                "tool_call_id": call_id if typed else "",
+                "step_id": str(payload.get("step_id", "direct") or "direct"),
             },
         )
         return tool_result, False

@@ -21,6 +21,7 @@ PROFILE_BUDGETS = {
         policy=AgentExecutionPolicy(
             total_timeout_seconds=45,
             tool_timeout_seconds=20,
+            max_safe_retries=2,
             max_plan_steps=4,
             max_tool_calls=4,
         ),
@@ -30,6 +31,7 @@ PROFILE_BUDGETS = {
         policy=AgentExecutionPolicy(
             total_timeout_seconds=1800,
             tool_timeout_seconds=120,
+            max_safe_retries=2,
             max_plan_steps=20,
             max_tool_calls=40,
         ),

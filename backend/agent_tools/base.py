@@ -75,6 +75,18 @@ class AgentToolSpec:
     requires_reading_context: bool
     requires_confirmation: bool
     input_schema: dict[str, Any]
+    timeout_seconds: float = 20.0
+    parallel_safe: bool = False
+    idempotent: bool = False
+    tool_version: str = "1"
+
+    def __post_init__(self) -> None:
+        if self.effect not in {"read", "compute", "write"}:
+            raise ValueError(f"Agent tool {self.name} must declare a valid effect")
+        if self.timeout_seconds <= 0 or not self.tool_version:
+            raise ValueError(f"Agent tool {self.name} has invalid execution metadata")
+        if self.effect == "write" and self.parallel_safe:
+            raise ValueError("write tools cannot be parallel_safe")
 
     def validate_planner_arguments(self, arguments: dict[str, Any]) -> dict[str, str]:
         raw = {str(key): value for key, value in dict(arguments or {}).items()}
@@ -131,6 +143,12 @@ class TypedAgentToolDefinition:
     result_model: type[BaseModel]
     executor: AgentToolExecutor
     retry_policy: AgentToolRetryPolicy = "safe"
+
+    def __post_init__(self) -> None:
+        if self.retry_policy not in {"safe", "never"}:
+            raise ValueError("invalid tool retry policy")
+        if self.spec.effect == "write" and self.retry_policy != "never":
+            raise ValueError("write tools cannot be automatically retried")
 
     @property
     def allows_safe_retry(self) -> bool:
@@ -222,6 +240,10 @@ def typed_tool_definition(
     executor: AgentToolExecutor,
     planner_args_model: type[BaseModel] | None = None,
     retry_policy: AgentToolRetryPolicy = "safe",
+    timeout_seconds: float = 20.0,
+    parallel_safe: bool | None = None,
+    idempotent: bool | None = None,
+    tool_version: str = "1",
 ) -> TypedAgentToolDefinition:
     input_schema = _model_properties(planner_args_model or args_model)
     return TypedAgentToolDefinition(
@@ -234,6 +256,10 @@ def typed_tool_definition(
             requires_reading_context=requires_reading_context,
             requires_confirmation=requires_confirmation,
             input_schema=input_schema,
+            timeout_seconds=timeout_seconds,
+            parallel_safe=(effect != "write" if parallel_safe is None else parallel_safe),
+            idempotent=(effect != "write" if idempotent is None else idempotent),
+            tool_version=tool_version,
         ),
         args_model=args_model,
         result_model=result_model,

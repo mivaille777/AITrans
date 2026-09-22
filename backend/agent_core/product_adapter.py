@@ -331,6 +331,7 @@ class ProductAgentRuntimeAdapter:
         payload = self.build_payload(state)
         payload.update(
             {
+                "step_id": step.step_id,
                 "_resolved_route": route.model_dump(),
                 "_route_metadata": {
                     "duration_ms": 0,

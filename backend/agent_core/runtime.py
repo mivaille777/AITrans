@@ -81,6 +81,8 @@ class AgentRuntime:
             task_id=state.task_id if state is not None else "",
             run_id=state.run_id if state is not None else "",
             trace_id=state.trace_id if state is not None else "",
+            step_id=str(payload.get("step_id", "") or ""),
+            tool_call_id=str(payload.get("tool_call_id", "") or ""),
             elapsed_ms=control.elapsed_ms if control is not None else 0,
         )
         self.events.append(event)

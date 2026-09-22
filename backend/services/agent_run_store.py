@@ -21,7 +21,7 @@ from backend.models.agent_run import (
 from backend.models.agent_tasks import AgentTaskRecord
 
 DEFAULT_AGENT_RUNTIME_FILENAME = "agent_runtime.sqlite3"
-AGENT_RUNTIME_SCHEMA_VERSION = 3
+AGENT_RUNTIME_SCHEMA_VERSION = 4
 
 
 class AgentRunStoreError(RuntimeError):
@@ -141,6 +141,7 @@ class AgentRunStore:
                 status TEXT NOT NULL,
                 idempotency_key TEXT NOT NULL,
                 record_json TEXT NOT NULL,
+                result_json TEXT,
                 FOREIGN KEY(run_id, step_id)
                     REFERENCES agent_steps(run_id, step_id) ON DELETE CASCADE,
                 UNIQUE(run_id, idempotency_key)
@@ -197,6 +198,12 @@ class AgentRunStore:
             ):
                 if name not in columns:
                     connection.execute(f"ALTER TABLE agent_runs ADD COLUMN {name} {declaration}")
+            tool_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(agent_tool_calls)")
+            }
+            if "result_json" not in tool_columns:
+                connection.execute("ALTER TABLE agent_tool_calls ADD COLUMN result_json TEXT")
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(key, value)
@@ -897,6 +904,57 @@ class AgentRunStore:
         if row is None:
             return None
         return AgentToolCallRecord.model_validate_json(str(row["record_json"]))
+
+    def claim_tool_call(
+        self, call: AgentToolCallRecord
+    ) -> tuple[AgentToolCallRecord, bool, dict | None]:
+        """Atomically claim one execution key. Existing writes are never reclaimed."""
+        with self._write_transaction() as connection:
+            step = AgentStepRecord(run_id=call.run_id, task_id=call.step_id)
+            connection.execute(
+                "INSERT OR IGNORE INTO agent_steps(run_id, step_id, status, state_json) "
+                "VALUES (?, ?, ?, ?)",
+                (call.run_id, call.step_id, step.status.value,
+                 step.model_dump_json(exclude={"step_id"})),
+            )
+            row = connection.execute(
+                "SELECT record_json, result_json FROM agent_tool_calls "
+                "WHERE run_id = ? AND idempotency_key = ?",
+                (call.run_id, call.idempotency_key),
+            ).fetchone()
+            if row is not None:
+                result = json.loads(row["result_json"]) if row["result_json"] else None
+                return AgentToolCallRecord.model_validate_json(row["record_json"]), False, result
+            connection.execute(
+                "INSERT INTO agent_tool_calls(tool_call_id, run_id, step_id, status, "
+                "idempotency_key, record_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (call.tool_call_id, call.run_id, call.step_id, call.status.value,
+                 call.idempotency_key, call.model_dump_json()),
+            )
+        return call.model_copy(deep=True), True, None
+
+    def finish_tool_call(
+        self, call: AgentToolCallRecord, *, result: dict | None = None
+    ) -> None:
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE agent_tool_calls SET status = ?, record_json = ?, result_json = ? "
+                "WHERE tool_call_id = ? AND status IN (?, ?)",
+                (call.status.value, call.model_dump_json(),
+                 json.dumps(result, ensure_ascii=False, sort_keys=True) if result is not None else None,
+                 call.tool_call_id, AgentToolCallStatus.PENDING.value,
+                 AgentToolCallStatus.RUNNING.value),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunStoreConflictError("tool call state changed before completion")
+
+    def get_tool_call_result(self, tool_call_id: str) -> dict | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT result_json FROM agent_tool_calls WHERE tool_call_id = ?",
+                (tool_call_id,),
+            ).fetchone()
+        return json.loads(row["result_json"]) if row and row["result_json"] else None
 
     def append_event(
         self,

@@ -175,6 +175,7 @@ def run_safe_tool_with_timeout(
     *,
     control: AgentRunControl,
     tool_name: str,
+    timeout_seconds: float | None = None,
 ) -> T:
     """Run a read/compute tool with cooperative cancellation and a hard wait bound.
 
@@ -184,6 +185,8 @@ def run_safe_tool_with_timeout(
     """
 
     timeout = control.bounded_tool_timeout()
+    if timeout_seconds is not None:
+        timeout = min(timeout, timeout_seconds)
     return _run_bounded_operation(
         operation,
         control=control,
