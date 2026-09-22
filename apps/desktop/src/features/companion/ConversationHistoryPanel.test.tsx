@@ -114,7 +114,8 @@ describe("ConversationHistoryPanel compact interaction", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }))
 
     await waitFor(() => {
-      expect(deleteConversation).toHaveBeenCalledWith("conversation-1")
+      expect(deleteConversation).toHaveBeenCalled()
+      expect(deleteConversation.mock.calls[0]?.[0]).toBe("conversation-1")
     })
   })
 })

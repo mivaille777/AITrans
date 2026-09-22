@@ -13,6 +13,15 @@ from backend.main import create_app
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
+from backend.models.companion_routing import (
+    CompanionExecutionPlan,
+    CompanionQueryRoute,
+    GroundingPolicy,
+)
+from backend.services.companion_chat_service import (
+    CompanionKnowledgeGrounding,
+    CompanionPreparedExecution,
+)
 from backend.services.conversation_store_service import ConversationStoreService
 
 
@@ -52,6 +61,18 @@ class BlockingStreamingService:
     def __init__(self) -> None:
         self.started = Event()
         self.release = Event()
+
+    def prepare_execution(self, **_kwargs):
+        return CompanionPreparedExecution(
+            plan=CompanionExecutionPlan(
+                route=CompanionQueryRoute.GENERAL,
+                grounding_policy=GroundingPolicy.NONE,
+                use_knowledge=False,
+                document_ids=(),
+                reason="test_stream_stub",
+            ),
+            grounding=CompanionKnowledgeGrounding(),
+        )
 
     def stream(self, **_kwargs):
         self.started.set()

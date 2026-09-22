@@ -80,5 +80,5 @@ def test_chat_service_reuses_configured_text_provider_client() -> None:
     assert result.model == "fake-model"
     assert "GP" in result.output_text
     call = text_service.provider.client.calls[0]
-    assert "conversational reading assistant" in str(call["system_prompt"])
+    assert "AITrans Assistant" in str(call["system_prompt"])
     assert "为什么要用 GP" in str(call["user_prompt"])
