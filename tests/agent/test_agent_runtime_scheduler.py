@@ -283,6 +283,41 @@ def test_canonical_runtime_stream_replays_after_sequence_and_closes_on_terminal(
     }
 
 
+def test_canonical_waiting_run_confirmation_requeues_recovery(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = AgentRunScheduler(store).enqueue(
+        goal="Confirm write",
+        request_payload={
+            "user_message": "Save the result",
+            "confirmed_write_tools": [],
+        },
+    )
+    store.transition_run(
+        run.run_id,
+        expected_status=AgentRunStatus.QUEUED,
+        target_status=AgentRunStatus.RUNNING,
+    )
+    store.transition_run(
+        run.run_id,
+        expected_status=AgentRunStatus.RUNNING,
+        target_status=AgentRunStatus.WAITING,
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_agent_run_store] = lambda: store
+    client = TestClient(app)
+    response = client.post(
+        f"/api/agent/runs/{run.run_id}/confirm",
+        json={"tool_name": "save_research_note"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recovering"
+    assert store.get_run_request(run.run_id)["confirmed_write_tools"] == [
+        "save_research_note"
+    ]
+
+
 def test_run_request_survives_reopened_store_and_events_are_fenced(tmp_path) -> None:
     path = tmp_path / "agent_runtime.sqlite3"
     store = AgentRunStore(storage_path=path)

@@ -85,6 +85,9 @@ class AgentRunScheduler:
     def resume(self, run_id: str) -> AgentRunRecord:
         return self.store.resume_run(run_id)
 
+    def confirm(self, run_id: str, *, tool_name: str) -> AgentRunRecord:
+        return self.store.confirm_waiting_run(run_id, tool_name=tool_name)
+
     def retry(self, run_id: str) -> AgentRunRecord:
         current = self.store.get_run(run_id)
         if current is None:

@@ -604,6 +604,48 @@ class AgentRunStore:
             target_status=AgentRunStatus.RECOVERING,
         )
 
+
+    def confirm_waiting_run(self, run_id: str, *, tool_name: str) -> AgentRunRecord:
+        tool = str(tool_name or "").strip()
+        if not tool:
+            raise ValueError("tool_name is required")
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreNotFoundError(f"run not found: {run_id}")
+            current = self._run_from_row(row)
+            if current.status is not AgentRunStatus.WAITING:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} cannot confirm from {current.status.value}"
+                )
+            request_row = connection.execute(
+                "SELECT request_json FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            request_payload = json.loads(str(request_row["request_json"]))
+            request_payload["confirmed_write_tools"] = [tool]
+            updated = transition_run(current, AgentRunStatus.RECOVERING)
+            cursor = connection.execute(
+                """
+                UPDATE agent_runs
+                SET status = ?, updated_at = ?, request_json = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    updated.status.value,
+                    _iso(updated.updated_at),
+                    json.dumps(request_payload, ensure_ascii=False, sort_keys=True),
+                    run_id,
+                    current.status.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} changed during confirmation"
+                )
+        return updated
+
     def update_checkpoint_metadata(
         self,
         run_id: str,

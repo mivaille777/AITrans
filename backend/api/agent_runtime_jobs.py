@@ -10,7 +10,12 @@ from pydantic import BaseModel
 from backend.agent_core.events import AgentEvent
 from backend.agent_core.exceptions import AgentPauseRequestedError, AgentRuntimeError
 from backend.agent_core.reliability import AgentRunControl
-from backend.api.agent import _associate_workspace_result, _run_response, _state_from_run_request
+from backend.api.agent import (
+    _apply_resume_request_context,
+    _associate_workspace_result,
+    _run_response,
+    _state_from_run_request,
+)
 from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
 from backend.api.agent_dependencies import (
     get_agent_conversation_service,
@@ -68,6 +73,10 @@ StoreDependency = Annotated[AgentRunStore, Depends(get_agent_run_store)]
 class AgentRuntimeJobRequest(BaseModel):
     request: AgentRunRequest
     runtime_profile: AgentRuntimeProfile = AgentRuntimeProfile.LONG_TASK
+
+
+class AgentRuntimeConfirmationRequest(BaseModel):
+    tool_name: str
 
 
 @router.post("/tasks", response_model=AgentRunRecord, status_code=status.HTTP_202_ACCEPTED)
@@ -169,6 +178,22 @@ def pause_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRun
 @canonical_router.post("/runs/{run_id}/resume", response_model=AgentRunRecord)
 def resume_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
     return resume_runtime_run(run_id, store)
+
+
+
+
+@canonical_router.post("/runs/{run_id}/confirm", response_model=AgentRunRecord)
+def confirm_canonical_runtime_run(
+    run_id: str,
+    payload: AgentRuntimeConfirmationRequest,
+    store: StoreDependency,
+) -> AgentRunRecord:
+    try:
+        return AgentRunScheduler(store).confirm(run_id, tool_name=payload.tool_name)
+    except AgentRunStoreNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except (AgentRunStoreConflictError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @canonical_router.post(
@@ -328,6 +353,8 @@ async def execute_persisted_agent_run(
                     research_notes=get_research_note_service(),
                 )
             )
+            if recovering:
+                state = _apply_resume_request_context(state, request)
         except AgentRuntimeError as exc:
             return AgentRunOutcome(
                 status=(
@@ -405,6 +432,7 @@ async def execute_persisted_agent_run(
 
 
 __all__ = [
+    "AgentRuntimeConfirmationRequest",
     "AgentRuntimeJobRequest",
     "canonical_router",
     "close_agent_run_store",

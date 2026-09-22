@@ -219,6 +219,27 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         />
       </div>
 
+
+      {runtime.durableRun ? (
+        <div className="ait-surface flex flex-wrap items-center gap-2 p-3" aria-label="Durable Agent run controls">
+          <span className="mr-auto text-[11px] font-medium text-slate-500">
+            Runtime · {runtime.durableRun.status}
+          </span>
+          {runtime.durableRun.status === "running" ? (
+            <Button onClick={runtime.pauseRun}>Pause</Button>
+          ) : null}
+          {runtime.durableRun.status === "paused" ? (
+            <Button onClick={runtime.resumeRun}>Resume</Button>
+          ) : null}
+          {runtime.durableRun.status === "failed" ? (
+            <Button onClick={runtime.retryRun}>Retry</Button>
+          ) : null}
+          {!["completed", "failed", "cancelled"].includes(runtime.durableRun.status) ? (
+            <Button onClick={runtime.cancelRun}>Cancel</Button>
+          ) : null}
+        </div>
+      ) : null}
+
       <TaskExecutionPanel
         events={runtime.traceEvents}
         snapshot={runtime.runSnapshot}

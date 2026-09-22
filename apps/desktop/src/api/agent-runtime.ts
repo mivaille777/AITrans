@@ -96,6 +96,16 @@ export function cancelAgentRuntimeRun(runId: string): Promise<DurableAgentRunRec
   )
 }
 
+export function confirmAgentRuntimeRun(
+  runId: string,
+  toolName: string,
+): Promise<DurableAgentRunRecord> {
+  return apiPost<DurableAgentRunRecord, { tool_name: string }>(
+    `/api/agent/runs/${encodeURIComponent(runId)}/confirm`,
+    { tool_name: toolName },
+  )
+}
+
 export function retryAgentRuntimeRun(runId: string): Promise<DurableAgentRunRecord> {
   return apiPost<DurableAgentRunRecord, Record<string, never>>(
     `/api/agent/runs/${encodeURIComponent(runId)}/retry`,

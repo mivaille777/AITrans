@@ -57,6 +57,7 @@ _ALLOWED_RUN_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
     AgentRunStatus.WAITING: frozenset(
         {
             AgentRunStatus.RUNNING,
+            AgentRunStatus.RECOVERING,
             AgentRunStatus.PAUSE_REQUESTED,
             AgentRunStatus.FAILED,
             AgentRunStatus.CANCELLED,

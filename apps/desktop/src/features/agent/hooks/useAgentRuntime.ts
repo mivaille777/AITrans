@@ -4,11 +4,26 @@ import type {
   AgentKnowledgeContext,
   AgentRunSnapshot,
   AgentRunRequest,
+  AgentRunResponse,
   AgentRunTraceResponse,
   AgentTraceEvent,
   AgentWorkflowAction,
 } from "../../../api/agent"
 import { getAgentRunSnapshot } from "../../../api/agent"
+import {
+  cancelAgentRuntimeRun,
+  confirmAgentRuntimeRun,
+  createAgentRuntimeRun,
+  getAgentRuntimeEvents,
+  getAgentRuntimeResult,
+  getAgentRuntimeRun,
+  pauseAgentRuntimeRun,
+  resumeAgentRuntimeRun,
+  retryAgentRuntimeRun,
+  streamAgentRuntimeRun,
+  type DurableAgentRunRecord,
+  type DurableAgentRuntimeStreamHandle,
+} from "../../../api/agent-runtime"
 import {
   streamAgentRun,
   type AgentStreamHandle,
@@ -47,6 +62,7 @@ export function useAgentRuntime(
   const [temporary, setTemporary] = useState(false)
   const [workflowAction, setWorkflowAction] = useState<AgentWorkflowAction>("")
   const [runSnapshot, setRunSnapshot] = useState<AgentRunSnapshot | null>(null)
+  const [durableRun, setDurableRun] = useState<DurableAgentRunRecord | null>(null)
   const [observabilityRefresh, setObservabilityRefresh] = useState(0)
   const reactInstanceId = useId()
   const sessionId = `agent-workspace-${reactInstanceId.replace(/[^a-zA-Z0-9_-]/g, "")}`
@@ -55,6 +71,7 @@ export function useAgentRuntime(
   const requestId = useRef(0)
   const lastPayload = useRef<AgentRunRequest | null>(null)
   const streamHandle = useRef<AgentStreamHandle | null>(null)
+  const durableStreamHandle = useRef<DurableAgentRuntimeStreamHandle | null>(null)
   const activeRunId = useRef("")
   const recoveryAttempted = useRef(false)
   const initialTargetLanguage = useRef(workspace.targetLanguage)
@@ -65,6 +82,8 @@ export function useAgentRuntime(
     return () => {
       streamHandle.current?.close()
       streamHandle.current = null
+      durableStreamHandle.current?.close()
+      durableStreamHandle.current = null
     }
   }, [])
 
@@ -75,6 +94,8 @@ export function useAgentRuntime(
     streamHandle.current?.cancel()
     streamHandle.current?.close()
     streamHandle.current = null
+    durableStreamHandle.current?.close()
+    durableStreamHandle.current = null
     clearPendingAgentRun(activeRunId.current)
     activeRunId.current = ""
     conversationId.current = ""
@@ -83,6 +104,7 @@ export function useAgentRuntime(
     setTrace(null)
     setLiveEvents([])
     setRunSnapshot(null)
+    setDurableRun(null)
     setPending(false)
     setCancelRequested(false)
     setCancelledMessage("")
@@ -162,8 +184,9 @@ export function useAgentRuntime(
       cancelRequested,
       cancelledMessage,
       errorMessage,
+      durableRun,
     }),
-    [cancelRequested, cancelledMessage, errorMessage, liveEvents, pending, trace],
+    [cancelRequested, cancelledMessage, durableRun, errorMessage, liveEvents, pending, trace],
   )
 
   const decision = useMemo(
@@ -222,7 +245,7 @@ export function useAgentRuntime(
     }
   }
 
-  function execute(payload: AgentRunRequest, preserveEvents = false) {
+  function executeLegacyStream(payload: AgentRunRequest, preserveEvents = false) {
     streamHandle.current?.close()
     streamHandle.current = null
     if (!payload.resume_run_id) {
@@ -341,7 +364,7 @@ export function useAgentRuntime(
             }, initialTargetLanguage.current)
             lastPayload.current = resume
             setErrorMessage("")
-            execute(resume, true)
+            executeLegacyStream(resume, true)
           })
           .catch(() => {
             setErrorMessage(error.message || "Agent stream failed.")
@@ -353,6 +376,166 @@ export function useAgentRuntime(
     })
   }
 
+
+  function buildDurableTrace(
+    run: DurableAgentRunRecord,
+    session: string,
+    response: AgentRunResponse,
+    events: AgentTraceEvent[],
+  ): AgentRunTraceResponse {
+    return {
+      run_id: run.run_id,
+      trace_id: run.trace_id,
+      session_id: session,
+      ui_mode: "assistant",
+      total_duration_ms: events.at(-1)?.elapsed_ms ?? run.budget_used_ms,
+      run: response,
+      events,
+    }
+  }
+
+  async function hydrateDurableRun(
+    run: DurableAgentRunRecord,
+    session: string,
+  ): Promise<void> {
+    setDurableRun(run)
+    const [eventsResult, resultResult, snapshotResult] = await Promise.allSettled([
+      getAgentRuntimeEvents(run.run_id),
+      getAgentRuntimeResult(run.run_id),
+      getAgentRunSnapshot(run.run_id),
+    ])
+    const events = eventsResult.status === "fulfilled" ? eventsResult.value : []
+    if (events.length > 0) setLiveEvents(events)
+    if (snapshotResult.status === "fulfilled") setRunSnapshot(snapshotResult.value)
+
+    if (resultResult.status === "fulfilled" && resultResult.value.result) {
+      const candidate = resultResult.value.result as Partial<AgentRunResponse>
+      if (candidate.run_id && candidate.trace_id && candidate.plan) {
+        const response = candidate as AgentRunResponse
+        const nextTrace = buildDurableTrace(run, session, response, events)
+        setTrace(nextTrace)
+        rememberConversation(response.conversation_id || "")
+        associateTraceWithWorkspace(nextTrace)
+      } else if (run.status === "failed") {
+        const payload = resultResult.value.result as Record<string, unknown>
+        setErrorMessage(String(payload.message || payload.code || "Agent run failed."))
+      }
+    }
+
+    if (run.status === "cancelled") {
+      setCancelledMessage("Agent run cancelled.")
+    }
+    if (["waiting", "paused", "completed", "failed", "cancelled"].includes(run.status)) {
+      setPending(false)
+    }
+    if (["completed", "failed", "cancelled"].includes(run.status)) {
+      clearPendingAgentRun(run.run_id)
+      activeRunId.current = ""
+      durableStreamHandle.current?.close()
+      durableStreamHandle.current = null
+      refreshObservability()
+    }
+  }
+
+  function followDurableRun(
+    run: DurableAgentRunRecord,
+    session: string,
+    request: number,
+    afterSequence = -1,
+  ) {
+    durableStreamHandle.current?.close()
+    activeRunId.current = run.run_id
+    setDurableRun(run)
+    setPending(["queued", "running", "pause_requested", "recovering"].includes(run.status))
+    rememberPendingAgentRun({
+      type: "accepted",
+      request_id: request,
+      session_id: session,
+      run_id: run.run_id,
+      trace_id: run.trace_id,
+    })
+    durableStreamHandle.current = streamAgentRuntimeRun(
+      run.run_id,
+      {
+        onEvent(event) {
+          if (event.type === "event") {
+            setLiveEvents((current) => mergeAgentEvents(current, [event.event], run.run_id))
+            return
+          }
+          if (event.type === "run") {
+            setDurableRun(event.run)
+            setPending(["queued", "running", "pause_requested", "recovering"].includes(event.run.status))
+            if (event.run.status === "waiting" || event.run.status === "paused") {
+              void hydrateDurableRun(event.run, session)
+            }
+            return
+          }
+          if (event.type === "terminal") {
+            void hydrateDurableRun(event.run, session)
+            return
+          }
+          setErrorMessage(event.message)
+          setPending(false)
+        },
+        onTransportError(error) {
+          const runId = activeRunId.current
+          durableStreamHandle.current = null
+          if (!runId || transportRecoveryCount.current >= 2) {
+            setErrorMessage(error.message)
+            setPending(false)
+            return
+          }
+          transportRecoveryCount.current += 1
+          void Promise.all([getAgentRuntimeRun(runId), getAgentRuntimeEvents(runId)])
+            .then(([currentRun, events]) => {
+              setDurableRun(currentRun)
+              setLiveEvents(events)
+              const cursor = events.at(-1)?.sequence ?? -1
+              followDurableRun(currentRun, session, request, cursor)
+            })
+            .catch(() => {
+              setErrorMessage(error.message)
+              setPending(false)
+            })
+        },
+      },
+      afterSequence,
+    )
+  }
+
+  function executeDurable(payload: AgentRunRequest, preserveEvents = false) {
+    setPending(true)
+    setCancelRequested(false)
+    setCancelledMessage("")
+    setErrorMessage("")
+    setFallbackReason("")
+    if (!preserveEvents) {
+      transportRecoveryCount.current = 0
+      setTrace(null)
+      setLiveEvents([])
+      setRunSnapshot(null)
+      setDurableRun(null)
+    }
+    void createAgentRuntimeRun(payload, "long_task")
+      .then((run) => followDurableRun(
+        run,
+        payload.session_id,
+        payload.request_id ?? 0,
+      ))
+      .catch((error) => {
+        setPending(false)
+        setErrorMessage(error instanceof Error ? error.message : "Unable to create durable Agent run.")
+      })
+  }
+
+  function execute(payload: AgentRunRequest, preserveEvents = false) {
+    if (payload.temporary) {
+      executeLegacyStream(payload, preserveEvents)
+      return
+    }
+    executeDurable(payload, preserveEvents)
+  }
+
   /* oxlint-disable react-hooks/exhaustive-deps -- checkpoint recovery is one-shot per mounted runtime */
   useEffect(() => {
     if (recoveryAttempted.current) return
@@ -361,9 +544,20 @@ export function useAgentRuntime(
     if (!pendingRun) return
 
     requestId.current = Math.max(requestId.current, pendingRun.requestId)
-    const payload = buildAgentResumeRequest(pendingRun, initialTargetLanguage.current)
-    lastPayload.current = payload
-    const timer = window.setTimeout(() => execute(payload), 0)
+    const timer = window.setTimeout(() => {
+      void getAgentRuntimeRun(pendingRun.runId)
+        .then((run) => followDurableRun(
+          run,
+          pendingRun.sessionId,
+          pendingRun.requestId,
+          -1,
+        ))
+        .catch(() => {
+          const payload = buildAgentResumeRequest(pendingRun, initialTargetLanguage.current)
+          lastPayload.current = payload
+          executeLegacyStream(payload)
+        })
+    }, 0)
     return () => window.clearTimeout(timer)
   }, [])
   /* oxlint-enable react-hooks/exhaustive-deps */
@@ -428,9 +622,21 @@ export function useAgentRuntime(
 
   function confirmWriteTool() {
     const toolName = viewState.confirmationTool
-    const previous = lastPayload.current
-    if (!toolName || !previous || pending) return
+    if (!toolName || pending) return
 
+    if (durableRun?.status === "waiting") {
+      setPending(true)
+      void confirmAgentRuntimeRun(durableRun.run_id, toolName)
+        .then((run) => followDurableRun(run, sessionId, requestId.current))
+        .catch((error) => {
+          setPending(false)
+          setErrorMessage(error instanceof Error ? error.message : "Unable to confirm write action.")
+        })
+      return
+    }
+
+    const previous = lastPayload.current
+    if (!previous) return
     requestId.current += 1
     const payload: AgentRunRequest = {
       ...previous,
@@ -439,14 +645,67 @@ export function useAgentRuntime(
       request_id: requestId.current,
     }
     lastPayload.current = payload
-    execute(payload)
+    executeLegacyStream(payload)
   }
 
   function cancelRun() {
-    if (!pending || cancelRequested) return
+    if (cancelRequested) return
+    if (durableRun && !["completed", "failed", "cancelled"].includes(durableRun.status)) {
+      setCancelRequested(true)
+      void cancelAgentRuntimeRun(durableRun.run_id)
+        .then((run) => {
+          setDurableRun(run)
+          void hydrateDurableRun(run, sessionId)
+        })
+        .catch((error) => {
+          setCancelRequested(false)
+          setErrorMessage(error instanceof Error ? error.message : "Unable to cancel Agent run.")
+        })
+      return
+    }
+    if (!pending) return
     clearPendingAgentRun(activeRunId.current)
     setCancelRequested(true)
     streamHandle.current?.cancel()
+  }
+
+  function pauseRun() {
+    if (!durableRun || durableRun.status !== "running") return
+    void pauseAgentRuntimeRun(durableRun.run_id)
+      .then(setDurableRun)
+      .catch((error) => setErrorMessage(error instanceof Error ? error.message : "Unable to pause Agent run."))
+  }
+
+  function resumeRun() {
+    if (!durableRun || durableRun.status !== "paused") return
+    setPending(true)
+    void resumeAgentRuntimeRun(durableRun.run_id)
+      .then((run) => followDurableRun(
+        run,
+        sessionId,
+        requestId.current,
+        liveEvents.at(-1)?.sequence ?? -1,
+      ))
+      .catch((error) => {
+        setPending(false)
+        setErrorMessage(error instanceof Error ? error.message : "Unable to resume Agent run.")
+      })
+  }
+
+  function retryRun() {
+    if (!durableRun || durableRun.status !== "failed") return
+    setPending(true)
+    void retryAgentRuntimeRun(durableRun.run_id)
+      .then((run) => {
+        setTrace(null)
+        setLiveEvents([])
+        setRunSnapshot(null)
+        followDurableRun(run, sessionId, requestId.current)
+      })
+      .catch((error) => {
+        setPending(false)
+        setErrorMessage(error instanceof Error ? error.message : "Unable to retry Agent run.")
+      })
   }
 
   function setTemporaryMode(enabled: boolean) {
@@ -459,6 +718,10 @@ export function useAgentRuntime(
   }
 
   function retryTask(taskId: string) {
+    if (durableRun?.status === "failed") {
+      retryRun()
+      return
+    }
     const runId = runSnapshot?.run_id || viewState.runId
     if (!runId || pending || !runSnapshot?.retryable_task_ids.includes(taskId)) return
     requestId.current += 1
@@ -490,10 +753,14 @@ export function useAgentRuntime(
     workflowAction,
     setWorkflowAction,
     runSnapshot,
+    durableRun,
     setTemporaryMode,
     submitPrompt,
     confirmWriteTool,
     cancelRun,
+    pauseRun,
+    resumeRun,
+    retryRun,
     retryTask,
   }
 }
