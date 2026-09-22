@@ -53,6 +53,11 @@ const eventStage: Partial<Record<AgentTraceEventType, AgentTimelineStageId>> = {
   budget_exhausted: "result",
   workflow_partial: "result",
   workflow_resumed: "decision",
+  knowledge_decision: "decision",
+  knowledge_scope_resolved: "decision",
+  knowledge_retrieval_started: "observation",
+  knowledge_retrieved: "observation",
+  knowledge_skipped: "result",
   plan_ready: "decision",
   react_started: "decision",
   decision_ready: "decision",
@@ -60,6 +65,8 @@ const eventStage: Partial<Record<AgentTraceEventType, AgentTimelineStageId>> = {
   retry: "tool",
   tool_result: "observation",
   observation_ready: "observation",
+  evidence_gate_evaluated: "observation",
+  evidence_sufficiency: "observation",
   rag_query_started: "observation",
   rag_query_rewritten: "observation",
   rag_dense_completed: "observation",
@@ -95,6 +102,12 @@ export function getAgentTimelineEventLabel(eventType: AgentTraceEventType): stri
     || eventType === "context_ready"
     || eventType === "knowledge_context_ready"
   ) return "Setup"
+  if (
+    eventType === "knowledge_decision"
+    || eventType === "knowledge_scope_resolved"
+    || eventType === "knowledge_skipped"
+  ) return "Knowledge"
+  if (eventType === "evidence_gate_evaluated" || eventType === "evidence_sufficiency") return "Evidence"
   const stageId = getAgentTimelineStageId(eventType)
   return agentTimelineStageDefinitions.find((stage) => stage.id === stageId)?.label ?? "Runtime"
 }

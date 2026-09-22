@@ -136,6 +136,8 @@ describe("Agent execution timeline", () => {
     expect(getAgentTimelineEventLabel("observation_ready")).toBe("Observation")
     expect(getAgentTimelineEventLabel("react_limit_reached")).toBe("Result")
     expect(getAgentTimelineEventLabel("rag_evidence_selected")).toBe("Observation")
+    expect(getAgentTimelineEventLabel("knowledge_decision")).toBe("Knowledge")
+    expect(getAgentTimelineEventLabel("evidence_sufficiency")).toBe("Evidence")
   })
 
   it("keeps RAG retrieval stages inside the existing observation timeline", () => {
@@ -152,6 +154,20 @@ describe("Agent execution timeline", () => {
     ], false)
 
     expect(stages.find((stage) => stage.id === "observation")?.activityCount).toBe(8)
+  })
+
+  it("keeps the knowledge decision and scope visible before RAG observation", () => {
+    const stages = deriveAgentTimelineStages([
+      activity(0, "knowledge_decision"),
+      activity(1, "knowledge_scope_resolved"),
+      activity(2, "rag_query_started"),
+      activity(3, "evidence_sufficiency", "success"),
+      activity(4, "agent_end", "success"),
+    ], false)
+
+    expect(stages.find((stage) => stage.id === "decision")?.activityCount).toBe(2)
+    expect(stages.find((stage) => stage.id === "observation")?.activityCount).toBe(2)
+    expect(stages.find((stage) => stage.id === "result")?.activityCount).toBe(1)
   })
 
   it("projects authoritative runtime events into Run → Step → Tool hierarchy", () => {

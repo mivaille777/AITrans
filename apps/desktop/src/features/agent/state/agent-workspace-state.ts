@@ -64,6 +64,35 @@ function reactIteration(payload: Record<string, unknown>): string {
   return iteration > 0 ? ` #${iteration}` : ""
 }
 
+function knowledgeMode(payload: Record<string, unknown>): string {
+  const mode = text(payload.mode)
+  if (mode === "always") return "Always"
+  if (mode === "never") return "Never"
+  return "Auto"
+}
+
+function knowledgeScope(payload: Record<string, unknown>): string {
+  const strategy = text(payload.strategy)
+  if (strategy === "attached_document") return "Current document"
+  if (strategy === "explicit_documents") {
+    const documents = numeric(payload.document_count)
+    return `${documents || "Selected"} documents`
+  }
+  if (strategy === "research_workspace") return "Research workspace"
+  if (strategy === "global_knowledge") return "All knowledge"
+  return "No knowledge scope"
+}
+
+function scopeCounts(payload: Record<string, unknown>): string {
+  const documents = numeric(payload.document_count)
+  const sources = numeric(payload.research_source_count)
+  const counts = [
+    documents > 0 ? `${documents} document${documents === 1 ? "" : "s"}` : "",
+    sources > 0 ? `${sources} source${sources === 1 ? "" : "s"}` : "",
+  ].filter(Boolean)
+  return counts.join(" · ")
+}
+
 function titleCaseEvent(eventType: AgentTraceEventType): string {
   return eventType
     .split("_")
@@ -91,6 +120,58 @@ function eventToActivity(event: AgentTraceEvent): AgentActivityItem {
         detail: text(payload.resource_title) || text(payload.section_heading) || "Reading context attached.",
         tone: "success",
       }
+    case "knowledge_decision": {
+      const shouldRetrieve = payload.should_retrieve === true
+      const reason = text(payload.reason_code)
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: "Knowledge decision",
+        detail: `${knowledgeMode(payload)} · retrieval ${shouldRetrieve ? "required" : "skipped"}${reason ? ` · ${reason}` : ""}`,
+        tone: shouldRetrieve ? "neutral" : "success",
+      }
+    }
+    case "knowledge_scope_resolved": {
+      const counts = scopeCounts(payload)
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: "Knowledge scope",
+        detail: `${knowledgeScope(payload)}${counts ? ` · ${counts}` : ""}`,
+        tone: "success",
+      }
+    }
+    case "knowledge_skipped":
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: "Knowledge skipped",
+        detail: `Reason: ${text(payload.reason_code) || "knowledge_policy"}`,
+        tone: "success",
+      }
+    case "knowledge_retrieval_started":
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: "Knowledge retrieval started",
+        detail: "Preparing knowledge evidence for the Agent.",
+        tone: "neutral",
+      }
+    case "knowledge_retrieved": {
+      const citations = numeric(payload.citation_count)
+      const contextChars = numeric(payload.context_chars)
+      const facts = [
+        citations > 0 ? `${citations} citations` : "",
+        contextChars > 0 ? `${contextChars.toLocaleString()} context chars` : "",
+      ].filter(Boolean)
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: "Knowledge retrieval complete",
+        detail: facts.length > 0 ? facts.join(" · ") : "Knowledge evidence is ready.",
+        tone: "success",
+      }
+    }
     case "plan_ready": {
       const action = text(payload.action)
       const toolName = text(payload.tool_name)
@@ -192,6 +273,32 @@ function eventToActivity(event: AgentTraceEvent): AgentActivityItem {
         tone: payload.success === false ? "warning" : "success",
       }
     }
+    case "evidence_gate_evaluated": {
+      const action = text(payload.action)
+      const evidenceCount = numeric(payload.evidence_count)
+      const searchCount = numeric(payload.search_count)
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: "Evidence gate",
+        detail: `${action || "assessed"}${evidenceCount > 0 ? ` · ${evidenceCount} evidence` : ""}${searchCount > 0 ? ` · ${searchCount} search${searchCount === 1 ? "" : "es"}` : ""}`,
+        tone: action === "stop" ? "success" : "neutral",
+      }
+    }
+    case "evidence_sufficiency": {
+      const sufficient = payload.sufficient === true
+      const reason = text(payload.reason)
+      const missing = Array.isArray(payload.missing_information)
+        ? payload.missing_information.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).join(", ")
+        : ""
+      return {
+        sequence: event.sequence,
+        eventType: event.event_type,
+        label: sufficient ? "Evidence ready" : "Evidence sufficiency",
+        detail: `${sufficient ? "Evidence is sufficient" : "More evidence may be needed"}${reason ? ` · ${reason}` : ""}${missing ? ` · Missing: ${missing}` : ""}`,
+        tone: sufficient ? "success" : "warning",
+      }
+    }
     case "react_limit_reached": {
       const reason = text(payload.reason)
       const toolCallCount = numeric(payload.tool_call_count)
@@ -207,7 +314,7 @@ function eventToActivity(event: AgentTraceEvent): AgentActivityItem {
       return {
         sequence: event.sequence,
         eventType: event.event_type,
-        label: "Knowledge retrieval started",
+        label: "RAG retrieval",
         detail: text(payload.retrieval_strategy) || "Preparing local hybrid retrieval.",
         tone: "neutral",
       }
@@ -265,7 +372,7 @@ function eventToActivity(event: AgentTraceEvent): AgentActivityItem {
       return {
         sequence: event.sequence,
         eventType: event.event_type,
-        label: "Evidence selected",
+        label: "Evidence ready",
         detail: withDuration(`${numeric(payload.final_count)} verified sources`, {
           duration_ms: payload.total_rag_ms,
         }),

@@ -107,6 +107,61 @@ describe("ReAct workspace activity projection", () => {
     expect(state.activities[0].detail).toContain("tool_call_budget_exhausted")
     expect(state.activities[0].detail).toContain("4 tool calls")
   })
+
+  it("makes knowledge routing and evidence sufficiency visible in the runtime timeline", () => {
+    const state = deriveAgentWorkspaceState({
+      trace: null,
+      pending: false,
+      liveEvents: [
+        event(0, "knowledge_decision", {
+          mode: "auto",
+          should_retrieve: true,
+          reason_code: "document_grounding_required",
+          scope_strategy: "attached_document",
+        }),
+        event(1, "knowledge_scope_resolved", {
+          strategy: "attached_document",
+          document_count: 1,
+          research_source_count: 0,
+        }),
+        event(2, "rag_query_started", { retrieval_strategy: "hybrid" }),
+        event(3, "rag_rerank_completed", { final_count: 6, rerank_ms: 12 }),
+        event(4, "evidence_sufficiency", {
+          sufficient: true,
+          reason: "evidence_sufficient",
+          missing_information: [],
+          search_count: 1,
+        }),
+      ],
+    })
+
+    expect(state.activities.map((item) => item.label)).toEqual([
+      "Knowledge decision",
+      "Knowledge scope",
+      "RAG retrieval",
+      "Evidence reranked",
+      "Evidence ready",
+    ])
+    expect(state.activities[0].detail).toContain("Auto · retrieval required")
+    expect(state.activities[1].detail).toContain("Current document")
+    expect(state.activities[4].detail).toContain("Evidence is sufficient")
+  })
+
+  it("explains why knowledge retrieval was skipped", () => {
+    const state = deriveAgentWorkspaceState({
+      trace: null,
+      pending: false,
+      liveEvents: [
+        event(0, "knowledge_skipped", {
+          reason_code: "current_context_sufficient",
+          scope_strategy: "attached_document",
+        }),
+      ],
+    })
+
+    expect(state.activities[0].label).toBe("Knowledge skipped")
+    expect(state.activities[0].detail).toBe("Reason: current_context_sufficient")
+  })
 })
 
 
