@@ -5,6 +5,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+from backend.models.knowledge_access import (
+    KnowledgeAccessDecision,
+    KnowledgeAccessPolicy,
+)
 
 ConversationMessageStatus = Literal["complete", "streaming", "cancelled", "error"]
 ConversationRole = Literal["user", "assistant"]
@@ -22,6 +26,11 @@ class ConversationMessageResponse(BaseModel):
     model: str = ""
     error_code: str = ""
     knowledge_enabled: bool = False
+    knowledge_access_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_decision: KnowledgeAccessDecision | None = None
+    knowledge_retrieved: bool = False
+    knowledge_document_count: int = Field(default=0, ge=0)
+    knowledge_chunk_count: int = Field(default=0, ge=0)
     knowledge_fallback_reason: str = ""
     evidence: list[AgentEvidenceItem] = Field(default_factory=list)
     citations: list[AgentCitationRef] = Field(default_factory=list)

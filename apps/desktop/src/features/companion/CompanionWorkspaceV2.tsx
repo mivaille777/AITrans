@@ -49,6 +49,30 @@ function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase): string
   }
 }
 
+function companionKnowledgeBehaviorLabel(message: CompanionRuntimeMessage): string | null {
+  const decision = message.knowledgeDecision
+  const retrieved = message.knowledgeRetrieved
+    ?? Boolean(message.knowledgeEnabled && (message.evidence?.length ?? 0) > 0)
+  if (retrieved) {
+    const documentCount = message.knowledgeDocumentCount ?? new Set(
+      (message.evidence ?? []).map((item) => item.source_id).filter(Boolean),
+    ).size
+    const chunkCount = message.knowledgeChunkCount ?? message.evidence?.length ?? 0
+    if (documentCount > 0 || chunkCount > 0) {
+      return `Knowledge · ${documentCount} document${documentCount === 1 ? "" : "s"} · ${chunkCount} chunk${chunkCount === 1 ? "" : "s"}`
+    }
+    return "Knowledge · searched · no evidence"
+  }
+  if (!decision) return null
+  if (decision.reason_code === "current_context_sufficient") {
+    return "Knowledge · skipped / Reading context sufficient"
+  }
+  if (decision.reason_code === "explicit_never") {
+    return "Knowledge · skipped / Never search"
+  }
+  return "Knowledge · skipped"
+}
+
 export default function CompanionWorkspaceV2() {
   const queryClient = useQueryClient()
   const location = useLocation()
@@ -577,9 +601,14 @@ export default function CompanionWorkspaceV2() {
         </div>
 
         <KnowledgeRetrievalControl
+          policy={runtime.knowledgeAccessPolicy}
           enabled={runtime.knowledgeEnabled}
           selectedDocumentIds={runtime.knowledgeDocumentIds}
+          scopeLabel={runtime.knowledgeDocumentIds.length > 0
+            ? `${runtime.knowledgeDocumentIds.length} selected documents`
+            : isKnowledgeContext ? "Current document" : "All documents"}
           disabled={runtime.activeRequestId !== null || runtime.openingConversation}
+          onPolicyChange={runtime.setKnowledgeAccessPolicy}
           onEnabledChange={runtime.setKnowledgeEnabled}
           onScopeChange={runtime.setKnowledgeDocumentIds}
         />
@@ -700,11 +729,12 @@ export default function CompanionWorkspaceV2() {
                             {message.provider}{message.model ? ` · ${message.model}` : ""}
                           </Badge>
                         )}
-                        {message.status === "complete" && message.knowledgeEnabled && (
-                          <Badge className="ait-chat-message-badge" tone={(message.evidence?.length ?? 0) > 0 ? "info" : "warning"}>
-                            {(message.evidence?.length ?? 0) > 0
-                              ? `Knowledge · ${message.evidence?.length} sources`
-                              : "General answer · No knowledge sources"}
+                        {message.status === "complete" && companionKnowledgeBehaviorLabel(message) && (
+                          <Badge
+                            className="ait-chat-message-badge"
+                            tone={message.knowledgeRetrieved ? "info" : "warning"}
+                          >
+                            {companionKnowledgeBehaviorLabel(message)}
                           </Badge>
                         )}
                         {userBefore && message.status !== "streaming" && (
@@ -882,17 +912,20 @@ export default function CompanionWorkspaceV2() {
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              className={`ait-chat-composer-knowledge ait-chat-composer-knowledge-button ${runtime.knowledgeEnabled ? "is-on" : ""}`}
-              role="switch"
-              aria-checked={runtime.knowledgeEnabled}
-              disabled={runtime.activeRequestId !== null || runtime.openingConversation}
-              onClick={() => runtime.setKnowledgeEnabled(!runtime.knowledgeEnabled)}
-            >
+            <label className="ait-chat-composer-knowledge ait-chat-composer-knowledge-button">
               <span className="ait-chat-composer-knowledge-dot" />
-              Knowledge {runtime.knowledgeEnabled ? "on" : "off"}
-            </button>
+              <span>Knowledge ·</span>
+              <select
+                aria-label="Knowledge policy"
+                value={runtime.knowledgeAccessPolicy}
+                disabled={runtime.activeRequestId !== null || runtime.openingConversation}
+                onChange={(event) => runtime.setKnowledgeAccessPolicy(event.target.value as "auto" | "always" | "never")}
+              >
+                <option value="auto">Auto</option>
+                <option value="always">Always search</option>
+                <option value="never">Never search</option>
+              </select>
+            </label>
             <AgentToolsControl
               selectedTools={runtime.selectedTools}
               disabled={runtime.activeRequestId !== null || runtime.openingConversation}
@@ -941,7 +974,7 @@ export default function CompanionWorkspaceV2() {
             )}
           </div>
           <p className="ait-chat-composer-helper">
-            Enter to send · Shift+Enter for a new line · {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge context" : "Reading context" : "General"}{runtime.knowledgeEnabled ? " · Knowledge on" : ""}
+            Enter to send · Shift+Enter for a new line · {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge context" : "Reading context" : "General"} · Knowledge {runtime.knowledgeAccessPolicy === "auto" ? "Auto" : runtime.knowledgeAccessPolicy === "always" ? "Always search" : "Never search"}
           </p>
         </form>
       </div>

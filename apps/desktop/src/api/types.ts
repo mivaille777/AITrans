@@ -1,4 +1,9 @@
-import type { AgentCitationRef, AgentEvidenceItem } from "../features/evidence/evidence-types"
+import type {
+  AgentCitationRef,
+  AgentEvidenceItem,
+  KnowledgeAccessDecision,
+  KnowledgeAccessPolicy,
+} from "./agent"
 
 export interface HealthResponse {
   status: "ok"
@@ -290,7 +295,8 @@ export interface CompanionChatRequest extends ReadingContextFields {
   context_mode: ChatContextMode
   history: CompanionChatMessage[]
   request_id?: number
-  knowledge_enabled: boolean
+  knowledge_access_policy: KnowledgeAccessPolicy
+  knowledge_enabled?: boolean
   knowledge_document_ids: string[]
 }
 
@@ -303,6 +309,11 @@ export interface CompanionChatResponse {
   model: string
   request_id: number
   knowledge_enabled: boolean
+  knowledge_access_policy: KnowledgeAccessPolicy
+  knowledge_decision: KnowledgeAccessDecision | null
+  knowledge_retrieved: boolean
+  knowledge_document_count: number
+  knowledge_chunk_count: number
   knowledge_fallback_reason: string
   evidence: AgentEvidenceItem[]
   citations: AgentCitationRef[]
@@ -355,6 +366,11 @@ export interface CompanionChatStreamDone {
   output_text: string
   provider: string
   model: string
+  knowledge_access_policy: KnowledgeAccessPolicy
+  knowledge_decision: KnowledgeAccessDecision | null
+  knowledge_retrieved: boolean
+  knowledge_document_count: number
+  knowledge_chunk_count: number
   knowledge_enabled: boolean
   knowledge_fallback_reason: string
   evidence: AgentEvidenceItem[]
@@ -397,6 +413,15 @@ export interface ConversationMessage {
   provider: string
   model: string
   error_code: string
+  knowledge_access_policy?: KnowledgeAccessPolicy
+  knowledge_decision?: KnowledgeAccessDecision | null
+  knowledge_retrieved?: boolean
+  knowledge_document_count?: number
+  knowledge_chunk_count?: number
+  knowledge_enabled?: boolean
+  knowledge_fallback_reason?: string
+  evidence?: AgentEvidenceItem[]
+  citations?: AgentCitationRef[]
   created_at: string
   updated_at: string
 }

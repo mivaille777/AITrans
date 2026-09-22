@@ -14,6 +14,26 @@ export type AgentContextMode = "general" | "reading" | "knowledge" | "research" 
 export type AgentWorkflowAction = "" | "quick_read" | "analyze_visuals" | "compare_papers" | "curate_knowledge" | "draft_section"
 export type KnowledgeAccessPolicy = "auto" | "always" | "never"
 export type KnowledgeScopeStrategy = "none" | "attached_document" | "explicit_documents" | "research_workspace" | "global_knowledge"
+export type KnowledgeDecisionReasonCode =
+  | "explicit_always"
+  | "explicit_never"
+  | "knowledge_request"
+  | "cross_document_request"
+  | "current_context_sufficient"
+  | "current_context_insufficient"
+  | "document_grounding_required"
+  | "research_grounding_required"
+  | "catalog_request"
+  | "semantic_router_required"
+
+export interface KnowledgeAccessDecision {
+  mode: KnowledgeAccessPolicy
+  should_retrieve: boolean
+  reason_code: KnowledgeDecisionReasonCode | string
+  scope_strategy: KnowledgeScopeStrategy
+  confidence: number | null
+  query: string
+}
 
 export interface AgentToolDefinition {
   name: string

@@ -144,6 +144,22 @@ describe("companion runtime", () => {
     ])
   })
 
+  it("serializes Auto as policy while preserving the selected scope boundary", () => {
+    const request = buildCompanionChatRequest({
+      sessionId: "session-auto",
+      userMessage: "Compare these papers",
+      contextMode: "general",
+      messages: [],
+      requestId: 8,
+      knowledgeAccessPolicy: "auto",
+      knowledgeDocumentIds: ["doc-a", "doc-b"],
+    })
+
+    expect(request.knowledge_access_policy).toBe("auto")
+    expect(request.knowledge_enabled).toBe(false)
+    expect(request.knowledge_document_ids).toEqual(["doc-a", "doc-b"])
+  })
+
   it("creates a stable reading runtime seed and restores bounded knowledge scope", () => {
     const handoff = {
       revision: 3,

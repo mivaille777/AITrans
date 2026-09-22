@@ -7,11 +7,11 @@ from backend.agent_core.state import AgentState
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
+from backend.services.conversation_grounding_service import save_message_grounding
 from backend.services.conversation_store_service import (
     ConversationStoreService,
     StoredConversation,
 )
-from backend.services.conversation_grounding_service import save_message_grounding
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,11 +251,21 @@ class AgentConversationService:
             )
             evidence = tuple(state.evidence or ())
             citations = tuple(state.citations or ())
-            if evidence or citations:
+            source_ids = {item.source_id for item in evidence if item.source_id}
+            scope_document_count = len(tuple(state.knowledge_scope.document_ids or ()))
+            if not scope_document_count:
+                scope_document_count = len(source_ids)
+            knowledge_retrieved = bool(state.retrieval_attempt_count or evidence)
+            if evidence or citations or state.knowledge_decision is not None:
                 save_message_grounding(
                     self._store.storage_path,
                     run.assistant_message_id,
-                    knowledge_enabled=True,
+                    knowledge_enabled=knowledge_retrieved,
+                    knowledge_access_policy=state.knowledge_policy,
+                    knowledge_decision=state.knowledge_decision,
+                    knowledge_retrieved=knowledge_retrieved,
+                    knowledge_document_count=scope_document_count,
+                    knowledge_chunk_count=len(evidence),
                     evidence=evidence,
                     citations=citations,
                 )

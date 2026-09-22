@@ -6,6 +6,8 @@ import {
   type AgentRunRequest,
   type AgentRunSnapshot,
   type AgentTraceEvent,
+  type KnowledgeAccessDecision,
+  type KnowledgeAccessPolicy,
 } from "../../api/agent"
 import {
   getCompanionChatOwnership,
@@ -53,6 +55,10 @@ import { companionExternalChangeDecision } from "./companion-sync"
 import type { AgentContextMode } from "../agent/runtime/agent-context-mode"
 import { buildAgentRunRequest } from "../agent/runtime/agent-run-request"
 import { mergeAgentEvents } from "../agent/runtime/agent-event-replay"
+import {
+  defaultKnowledgeAccessPolicy,
+  normalizeKnowledgeAccessPolicy,
+} from "../agent/runtime/knowledge-access-policy"
 
 type StreamEventContext = {
   scopeId: string
@@ -77,6 +83,7 @@ export interface CompanionRuntimeResetOptions {
   draft?: string
   sessionId?: string
   scopeId?: string
+  knowledgeAccessPolicy?: KnowledgeAccessPolicy
   knowledgeEnabled?: boolean
   knowledgeDocumentIds?: string[]
   selectedTools?: string[]
@@ -107,6 +114,8 @@ export interface CompanionConversationRuntime {
   chatStatusLoaded: boolean
   openingConversation: boolean
   contextUpdating: boolean
+  knowledgeAccessPolicy: KnowledgeAccessPolicy
+  setKnowledgeAccessPolicy: (policy: KnowledgeAccessPolicy) => void
   knowledgeEnabled: boolean
   setKnowledgeEnabled: (enabled: boolean) => void
   knowledgeDocumentIds: string[]
@@ -154,6 +163,59 @@ function normalizedDocumentIds(values: string[] | undefined): string[] {
   return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 100)
 }
 
+function agentKnowledgeOutcome(
+  events: AgentTraceEvent[],
+  evidence: CompanionRuntimeMessage["evidence"],
+): {
+  policy?: KnowledgeAccessPolicy
+  decision: KnowledgeAccessDecision | null
+  retrieved: boolean
+  documentCount: number
+  chunkCount: number
+} {
+  const decisionEvent = [...events].reverse().find((event) => event.event_type === "knowledge_decision")
+  const rawDecision = decisionEvent?.payload
+  const decision = rawDecision
+    ? {
+        mode: normalizeKnowledgeAccessPolicy(rawDecision.mode),
+        should_retrieve: Boolean(rawDecision.should_retrieve),
+        reason_code: String(rawDecision.reason_code ?? "current_context_sufficient"),
+        scope_strategy: String(rawDecision.scope_strategy ?? "none") as KnowledgeAccessDecision["scope_strategy"],
+        confidence: typeof rawDecision.confidence === "number" ? rawDecision.confidence : null,
+        query: String(rawDecision.query ?? ""),
+      }
+    : null
+  const retrievalEvent = [...events].reverse().find((event) => event.event_type === "knowledge_retrieved")
+  const scopeEvent = [...events].reverse().find((event) => event.event_type === "knowledge_scope_resolved")
+  const retrievalToolUsed = events.some((event) =>
+    (event.event_type === "tool_call" || event.event_type === "tool_result")
+      && String(event.payload.tool_name ?? "") === "search_knowledge_base",
+  )
+  const retrieved = Boolean(
+    retrievalEvent
+      || retrievalToolUsed
+      || evidence?.length,
+  )
+  const sourceIds = new Set(
+    (evidence ?? []).map((item) => item.source_id).filter(Boolean),
+  )
+  const rawDocumentCount = scopeEvent?.payload.document_count
+  const documentCount = typeof rawDocumentCount === "number"
+    ? rawDocumentCount
+    : sourceIds.size
+  const rawChunkCount = retrievalEvent?.payload.evidence
+  const chunkCount = typeof rawChunkCount === "number"
+    ? rawChunkCount
+    : evidence?.length ?? 0
+  return {
+    policy: decision?.mode,
+    decision,
+    retrieved,
+    documentCount: Math.max(0, documentCount),
+    chunkCount: Math.max(0, chunkCount),
+  }
+}
+
 export function useCompanionConversationRuntime(
   options: UseCompanionConversationRuntimeOptions = {},
 ): CompanionConversationRuntime {
@@ -171,7 +233,9 @@ export function useCompanionConversationRuntime(
   )
   const [openingConversation, setOpeningConversation] = useState(false)
   const [contextUpdating, setContextUpdating] = useState(false)
-  const [knowledgeEnabled, setKnowledgeEnabled] = useState(false)
+  const [knowledgeAccessPolicy, setKnowledgeAccessPolicyState] = useState<KnowledgeAccessPolicy>(
+    defaultKnowledgeAccessPolicy,
+  )
   const [knowledgeDocumentIds, setKnowledgeDocumentIds] = useState<string[]>([])
   const [transport, setTransport] = useState<CompanionTransport>("companion")
   const [agentPhase, setAgentPhase] = useState<CompanionAgentPhase>("idle")
@@ -186,6 +250,14 @@ export function useCompanionConversationRuntime(
   const [recoveryDetail, setRecoveryDetail] = useState("")
   const [clientSurface] = useState<CompanionClientSurface>(options.clientSurface ?? "unknown")
   const [clientId] = useState(() => createCompanionScope(`client-${clientSurface}`))
+
+  const knowledgeEnabled = knowledgeAccessPolicy === "always"
+  const setKnowledgeAccessPolicy = useCallback((policy: KnowledgeAccessPolicy) => {
+    setKnowledgeAccessPolicyState(normalizeKnowledgeAccessPolicy(policy))
+  }, [])
+  const setKnowledgeEnabled = useCallback((enabled: boolean) => {
+    setKnowledgeAccessPolicyState(enabled ? "always" : "never")
+  }, [])
 
   const contextRef = useRef(context)
   const contextModeRef = useRef(contextMode)
@@ -304,7 +376,14 @@ export function useCompanionConversationRuntime(
     setErrorMessage("")
     const nextKnowledgeDocumentIds = normalizedDocumentIds(next.knowledgeDocumentIds)
     setKnowledgeDocumentIds(nextKnowledgeDocumentIds)
-    setKnowledgeEnabled(Boolean(next.knowledgeEnabled))
+    setKnowledgeAccessPolicyState(
+      normalizeKnowledgeAccessPolicy(
+        next.knowledgeAccessPolicy
+          ?? (next.knowledgeEnabled === undefined
+            ? defaultKnowledgeAccessPolicy
+            : next.knowledgeEnabled ? "always" : "never"),
+      ),
+    )
     setTransport("companion")
     setAgentPhase("idle")
     setAgentRunId("")
@@ -323,6 +402,7 @@ export function useCompanionConversationRuntime(
     applyConversationId,
     clearRecovery,
     closeActiveStream,
+    setKnowledgeAccessPolicyState,
     setSelectedTools,
   ])
 
@@ -662,7 +742,12 @@ export function useCompanionConversationRuntime(
                 serverMessageId: event.message_id,
                 provider: event.provider,
                 model: event.model,
+                knowledgeAccessPolicy: event.knowledge_access_policy,
                 knowledgeEnabled: event.knowledge_enabled,
+                knowledgeDecision: event.knowledge_decision,
+                knowledgeRetrieved: event.knowledge_retrieved,
+                knowledgeDocumentCount: event.knowledge_document_count,
+                knowledgeChunkCount: event.knowledge_chunk_count,
                 knowledgeFallbackReason: event.knowledge_fallback_reason,
                 evidence: event.evidence,
                 citations: event.citations,
@@ -803,6 +888,7 @@ export function useCompanionConversationRuntime(
       )
       setAgentPhase(run.status === "confirmation_required" ? "confirmation_required" : "completed")
       setAgentEvents((current) => mergeAgentEvents(current, trace.events, nextRunId))
+      const knowledgeOutcome = agentKnowledgeOutcome(trace.events, run.evidence)
       setMessages((current) =>
         current.map((message) =>
           message.id === localAssistantId
@@ -813,9 +899,14 @@ export function useCompanionConversationRuntime(
                 model: run.model,
                 evidence: run.evidence,
                 citations: run.citations,
+                knowledgeAccessPolicy: knowledgeOutcome.policy ?? knowledgeAccessPolicy,
+                knowledgeEnabled: knowledgeOutcome.policy === "always",
+                knowledgeDecision: knowledgeOutcome.decision,
+                knowledgeRetrieved: knowledgeOutcome.retrieved,
+                knowledgeDocumentCount: knowledgeOutcome.documentCount,
+                knowledgeChunkCount: knowledgeOutcome.chunkCount,
                 status: run.status === "confirmation_required" ? "cancelled" : "complete",
                 errorCode: run.status === "confirmation_required" ? "confirmation_required" : undefined,
-                knowledgeEnabled,
               }
             : message,
         ),
@@ -879,7 +970,7 @@ export function useCompanionConversationRuntime(
     applyConversationId,
     clearRecovery,
     finishRequest,
-    knowledgeEnabled,
+    knowledgeAccessPolicy,
     notifyConversationUpdated,
     queryClient,
   ])
@@ -994,6 +1085,7 @@ export function useCompanionConversationRuntime(
         role: "assistant",
         content: "",
         status: "streaming",
+        knowledgeAccessPolicy,
         knowledgeEnabled,
       },
     ])
@@ -1035,7 +1127,8 @@ export function useCompanionConversationRuntime(
         conversationId: conversationIdRef.current,
         clientId,
         enabledTools,
-        knowledgeDocumentIds: knowledgeEnabled ? knowledgeDocumentIds : [],
+        knowledgeAccessPolicy,
+        knowledgeDocumentIds,
       })
 
       startAgentStream(agentPayload, {
@@ -1057,6 +1150,7 @@ export function useCompanionConversationRuntime(
       context: currentContext,
       messages: baseMessages,
       requestId,
+      knowledgeAccessPolicy,
       knowledgeEnabled,
       knowledgeDocumentIds,
     })
@@ -1114,6 +1208,7 @@ export function useCompanionConversationRuntime(
     finishRequest,
     handleStreamEvent,
     startAgentStream,
+    knowledgeAccessPolicy,
     knowledgeDocumentIds,
     knowledgeEnabled,
     messages,
@@ -1145,6 +1240,7 @@ export function useCompanionConversationRuntime(
         role: "assistant",
         content: "",
         status: "streaming",
+        knowledgeAccessPolicy,
         knowledgeEnabled,
       },
     ])
@@ -1170,7 +1266,7 @@ export function useCompanionConversationRuntime(
     agentConfirmationTool,
     agentPhase,
     clearRecovery,
-    knowledgeEnabled,
+    knowledgeAccessPolicy,
     startAgentStream,
   ])
 
@@ -1320,6 +1416,8 @@ export function useCompanionConversationRuntime(
     chatStatusLoaded: chatStatusQuery.isSuccess,
     openingConversation,
     contextUpdating,
+    knowledgeAccessPolicy,
+    setKnowledgeAccessPolicy,
     knowledgeEnabled,
     setKnowledgeEnabled,
     knowledgeDocumentIds,

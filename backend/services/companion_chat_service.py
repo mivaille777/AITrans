@@ -14,10 +14,15 @@ from app.ai.chat.models import (
 )
 from app.ai.chat.service import AIChatService
 from app.ai.chat.stream_service import ProviderStreamingAIChatService
+from app.ai.chat.system_context import SYSTEM_CONTEXT, SystemContext
 from app.ai.errors import AIConfigurationError
 from app.ai.service import AITextService
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.models.companion_routing import CompanionExecutionPlan, CompanionQueryRoute
+from backend.models.knowledge_access import (
+    KnowledgeAccessDecision,
+    KnowledgeAccessPolicy,
+)
 from backend.rag.citation_service import build_evidence_citations
 from backend.rag.context_builder import GroundedContextBuilder
 from backend.rag.evidence_builder import build_agent_evidence
@@ -30,8 +35,8 @@ from backend.rag.structure_retrieval import (
     promote_structural_candidates,
 )
 from backend.services.companion_query_router import CompanionQueryRouter
+from backend.services.knowledge_access_router import KnowledgeAccessRouter
 from backend.services.reading_context_adapter import to_reading_context
-from app.ai.chat.system_context import SYSTEM_CONTEXT, SystemContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +52,8 @@ class CompanionKnowledgeGrounding:
 class CompanionPreparedExecution:
     plan: CompanionExecutionPlan
     grounding: CompanionKnowledgeGrounding
+    knowledge_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_decision: KnowledgeAccessDecision | None = None
     tool_name: str = ""
     tool_context: str = ""
     direct_output_text: str = ""
@@ -62,6 +69,11 @@ class CompanionChatResult:
     model: str
     request_id: int = 0
     knowledge_enabled: bool = False
+    knowledge_access_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_decision: KnowledgeAccessDecision | None = None
+    knowledge_retrieved: bool = False
+    knowledge_document_count: int = 0
+    knowledge_chunk_count: int = 0
     knowledge_fallback_reason: str = ""
     evidence: tuple[AgentEvidenceItem, ...] = ()
     citations: tuple[AgentCitationRef, ...] = ()
@@ -85,6 +97,7 @@ class CompanionChatService:
         retrieval_service_factory: Callable[[], Any] | None = None,
         query_planner_factory: Callable[[], Any] | None = None,
         knowledge_library_service_factory: Callable[[], Any] | None = None,
+        knowledge_access_router: KnowledgeAccessRouter | Any | None = None,
         system_context: SystemContext | Any | None = None,
     ) -> None:
         self._text_service = text_service
@@ -99,6 +112,7 @@ class CompanionChatService:
         self._retrieval_service_factory = retrieval_service_factory
         self._query_planner_factory = query_planner_factory
         self._knowledge_library_service_factory = knowledge_library_service_factory
+        self._knowledge_access_router = knowledge_access_router or KnowledgeAccessRouter()
         self._system_context = system_context or SYSTEM_CONTEXT
         self._grounded_context_builder = GroundedContextBuilder()
 
@@ -149,20 +163,46 @@ class CompanionChatService:
         self,
         *,
         query: str,
-        knowledge_enabled: bool = False,
+        knowledge_enabled: bool | None = None,
+        knowledge_access_policy: KnowledgeAccessPolicy | str | None = None,
         document_ids: tuple[str, ...] = (),
         history: tuple[tuple[str, str], ...] = (),
         context_mode: str = "general",
         source_text: str = "",
         phase_callback: Any | None = None,
     ) -> CompanionPreparedExecution:
+        policy = self._resolve_knowledge_policy(
+            knowledge_access_policy,
+            knowledge_enabled,
+        )
+        legacy_reading_semantics = (
+            knowledge_access_policy is None and knowledge_enabled is not None
+        )
+        reading_context_available = (
+            str(context_mode or "").strip().lower() == "reading"
+            and bool(str(source_text or "").strip())
+        )
+        decision = self._knowledge_access_router.route(
+            user_message=query,
+            context_mode="reading" if reading_context_available else str(context_mode or "general"),
+            policy=policy,
+            reading_context_available=reading_context_available,
+            attached_document="",
+            explicit_scope_count=len(tuple(document_ids)),
+            workspace_available=False,
+            knowledge_available=True,
+            context_summary=str(source_text or "")[:1000],
+        )
+        knowledge_capability_enabled = (
+            decision.should_retrieve
+            or decision.reason_code == "catalog_request"
+            or policy is KnowledgeAccessPolicy.ALWAYS
+        )
         plan = self._query_router.route(
             query,
-            knowledge_enabled=knowledge_enabled,
-            reading_attached=(
-                str(context_mode or "").strip().lower() == "reading"
-                and bool(str(source_text or "").strip())
-            ),
+            knowledge_enabled=knowledge_capability_enabled,
+            reading_attached=reading_context_available
+            and (legacy_reading_semantics or not decision.should_retrieve),
             document_ids=document_ids,
         )
         if callable(phase_callback):
@@ -191,6 +231,8 @@ class CompanionChatService:
         return CompanionPreparedExecution(
             plan=plan,
             grounding=grounding,
+            knowledge_policy=policy,
+            knowledge_decision=decision,
             tool_name=tool_name,
             tool_context=tool_context,
             direct_output_text=direct_output_text,
@@ -625,13 +667,16 @@ class CompanionChatService:
 
     def send(self, **kwargs: Any) -> CompanionChatResult:
         payload = dict(kwargs)
-        knowledge_enabled = bool(payload.pop("knowledge_enabled", False))
+        raw_policy = payload.pop("knowledge_access_policy", None)
+        raw_legacy_enabled = payload.pop("knowledge_enabled", None)
+        policy = self._resolve_knowledge_policy(raw_policy, raw_legacy_enabled)
         raw_document_ids = payload.pop("knowledge_document_ids", ())
         document_ids = tuple(str(item) for item in raw_document_ids)
         history = tuple(payload.get("history", ()) or ())
         prepared = self.prepare_execution(
             query=str(payload.get("user_message", "")),
-            knowledge_enabled=knowledge_enabled,
+            knowledge_access_policy=policy,
+            knowledge_enabled=raw_legacy_enabled,
             document_ids=document_ids,
             history=history,
             context_mode=str(payload.get("context_mode", "general") or "general"),
@@ -660,11 +705,50 @@ class CompanionChatService:
             provider=result.provider,
             model=result.model,
             request_id=result.request_id,
-            knowledge_enabled=knowledge_enabled,
+            knowledge_enabled=bool(raw_legacy_enabled),
+            knowledge_access_policy=prepared.knowledge_policy,
+            knowledge_decision=prepared.knowledge_decision,
+            knowledge_retrieved=prepared.plan.use_knowledge,
+            knowledge_document_count=self._grounding_document_count(grounding),
+            knowledge_chunk_count=self._grounding_chunk_count(grounding),
             knowledge_fallback_reason=grounding.fallback_reason,
             evidence=grounding.evidence,
             citations=grounding.citations,
         )
+
+    @staticmethod
+    def _resolve_knowledge_policy(
+        policy: KnowledgeAccessPolicy | str | None,
+        legacy_enabled: bool | None,
+    ) -> KnowledgeAccessPolicy:
+        if policy is not None:
+            return KnowledgeAccessPolicy(policy)
+        if legacy_enabled is not None:
+            return (
+                KnowledgeAccessPolicy.ALWAYS
+                if legacy_enabled
+                else KnowledgeAccessPolicy.NEVER
+            )
+        return KnowledgeAccessPolicy.AUTO
+
+    @staticmethod
+    def _grounding_document_count(grounding: CompanionKnowledgeGrounding) -> int:
+        selected = (grounding.debug_metadata or {}).get("selected_chunks", ())
+        identifiers = {
+            str(item.get("document_id", "")).strip()
+            for item in selected
+            if isinstance(item, dict) and str(item.get("document_id", "")).strip()
+        }
+        if identifiers:
+            return len(identifiers)
+        return len({item.source_id for item in grounding.evidence if item.source_id})
+
+    @staticmethod
+    def _grounding_chunk_count(grounding: CompanionKnowledgeGrounding) -> int:
+        selected = (grounding.debug_metadata or {}).get("selected_chunks", ())
+        if isinstance(selected, (list, tuple)):
+            return len(selected)
+        return len(grounding.evidence)
 
     def stream(self, **kwargs: Any) -> Iterator[str]:
         request = self._build_request(**self._with_resolved_reading(kwargs))

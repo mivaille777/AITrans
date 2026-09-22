@@ -20,16 +20,16 @@ function renderControl({ documents = [document()] }: { documents?: ReturnType<ty
     : json({ total: documents.length, documents }))
   vi.stubGlobal("fetch", fetchMock)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const onEnabledChange = vi.fn()
+  const onPolicyChange = vi.fn()
   const onScopeChange = vi.fn()
   render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <KnowledgeRetrievalControl enabled={false} selectedDocumentIds={[]} disabled={false} onEnabledChange={onEnabledChange} onScopeChange={onScopeChange} />
+        <KnowledgeRetrievalControl policy="auto" selectedDocumentIds={[]} disabled={false} onPolicyChange={onPolicyChange} onScopeChange={onScopeChange} />
       </QueryClientProvider>
     </MemoryRouter>,
   )
-  return { onEnabledChange, onScopeChange }
+  return { onPolicyChange, onScopeChange }
 }
 
 function document() {
@@ -44,17 +44,18 @@ afterEach(() => {
 
 describe("Knowledge retrieval control", () => {
   it("keeps retrieval separate from Chat context and reports availability", async () => {
-    const { onEnabledChange } = renderControl()
+    const { onPolicyChange } = renderControl()
     expect(await screen.findByText("1 documents available")).not.toBeNull()
-    const toggle = screen.getByRole("switch", { name: "Search knowledge base" })
-    await userEvent.click(toggle)
-    expect(onEnabledChange).toHaveBeenCalledWith(true)
+    const policy = screen.getByRole("combobox", { name: "Knowledge policy" })
+    expect((policy as HTMLSelectElement).value).toBe("auto")
+    await userEvent.selectOptions(policy, "always")
+    expect(onPolicyChange).toHaveBeenCalledWith("always")
   })
 
   it("shows an actionable empty state when no indexed documents exist", async () => {
     renderControl({ documents: [] })
     expect(await screen.findByText("Knowledge base is empty")).not.toBeNull()
     expect(screen.getByRole("link", { name: "Open Knowledge Base" }).getAttribute("href")).toBe("/knowledge")
-    expect((screen.getByRole("switch", { name: "Search knowledge base" }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole("option", { name: "Always search" }) as HTMLOptionElement).disabled).toBe(true)
   })
 })

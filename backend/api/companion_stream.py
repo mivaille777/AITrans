@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import suppress
 from threading import Event, Lock
@@ -22,6 +23,7 @@ from backend.models.companion import (
     CompanionChatStreamStart,
 )
 from backend.models.companion_routing import GroundingPolicy
+from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.companion_chat_service import CompanionChatService
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
@@ -29,7 +31,6 @@ from backend.services.companion_ownership_service import (
 )
 from backend.services.conversation_grounding_service import save_message_grounding
 from backend.services.conversation_store_service import ConversationStoreService
-from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.grounded_synthesis_service import evidence_only_grounding_fallback
 
 router = APIRouter(tags=["companion-stream"])
@@ -68,9 +69,24 @@ def _stream_kwargs(payload: Any) -> dict[str, Any]:
         "history": tuple((item.role, item.content) for item in payload.history),
         "request_id": payload.request_id,
         "context_mode": payload.context_mode,
+        "knowledge_access_policy": payload.knowledge_access_policy,
         "knowledge_enabled": payload.knowledge_enabled,
         "knowledge_document_ids": tuple(payload.knowledge_document_ids),
     }
+
+
+def _prepare_execution(service: Any, payload: Any, **kwargs: Any) -> Any:
+    """Call legacy test/integration services without forcing the new policy arg."""
+
+    prepare = service.prepare_execution
+    parameters = inspect.signature(prepare).parameters
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    if "knowledge_access_policy" not in parameters and not accepts_kwargs:
+        kwargs.pop("knowledge_access_policy", None)
+    return prepare(**kwargs)
 
 
 def _begin_exchange(store: ConversationStoreService, payload: Any, request_id: int):
@@ -338,8 +354,11 @@ async def stream_companion_chat(
                         }
                     )
 
-                prepared = service.prepare_execution(
+                prepared = _prepare_execution(
+                    service,
+                    payload,
                     query=payload.user_message,
+                    knowledge_access_policy=payload.knowledge_access_policy,
                     knowledge_enabled=payload.knowledge_enabled,
                     document_ids=tuple(payload.knowledge_document_ids),
                     history=tuple(
@@ -384,6 +403,7 @@ async def stream_companion_chat(
                     stream_kwargs["tool_name"] = prepared.tool_name
                     stream_kwargs["tool_context"] = prepared.tool_context
                 stream_kwargs.pop("knowledge_enabled", None)
+                stream_kwargs.pop("knowledge_access_policy", None)
                 stream_kwargs.pop("knowledge_document_ids", None)
                 direct_output = str(prepared.direct_output_text or "")
                 response_provider = "local" if direct_output else service.provider_name
@@ -526,12 +546,29 @@ async def stream_companion_chat(
                     provider=response_provider,
                     model=response_model,
                 )
-                if evidence_route:
+                if evidence_route or getattr(prepared, "knowledge_decision", None) is not None:
                     try:
                         save_message_grounding(
                             store.storage_path,
                             assistant_message_id,
-                            knowledge_enabled=True,
+                            knowledge_enabled=bool(prepared.plan.use_knowledge),
+                            knowledge_access_policy=getattr(
+                                prepared,
+                                "knowledge_policy",
+                                payload.knowledge_access_policy,
+                            ),
+                            knowledge_decision=getattr(
+                                prepared,
+                                "knowledge_decision",
+                                None,
+                            ),
+                            knowledge_retrieved=bool(prepared.plan.use_knowledge),
+                            knowledge_document_count=CompanionChatService._grounding_document_count(
+                                grounding
+                            ),
+                            knowledge_chunk_count=CompanionChatService._grounding_chunk_count(
+                                grounding
+                            ),
                             knowledge_fallback_reason=grounding_fallback,
                             evidence=list(grounding_evidence),
                             citations=list(grounding_citations),
@@ -550,7 +587,24 @@ async def stream_companion_chat(
                         "output_text": text,
                         "provider": response_provider,
                         "model": response_model,
-                        "knowledge_enabled": payload.knowledge_enabled,
+                        "knowledge_enabled": bool(payload.knowledge_enabled),
+                        "knowledge_access_policy": getattr(
+                            prepared,
+                            "knowledge_policy",
+                            payload.knowledge_access_policy,
+                        ),
+                        "knowledge_decision": (
+                            prepared.knowledge_decision.model_dump(mode="json")
+                            if getattr(prepared, "knowledge_decision", None) is not None
+                            else None
+                        ),
+                        "knowledge_retrieved": bool(prepared.plan.use_knowledge),
+                        "knowledge_document_count": CompanionChatService._grounding_document_count(
+                            grounding
+                        ),
+                        "knowledge_chunk_count": CompanionChatService._grounding_chunk_count(
+                            grounding
+                        ),
                         "knowledge_fallback_reason": grounding_fallback,
                         "evidence": [
                             item.model_dump(mode="json") for item in grounding_evidence

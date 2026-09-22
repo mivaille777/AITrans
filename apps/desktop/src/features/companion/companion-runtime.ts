@@ -1,5 +1,10 @@
 import type { CompanionClientSurface } from "../../api/companion"
-import type { AgentRunSnapshot, AgentTraceEvent } from "../../api/agent"
+import type {
+  AgentRunSnapshot,
+  AgentTraceEvent,
+  KnowledgeAccessDecision,
+  KnowledgeAccessPolicy,
+} from "../../api/agent"
 import type {
   ChatContextMode,
   CompanionChatMessage,
@@ -36,7 +41,12 @@ export interface CompanionRuntimeMessage extends CompanionChatMessage {
   serverMessageId?: string
   errorCode?: string
   generationPhase?: CompanionGenerationPhase
+  knowledgeAccessPolicy?: KnowledgeAccessPolicy
   knowledgeEnabled?: boolean
+  knowledgeDecision?: KnowledgeAccessDecision | null
+  knowledgeRetrieved?: boolean
+  knowledgeDocumentCount?: number
+  knowledgeChunkCount?: number
   knowledgeFallbackReason?: string
   evidence?: AgentEvidenceItem[]
   citations?: AgentCitationRef[]
@@ -105,6 +115,7 @@ export function companionContextSnapshot(
 }
 
 type ScopedCompanionHandoff = CompanionHandoff & {
+  knowledge_access_policy?: KnowledgeAccessPolicy
   knowledge_enabled?: boolean
   knowledge_document_ids?: string[]
 }
@@ -119,6 +130,7 @@ export interface CompanionHandoffRuntimeSeed {
   draft: string
   sessionId: string
   scopeId: string
+  knowledgeAccessPolicy: KnowledgeAccessPolicy
   knowledgeEnabled: boolean
   knowledgeDocumentIds: string[]
 }
@@ -128,13 +140,16 @@ export function companionHandoffRuntimeSeed(
 ): CompanionHandoffRuntimeSeed {
   const scoped = handoff as ScopedCompanionHandoff
   const knowledgeDocumentIds = normalizedDocumentIds(scoped.knowledge_document_ids)
+  const knowledgeAccessPolicy = scoped.knowledge_access_policy
+    ?? (scoped.knowledge_enabled ? "always" : "auto")
   return {
     context: companionContextSnapshot(handoff),
     contextMode: "reading",
     draft: handoff.suggested_prompt ?? "",
     sessionId: `companion-${handoff.handoff_id}`,
     scopeId: `handoff:${handoff.handoff_id}`,
-    knowledgeEnabled: Boolean(scoped.knowledge_enabled),
+    knowledgeAccessPolicy,
+    knowledgeEnabled: knowledgeAccessPolicy === "always",
     knowledgeDocumentIds,
   }
 }
@@ -150,7 +165,12 @@ export function companionHistory(
 }
 
 type PersistedGroundingMessage = ConversationMessage & {
+  knowledge_access_policy?: KnowledgeAccessPolicy
   knowledge_enabled?: boolean
+  knowledge_decision?: KnowledgeAccessDecision | null
+  knowledge_retrieved?: boolean
+  knowledge_document_count?: number
+  knowledge_chunk_count?: number
   knowledge_fallback_reason?: string
   evidence?: AgentEvidenceItem[]
   citations?: AgentCitationRef[]
@@ -171,7 +191,13 @@ export function restoreCompanionMessages(
       serverMessageId: message.message_id,
       errorCode: message.error_code,
       generationPhase: message.status === "complete" ? "complete" : undefined,
+      knowledgeAccessPolicy: grounded.knowledge_access_policy
+        ?? (grounded.knowledge_enabled ? "always" : "auto"),
       knowledgeEnabled: grounded.knowledge_enabled ?? false,
+      knowledgeDecision: grounded.knowledge_decision ?? null,
+      knowledgeRetrieved: grounded.knowledge_retrieved,
+      knowledgeDocumentCount: grounded.knowledge_document_count,
+      knowledgeChunkCount: grounded.knowledge_chunk_count,
       knowledgeFallbackReason: grounded.knowledge_fallback_reason ?? "",
       evidence: grounded.evidence ?? [],
       citations: grounded.citations ?? [],
@@ -208,6 +234,7 @@ export interface CompanionRequestInput {
   context?: CompanionContextSnapshot | null
   messages: CompanionRuntimeMessage[]
   requestId: number
+  knowledgeAccessPolicy?: KnowledgeAccessPolicy
   knowledgeEnabled?: boolean
   knowledgeDocumentIds?: string[]
 }
@@ -222,10 +249,13 @@ export function buildCompanionChatRequest({
   context = EMPTY_COMPANION_CONTEXT,
   messages,
   requestId,
-  knowledgeEnabled = false,
+  knowledgeAccessPolicy,
+  knowledgeEnabled,
   knowledgeDocumentIds = [],
 }: CompanionRequestInput): CompanionChatRequestWithClient {
   const resolvedContext = context ?? EMPTY_COMPANION_CONTEXT
+  const policy: KnowledgeAccessPolicy = knowledgeAccessPolicy
+    ?? (knowledgeEnabled === undefined ? "auto" : knowledgeEnabled ? "always" : "never")
   return {
     conversation_id: conversationId,
     session_id: sessionId,
@@ -246,7 +276,10 @@ export function buildCompanionChatRequest({
     source_kind: resolvedContext.source_kind,
     history: companionHistory(messages),
     request_id: requestId,
-    knowledge_enabled: knowledgeEnabled,
-    knowledge_document_ids: knowledgeEnabled ? knowledgeDocumentIds : [],
+    knowledge_access_policy: policy,
+    // Keep the legacy field for older backends; policy is authoritative.
+    knowledge_enabled: policy === "always",
+    // Document IDs are an access boundary, not a retrieval command.
+    knowledge_document_ids: knowledgeDocumentIds,
   }
 }

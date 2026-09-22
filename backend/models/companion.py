@@ -5,6 +5,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+from backend.models.knowledge_access import (
+    KnowledgeAccessDecision,
+    KnowledgeAccessPolicy,
+)
 from backend.models.quick_actions import ReadingContextPayload
 
 
@@ -66,7 +70,8 @@ class CompanionChatRequest(BaseModel):
     context_before: str = Field(default="", max_length=4000)
     context_after: str = Field(default="", max_length=4000)
     source_kind: str = Field(default="", max_length=128)
-    knowledge_enabled: bool = False
+    knowledge_access_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_enabled: bool | None = None
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator("source_language", "target_language")
@@ -81,6 +86,17 @@ class CompanionChatRequest(BaseModel):
     def validate_reading_context(self) -> CompanionChatRequest:
         if self.context_mode == "reading" and not self.source_text.strip():
             raise ValueError("Reading-grounded chat requires selected source text.")
+        if (
+            self.knowledge_enabled is not None
+            and "knowledge_access_policy" not in self.model_fields_set
+        ):
+            # Keep older desktop clients working while ensuring new clients can
+            # explicitly send Auto without the legacy boolean overriding it.
+            self.knowledge_access_policy = (
+                KnowledgeAccessPolicy.ALWAYS
+                if self.knowledge_enabled
+                else KnowledgeAccessPolicy.NEVER
+            )
         return self
 
 
@@ -93,6 +109,11 @@ class CompanionChatResponse(BaseModel):
     model: str
     request_id: int
     knowledge_enabled: bool = False
+    knowledge_access_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_decision: KnowledgeAccessDecision | None = None
+    knowledge_retrieved: bool = False
+    knowledge_document_count: int = Field(default=0, ge=0)
+    knowledge_chunk_count: int = Field(default=0, ge=0)
     knowledge_fallback_reason: str = ""
     evidence: list[AgentEvidenceItem] = Field(default_factory=list)
     citations: list[AgentCitationRef] = Field(default_factory=list)
