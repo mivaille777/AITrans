@@ -1,0 +1,818 @@
+[
+  {
+    "case_id": "water-tank-study-objective",
+    "query": "What does the water-tank study evaluate, and how is the LLM positioned in the control loop?",
+    "categories": ["term"],
+    "relevant_chunk_ids": ["chunk_98a1c298f2e27f1baa42e996"],
+    "relevance_grades": {"chunk_98a1c298f2e27f1baa42e996": 3},
+    "claims": [
+      {"claim_id": "study-objective", "relevant_chunk_ids": ["chunk_98a1c298f2e27f1baa42e996"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The study evaluates an LLM-assisted supervisory PID framework on a nonlinear water-tank benchmark using MATLAB/Simulink-Python co-simulation. The LLM supervises PID tuning rather than replacing the feedback controller.",
+    "answerable": true,
+    "tags": ["water-tank", "study-objective", "smoke"],
+    "notes": "Gold ID comes from the current ready index; revalidate after reindexing.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-four-control-architectures",
+    "query": "Which four control architectures are compared in the water-tank experiment?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_aa4906a854b707167a50f3d6"],
+    "relevance_grades": {"chunk_aa4906a854b707167a50f3d6": 3},
+    "claims": [
+      {"claim_id": "four-architectures", "relevant_chunk_ids": ["chunk_aa4906a854b707167a50f3d6"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The experiment compares fixed-gain PID, MATLAB PID Tuner autotuned PID, direct LLM control, and a hybrid LLM-PID controller that tunes PID gains online.",
+    "answerable": true,
+    "tags": ["water-tank", "exact-identifier", "controller"],
+    "notes": "Tests retrieval of a compact enumerated list.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-matlab-python-ollama-pipeline",
+    "query": "How are MATLAB/Simulink, Python, and LLaMA/Ollama connected in the water-tank experiment?",
+    "categories": ["cross_section"],
+    "relevant_chunk_ids": ["chunk_77ab16a78390f66fe1749fbe"],
+    "relevance_grades": {"chunk_77ab16a78390f66fe1749fbe": 3},
+    "claims": [
+      {"claim_id": "simulation-language-pipeline", "relevant_chunk_ids": ["chunk_77ab16a78390f66fe1749fbe"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "MATLAB/Simulink models and integrates the plant, while Python mediates data exchange, formats numerical state into prompts, and parses the model response into numerical control actions. LLaMA is accessed through Ollama.",
+    "answerable": true,
+    "tags": ["water-tank", "pipeline", "multi-component"],
+    "notes": "Tests whether the answer combines the roles of multiple runtime components.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-nominal-condition",
+    "query": "What is the nominal operating condition used for the water-tank control comparison?",
+    "categories": ["term"],
+    "relevant_chunk_ids": ["chunk_8baaf601916e03fc63c8fb74"],
+    "relevance_grades": {"chunk_8baaf601916e03fc63c8fb74": 3},
+    "claims": [
+      {"claim_id": "nominal-condition", "relevant_chunk_ids": ["chunk_8baaf601916e03fc63c8fb74"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The tank starts at a low liquid level of 1 m and tracks a constant 10 m reference without external disturbances.",
+    "answerable": true,
+    "tags": ["water-tank", "nominal", "conditions"],
+    "notes": "Includes numeric values to test exact retrieval.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-measurement-bias-disturbance",
+    "query": "How is the measurement-bias disturbance injected in the water-tank experiment?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_a40e0f1fd49a304d53f6b026"],
+    "relevance_grades": {"chunk_a40e0f1fd49a304d53f6b026": 3},
+    "claims": [
+      {"claim_id": "measurement-bias", "relevant_chunk_ids": ["chunk_a40e0f1fd49a304d53f6b026"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "At t = 10 s, a +2 m bias is added to the level sensor, so the controller receives H_measured = H_true + 2 while the true tank level is unchanged.",
+    "answerable": true,
+    "tags": ["water-tank", "disturbance", "measurement-bias"],
+    "notes": "Tests formula-like identifier and numeric disturbance parameters.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-measurement-drift-disturbance",
+    "query": "What is the measurement-drift model and drift rate in the water-tank experiment?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_a92b15e8f6b34894d2dd8ca6"],
+    "relevance_grades": {"chunk_a92b15e8f6b34894d2dd8ca6": 3},
+    "claims": [
+      {"claim_id": "measurement-drift", "relevant_chunk_ids": ["chunk_a92b15e8f6b34894d2dd8ca6"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "At t = 10 s, a ramp drift is added: H_measured(t) = H_true(t) + r(t), with r(t) = k(t - 10) and k = 1 m/s.",
+    "answerable": true,
+    "tags": ["water-tank", "disturbance", "measurement-drift"],
+    "notes": "Tests retrieval of a disturbance definition with a rate parameter.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-disturbance-metrics",
+    "query": "Which performance metrics are used in addition to the response plots for the water-tank disturbance scenarios?",
+    "categories": ["term"],
+    "relevant_chunk_ids": ["chunk_5659521fc06c9e7806ad8f67"],
+    "relevance_grades": {"chunk_5659521fc06c9e7806ad8f67": 3},
+    "claims": [
+      {"claim_id": "disturbance-metrics", "relevant_chunk_ids": ["chunk_5659521fc06c9e7806ad8f67"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The scenarios are evaluated with integrated absolute error (IAE) and total variation of the control signal (TVu).",
+    "answerable": true,
+    "tags": ["water-tank", "metrics", "disturbance"],
+    "notes": "Tests acronym and metric-name retrieval.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "water-tank-chinese-controller-query",
+    "query": "水箱实验比较了哪四种控制架构？",
+    "categories": ["multilingual", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_aa4906a854b707167a50f3d6"],
+    "relevance_grades": {"chunk_aa4906a854b707167a50f3d6": 3},
+    "claims": [
+      {"claim_id": "chinese-controller-list", "relevant_chunk_ids": ["chunk_aa4906a854b707167a50f3d6"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2",
+      "document_title": "Computers and Chemical Engineering",
+      "source": "indexed-water-tank-paper",
+      "language": "zh-CN"
+    },
+    "query_type": "Factual",
+    "expected_answer": "固定增益 PID、自动调参 PID、直接 LLM 控制，以及混合 LLM-PID 控制。",
+    "answerable": true,
+    "tags": ["water-tank", "multilingual", "chinese"],
+    "notes": "Tests Chinese query to English source retrieval.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-llm-boundary-role",
+    "query": "Can the LLM in the Measurement study directly output PID increments or actuator commands?",
+    "categories": ["exact_identifier", "cross_section"],
+    "relevant_chunk_ids": ["chunk_e945d21fa311da2062a272c1", "chunk_ee8a42938333ac4a6a628996"],
+    "relevance_grades": {
+      "chunk_e945d21fa311da2062a272c1": 3,
+      "chunk_ee8a42938333ac4a6a628996": 2
+    },
+    "claims": [
+      {"claim_id": "llm-output-boundary", "relevant_chunk_ids": ["chunk_e945d21fa311da2062a272c1"]},
+      {"claim_id": "deterministic-safety-authority", "relevant_chunk_ids": ["chunk_ee8a42938333ac4a6a628996"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "No. The LLM produces a bounded blueprint relative to a supplied GP anchor. A deterministic compiler turns it into numerical PID candidates, and deterministic validation and safety admission decide what may execute.",
+    "answerable": true,
+    "tags": ["measurement", "llm-boundary", "safety"],
+    "notes": "Multi-claim case for authority separation.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-objective-metrics",
+    "query": "What does the complete-episode objective include in the Measurement study, and what is the role of the segment objective?",
+    "categories": ["cross_section", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_c6413d324743e32bc8229680", "chunk_cb9996d613a17eae24d33174", "chunk_4486fc63b43b688b59fdc5e9"],
+    "relevance_grades": {
+      "chunk_c6413d324743e32bc8229680": 3,
+      "chunk_cb9996d613a17eae24d33174": 3,
+      "chunk_4486fc63b43b688b59fdc5e9": 2
+    },
+    "claims": [
+      {"claim_id": "principal-metrics", "relevant_chunk_ids": ["chunk_c6413d324743e32bc8229680"]},
+      {"claim_id": "episode-objective", "relevant_chunk_ids": ["chunk_cb9996d613a17eae24d33174"]},
+      {"claim_id": "segment-objective-limit", "relevant_chunk_ids": ["chunk_4486fc63b43b688b59fdc5e9"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The evaluation tracks IAE, TVu, positive overshoot, terminal absolute error, and settling time; the complete-episode objective combines normalized tracking, smoothness, overshoot, terminal-error, and settling terms and penalizes continuous saturation over 3 s. The segment objective is only for local candidate ranking and cannot replace the complete-episode objective or independently represent terminal error and settling time.",
+    "answerable": true,
+    "tags": ["measurement", "metrics", "cross-section"],
+    "notes": "Tests whether retrieval separates local ranking from final evaluation.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-method-overview",
+    "query": "What are the distinct roles of the GP and the LLM at a segment boundary in the proposed tuning method?",
+    "categories": ["cross_section"],
+    "relevant_chunk_ids": ["chunk_b8620cb39a14b66d2c90b8bd", "chunk_cfb6944dd0bfa66b58ad7775"],
+    "relevance_grades": {
+      "chunk_b8620cb39a14b66d2c90b8bd": 3,
+      "chunk_cfb6944dd0bfa66b58ad7775": 3
+    },
+    "claims": [
+      {"claim_id": "method-role-separation", "relevant_chunk_ids": ["chunk_b8620cb39a14b66d2c90b8bd", "chunk_cfb6944dd0bfa66b58ad7775"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The GP performs uncertainty-aware statistical localization and identifies promising anchors. The LLM interprets current state, history, mechanism evidence, and GP statistics to generate bounded local gain directions; deterministic compilation, evaluation, admission, and execution remain separate steps.",
+    "answerable": true,
+    "tags": ["measurement", "gp", "llm", "architecture"],
+    "notes": "Tests cross-chunk role separation.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-safety-admission-chain",
+    "query": "What checks must a candidate pass before it can be executed in the next control segment?",
+    "categories": ["cross_section", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773", "chunk_f26460985de83b7fefbde353", "chunk_8a2690ac96545ed9ba9e7198"],
+    "relevance_grades": {
+      "chunk_930dfeac492a0f882399f773": 3,
+      "chunk_f26460985de83b7fefbde353": 3,
+      "chunk_8a2690ac96545ed9ba9e7198": 3
+    },
+    "claims": [
+      {"claim_id": "admission-chain", "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773", "chunk_f26460985de83b7fefbde353"]},
+      {"claim_id": "fallback-rule", "relevant_chunk_ids": ["chunk_8a2690ac96545ed9ba9e7198"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "Candidates are checked for numerical validity, search-region and global bounds, switching feasibility, short-horizon physical risk, recoverability, and remaining-episode performance. They are previewed under multiple models; if none is admitted, the current certified controller is held or a predefined recovery controller is used. Invalid or unvalidated parameters are never executed.",
+    "answerable": true,
+    "tags": ["measurement", "safety", "admission", "fallback"],
+    "notes": "High-value safety case; keep all three gold chunks after reindexing.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-boundary-expansion-evidence",
+    "query": "What evidence is required before the adaptive search region can be expanded?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_a3ae39fee6e76d0cddc75f7e", "chunk_be24b02e3a45531dc0bb8e10"],
+    "relevance_grades": {
+      "chunk_a3ae39fee6e76d0cddc75f7e": 3,
+      "chunk_be24b02e3a45531dc0bb8e10": 3
+    },
+    "claims": [
+      {"claim_id": "boundary-evidence", "relevant_chunk_ids": ["chunk_a3ae39fee6e76d0cddc75f7e"]},
+      {"claim_id": "execution-only-expansion", "relevant_chunk_ids": ["chunk_be24b02e3a45531dc0bb8e10"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "Expansion requires at least the configured number of consecutive valid observations in the same parameter direction, completed segments, finite objectives and margins, no physical or numerical violations, remaining-episode protection, and no cooldown violation. It must be based on actual executed trajectories, not LLM confidence or unexecuted previews.",
+    "answerable": true,
+    "tags": ["measurement", "search-region", "evidence"],
+    "notes": "Tests retrieval of a boundary condition plus its anti-shortcut rule.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-nominal-results",
+    "query": "What nominal-condition results are reported for the Proposed method in Table 4?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_d26dd2b41f8b61ba410a46de"],
+    "relevance_grades": {"chunk_d26dd2b41f8b61ba410a46de": 3},
+    "claims": [
+      {"claim_id": "proposed-nominal-metrics", "relevant_chunk_ids": ["chunk_d26dd2b41f8b61ba410a46de"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "For accepted nominal episodes, Proposed reports IAE 43.48 ± 11.74, TVu 6.43 ± 1.78, positive overshoot 0.20 ± 0.40%, settling time 17.15 ± 6.29 s, and terminal error 0.0024 ± 0.0016.",
+    "answerable": true,
+    "tags": ["measurement", "results", "table", "numeric"],
+    "notes": "Numeric table-recall case; do not paraphrase away the values when manually checking.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-non-nominal-robustness",
+    "query": "How does the Proposed method compare with Fixed PID under the three registered non-nominal scenarios?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_5fe711841a2d4587e334c9c7"],
+    "relevance_grades": {"chunk_5fe711841a2d4587e334c9c7": 3},
+    "claims": [
+      {"claim_id": "scenario-wise-robustness", "relevant_chunk_ids": ["chunk_5fe711841a2d4587e334c9c7"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The Proposed method has lower mean J in all three scenarios: operating-point shift 0.3115 versus 0.6187, plant mismatch 0.4337 versus 0.8389, and actuator dynamics 0.5619 versus 1.0357. The aggregate reduction is 47.58% with 30/30 accepted episodes.",
+    "answerable": true,
+    "tags": ["measurement", "robustness", "numeric"],
+    "notes": "Tests retrieval of a scenario table rather than only the section heading.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-llm-contribution",
+    "query": "What does the ablation evidence say the LLM contributes beyond GP-only search?",
+    "categories": ["cross_section"],
+    "relevant_chunk_ids": ["chunk_07f4831e9a26b3ea1b5127e6", "chunk_52880796d049aa111ee99080"],
+    "relevance_grades": {
+      "chunk_07f4831e9a26b3ea1b5127e6": 3,
+      "chunk_52880796d049aa111ee99080": 3
+    },
+    "claims": [
+      {"claim_id": "llm-information-layer", "relevant_chunk_ids": ["chunk_07f4831e9a26b3ea1b5127e6"]},
+      {"claim_id": "mechanism-channel", "relevant_chunk_ids": ["chunk_52880796d049aa111ee99080"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The LLM adds an information-processing layer that integrates state/history and mechanism information. It interprets relationships among trajectories, controller state, and PID roles to guide local gain directions; the contribution is complementary to the GP's numerical search rather than a replacement for it.",
+    "answerable": true,
+    "tags": ["measurement", "ablation", "llm", "gp"],
+    "notes": "Tests semantic synthesis from two adjacent evidence channels.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-limitations-generalizability",
+    "query": "What are the main limitations before the Measurement study can support deployment-level control claims?",
+    "categories": ["cross_section"],
+    "relevant_chunk_ids": ["chunk_4cc2a9ad217b87eb6237b20a", "chunk_b67164bb34b1756432162af3"],
+    "relevance_grades": {
+      "chunk_4cc2a9ad217b87eb6237b20a": 3,
+      "chunk_b67164bb34b1756432162af3": 2
+    },
+    "claims": [
+      {"claim_id": "physical-generalizability", "relevant_chunk_ids": ["chunk_4cc2a9ad217b87eb6237b20a"]},
+      {"claim_id": "robustness-scope", "relevant_chunk_ids": ["chunk_b67164bb34b1756432162af3"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The evidence is limited to a simulated nonlinear single-tank process and predefined conditions. Physical deployment still requires hardware-in-the-loop and real-tank validation because noise, drift, actuator dead zones, latency, aging, and unmodeled nonlinearities are only partially represented. The non-nominal results also do not establish superiority over every adaptive baseline.",
+    "answerable": true,
+    "tags": ["measurement", "limitations", "deployment"],
+    "notes": "Prevents the answer generator from turning simulation evidence into a deployment claim.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "measurement-chinese-safety-query",
+    "query": "Measurement 论文中，候选 PID 在执行前为什么不能直接进入下一控制段？",
+    "categories": ["multilingual", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773", "chunk_8a2690ac96545ed9ba9e7198"],
+    "relevance_grades": {
+      "chunk_930dfeac492a0f882399f773": 3,
+      "chunk_8a2690ac96545ed9ba9e7198": 3
+    },
+    "claims": [
+      {"claim_id": "chinese-safety-admission", "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773", "chunk_8a2690ac96545ed9ba9e7198"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Measurement",
+      "source": "indexed-measurement-paper",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "因为候选只是 proposal，必须先通过数值有效性、边界、切换可行性、短期物理风险、可恢复性和剩余 episode 性能等确定性 admission 检查；没有新候选通过时应保持当前已认证控制器或使用预定义恢复控制器，不能执行未经验证的参数。",
+    "answerable": true,
+    "tags": ["measurement", "multilingual", "safety"],
+    "notes": "Tests Chinese reasoning over English safety evidence.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-scope-empty-workspace",
+    "query": "What is the required behavior when a research workspace is explicitly selected but contains no authorized documents?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_363c85c0faff14d12d675b4d"],
+    "relevance_grades": {"chunk_363c85c0faff14d12d675b4d": 3},
+    "claims": [
+      {"claim_id": "restricted-empty-scope", "relevant_chunk_ids": ["chunk_363c85c0faff14d12d675b4d"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The scope must remain restricted(empty) and return an empty result; it must not fall back to the whole knowledge library. This protects the workspace boundary.",
+    "answerable": true,
+    "tags": ["aitrans", "scope", "security", "exact-identifier"],
+    "notes": "Important negative-boundary case for the knowledge scope resolver.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-scope-contract",
+    "query": "What does the shared execution contract say about ScopeContext and empty authorization sets?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_0f096b37fadf2c8842a6aff8"],
+    "relevance_grades": {"chunk_0f096b37fadf2c8842a6aff8": 3},
+    "claims": [
+      {"claim_id": "scope-context-contract", "relevant_chunk_ids": ["chunk_0f096b37fadf2c8842a6aff8"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Factual",
+    "expected_answer": "Evidence scope must be repaired before adding new experts. Every retrieval and tool request must use a trusted ScopeContext, and an empty authorized set must never be interpreted as access to the whole library.",
+    "answerable": true,
+    "tags": ["aitrans", "scope", "contract"],
+    "notes": "Near-duplicate intent with the previous case is intentional for ranking discrimination.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-task-result-contract",
+    "query": "Which contracts and validation rules are required for multi-agent task planning?",
+    "categories": ["cross_section", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_641e8ad1b69ca9581f9d29da"],
+    "relevance_grades": {"chunk_641e8ad1b69ca9581f9d29da": 3},
+    "claims": [
+      {"claim_id": "task-contract-types", "relevant_chunk_ids": ["chunk_641e8ad1b69ca9581f9d29da"]},
+      {"claim_id": "task-plan-validation", "relevant_chunk_ids": ["chunk_641e8ad1b69ca9581f9d29da"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The plan requires TaskSpec, TaskResult, ValidatedTaskPlan, ScopeContext, and Artifact contracts plus concrete artifact DTOs. Validation must reject duplicate task IDs, unknown roles/tools, cyclic dependencies, invalid artifact inputs, missing required fields, and plans that exceed the task limit; results are reduced deterministically by task ID, attempt, and version.",
+    "answerable": true,
+    "tags": ["aitrans", "multi-agent", "contract", "validation"],
+    "notes": "Tests retrieval of both named DTOs and validation constraints.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-routing-and-graph-ownership",
+    "query": "How should routing and graph ownership be organized for fast, single-agent, and workflow requests?",
+    "categories": ["cross_section"],
+    "relevant_chunk_ids": ["chunk_ac90728903af3c32b9f8da4c"],
+    "relevance_grades": {"chunk_ac90728903af3c32b9f8da4c": 3},
+    "claims": [
+      {"claim_id": "routing-modes", "relevant_chunk_ids": ["chunk_ac90728903af3c32b9f8da4c"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The root graph should choose fast, single, or workflow according to the task. It should resolve identity, acquire run ownership, freeze scope and memory, validate the plan before expert calls, execute a serial topological task graph, and preserve graph/checkpoint compatibility instead of maintaining duplicate routing authorities.",
+    "answerable": true,
+    "tags": ["aitrans", "routing", "langgraph", "ownership"],
+    "notes": "Tests architecture-level retrieval from the development taskbook.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-resume-and-runtime-events",
+    "query": "What safeguards are required for subtask recovery and real-time agent events?",
+    "categories": ["cross_section", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_24cc0c7bce55e3279dd02dd0", "chunk_efb3a4457fc8dec89dfa54df"],
+    "relevance_grades": {
+      "chunk_24cc0c7bce55e3279dd02dd0": 3,
+      "chunk_efb3a4457fc8dec89dfa54df": 3
+    },
+    "claims": [
+      {"claim_id": "recovery-lease", "relevant_chunk_ids": ["chunk_24cc0c7bce55e3279dd02dd0"]},
+      {"claim_id": "event-contract", "relevant_chunk_ids": ["chunk_efb3a4457fc8dec89dfa54df"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "Recovery needs a run lease to prevent double recovery and real SQLite checkpoint/pending-write tests. Runtime events must carry identifiers such as event_id, run/task/parent_task, attempt, plan_revision, sequence, status, time, usage, and reason code; a unified event sink assigns sequence numbers so reconnects can deduplicate events.",
+    "answerable": true,
+    "tags": ["aitrans", "resume", "events", "recovery"],
+    "notes": "Cross-section case for persistence and observability requirements.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-curator-memory-boundary",
+    "query": "How should Knowledge Curator outputs and cross-session memory respect source and workspace boundaries?",
+    "categories": ["cross_section"],
+    "relevant_chunk_ids": ["chunk_f1b23e15558e770a75177538", "chunk_1c5224bfe4aeb4254500280d"],
+    "relevance_grades": {
+      "chunk_f1b23e15558e770a75177538": 3,
+      "chunk_1c5224bfe4aeb4254500280d": 3
+    },
+    "claims": [
+      {"claim_id": "curator-drafts", "relevant_chunk_ids": ["chunk_f1b23e15558e770a75177538"]},
+      {"claim_id": "memory-workspace-boundary", "relevant_chunk_ids": ["chunk_1c5224bfe4aeb4254500280d"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "The Curator should produce typed note/item/relation drafts and proposals with source and scope, not copy the final answer into every database. Memory retrieval must stay within the current workspace and allowed global preferences; completed and verified artifacts can create candidates, while user facts and model suggestions remain separate and revocation/deletion checks must reach commit time.",
+    "answerable": true,
+    "tags": ["aitrans", "curator", "memory", "scope"],
+    "notes": "Tests provenance and memory-boundary synthesis.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-completion-quality-gate",
+    "query": "What is the distinction between completion criteria and quality/performance targets in the AITrans taskbook?",
+    "categories": ["cross_section", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_6896e5d9c1695a23f43b90b6", "chunk_2ad0207405b96f06d262b936"],
+    "relevance_grades": {
+      "chunk_6896e5d9c1695a23f43b90b6": 3,
+      "chunk_2ad0207405b96f06d262b936": 3
+    },
+    "claims": [
+      {"claim_id": "completion-outcomes", "relevant_chunk_ids": ["chunk_6896e5d9c1695a23f43b90b6"]},
+      {"claim_id": "quality-targets-not-measurements", "relevant_chunk_ids": ["chunk_2ad0207405b96f06d262b936"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "Completion is judged by user-visible, source-traceable research outcomes such as coverage, citations, non-fabrication, and resumable execution. Quality, cost, and performance figures are design goals rather than measured results; they cannot be reported as achieved without a real MA10 report.",
+    "answerable": true,
+    "tags": ["aitrans", "quality", "acceptance", "verification"],
+    "notes": "Important anti-overclaiming case for future agent answers.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-migration-compatibility",
+    "query": "What migration path must be checked before final delivery of the multi-agent runtime?",
+    "categories": ["exact_identifier"],
+    "relevant_chunk_ids": ["chunk_a4a6953ab416ef665faea51e"],
+    "relevance_grades": {"chunk_a4a6953ab416ef665faea51e": 3},
+    "claims": [
+      {"claim_id": "migration-path", "relevant_chunk_ids": ["chunk_a4a6953ab416ef665faea51e"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The migration switches must be validated along simple → single → workflow, while checking old requests, traces, checkpoints, and existing knowledge and note APIs for compatibility.",
+    "answerable": true,
+    "tags": ["aitrans", "migration", "compatibility"],
+    "notes": "Compact exact-identifier case for migration semantics.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "aitrans-chinese-empty-scope-query",
+    "query": "空的 Research Workspace 能不能自动退回全库搜索？为什么？",
+    "categories": ["multilingual", "exact_identifier"],
+    "relevant_chunk_ids": ["chunk_363c85c0faff14d12d675b4d", "chunk_0f096b37fadf2c8842a6aff8"],
+    "relevance_grades": {
+      "chunk_363c85c0faff14d12d675b4d": 3,
+      "chunk_0f096b37fadf2c8842a6aff8": 3
+    },
+    "claims": [
+      {"claim_id": "chinese-empty-scope", "relevant_chunk_ids": ["chunk_363c85c0faff14d12d675b4d", "chunk_0f096b37fadf2c8842a6aff8"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_4432bb1a79dbe230742cd82b",
+      "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-aitrans-taskbook",
+      "language": "zh-CN"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "不能。显式选择空 Workspace 时必须保持 restricted(empty)，空授权集合不能解释成全库权限，否则会突破用户定义的证据范围。",
+    "answerable": true,
+    "tags": ["aitrans", "multilingual", "scope", "security"],
+    "notes": "Tests Chinese retrieval of the core scope safety invariant.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "multi-document-llm-role-comparison",
+    "query": "How do the water-tank study and the Measurement paper constrain the role of the LLM?",
+    "categories": ["multi_document", "cross_section"],
+    "relevant_chunk_ids": ["chunk_98a1c298f2e27f1baa42e996", "chunk_e945d21fa311da2062a272c1", "chunk_ee8a42938333ac4a6a628996"],
+    "relevance_grades": {
+      "chunk_98a1c298f2e27f1baa42e996": 3,
+      "chunk_e945d21fa311da2062a272c1": 3,
+      "chunk_ee8a42938333ac4a6a628996": 3
+    },
+    "claims": [
+      {"claim_id": "water-tank-supervision", "relevant_chunk_ids": ["chunk_98a1c298f2e27f1baa42e996"]},
+      {"claim_id": "measurement-bounded-proposal", "relevant_chunk_ids": ["chunk_e945d21fa311da2062a272c1", "chunk_ee8a42938333ac4a6a628996"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2;doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Computers and Chemical Engineering; Measurement",
+      "source": "indexed-multi-document",
+      "language": "en"
+    },
+    "query_type": "Comparative",
+    "expected_answer": "Both documents keep the LLM above the low-level feedback loop. The water-tank study uses it as a supervisory PID tuner, while the Measurement paper restricts it to bounded local blueprints that are compiled, validated, and admitted by deterministic modules before execution.",
+    "answerable": true,
+    "tags": ["multi-document", "comparison", "llm", "safety"],
+    "notes": "First cross-document benchmark; requires evidence from both indexed papers.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "multi-document-control-safety-evidence",
+    "query": "How do the water-tank study and the Measurement paper differ in the way they frame safety and reproducibility?",
+    "categories": ["multi_document", "cross_section"],
+    "relevant_chunk_ids": ["chunk_3eeb47f962dd76a1a096cf84", "chunk_930dfeac492a0f882399f773"],
+    "relevance_grades": {
+      "chunk_3eeb47f962dd76a1a096cf84": 3,
+      "chunk_930dfeac492a0f882399f773": 3
+    },
+    "claims": [
+      {"claim_id": "water-tank-reproducibility", "relevant_chunk_ids": ["chunk_3eeb47f962dd76a1a096cf84"]},
+      {"claim_id": "measurement-safety-admission", "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_2b42b53ebf3c031253883ad2;doc_d4d1a15d06f79a7534f4a812",
+      "document_title": "Computers and Chemical Engineering; Measurement",
+      "source": "indexed-multi-document",
+      "language": "en"
+    },
+    "query_type": "Comparative",
+    "expected_answer": "The water-tank study emphasizes an educational, reproducible MATLAB-Python-LLM framework for evaluating heuristic tuning in a safety-critical setting. The Measurement paper makes the safety boundary operational through deterministic admission checks that separate proposals from executable controllers.",
+    "answerable": true,
+    "tags": ["multi-document", "comparison", "safety", "reproducibility"],
+    "notes": "Tests whether retrieval keeps educational framing distinct from execution-time safety rules.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "multi-document-evidence-and-research-delivery",
+    "query": "What common evidence discipline can be inferred by comparing the Measurement paper with the AITrans taskbook?",
+    "categories": ["multi_document", "cross_section"],
+    "relevant_chunk_ids": ["chunk_ee8a42938333ac4a6a628996", "chunk_6896e5d9c1695a23f43b90b6", "chunk_2ad0207405b96f06d262b936"],
+    "relevance_grades": {
+      "chunk_ee8a42938333ac4a6a628996": 2,
+      "chunk_6896e5d9c1695a23f43b90b6": 3,
+      "chunk_2ad0207405b96f06d262b936": 3
+    },
+    "claims": [
+      {"claim_id": "deterministic-validation", "relevant_chunk_ids": ["chunk_ee8a42938333ac4a6a628996"]},
+      {"claim_id": "traceable-delivery", "relevant_chunk_ids": ["chunk_6896e5d9c1695a23f43b90b6", "chunk_2ad0207405b96f06d262b936"]}
+    ],
+    "no_answer": false,
+    "metadata": {
+      "document_id": "doc_d4d1a15d06f79a7534f4a812;doc_4432bb1a79dbe230742cd82b",
+      "document_title": "Measurement; AITrans 科研多 Agent 系统：分阶段开发任务书",
+      "source": "indexed-multi-document",
+      "language": "en"
+    },
+    "query_type": "Comparative",
+    "expected_answer": "Both emphasize that model-generated proposals are not evidence by themselves: they need deterministic validation, traceable sources, and explicit acceptance criteria. The taskbook additionally warns that design targets must not be reported as measured achievements without a real validation report.",
+    "answerable": true,
+    "tags": ["multi-document", "evidence", "validation", "anti-overclaiming"],
+    "notes": "Cross-document quality-gate case.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "no-answer-mars-production-uptime",
+    "query": "What production uptime was measured on Mars in the 2027 deployment?",
+    "categories": ["no_answer"],
+    "relevant_chunk_ids": [],
+    "relevance_grades": {},
+    "claims": [],
+    "no_answer": true,
+    "metadata": {
+      "document_id": "current-index",
+      "document_title": "All currently indexed documents",
+      "source": "current-index-no-answer",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The current indexed documents do not contain evidence about a Mars deployment or its production uptime.",
+    "answerable": false,
+    "tags": ["no-answer", "abstention", "smoke"],
+    "notes": "Keep gold chunks empty; this case measures abstention against an out-of-scope premise.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "no-answer-gpu-energy-budget",
+    "query": "What GPU model and watt-hour energy budget were used for the production RAG deployment?",
+    "categories": ["no_answer"],
+    "relevant_chunk_ids": [],
+    "relevance_grades": {},
+    "claims": [],
+    "no_answer": true,
+    "metadata": {
+      "document_id": "current-index",
+      "document_title": "All currently indexed documents",
+      "source": "current-index-no-answer",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The current indexed documents do not specify a production GPU model or watt-hour energy budget.",
+    "answerable": false,
+    "tags": ["no-answer", "abstention", "deployment"],
+    "notes": "No gold IDs by design; unrelated metadata should not be invented.",
+    "updated_at": "2026-09-22"
+  },
+  {
+    "case_id": "no-answer-certified-industrial-deployment",
+    "query": "Which industrial certification number proves that the proposed controller has already been approved for field deployment?",
+    "categories": ["no_answer"],
+    "relevant_chunk_ids": [],
+    "relevance_grades": {},
+    "claims": [],
+    "no_answer": true,
+    "metadata": {
+      "document_id": "current-index",
+      "document_title": "All currently indexed documents",
+      "source": "current-index-no-answer",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The current indexed documents do not provide an industrial certification number or evidence of completed field approval.",
+    "answerable": false,
+    "tags": ["no-answer", "abstention", "safety"],
+    "notes": "Tests that simulation and design-goal evidence are not converted into certification claims.",
+    "updated_at": "2026-09-22"
+  }
+]
