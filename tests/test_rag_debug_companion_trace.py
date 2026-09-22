@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from backend.models.knowledge_access import KnowledgeAccessPolicy
+from backend.models.rag_debug import RagDebugRunRequest
+from backend.rag.config import RagConfig
 from backend.services.rag_debug_service import RagDebugService
 from backend.services.rag_debug_store_service import RagDebugStoreService
 
@@ -47,5 +51,37 @@ def test_companion_trace_records_route_retrieval_evidence_and_verification(tmp_p
         assert trace.citations[0]["label"] == "[1]"
         assert trace.verification["reason_codes"] == ["weak_claim_evidence_overlap"]
         assert trace.fallback_applied is True
+    finally:
+        service.close()
+
+
+def test_rag_debug_trace_exposes_knowledge_decision_and_scope_when_retrieval_is_skipped(
+    tmp_path: Path,
+) -> None:
+    service = RagDebugService(
+        store=RagDebugStoreService(storage_path=tmp_path / "rag-debug.sqlite3")
+    )
+    try:
+        trace = service.run_trace_sync(
+            RagDebugRunRequest(
+                query="你好",
+                knowledge_access_policy=KnowledgeAccessPolicy.AUTO,
+            ),
+            runtime=SimpleNamespace(config=RagConfig()),
+        )
+
+        assert trace.knowledge_decision["should_retrieve"] is False
+        assert trace.knowledge_decision["reason_code"] == "current_context_sufficient"
+        assert trace.knowledge_scope["strategy"] == "none"
+        assert trace.metadata["retrieval_skipped"] is True
+        assert trace.metadata["retrieval_round_count"] == 0
+        assert {stage.key for stage in trace.stages if stage.status == "skipped"} == {
+            "dense",
+            "bm25",
+            "fusion",
+            "rerank",
+            "context",
+            "answer",
+        }
     finally:
         service.close()

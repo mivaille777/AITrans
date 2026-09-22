@@ -155,13 +155,20 @@ describe("RagDebugStudio", () => {
     expect(screen.getByText("Verification passed")).toBeTruthy()
   })
 
-  it("renders all five interactive tabs", () => {
+  it("renders all six interactive tabs", () => {
     render(<RagDebugStudioTrace />)
 
     expect(screen.getByText("RAG Debug Studio")).toBeTruthy()
-    for (const label of ["Trace", "Chunks", "Evaluation", "Compare", "Datasets"]) {
+    for (const label of ["Trace", "Retrieval", "Chunks", "Evaluation", "Compare", "Datasets"]) {
       expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(false)
     }
+  })
+
+  it("opens the retrieval trace tab before a run", () => {
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Retrieval" }))
+    expect(screen.getByText("No retrieval trace")).toBeTruthy()
   })
 
   it("switches to the chunk explorer and selects a chunk", async () => {
@@ -192,6 +199,7 @@ describe("RagDebugStudio", () => {
         config_id: "default",
         top_k: 42,
         include_answer: false,
+        knowledge_access_policy: "auto",
       }),
     )
   })
@@ -229,6 +237,17 @@ describe("RagDebugStudio", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Evaluation" }))
     expect(screen.getByText("Recall@10")).toBeTruthy()
+    for (const label of [
+      "Retrieval Trigger Precision",
+      "Retrieval Trigger Recall",
+      "Unnecessary Retrieval Rate",
+      "Missing Retrieval Rate",
+      "Scope Violation Rate",
+      "Second-round Retrieval Rate",
+      "Evidence Sufficiency Rate",
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy()
+    }
     expect(screen.getByText("Case Results")).toBeTruthy()
   })
 

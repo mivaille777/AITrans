@@ -4,8 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.rag.config import RagConfig
-
 
 RagDebugRunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 RagDebugStageStatus = Literal[
@@ -48,6 +48,7 @@ class RagDebugRunRequest(RagDebugModel):
     top_k: int = Field(default=8, ge=1, le=100)
     include_answer: bool = False
     workspace_id: str = Field(default="", max_length=128)
+    knowledge_access_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
 
 
 class RagDebugStageEvent(RagDebugModel):
@@ -109,6 +110,8 @@ class RagDebugTraceResponse(RagDebugModel):
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     citations: list[dict[str, Any]] = Field(default_factory=list)
     answer: str = ""
+    knowledge_decision: dict[str, Any] = Field(default_factory=dict)
+    knowledge_scope: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     error: str = ""
 
@@ -276,11 +279,11 @@ class RagDebugCompareResponse(RagDebugModel):
 
 
 __all__ = [
-    "RagDebugCase",
-    "RagDebugCompanionTrace",
     "RagDebugCandidate",
+    "RagDebugCase",
     "RagDebugChunk",
     "RagDebugChunkPage",
+    "RagDebugCompanionTrace",
     "RagDebugCompareCase",
     "RagDebugCompareRequest",
     "RagDebugCompareResponse",

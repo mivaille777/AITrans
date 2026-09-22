@@ -1,29 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, RLock
 from time import perf_counter
+from typing import Any
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
-from typing import Any, Callable
 
+from backend.models.knowledge_access import KnowledgeScopeStrategy
 from backend.models.rag_debug import (
     RagDebugCandidate,
     RagDebugCase,
-    RagDebugCompanionTrace,
     RagDebugChunk,
     RagDebugChunkPage,
+    RagDebugCompanionTrace,
     RagDebugCompareCase,
     RagDebugCompareResponse,
     RagDebugConfigProfile,
     RagDebugContext,
     RagDebugDocument,
-    RagDebugEvaluationResponse,
     RagDebugRunAccepted,
     RagDebugRunEventsResponse,
     RagDebugRunRequest,
@@ -44,7 +44,7 @@ from backend.rag.evaluation_dataset import (
 from backend.rag.evidence_builder import build_agent_evidence
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.observability import build_rag_trace_events
-from backend.rag.query_planner import RagQueryPlan, RagQueryPlanner, merge_query_results
+from backend.rag.query_planner import RagQueryPlanner, merge_query_results
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.stores.base import VectorSearchFilter
 from backend.rag.structure_retrieval import (
@@ -52,8 +52,9 @@ from backend.rag.structure_retrieval import (
     detect_structural_intent,
     promote_structural_candidates,
 )
+from backend.services.knowledge_access_router import KnowledgeAccessRouter
+from backend.services.knowledge_scope_resolver import KnowledgeScopeResolver
 from backend.services.rag_debug_store_service import RagDebugStoreService
-
 
 _STAGE_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("query", "Query", "Parse query and intent"),
@@ -259,7 +260,7 @@ class RagDebugService:
         page: int = 1,
         page_size: int = 50,
     ) -> RagDebugChunkPage:
-        raw_chunks = getattr(runtime.sparse_retriever, "list_chunks", lambda: [])()
+        raw_chunks = getattr(runtime.sparse_retriever, "list_chunks", list)()
         normalized_document = document_id.strip()
         normalized_query = query.strip().casefold()
         filtered = [
@@ -487,6 +488,42 @@ class RagDebugService:
             raise KeyError(f"RAG config profile not found: {request.config_id}")
         response_stages = self._initial_stages()
 
+        knowledge_context_mode = "research" if request.workspace_id.strip() else "knowledge"
+        knowledge_decision_model = KnowledgeAccessRouter().route(
+            user_message=request.query,
+            context_mode=knowledge_context_mode,
+            policy=request.knowledge_access_policy,
+            reading_context_available=False,
+            attached_document="",
+            explicit_scope_count=len(request.document_ids),
+            workspace_available=bool(request.workspace_id.strip()),
+            knowledge_available=True,
+            context_summary="RAG Debug Studio retrieval trace",
+        )
+        knowledge_scope_model = KnowledgeScopeResolver().resolve(
+            context_mode=knowledge_context_mode,
+            explicit_document_ids=request.document_ids,
+            attached_document_id="",
+            workspace_id=request.workspace_id,
+            workspace_document_ids=request.document_ids,
+            research_source_ids=(),
+            global_allowed=knowledge_decision_model.scope_strategy is KnowledgeScopeStrategy.GLOBAL_KNOWLEDGE,
+            requested_strategy=knowledge_decision_model.scope_strategy,
+        )
+        knowledge_decision = knowledge_decision_model.model_dump(mode="json")
+        knowledge_decision["query_chars"] = len(knowledge_decision_model.query)
+        knowledge_scope = knowledge_scope_model.model_dump(mode="json")
+        emit(
+            "knowledge_decision",
+            "complete",
+            knowledge_decision,
+        )
+        emit(
+            "knowledge_scope",
+            "complete",
+            knowledge_scope,
+        )
+
         def check_cancelled() -> None:
             if cancelled.is_set():
                 raise _RunCancelled()
@@ -516,13 +553,40 @@ class RagDebugService:
         )
         check_cancelled()
 
+        if not knowledge_decision_model.should_retrieve:
+            for key in ("dense", "bm25", "fusion", "rerank", "context", "answer"):
+                stage_update(
+                    key,
+                    "skipped",
+                    summary={"reason": knowledge_decision_model.reason_code},
+                )
+            return RagDebugTraceResponse(
+                run_id=run_id,
+                trace_id=trace_id,
+                status="completed",
+                query=request.query,
+                config_id=profile.config_id,
+                query_plan=query_plan.model_dump(mode="json"),
+                stages=response_stages,
+                knowledge_decision=knowledge_decision,
+                knowledge_scope=knowledge_scope,
+                metadata={
+                    "knowledge_access_policy": request.knowledge_access_policy.value,
+                    "retrieval_skipped": True,
+                    "retrieval_round_count": 0,
+                    "retrieval_queries": [],
+                    "skip_reason": knowledge_decision_model.reason_code,
+                },
+            )
+
         structural_intent = detect_structural_intent(request.query) or detect_structural_intent(query_plan.rewritten_query)
         retrieval_queries = build_structural_queries(
             query_plan.retrieval_queries,
             original_query=request.query,
             intent=structural_intent,
         )
-        filters = VectorSearchFilter(document_ids=list(dict.fromkeys(request.document_ids))) if request.document_ids else None
+        scope_document_ids = list(dict.fromkeys(knowledge_scope_model.document_ids))
+        filters = VectorSearchFilter(document_ids=scope_document_ids) if scope_document_ids else None
         retriever = self._retriever_for_profile(runtime, profile)
         retrievals: list[RetrievalResult] = []
         retrieval_errors: list[str] = []
@@ -608,6 +672,11 @@ class RagDebugService:
             "fallback_reason": "; ".join(retrieval_errors),
             "config_requires_reindex": profile.requires_reindex,
             "config_index_fingerprint": profile.index_fingerprint,
+            "knowledge_access_policy": request.knowledge_access_policy.value,
+            "knowledge_decision": knowledge_decision,
+            "knowledge_scope": knowledge_scope,
+            "retrieval_skipped": False,
+            "retrieval_round_count": len(retrieval_queries),
         }
         return RagDebugTraceResponse(
             run_id=run_id,
@@ -628,6 +697,8 @@ class RagDebugService:
             evidence=[item.model_dump(mode="json") for item in evidence],
             citations=[item.model_dump(mode="json") for item in citations],
             answer=answer,
+            knowledge_decision=knowledge_decision,
+            knowledge_scope=knowledge_scope,
             metadata=metadata,
         )
 

@@ -67,10 +67,11 @@ import {
   updateRagDebugConfig,
 } from "../../api/rag-debug"
 
-type RagTab = "trace" | "chunks" | "evaluation" | "compare" | "datasets"
+type RagTab = "trace" | "retrieval" | "chunks" | "evaluation" | "compare" | "datasets"
 
 const TABS: Array<{ id: RagTab; label: string }> = [
   { id: "trace", label: "Trace" },
+  { id: "retrieval", label: "Retrieval" },
   { id: "chunks", label: "Chunks" },
   { id: "evaluation", label: "Evaluation" },
   { id: "compare", label: "Compare" },
@@ -92,6 +93,7 @@ export default function RagDebugStudioTrace() {
   const [activeTab, setActiveTab] = useState<RagTab>("trace")
   const [configs, setConfigs] = useState<RagDebugConfigProfile[]>([])
   const [datasets, setDatasets] = useState<RagDebugDataset[]>([])
+  const [latestTrace, setLatestTrace] = useState<RagDebugTraceResponse | null>(null)
   const [baseError, setBaseError] = useState("")
 
   async function refreshBaseData() {
@@ -128,7 +130,8 @@ export default function RagDebugStudioTrace() {
       </header>
 
       <div key={activeTab} className="min-h-0 flex-1 animate-[ragFadeIn_.18s_ease-out]">
-        {activeTab === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} />}
+        {activeTab === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} trace={latestTrace} onTraceChange={setLatestTrace} />}
+        {activeTab === "retrieval" && <RetrievalTab trace={latestTrace} />}
         {activeTab === "chunks" && <ChunksTab />}
         {activeTab === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} />}
         {activeTab === "compare" && <CompareTab configs={configs} datasets={datasets} />}
@@ -138,12 +141,21 @@ export default function RagDebugStudioTrace() {
   )
 }
 
-function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfile[]; onConfigsChanged: () => Promise<void> }) {
+function TraceTab({
+  configs,
+  onConfigsChanged,
+  trace,
+  onTraceChange,
+}: {
+  configs: RagDebugConfigProfile[]
+  onConfigsChanged: () => Promise<void>
+  trace: RagDebugTraceResponse | null
+  onTraceChange: (trace: RagDebugTraceResponse | null) => void
+}) {
   const [query, setQuery] = useState("")
   const [configId, setConfigId] = useState("default")
   const [topK, setTopK] = useState("8")
   const [includeAnswer, setIncludeAnswer] = useState(false)
-  const [trace, setTrace] = useState<RagDebugTraceResponse | null>(null)
   const [selectedId, setSelectedId] = useState("")
   const [running, setRunning] = useState(false)
   const [notice, setNotice] = useState("")
@@ -189,13 +201,13 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
     setRunning(true)
     setNotice("")
     try {
-      const accepted = await startRagDebugRun({ query: query.trim(), config_id: configId, top_k: topKNumber, include_answer: includeAnswer })
+      const accepted = await startRagDebugRun({ query: query.trim(), config_id: configId, top_k: topKNumber, include_answer: includeAnswer, knowledge_access_policy: "auto" })
       let next = await getRagDebugRun(accepted.run_id)
-      if (mounted.current) setTrace(next)
+      if (mounted.current) onTraceChange(next)
       while (next.status === "queued" || next.status === "running") {
         await new Promise((resolve) => window.setTimeout(resolve, 180))
         next = await getRagDebugRun(accepted.run_id)
-        if (mounted.current) setTrace(next)
+        if (mounted.current) onTraceChange(next)
       }
       if (next.status === "failed") setNotice(next.error || "Trace failed.")
       if (next.status === "cancelled") setNotice("Trace cancelled.")
@@ -211,7 +223,7 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
     if (!trace?.run_id) return
     try {
       const cancelled = await cancelRagDebugRun(trace.run_id)
-      setTrace(cancelled)
+      onTraceChange(cancelled)
       setRunning(false)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to stop trace.")
@@ -314,6 +326,7 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
         </section>
 
         <ConfigTuningPanel config={selectedConfig} onSaved={onConfigsChanged} onNotice={setNotice} />
+        {trace ? <KnowledgeDebugCards trace={trace} /> : null}
 
         <section className="rounded-[10px] border border-slate-200 px-4 py-4">
           <div className="grid grid-cols-4 gap-2 md:grid-cols-8">{(trace?.stages ?? INITIAL_STAGES).map((item) => <StagePill key={item.key} stage={item} active={activeStage === item.key} />)}</div>
@@ -328,6 +341,154 @@ function TraceTab({ configs, onConfigsChanged }: { configs: RagDebugConfigProfil
       </div>
     </ScrollSurface>
   )
+}
+
+function KnowledgeDebugCards({ trace }: { trace: RagDebugTraceResponse }) {
+  const decision = trace.knowledge_decision ?? {}
+  const scope = trace.knowledge_scope ?? {}
+  const mode = debugText(decision.mode) || "auto"
+  const shouldRetrieve = decision.should_retrieve === true
+  const strategy = debugText(scope.strategy) || debugText(decision.scope_strategy) || "none"
+  const documents = debugNumber(scope.document_count) || debugArrayLength(scope.document_ids)
+  const sources = debugNumber(scope.research_source_count) || debugArrayLength(scope.research_source_ids)
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <section className="rounded-[10px] border border-cyan-100 bg-cyan-50/35 p-4" aria-label="Knowledge Decision">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-[13px] font-semibold text-slate-900">Knowledge Decision</h2>
+          <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-cyan-700">{mode}</span>
+        </div>
+        <p className="mt-3 text-sm font-semibold text-slate-800">{modeLabel(mode)} · retrieval {shouldRetrieve ? "required" : "skipped"}</p>
+        <p className="mt-1 text-[10px] leading-4 text-slate-500">Reason: {debugText(decision.reason_code) || "not available"}</p>
+        {debugNumber(decision.confidence) > 0 ? <p className="mt-2 text-[10px] text-slate-400">Confidence · {Number(decision.confidence).toFixed(2)}</p> : null}
+      </section>
+      <section className="rounded-[10px] border border-violet-100 bg-violet-50/35 p-4" aria-label="Scope Decision">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-[13px] font-semibold text-slate-900">Scope Decision</h2>
+          <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-violet-700">{scopeLabel(strategy)}</span>
+        </div>
+        <p className="mt-3 text-sm font-semibold text-slate-800">{documents} documents · {sources} sources</p>
+        <p className="mt-1 text-[10px] leading-4 text-slate-500">{debugText(scope.reason) || "Scope resolved from the debug request."}</p>
+        <p className="mt-2 text-[10px] text-slate-400">Global access · {scope.allow_global === true ? "allowed" : "restricted"}</p>
+      </section>
+    </div>
+  )
+}
+
+function RetrievalTab({ trace }: { trace: RagDebugTraceResponse | null }) {
+  if (!trace) {
+    return <ScrollSurface><EmptyState title="No retrieval trace" description="Run a trace from the Trace tab to inspect the query, scope, and retrieval rounds here." /></ScrollSurface>
+  }
+
+  const plan = trace.query_plan ?? {}
+  const metadata = trace.metadata ?? {}
+  const queries = debugStringArray(metadata.retrieval_queries).length > 0
+    ? debugStringArray(metadata.retrieval_queries)
+    : debugStringArray(plan.retrieval_queries)
+  const stages = trace.stages ?? []
+  const stage = (key: string) => stages.find((item) => item.key === key)
+  const scope = trace.knowledge_scope ?? {}
+  const scopeStrategy = debugText(scope.strategy) || "none"
+  const roundCount = debugNumber(metadata.retrieval_round_count) || queries.length
+  const retrievalSkipped = metadata.retrieval_skipped === true
+  const pipeline = [
+    { label: "Dense", key: "dense", count: stage("dense")?.candidate_count ?? debugNumber(stage("dense")?.summary.count) },
+    { label: "BM25", key: "bm25", count: stage("bm25")?.candidate_count ?? debugNumber(stage("bm25")?.summary.count) },
+    { label: "Fusion", key: "fusion", count: stage("fusion")?.candidate_count ?? debugNumber(stage("fusion")?.summary.count) },
+    { label: "Rerank", key: "rerank", count: stage("rerank")?.candidate_count ?? debugNumber(stage("rerank")?.summary.count) },
+  ]
+
+  return (
+    <ScrollSurface>
+      <div className="mx-auto max-w-[1240px] space-y-4">
+        <section className="rounded-[10px] border border-slate-200 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[13px] font-semibold text-slate-900">Retrieval rounds</h2>
+              <p className="mt-1 text-[10px] text-slate-500">Inspect the exact query planning, scope boundary, and local retrieval pipeline.</p>
+            </div>
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${retrievalSkipped ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>
+              {retrievalSkipped ? "Retrieval skipped" : `${roundCount} round${roundCount === 1 ? "" : "s"}`}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <DebugDetail label="Query" value={trace.query} />
+            <DebugDetail label="Query rewrite" value={debugText(plan.rewritten_query) || trace.query} />
+            <DebugDetail label="Scope" value={`${scopeLabel(scopeStrategy)} · ${debugNumber(scope.document_count) || debugArrayLength(scope.document_ids)} documents`} />
+          </div>
+        </section>
+
+        <section className="rounded-[10px] border border-slate-200 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[13px] font-semibold text-slate-900">Pipeline</h2>
+            <span className="text-[10px] text-slate-400">{formatMs(Number(metadata.total_rag_ms ?? 0))}</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {pipeline.map((item) => {
+              const current = stage(item.key)
+              return (
+                <div key={item.key} className="rounded-[10px] border border-slate-100 bg-slate-50/60 px-3 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="text-[11px] font-semibold text-slate-700">{item.label}</strong>
+                    <span className="text-[10px] tabular-nums text-slate-400">{item.count || 0}</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-500">{current?.status ?? "pending"} · {formatMs(current?.elapsed_ms ?? 0)}</p>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-[10px] border border-slate-200 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[13px] font-semibold text-slate-900">Round queries</h2>
+            <span className="text-[10px] text-slate-400">{queries.length} planned</span>
+          </div>
+          {queries.length > 0 ? (
+            <ol className="mt-3 space-y-2">
+              {queries.map((item, index) => <li key={`${item}-${index}`} className="rounded-[9px] bg-slate-50 px-3 py-2 text-[10px] text-slate-700"><span className="mr-2 font-semibold text-slate-400">{index + 1}</span>{item}</li>)}
+            </ol>
+          ) : (
+            <p className="mt-3 rounded-[9px] bg-slate-50 px-3 py-2 text-[10px] text-slate-500">No retrieval query was executed.</p>
+          )}
+        </section>
+      </div>
+    </ScrollSurface>
+  )
+}
+
+function DebugDetail({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-[10px] bg-slate-50/70 px-3 py-2.5"><p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{label}</p><p className="mt-1 line-clamp-3 text-[11px] leading-4 text-slate-700">{value || "—"}</p></div>
+}
+
+function modeLabel(value: string): string {
+  if (value === "always") return "Always"
+  if (value === "never") return "Never"
+  return "Auto"
+}
+
+function scopeLabel(value: string): string {
+  if (value === "attached_document") return "Current document"
+  if (value === "explicit_documents") return "Selected documents"
+  if (value === "research_workspace") return "Research workspace"
+  if (value === "global_knowledge") return "All knowledge"
+  return "No scope"
+}
+
+function debugText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function debugNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function debugArrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
+}
+
+function debugStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : []
 }
 
 function ConfigTuningPanel({ config, onSaved, onNotice }: { config?: RagDebugConfigProfile; onSaved: () => Promise<void>; onNotice: (value: string) => void }) {
@@ -891,7 +1052,16 @@ function EvaluationTab({ configs, datasets }: { configs: RagDebugConfigProfile[]
   async function run() { if (!datasetId || running) return; setRunning(true); setError(""); try { const result = await evaluateRagDebugDataset({ dataset_id: datasetId, config_id: configId, top_k: 20 }); setReport(result.report) } catch (reason) { setError(errorText(reason)) } finally { setRunning(false) } }
   const retrieval = report?.retrieval ?? {}
   const rows = report?.cases ?? []
-  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_140px]"><Field label="Evaluation Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name} · {item.case_count} cases</option>)}</select></Field><Field label="RAG Config"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !cases.length || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Evaluating" : "Run evaluation"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-4"><MetricCard title="Recall@10" value={percent(retrieval.recall_at_10)} delta={report ? `${Number(retrieval.evaluated_cases ?? 0)} cases` : "—"} detail="Relevant chunks found in the top ten." icon={<Target size={15} />} /><MetricCard title="MRR" value={percent(retrieval.mrr)} delta={report ? "measured" : "—"} detail="Mean reciprocal rank after reranking." icon={<BarChart3 size={15} />} /><MetricCard title="nDCG@10" value={percent(retrieval.ndcg_at_10)} delta={report ? "graded" : "—"} detail="Position-aware relevance quality." icon={<CheckCircle2 size={15} />} /><MetricCard title="No-answer" value={percent(retrieval.no_answer_accuracy)} delta={report ? `${Number(retrieval.no_answer_cases ?? 0)} cases` : "—"} detail="Correctly abstained cases." icon={<HelpCircle size={15} />} /></div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Case Results</h2><p className="mt-1 text-[10px] text-slate-500">Metrics are calculated from the selected dataset and real retrieval responses.</p></div><span className="text-[10px] text-slate-400">{cases.length} cases</span></div>{!cases.length ? <EmptyState title="No evaluation cases" description="Create or import cases in Datasets before running an evaluation." /> : <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Query</th><th className="w-28 px-2">Type</th><th className="w-24 px-2">Recall@10</th><th className="w-20 px-2">MRR</th><th className="w-20 px-2">Status</th></tr></thead><tbody>{cases.map((item, index) => { const metric = rows[index] ?? {}; const recall = Number(metric.recall_at_10 ?? 0); return <tr key={item.case_id} className="border-t border-slate-100"><td className="max-w-[480px] truncate px-3 py-2.5 font-medium">{item.query}</td><td className="px-2 text-slate-500">{item.query_type}</td><td className="px-2">{report ? percent(recall) : "—"}</td><td className="px-2">{report ? percent(Number(metric.reciprocal_rank ?? 0)) : "—"}</td><td className="px-2">{report ? <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 size={12} />Measured</span> : <span className="text-slate-400">Pending</span>}</td></tr> })}</tbody></table></div>}</section></div></ScrollSurface>
+  const routingMetrics = [
+    { key: "retrieval_trigger_precision", title: "Retrieval Trigger Precision", detail: "Correct retrieval decisions among triggered cases.", icon: <Target size={15} /> },
+    { key: "retrieval_trigger_recall", title: "Retrieval Trigger Recall", detail: "Expected retrieval cases that were triggered.", icon: <Target size={15} /> },
+    { key: "unnecessary_retrieval_rate", title: "Unnecessary Retrieval Rate", detail: "Retrieval runs for cases that should stay in context.", icon: <X size={15} /> },
+    { key: "missing_retrieval_rate", title: "Missing Retrieval Rate", detail: "Cases needing knowledge access but skipped.", icon: <AlertCircle size={15} /> },
+    { key: "scope_violation_rate", title: "Scope Violation Rate", detail: "Retrieved evidence outside the resolved scope.", icon: <CheckCircle2 size={15} /> },
+    { key: "second_round_retrieval_rate", title: "Second-round Retrieval Rate", detail: "Runs that issued a constrained second query.", icon: <RefreshCw size={15} /> },
+    { key: "evidence_sufficiency_rate", title: "Evidence Sufficiency Rate", detail: "Retrieval rounds that met the evidence gate.", icon: <BarChart3 size={15} /> },
+  ]
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_140px]"><Field label="Evaluation Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name} · {item.case_count} cases</option>)}</select></Field><Field label="RAG Config"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !cases.length || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Evaluating" : "Run evaluation"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-4"><MetricCard title="Recall@10" value={percent(retrieval.recall_at_10)} delta={report ? `${Number(retrieval.evaluated_cases ?? 0)} cases` : "—"} detail="Relevant chunks found in the top ten." icon={<Target size={15} />} /><MetricCard title="MRR" value={percent(retrieval.mrr)} delta={report ? "measured" : "—"} detail="Mean reciprocal rank after reranking." icon={<BarChart3 size={15} />} /><MetricCard title="nDCG@10" value={percent(retrieval.ndcg_at_10)} delta={report ? "graded" : "—"} detail="Position-aware relevance quality." icon={<CheckCircle2 size={15} />} /><MetricCard title="No-answer" value={percent(retrieval.no_answer_accuracy)} delta={report ? `${Number(retrieval.no_answer_cases ?? 0)} cases` : "—"} detail="Correctly abstained cases." icon={<HelpCircle size={15} />} /></div><div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">{routingMetrics.map((metric) => { const rawValue = retrieval[metric.key] ?? report?.[metric.key]; const measured = rawValue !== undefined && rawValue !== null; return <MetricCard key={metric.key} title={metric.title} value={measured ? percent(rawValue) : "—"} delta={measured ? "measured" : "not measured"} deltaTone={measured ? "positive" : "muted"} detail={metric.detail} icon={metric.icon} /> })}</div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Case Results</h2><p className="mt-1 text-[10px] text-slate-500">Metrics are calculated from the selected dataset and real retrieval responses.</p></div><span className="text-[10px] text-slate-400">{cases.length} cases</span></div>{!cases.length ? <EmptyState title="No evaluation cases" description="Create or import cases in Datasets before running an evaluation." /> : <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Query</th><th className="w-28 px-2">Type</th><th className="w-24 px-2">Recall@10</th><th className="w-20 px-2">MRR</th><th className="w-20 px-2">Status</th></tr></thead><tbody>{cases.map((item, index) => { const metric = rows[index] ?? {}; const recall = Number(metric.recall_at_10 ?? 0); return <tr key={item.case_id} className="border-t border-slate-100"><td className="max-w-[480px] truncate px-3 py-2.5 font-medium">{item.query}</td><td className="px-2 text-slate-500">{item.query_type}</td><td className="px-2">{report ? percent(recall) : "—"}</td><td className="px-2">{report ? percent(Number(metric.reciprocal_rank ?? 0)) : "—"}</td><td className="px-2">{report ? <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 size={12} />Measured</span> : <span className="text-slate-400">Pending</span>}</td></tr> })}</tbody></table></div>}</section></div></ScrollSurface>
 }
 
 function CompareTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[] }) {
@@ -935,7 +1105,7 @@ function StagePill({ stage, active }: { stage: RagDebugStage; active: boolean })
 function ResultTable({ rows, selectedId, onSelect }: { rows: RagDebugCandidate[]; selectedId: string; onSelect: (id: string) => void }) { return <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full table-fixed text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="w-8 px-2 py-2">#</th><th className="w-[135px] px-2">Chunk ID</th><th className="w-[70px] px-2">Score</th><th className="w-[64px] px-2">Δ Rank</th><th className="px-2">Source</th><th className="w-[90px] px-2">Section</th></tr></thead><tbody>{rows.map((row, index) => { const delta = (row.before ?? row.after ?? index + 1) - (row.after ?? index + 1); return <tr key={row.id} onClick={() => onSelect(row.id)} className={`cursor-pointer border-t border-slate-100 transition ${selectedId === row.id ? "bg-slate-100" : "hover:bg-slate-50"}`}><td className="px-2 py-2.5 text-slate-500">{row.after ?? index + 1}</td><td className="truncate px-2 font-medium">{row.id}</td><td className="px-2 tabular-nums">{formatScore(row.rerank ?? row.fusion ?? row.dense ?? row.bm25)}</td><td className="px-2">{delta === 0 ? <span className="text-slate-400">—</span> : delta > 0 ? <span className="inline-flex items-center gap-1 text-emerald-600"><ArrowUp size={10} />{delta}</span> : <span className="inline-flex items-center gap-1 text-rose-500"><ArrowDown size={10} />{Math.abs(delta)}</span>}</td><td className="truncate px-2 text-slate-600">{row.source || row.document_id}</td><td className="truncate px-2 text-slate-600">{row.section || "—"}</td></tr> })}</tbody></table></div> }
 function ChunkDetail({ row, index, total, previous, next }: { row: RagDebugCandidate; index: number; total: number; previous: () => void; next: () => void }) { const [copied, setCopied] = useState(false); function copy() { if (navigator.clipboard) void navigator.clipboard.writeText(row.id); setCopied(true); window.setTimeout(() => setCopied(false), 800) }; return <div><div className="flex items-center justify-between border-b border-slate-100 pb-3"><h2 className="text-[13px] font-semibold">Chunk Detail</h2><div className="flex items-center gap-1 text-[10px] text-slate-500"><button type="button" onClick={previous} className="rounded border border-slate-200 p-1"><ChevronLeft size={13} /></button><span>{index + 1} of {total}</span><button type="button" onClick={next} className="rounded border border-slate-200 p-1"><ChevronRight size={13} /></button></div></div><dl className="grid grid-cols-[92px_1fr] gap-x-2 gap-y-2 border-b border-slate-100 py-3 text-[10px]"><dt className="text-slate-500">Chunk ID</dt><dd className="flex items-center gap-1 font-medium"><span className="truncate">{row.id}</span><button type="button" onClick={copy} aria-label="Copy chunk ID" className="text-slate-400">{copied ? <Check size={11} /> : <Copy size={11} />}</button></dd><dt className="text-slate-500">Source</dt><dd>{row.source || row.document_id}</dd><dt className="text-slate-500">Section</dt><dd className="truncate">{row.section || "—"}</dd><dt className="text-slate-500">Page</dt><dd>{row.page ?? "—"}</dd><dt className="text-slate-500">Tokens</dt><dd>{row.tokens}</dd><dt className="text-slate-500">Score</dt><dd>{formatScore(row.rerank ?? row.fusion ?? row.dense ?? row.bm25)}</dd><dt className="text-slate-500">Original Rank</dt><dd>{row.before ?? "—"}</dd><dt className="text-slate-500">Rerank Position</dt><dd>{row.after ?? "—"}</dd></dl><h3 className="mt-3 text-[11px] font-semibold">Chunk Text</h3><div className="ait-scroll-page mt-2 max-h-[230px] overflow-y-auto rounded-[8px] bg-slate-50 px-3 py-2.5 text-[10px] leading-[1.6] text-slate-700">{row.text || "No text returned by the index."}</div></div> }
 function ChunkRecordDetail({ chunk }: { chunk: RagDebugChunk }) { const [copied, setCopied] = useState(false); function copy() { if (navigator.clipboard) void navigator.clipboard.writeText(chunk.id); setCopied(true); window.setTimeout(() => setCopied(false), 800) }; return <div><div className="flex items-center justify-between border-b border-slate-100 pb-3"><h2 className="text-[13px] font-semibold">Chunk Detail</h2><button type="button" aria-label="Copy chunk ID" onClick={copy} className="text-slate-400">{copied ? <Check size={13} /> : <Copy size={13} />}</button></div><dl className="grid grid-cols-[92px_1fr] gap-x-2 gap-y-2 border-b border-slate-100 py-3 text-[10px]"><dt className="text-slate-500">Chunk ID</dt><dd className="truncate font-medium">{chunk.id}</dd><dt className="text-slate-500">Document</dt><dd>{chunk.document_id}</dd><dt className="text-slate-500">Section</dt><dd>{chunk.section || "—"}</dd><dt className="text-slate-500">Page</dt><dd>{chunk.page ?? "—"}</dd><dt className="text-slate-500">Type</dt><dd>{chunk.type || "—"}</dd><dt className="text-slate-500">Tokens</dt><dd>{chunk.tokens}</dd><dt className="text-slate-500">Overlap</dt><dd>{chunk.overlap || "—"}</dd><dt className="text-slate-500">Character range</dt><dd>{chunk.start.toLocaleString()} – {chunk.end.toLocaleString()}</dd><dt className="text-slate-500">Embedding model</dt><dd className="truncate">{chunk.embedding || "—"}</dd></dl><h3 className="mt-3 text-[11px] font-semibold">Chunk Text</h3><div className="ait-scroll-page mt-2 max-h-[290px] overflow-y-auto rounded-[8px] bg-slate-50 px-3 py-3 text-[10px] leading-[1.7] text-slate-700">{chunk.text}</div></div> }
-function MetricCard({ title, value, delta, detail, icon }: { title: string; value: string; delta: string; detail: string; icon: ReactNode }) { return <section className="rounded-[10px] border border-slate-200 p-4 transition hover:shadow-[0_4px_16px_rgba(15,23,42,.05)]"><div className="flex items-start justify-between"><h2 className="text-[12px] font-semibold">{title}</h2><span className="text-slate-600">{icon}</span></div><div className="mt-2 flex items-end gap-3"><span className="text-[25px] font-semibold tracking-tight">{value}</span><span className="mb-1 text-[11px] font-medium text-emerald-600">{delta}</span></div><p className="mt-1 text-[10px] text-slate-500">{detail}</p></section> }
+function MetricCard({ title, value, delta, detail, icon, deltaTone = "positive" }: { title: string; value: string; delta: string; detail: string; icon: ReactNode; deltaTone?: "positive" | "muted" }) { return <section className="rounded-[10px] border border-slate-200 p-4 transition hover:shadow-[0_4px_16px_rgba(15,23,42,.05)]"><div className="flex items-start justify-between"><h2 className="text-[12px] font-semibold">{title}</h2><span className="text-slate-600">{icon}</span></div><div className="mt-2 flex items-end gap-3"><span className="text-[25px] font-semibold tracking-tight">{value}</span><span className={`mb-1 text-[11px] font-medium ${deltaTone === "muted" ? "text-slate-400" : "text-emerald-600"}`}>{delta}</span></div><p className="mt-1 text-[10px] text-slate-500">{detail}</p></section> }
 function CompareMetric({ title, a, b, delta, percent: label }: { title: string; a: string; b: string; delta: string; percent: string }) { return <section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center gap-1"><h2 className="text-[12px] font-semibold">{title}</h2><HelpCircle size={12} className="text-slate-400" /></div><div className="mt-3 grid grid-cols-[1fr_1fr_1.15fr] divide-x divide-slate-100"><div><p className="text-[9px] text-slate-500">A</p><p className="mt-1 text-[18px] font-semibold">{a}</p></div><div className="pl-4"><p className="text-[9px] text-slate-500">B</p><p className="mt-1 text-[18px] font-semibold">{b}</p></div><div className="pl-4"><p className="text-[9px] text-slate-500">Δ</p><p className="mt-1 text-[18px] font-semibold text-emerald-600">{delta}</p><p className="text-[10px] text-emerald-600">{label}</p></div></div></section> }
 function MiniStat({ label, value }: { label: string; value: string }) { return <div className="px-3 first:pl-0"><p className="text-[9px] text-slate-500">{label}</p><p className="mt-1 text-[13px] font-semibold">{value}</p></div> }
 function ScrollSurface({ children }: { children: ReactNode }) { return <div className="ait-scroll-page h-full min-h-0 overflow-y-auto px-8 py-5">{children}</div> }

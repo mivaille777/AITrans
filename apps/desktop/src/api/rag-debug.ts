@@ -2,7 +2,7 @@ import { apiDelete, apiGet, apiPatch, apiPost, apiWebSocketUrl } from "./client"
 
 export type RagDebugRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled"
 export type RagDebugStageStatus = "pending" | "active" | "complete" | "warning" | "failed" | "skipped"
-export type RagDebugTab = "trace" | "chunks" | "evaluation" | "compare" | "datasets"
+export type RagDebugTab = "trace" | "retrieval" | "chunks" | "evaluation" | "compare" | "datasets"
 
 export interface RagConfig {
   enabled: boolean
@@ -109,6 +109,8 @@ export interface RagDebugTraceResponse {
   evidence: Array<Record<string, unknown>>
   citations: Array<Record<string, unknown>>
   answer: string
+  knowledge_decision: Record<string, unknown>
+  knowledge_scope: Record<string, unknown>
   metadata: Record<string, unknown>
   error: string
 }
@@ -269,7 +271,7 @@ export function getRagDebugChunk(chunkId: string): Promise<RagDebugChunk> {
   return apiGet(`${ROOT}/chunks/${encodeURIComponent(chunkId)}`)
 }
 
-export function startRagDebugRun(payload: { query: string; config_id: string; document_ids?: string[]; top_k: number; include_answer: boolean }): Promise<RagDebugRunAccepted> {
+export function startRagDebugRun(payload: { query: string; config_id: string; document_ids?: string[]; top_k: number; include_answer: boolean; knowledge_access_policy?: "auto" | "always" | "never" }): Promise<RagDebugRunAccepted> {
   return apiPost(`${ROOT}/runs`, payload)
 }
 
