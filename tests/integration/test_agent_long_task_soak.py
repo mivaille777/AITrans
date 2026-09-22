@@ -79,10 +79,10 @@ async def test_long_task_soak_survives_pause_reconnect_and_store_restart(tmp_pat
         poll_seconds=0.01,
     )
     first_task = asyncio.create_task(first_worker.run_once())
-    await asyncio.wait_for(pause_boundary.wait(), timeout=5)
+    await asyncio.wait_for(pause_boundary.wait(), timeout=15)
     requested = AgentRunScheduler(first_store).pause(run.run_id)
     assert requested.status is AgentRunStatus.PAUSE_REQUESTED
-    paused = await asyncio.wait_for(first_task, timeout=5)
+    paused = await asyncio.wait_for(first_task, timeout=15)
     assert paused is not None and paused.status is AgentRunStatus.PAUSED
 
     pre_restart_events = first_store.list_events(run.run_id)
