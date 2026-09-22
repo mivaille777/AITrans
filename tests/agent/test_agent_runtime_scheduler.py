@@ -193,6 +193,55 @@ def test_runtime_jobs_api_enqueues_durable_request_and_supports_cancel(tmp_path)
     ).status_code == 400
 
 
+def test_canonical_runtime_api_supports_create_lookup_and_retry(tmp_path) -> None:
+    store = _store(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_agent_run_store] = lambda: store
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agent/runs",
+        json={
+            "request": {
+                "user_message": "Analyze durable runtime",
+                "context_mode": "general",
+            },
+            "runtime_profile": "long_task",
+        },
+    )
+    assert created.status_code == 202
+    first = created.json()
+    run_id = first["run_id"]
+    assert first["status"] == "queued"
+    assert client.get(f"/api/agent/runs/{run_id}").json()["task_id"] == first["task_id"]
+    assert client.get(f"/api/agent/runs/{run_id}/events").json() == []
+    assert client.get(f"/api/agent/runs/{run_id}/result").json() == {
+        "status": "queued",
+        "result": None,
+    }
+
+    assert client.post(f"/api/agent/runs/{run_id}/retry").status_code == 409
+    store.transition_run(
+        run_id,
+        expected_status=AgentRunStatus.QUEUED,
+        target_status=AgentRunStatus.RUNNING,
+    )
+    store.transition_run(
+        run_id,
+        expected_status=AgentRunStatus.RUNNING,
+        target_status=AgentRunStatus.FAILED,
+    )
+
+    retried = client.post(f"/api/agent/runs/{run_id}/retry")
+    assert retried.status_code == 202
+    second = retried.json()
+    assert second["status"] == "queued"
+    assert second["task_id"] == first["task_id"]
+    assert second["run_id"] != run_id
+    assert second["trace_id"] != first["trace_id"]
+    assert store.get_run_request(second["run_id"])["user_message"] == "Analyze durable runtime"
+
+
 def test_run_request_survives_reopened_store_and_events_are_fenced(tmp_path) -> None:
     path = tmp_path / "agent_runtime.sqlite3"
     store = AgentRunStore(storage_path=path)

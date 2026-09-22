@@ -16,6 +16,7 @@ from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_routing import router as agent_routing_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
 from backend.api.agent_runtime_jobs import (
+    canonical_router as agent_runtime_canonical_router,
     close_agent_run_store,
     execute_persisted_agent_run,
     get_agent_run_store,
@@ -149,6 +150,7 @@ def create_app():
         agent_observability_router,
         agent_runtime_config_router,
         agent_runtime_jobs_router,
+        agent_runtime_canonical_router,
         memory_router,
         translation_router,
         translation_cascade_router,

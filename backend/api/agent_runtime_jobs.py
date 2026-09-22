@@ -40,6 +40,7 @@ from backend.services.agent_run_store import (
 from backend.services.agent_run_worker import AgentRunOutcome
 
 router = APIRouter(prefix="/api/agent/runtime", tags=["agent-runtime-jobs"])
+canonical_router = APIRouter(prefix="/api/agent", tags=["agent-runtime"])
 _store: AgentRunStore | None = None
 _store_lock = Lock()
 
@@ -137,6 +138,61 @@ def get_runtime_result(run_id: str, store: StoreDependency) -> dict[str, object]
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return {"status": run.status.value, "result": store.get_run_result(run_id)}
+
+
+@canonical_router.post(
+    "/runs",
+    response_model=AgentRunRecord,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_canonical_runtime_run(
+    payload: AgentRuntimeJobRequest, store: StoreDependency
+) -> AgentRunRecord:
+    return enqueue_runtime_task(payload, store)
+
+
+@canonical_router.get("/runs/{run_id}", response_model=AgentRunRecord)
+def get_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    return get_runtime_run(run_id, store)
+
+
+@canonical_router.post("/runs/{run_id}/cancel", response_model=AgentRunRecord)
+def cancel_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    return cancel_runtime_run(run_id, store)
+
+
+@canonical_router.post("/runs/{run_id}/pause", response_model=AgentRunRecord)
+def pause_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    return pause_runtime_run(run_id, store)
+
+
+@canonical_router.post("/runs/{run_id}/resume", response_model=AgentRunRecord)
+def resume_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    return resume_runtime_run(run_id, store)
+
+
+@canonical_router.post(
+    "/runs/{run_id}/retry",
+    response_model=AgentRunRecord,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_canonical_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    try:
+        return AgentRunScheduler(store).retry(run_id)
+    except AgentRunStoreNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except AgentRunStoreConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@canonical_router.get("/runs/{run_id}/events", response_model=list[AgentEvent])
+def get_canonical_runtime_events(run_id: str, store: StoreDependency) -> tuple[AgentEvent, ...]:
+    return get_runtime_events(run_id, store)
+
+
+@canonical_router.get("/runs/{run_id}/result")
+def get_canonical_runtime_result(run_id: str, store: StoreDependency) -> dict[str, object]:
+    return get_runtime_result(run_id, store)
 
 
 def _build_runtime():
@@ -279,6 +335,7 @@ async def execute_persisted_agent_run(
 
 __all__ = [
     "AgentRuntimeJobRequest",
+    "canonical_router",
     "close_agent_run_store",
     "execute_persisted_agent_run",
     "get_agent_run_store",

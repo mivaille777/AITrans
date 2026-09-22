@@ -7,7 +7,11 @@ from backend.agent_core.reliability import AgentExecutionPolicy
 from backend.models.agent_run import AgentRunRecord, AgentRunStatus
 from backend.models.agent_runtime import AgentRuntimeProfile
 from backend.models.agent_tasks import AgentTaskRecord
-from backend.services.agent_run_store import AgentRunStore
+from backend.services.agent_run_store import (
+    AgentRunStore,
+    AgentRunStoreConflictError,
+    AgentRunStoreNotFoundError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +84,26 @@ class AgentRunScheduler:
 
     def resume(self, run_id: str) -> AgentRunRecord:
         return self.store.resume_run(run_id)
+
+    def retry(self, run_id: str) -> AgentRunRecord:
+        current = self.store.get_run(run_id)
+        if current is None:
+            raise AgentRunStoreNotFoundError(f"run not found: {run_id}")
+        if current.status is not AgentRunStatus.FAILED:
+            raise AgentRunStoreConflictError(
+                f"run {run_id} cannot retry from {current.status.value}"
+            )
+        retry_run = AgentRunRecord(
+            task_id=current.task_id,
+            run_id=f"run-{uuid4().hex}",
+            trace_id=f"trace-{uuid4().hex}",
+            runtime_profile=current.runtime_profile,
+            status=AgentRunStatus.QUEUED,
+        )
+        return self.store.create_run(
+            retry_run,
+            request_payload=self.store.get_run_request(run_id) or {},
+        )
 
 
 __all__ = ["PROFILE_BUDGETS", "AgentProfileBudget", "AgentRunScheduler"]
