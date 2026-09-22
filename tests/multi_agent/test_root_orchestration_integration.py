@@ -12,7 +12,7 @@ from backend.agent_core.orchestration.serial_executor import (
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
-from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.models.agent_runtime import AgentRouteDecision
 from backend.models.agent_tasks import TaskResult, TaskRole, TaskStatus
 from backend.models.agent_tools import AgentPlan
@@ -190,7 +190,7 @@ class DirectDeliveryCollaboration:
 
 def test_root_graph_acquires_conversation_ownership_before_specialists() -> None:
     calls: list[str] = []
-    graph = ReadingAgentGraph(
+    graph = RootAgentGraph(
         ProductAgentRuntimeAdapter(
             ProductService(calls),
             conversation_service=Conversations(calls),
@@ -207,7 +207,7 @@ def test_root_graph_acquires_conversation_ownership_before_specialists() -> None
 
 def test_root_graph_delivers_completed_bounded_output_without_second_generation() -> None:
     calls: list[str] = []
-    graph = ReadingAgentGraph(
+    graph = RootAgentGraph(
         ProductAgentRuntimeAdapter(
             ProductService(calls),
             conversation_service=Conversations(calls),

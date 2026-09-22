@@ -24,8 +24,8 @@ from backend.agent_graph.academic_writer_graph import (
 )
 from backend.agent_graph.document_analyst_graph import DocumentAnalystGraph
 from backend.agent_graph.knowledge_curator_graph import KnowledgeCuratorGraph
-from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
 from backend.agent_graph.research_synthesizer_graph import ResearchSynthesizerGraph
+from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
 from backend.api.agent_observability_dependencies import get_agent_trace_store_service
 from backend.api.dependencies import (
@@ -256,7 +256,7 @@ def get_agent_runtime(
         collaboration_service,
         orchestrator=orchestration_service,
     )
-    graph = ReadingAgentGraph(
+    graph = RootAgentGraph(
         adapter,
         checkpointer=(
             checkpoint_service.checkpointer if checkpoint_service is not None else None

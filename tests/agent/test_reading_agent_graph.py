@@ -7,6 +7,7 @@ from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.api.agent_dependencies import get_agent_runtime
 from backend.models.agent_tools import AgentPlan
 from backend.services.agent_tool_registry import AgentToolExecutionResult
@@ -199,3 +200,4 @@ def test_agent_runtime_dependency_uses_reading_agent_graph() -> None:
     )
 
     assert isinstance(runtime.workflow_adapter, ReadingAgentGraph)
+    assert isinstance(runtime.workflow_adapter, RootAgentGraph)

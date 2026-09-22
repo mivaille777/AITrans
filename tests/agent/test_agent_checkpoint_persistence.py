@@ -9,7 +9,7 @@ from backend.agent_core.exceptions import AgentRuntimeError
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
-from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.models.agent_runtime import AgentRouteDecision
 from backend.models.agent_tools import AgentPlan
 from backend.services.agent_checkpoint_service import AgentCheckpointService
@@ -184,7 +184,7 @@ def _runtime(
     collaboration_adapter=None,
 ) -> AgentRuntime:
     return AgentRuntime(
-        workflow_adapter=ReadingAgentGraph(
+        workflow_adapter=RootAgentGraph(
             ProductAgentRuntimeAdapter(
                 service,
                 conversation_service=conversations,

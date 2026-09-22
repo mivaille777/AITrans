@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.state import AgentState
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
-from backend.agent_graph.studio import make_graph
+from backend.agent_graph.studio import make_graph, make_root_graph
 from backend.models.agent_tools import AgentPlan
 
 
@@ -67,11 +67,13 @@ def test_langgraph_config_exposes_reading_agent_factory_and_dotenv() -> None:
     config = json.loads((root / "langgraph.json").read_text(encoding="utf-8"))
 
     assert config["graphs"] == {
-        "reading_agent": "./backend/agent_graph/studio.py:make_graph"
+        "reading_agent": "./backend/agent_graph/studio.py:make_graph",
+        "root_agent": "./backend/agent_graph/studio.py:make_root_graph",
     }
     assert config["dependencies"] == ["."]
     assert config["env"] == ".env"
     assert callable(make_graph)
+    assert callable(make_root_graph)
 
 
 def test_repository_ignores_local_studio_credentials() -> None:

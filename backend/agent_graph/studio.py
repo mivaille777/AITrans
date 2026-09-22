@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
-from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.api.dependencies import (
     get_companion_ownership_service,
     get_conversation_store_service,
@@ -10,8 +10,8 @@ from backend.api.dependencies import (
 from backend.services.agent_conversation_service import AgentConversationService
 
 
-def make_graph():
-    """Build the production ReadingAgentGraph for LangSmith Studio.
+def make_root_graph():
+    """Build the production RootAgentGraph for LangSmith Studio.
 
     Agent Server graph factories may either accept no arguments or explicitly
     typed ``RunnableConfig`` / ``ServerRuntime`` parameters. Studio only needs
@@ -27,7 +27,13 @@ def make_graph():
         get_product_agent_service(),
         conversation_service=conversation_service,
     )
-    return ReadingAgentGraph(adapter).compiled_graph
+    return RootAgentGraph(adapter).compiled_graph
 
 
-__all__ = ["make_graph"]
+def make_graph():
+    """Keep the previous Studio factory path as a compatibility alias."""
+
+    return make_root_graph()
+
+
+__all__ = ["make_graph", "make_root_graph"]

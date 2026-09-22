@@ -54,6 +54,13 @@ class AgentRuntime:
         run_recorder: AgentRunRecorder | None = None,
         event_recorder: AgentEventRecorder | None = None,
     ) -> None:
+        if getattr(workflow_adapter, "graph_role", "") == "canonical_root" and (
+            planner is not None or tool_executor is not None
+        ):
+            raise ValueError(
+                "The canonical Root Graph owns planning and tool dispatch; "
+                "legacy runtime handlers cannot run alongside it."
+            )
         self.context_provider = context_provider
         self.planner = planner
         self.tool_executor = tool_executor

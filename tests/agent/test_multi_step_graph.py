@@ -6,7 +6,7 @@ from backend.agent_core.events import AgentEventType
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
-from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
+from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.models.agent_react import AgentReActDecision
 from backend.models.agent_runtime import (
     AgentPlanContext,
@@ -15,7 +15,6 @@ from backend.models.agent_runtime import (
 )
 from backend.models.agent_tools import AgentPlan
 from backend.services.agent_tool_registry import AgentToolExecutionResult, AgentToolSpec
-
 
 TRANSLATE_TOOL = AgentToolSpec(
     name="translate_selection",
@@ -225,7 +224,7 @@ def test_reading_agent_graph_executes_bounded_react_loop_and_synthesizes_once() 
     decisions = FakeReActDecisionService()
     runtime = AgentRuntime(
         context_provider=lambda state: dict(state.browser_context),
-        workflow_adapter=ReadingAgentGraph(
+        workflow_adapter=RootAgentGraph(
             ProductAgentRuntimeAdapter(service),
             react_decision_service=decisions,
         ),
