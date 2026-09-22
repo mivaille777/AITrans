@@ -136,6 +136,8 @@ def test_reading_agent_graph_compiles_explicit_react_nodes() -> None:
         "resolve_context",
         "run_collaboration",
         "prepare_conversation",
+        "knowledge_access",
+        "knowledge_scope",
         "route_request",
         "execute_direct",
         "start_react",

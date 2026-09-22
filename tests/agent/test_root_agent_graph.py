@@ -87,6 +87,7 @@ def test_root_graph_owns_direct_route_and_each_node_checkpoint(tmp_path, kind):
     assert probe.runs == 1
     assert scheduled_nodes == [
         "resolve_context", "prepare_conversation", "run_collaboration",
+        "knowledge_access", "knowledge_scope",
         "route_request", "execute_direct", "finalize_conversation",
     ]
     assert all(

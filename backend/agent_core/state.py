@@ -25,6 +25,11 @@ from backend.models.agent_runtime import (
     AgentRouteDecision,
     AgentRuntimeProfile,
 )
+from backend.models.knowledge_access import (
+    KnowledgeAccessDecision,
+    KnowledgeAccessPolicy,
+    ResolvedKnowledgeScope,
+)
 
 CURRENT_AGENT_GRAPH_VERSION = "reading-agent-ma03-v1"
 CURRENT_AGENT_STATE_SCHEMA_VERSION = 2
@@ -144,6 +149,11 @@ class AgentState(BaseModel):
     evidence: list[AgentEvidenceItem] = Field(default_factory=list)
     citations: list[AgentCitationRef] = Field(default_factory=list)
     response_state: AgentResponseContext = Field(default_factory=AgentResponseContext)
+    knowledge_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_decision: KnowledgeAccessDecision | None = None
+    knowledge_scope: ResolvedKnowledgeScope = Field(default_factory=ResolvedKnowledgeScope)
+    retrieval_attempt_count: int = Field(default=0, ge=0)
+    evidence_sufficient: bool | None = None
 
     @model_validator(mode="after")
     def initialize_contracts(self) -> AgentState:
@@ -151,6 +161,26 @@ class AgentState(BaseModel):
 
     def sync_contract(self) -> AgentState:
         context = dict(self.browser_context)
+        raw_policy = context.get("knowledge_access_policy")
+        if raw_policy is not None:
+            try:
+                self.knowledge_policy = KnowledgeAccessPolicy(raw_policy)
+            except ValueError:
+                self.knowledge_policy = KnowledgeAccessPolicy.AUTO
+        raw_decision = context.get("knowledge_decision")
+        if isinstance(raw_decision, dict):
+            try:
+                self.knowledge_decision = KnowledgeAccessDecision.model_validate(
+                    raw_decision
+                )
+            except ValueError:
+                self.knowledge_decision = None
+        raw_scope = context.get("knowledge_scope")
+        if isinstance(raw_scope, dict):
+            try:
+                self.knowledge_scope = ResolvedKnowledgeScope.model_validate(raw_scope)
+            except ValueError:
+                self.knowledge_scope = ResolvedKnowledgeScope()
         request_id = _safe_request_id(
             self.response.get("request_id", context.get("request_id", 0))
         )

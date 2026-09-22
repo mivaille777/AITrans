@@ -15,9 +15,15 @@ from backend.models.agent_runtime import (
     AgentPlanStep,
     AgentRouteDecision,
 )
-from backend.models.knowledge_access import KnowledgeAccessPolicy
+from backend.models.knowledge_access import (
+    KnowledgeAccessDecision,
+    KnowledgeAccessPolicy,
+    KnowledgeScopeStrategy,
+    ResolvedKnowledgeScope,
+)
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.knowledge_access_router import KnowledgeAccessRouter
+from backend.services.knowledge_scope_resolver import KnowledgeScopeResolver
 
 _UI_MODE_BY_TOOL = {
     "translate_selection": "translation",
@@ -108,7 +114,8 @@ class ProductAgentRuntimeAdapter:
             "user_message": state.user_input,
             "context_mode": str(context.get("context_mode", "reading") or "reading"),
             "knowledge_access_policy": str(
-                context.get("knowledge_access_policy", "auto") or "auto"
+                context.get("knowledge_access_policy", state.knowledge_policy.value)
+                or state.knowledge_policy.value
             ),
             "knowledge_enabled": context.get("knowledge_enabled"),
             "source_text": derived_language_input or state.selected_text,
@@ -249,11 +256,11 @@ class ProductAgentRuntimeAdapter:
 
     _begin_conversation = begin_conversation
 
-    def _resolve_knowledge_access(
-        self,
-        state: AgentState,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
+    def resolve_knowledge_access(self, state: AgentState) -> KnowledgeAccessDecision:
+        if state.knowledge_decision is not None:
+            return state.knowledge_decision
+
+        payload = self.build_payload(state)
         context = state.browser_context
         explicit_ids = payload.get("explicit_knowledge_document_ids", ())
         if not explicit_ids and not str(payload.get("workspace_id", "") or "").strip():
@@ -292,6 +299,8 @@ class ProductAgentRuntimeAdapter:
                 if item
             )[:1_000],
         )
+        state.knowledge_policy = decision.mode
+        state.knowledge_decision = decision
         context["knowledge_decision"] = decision.model_dump(mode="json")
         if decision.should_retrieve:
             context.pop("disabled_tools", None)
@@ -304,7 +313,41 @@ class ProductAgentRuntimeAdapter:
         ):
             context["knowledge_scope_strategy"] = "global_knowledge"
             context["knowledge_scope_allow_global"] = True
-        return decision.model_dump(mode="json")
+        return decision
+
+    def resolve_knowledge_scope(
+        self,
+        state: AgentState,
+        *,
+        decision: KnowledgeAccessDecision | None = None,
+    ) -> ResolvedKnowledgeScope:
+        resolved_decision = decision or self.resolve_knowledge_access(state)
+        context = state.browser_context
+        active_workspace_id = str(
+            context.get("active_research_workspace_id", "") or ""
+        ).strip()
+        scope = KnowledgeScopeResolver().resolve(
+            context_mode=str(context.get("context_mode", "general") or "general"),
+            explicit_document_ids=context.get("explicit_knowledge_document_ids", ()),
+            attached_document_id=str(
+                context.get("attached_document_id", "") or ""
+            ).strip(),
+            workspace_id=active_workspace_id
+            or str(context.get("workspace_id", "") or "").strip(),
+            workspace_document_ids=context.get("knowledge_document_ids", ()),
+            research_source_ids=context.get("research_source_ids", ()),
+            global_allowed=bool(context.get("knowledge_scope_allow_global", False)),
+            requested_strategy=resolved_decision.scope_strategy,
+        )
+        state.knowledge_scope = scope
+        context["knowledge_scope"] = scope.model_dump(mode="json")
+        context["knowledge_scope_strategy"] = scope.strategy.value
+        context["knowledge_scope_allow_global"] = scope.allow_global
+        context["knowledge_scope_reason"] = scope.reason
+        context["knowledge_document_ids"] = list(scope.document_ids)
+        context["research_source_ids"] = list(scope.research_source_ids)
+        context["workspace_id"] = scope.workspace_id
+        return scope
 
     def _knowledge_tool_names(self) -> set[str]:
         registry = getattr(self._service, "_registry", None)
@@ -392,8 +435,10 @@ class ProductAgentRuntimeAdapter:
         *,
         control: AgentRunControl | None = None,
     ) -> tuple[AgentRouteDecision, dict[str, Any]]:
+        decision_model = self.resolve_knowledge_access(state)
+        self.resolve_knowledge_scope(state, decision=decision_model)
         payload = self.build_payload(state)
-        decision = self._resolve_knowledge_access(state, payload)
+        decision = decision_model.model_dump(mode="json")
         knowledge_tools = self._knowledge_tool_names()
         if not bool(decision.get("should_retrieve", False)):
             payload = self._restrict_non_retrieval_tools(payload, knowledge_tools)

@@ -248,6 +248,8 @@ class ReadingAgentGraph:
         "resolve_context",
         "run_collaboration",
         "prepare_conversation",
+        "knowledge_access",
+        "knowledge_scope",
         "route_request",
         "execute_direct",
         "start_react",
@@ -283,6 +285,8 @@ class ReadingAgentGraph:
         builder.add_node("resolve_context", self._pausable_node("resolve_context", self._resolve_context))
         builder.add_node("run_collaboration", self._pausable_node("run_collaboration", self._run_collaboration))
         builder.add_node("prepare_conversation", self._pausable_node("prepare_conversation", self._prepare_conversation, simple=True))
+        builder.add_node("knowledge_access", self._pausable_node("knowledge_access", self._knowledge_access))
+        builder.add_node("knowledge_scope", self._pausable_node("knowledge_scope", self._knowledge_scope))
         builder.add_node("route_request", self._pausable_node("route_request", self._route_request))
         builder.add_node("execute_direct", self._pausable_node("execute_direct", self._execute_direct))
         builder.add_node("start_react", self._pausable_node("start_react", self._start_react))
@@ -296,7 +300,9 @@ class ReadingAgentGraph:
         # memory, so two windows cannot launch competing task graphs.
         builder.add_edge("resolve_context", "prepare_conversation")
         builder.add_edge("prepare_conversation", "run_collaboration")
-        builder.add_edge("run_collaboration", "route_request")
+        builder.add_edge("run_collaboration", "knowledge_access")
+        builder.add_edge("knowledge_access", "knowledge_scope")
+        builder.add_edge("knowledge_scope", "route_request")
         builder.add_conditional_edges(
             "route_request",
             self._route_branch,
@@ -602,13 +608,77 @@ class ReadingAgentGraph:
             "conversation_run": _dump_conversation_run(conversation_run),
         }
 
-    def _route_request(
+    def _knowledge_access(
         self,
         graph_state: ReadingAgentGraphState,
         runtime: Runtime[ReadingAgentRuntimeContext],
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         emit, control = self._runtime(runtime)
+        control.checkpoint("knowledge_access")
+        decision = self._adapter.resolve_knowledge_access(state)
+        emitted: set[AgentEventType] = set()
+        if emit is not None:
+            payload = decision.model_dump(mode="json")
+            query = str(payload.pop("query", "") or "")
+            payload["query_chars"] = len(query)
+            emit(AgentEventType.KNOWLEDGE_DECISION, payload)
+            emitted.add(AgentEventType.KNOWLEDGE_DECISION)
+        return {
+            "agent_state": _dump_agent_state(state),
+            "emitted_event_types": _merge_emitted(
+                graph_state.get("emitted_event_types", ()), emitted
+            ),
+        }
+
+    def _knowledge_scope(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        emit, control = self._runtime(runtime)
+        control.checkpoint("knowledge_scope")
+        decision = self._adapter.resolve_knowledge_access(state)
+        scope = self._adapter.resolve_knowledge_scope(state, decision=decision)
+        emitted: set[AgentEventType] = set()
+        if emit is not None:
+            emit(
+                AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
+                {
+                    "strategy": scope.strategy.value,
+                    "document_count": len(scope.document_ids),
+                    "research_source_count": len(scope.research_source_ids),
+                    "workspace_selected": bool(scope.workspace_id),
+                    "allow_global": scope.allow_global,
+                    "reason": scope.reason[:256],
+                },
+            )
+            emitted.add(AgentEventType.KNOWLEDGE_SCOPE_RESOLVED)
+            if not decision.should_retrieve:
+                emit(
+                    AgentEventType.KNOWLEDGE_SKIPPED,
+                    {
+                        "reason_code": decision.reason_code,
+                        "scope_strategy": decision.scope_strategy.value,
+                        "query_chars": len(decision.query),
+                    },
+                )
+                emitted.add(AgentEventType.KNOWLEDGE_SKIPPED)
+        return {
+            "agent_state": _dump_agent_state(state),
+            "emitted_event_types": _merge_emitted(
+                graph_state.get("emitted_event_types", ()), emitted
+            ),
+        }
+
+    def _route_request(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        _, control = self._runtime(runtime)
         if (
             state.browser_context.get("orchestration_direct_delivery")
             and state.response_state.status == "completed"
@@ -630,58 +700,6 @@ class ReadingAgentGraph:
         except Exception as exc:
             self._abort(graph_state, exc)
             raise
-        knowledge_decision = metadata.get("knowledge_decision")
-        if emit is not None and isinstance(knowledge_decision, dict):
-            decision_payload = {
-                key: value
-                for key, value in knowledge_decision.items()
-                if key != "query"
-            }
-            decision_payload["query_chars"] = len(
-                str(knowledge_decision.get("query", "") or "")
-            )
-            emit(AgentEventType.KNOWLEDGE_DECISION, decision_payload)
-            scope = state.browser_context
-            emit(
-                AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
-                {
-                    "strategy": str(
-                        scope.get("knowledge_scope_strategy", "none") or "none"
-                    ),
-                    "document_count": len(scope.get("knowledge_document_ids", ()) or ()),
-                    "research_source_count": len(
-                        scope.get("research_source_ids", ()) or ()
-                    ),
-                    "workspace_selected": bool(
-                        str(
-                            scope.get("active_research_workspace_id", "")
-                            or ""
-                        ).strip()
-                    ),
-                    "allow_global": bool(
-                        scope.get("knowledge_scope_allow_global", False)
-                    ),
-                    "reason": str(
-                        scope.get("knowledge_scope_reason", "") or ""
-                    )[:256],
-                },
-            )
-            if not bool(knowledge_decision.get("should_retrieve", False)):
-                emit(
-                    AgentEventType.KNOWLEDGE_SKIPPED,
-                    {
-                        "reason_code": str(
-                            knowledge_decision.get("reason_code", "") or ""
-                        ),
-                        "scope_strategy": str(
-                            knowledge_decision.get("scope_strategy", "none")
-                            or "none"
-                        ),
-                        "query_chars": len(
-                            str(knowledge_decision.get("query", "") or "")
-                        ),
-                    },
-                )
         return {
             "agent_state": _dump_agent_state(state),
             "route": route.model_dump(mode="json"),
