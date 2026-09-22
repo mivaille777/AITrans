@@ -1,0 +1,20 @@
+{
+  "reading_with_empty_research_workspace": {
+    "context_mode": "reading",
+    "attached_document_id": "doc-A",
+    "workspace_id": "workspace-X",
+    "workspace_document_ids": [],
+    "user_message": "基于当前 Reading Context 分析这篇论文的方法。",
+    "baseline_scope": "__workspace_empty_scope__:document:workspace-X",
+    "target_scope": "doc-A"
+  },
+  "research_with_empty_workspace": {
+    "context_mode": "research",
+    "attached_document_id": "doc-A",
+    "workspace_id": "workspace-X",
+    "workspace_document_ids": [],
+    "user_message": "比较当前 Research Workspace 中所有论文的方法。",
+    "baseline_scope": "__workspace_empty_scope__:document:workspace-X",
+    "target_scope": "__workspace_empty_scope__:document:workspace-X"
+  }
+}
