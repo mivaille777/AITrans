@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
 
 import type { AgentActivityItem } from "../state/agent-workspace-state"
-import { deriveAgentTimelineStages, getAgentTimelineEventLabel } from "./agent-timeline"
+import {
+  deriveAgentTimelineHierarchy,
+  deriveAgentTimelineStages,
+  getAgentTimelineEventLabel,
+} from "./agent-timeline"
 
 function activity(
   sequence: number,

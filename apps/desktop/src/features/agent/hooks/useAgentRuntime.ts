@@ -718,8 +718,8 @@ export function useAgentRuntime(
   }
 
   function retryTask(taskId: string) {
-    if (durableRun?.status === "failed") {
-      retryRun()
+    if (durableRun) {
+      if (durableRun.status === "failed") retryRun()
       return
     }
     const runId = runSnapshot?.run_id || viewState.runId

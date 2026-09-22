@@ -158,6 +158,24 @@ def test_heartbeat_rejects_stale_or_wrong_owner_and_terminal_run(tmp_path) -> No
     )
 
 
+def test_stage7_keeps_legacy_routes_while_registering_canonical_runtime_routes() -> None:
+    paths = {getattr(route, "path", "") for route in create_app().routes}
+    assert {
+        "/api/agent/runs",
+        "/api/agent/runs/{run_id}",
+        "/api/agent/runs/{run_id}/cancel",
+        "/api/agent/runs/{run_id}/pause",
+        "/api/agent/runs/{run_id}/resume",
+        "/api/agent/runs/{run_id}/retry",
+        "/api/agent/runs/{run_id}/confirm",
+        "/api/agent/runs/{run_id}/events",
+        "/api/agent/runs/{run_id}/result",
+        "/api/agent/runs/{run_id}/stream",
+    } <= paths
+    assert "/api/agent/runtime/tasks" in paths
+    assert "/api/agent/stream" in paths
+
+
 def test_runtime_jobs_api_enqueues_durable_request_and_supports_cancel(tmp_path) -> None:
     store = _store(tmp_path)
     app = create_app()

@@ -246,6 +246,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         snapshot={runtime.runSnapshot}
         running={runtimeRunning}
         onRetry={runtime.retryTask}
+        allowTaskRetry={!runtime.durableRun}
       />
 
       <ResearchArtifactPanel snapshot={runtime.runSnapshot} />

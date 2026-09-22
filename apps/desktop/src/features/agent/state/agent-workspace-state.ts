@@ -26,8 +26,8 @@ export interface AgentActivityItem {
   detail: string
   tone: AgentActivityTone
   payload?: Record<string, unknown>
-  stepId: string
-  toolCallId: string
+  stepId?: string
+  toolCallId?: string
 }
 
 export interface AgentWorkspaceViewState {

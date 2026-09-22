@@ -33,8 +33,28 @@ export function AgentMessage({
         </p>
       ) : null}
 
-      {phase === "running" && !content ? (
-        <p className="mt-4 text-sm leading-6 text-slate-500">Planning and executing the bounded workflow…</p>
+      {["queued", "running", "pausing", "recovering"].includes(phase) && !content ? (
+        <p className="mt-4 text-sm leading-6 text-slate-500">
+          {phase === "queued"
+            ? "The durable run is queued for execution."
+            : phase === "pausing"
+              ? "Pause requested. The Agent will stop at the next safe checkpoint."
+              : phase === "recovering"
+                ? "Recovering the durable run from its latest checkpoint…"
+                : "Planning and executing the bounded workflow…"}
+        </p>
+      ) : null}
+
+      {phase === "paused" && !content ? (
+        <p className="mt-4 text-sm leading-6 text-slate-500">
+          This run is paused at a safe checkpoint and can be resumed without replaying completed work.
+        </p>
+      ) : null}
+
+      {phase === "waiting" && !content ? (
+        <p className="mt-4 text-sm leading-6 text-slate-500">
+          The durable run is waiting for a runtime condition before it can continue.
+        </p>
       ) : null}
 
       {phase === "cancelling" && !content ? (
@@ -47,7 +67,7 @@ export function AgentMessage({
         </p>
       ) : null}
 
-      {(phase === "error" || phase === "cancelled") && !content ? (
+      {(phase === "error" || phase === "failed" || phase === "cancelled") && !content ? (
         <p className="mt-4 text-sm leading-6 text-slate-500">
           No final response was produced for this run. See the Agent decision above for details.
         </p>

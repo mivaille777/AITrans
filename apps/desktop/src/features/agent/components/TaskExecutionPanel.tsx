@@ -64,11 +64,13 @@ export function TaskExecutionPanel({
   snapshot,
   running,
   onRetry,
+  allowTaskRetry = true,
 }: {
   events: AgentTraceEvent[]
   snapshot: AgentRunSnapshot | null
   running: boolean
   onRetry: (taskId: string) => void
+  allowTaskRetry?: boolean
 }) {
   const tasks = snapshot?.plan.tasks?.length ? snapshot.plan.tasks : eventTasks(events)
   const taskEvents = events.filter((event) => taskEventTypes.has(event.event_type))
@@ -89,7 +91,7 @@ export function TaskExecutionPanel({
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {tasks.map((task) => {
           const status = taskStatus(task.task_id, events, snapshot)
-          const retryable = snapshot?.retryable_task_ids.includes(task.task_id) ?? false
+          const retryable = allowTaskRetry && (snapshot?.retryable_task_ids.includes(task.task_id) ?? false)
           const result = snapshot?.results.find((item) => item.task_id === task.task_id)
           return (
             <article key={task.task_id} className={`rounded-[15px] border p-3.5 ${tone(status)}`} data-task-id={task.task_id} data-task-status={status}>
