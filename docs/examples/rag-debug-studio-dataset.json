@@ -1,0 +1,132 @@
+[
+  {
+    "case_id": "demo-term-001",
+    "query": "What is the target chunk size used by this RAG configuration?",
+    "categories": [
+      "term"
+    ],
+    "relevant_chunk_ids": [
+      "demo-rag-guide-chunk-001"
+    ],
+    "relevance_grades": {
+      "demo-rag-guide-chunk-001": 3
+    },
+    "claims": [
+      {
+        "claim_id": "target-chunk-size",
+        "relevant_chunk_ids": [
+          "demo-rag-guide-chunk-001"
+        ]
+      }
+    ],
+    "no_answer": false,
+    "metadata": {
+      "source": "demo-rag-guide",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The example configuration targets 512 tokens per chunk.",
+    "answerable": true,
+    "tags": [
+      "smoke",
+      "term"
+    ],
+    "notes": "Replace demo-rag-guide-chunk-001 with a real ID copied from the Chunks tab.",
+    "updated_at": ""
+  },
+  {
+    "case_id": "demo-multilingual-001",
+    "query": "这个知识库的默认向量模型是什么？",
+    "categories": [
+      "multilingual"
+    ],
+    "relevant_chunk_ids": [
+      "demo-rag-guide-chunk-002"
+    ],
+    "relevance_grades": {
+      "demo-rag-guide-chunk-002": 3
+    },
+    "claims": [],
+    "no_answer": false,
+    "metadata": {
+      "source": "demo-rag-guide",
+      "language": "zh-CN"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The example configuration uses Qwen/Qwen3-Embedding-0.6B by default.",
+    "answerable": true,
+    "tags": [
+      "smoke",
+      "multilingual"
+    ],
+    "notes": "Use a Chinese query to verify multilingual sparse and dense retrieval.",
+    "updated_at": ""
+  },
+  {
+    "case_id": "demo-cross-section-001",
+    "query": "Which settings control chunk overlap and final retrieval depth?",
+    "categories": [
+      "cross_section"
+    ],
+    "relevant_chunk_ids": [
+      "demo-rag-guide-chunk-001",
+      "demo-rag-guide-chunk-003"
+    ],
+    "relevance_grades": {
+      "demo-rag-guide-chunk-001": 2,
+      "demo-rag-guide-chunk-003": 3
+    },
+    "claims": [
+      {
+        "claim_id": "chunk-overlap",
+        "relevant_chunk_ids": [
+          "demo-rag-guide-chunk-001"
+        ]
+      },
+      {
+        "claim_id": "final-retrieval-depth",
+        "relevant_chunk_ids": [
+          "demo-rag-guide-chunk-003"
+        ]
+      }
+    ],
+    "no_answer": false,
+    "metadata": {
+      "source": "demo-rag-guide",
+      "language": "en"
+    },
+    "query_type": "Analytical",
+    "expected_answer": "Chunk overlap is controlled by overlap_tokens; final retrieval depth is controlled by final_top_k.",
+    "answerable": true,
+    "tags": [
+      "smoke",
+      "multi-chunk"
+    ],
+    "notes": "This case checks whether fusion/context can combine evidence from separate sections.",
+    "updated_at": ""
+  },
+  {
+    "case_id": "demo-no-answer-001",
+    "query": "What was the production uptime measured on Mars in the 2027 deployment?",
+    "categories": [
+      "no_answer"
+    ],
+    "relevant_chunk_ids": [],
+    "relevance_grades": {},
+    "claims": [],
+    "no_answer": true,
+    "metadata": {
+      "source": "demo-rag-guide",
+      "language": "en"
+    },
+    "query_type": "Factual",
+    "expected_answer": "The indexed material does not provide enough evidence to answer this question.",
+    "answerable": false,
+    "tags": [
+      "smoke",
+      "no-answer"
+    ],
+    "notes": "Keep gold chunks empty; this case measures abstention behavior.",
+    "updated_at": ""
+  }
+]
