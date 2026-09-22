@@ -5,16 +5,22 @@ import type { AgentWorkspacePhase } from "../agent-workspace-state"
 
 const phaseLabel: Record<AgentWorkspacePhase, string> = {
   idle: "Ready",
+  queued: "Queued",
   running: "Running",
+  pausing: "Pausing",
+  paused: "Paused",
+  recovering: "Recovering",
+  waiting: "Waiting",
   cancelling: "Cancelling",
   cancelled: "Cancelled",
   completed: "Completed",
+  failed: "Failed",
   confirmation_required: "Waiting for confirmation",
   error: "Error",
 }
 
 export function AgentHeader({ phase, uiMode }: { phase: AgentWorkspacePhase; uiMode: string }) {
-  const running = phase === "running" || phase === "cancelling"
+  const running = ["queued", "running", "pausing", "recovering", "cancelling"].includes(phase)
 
   return (
     <AITPanel className="p-5">

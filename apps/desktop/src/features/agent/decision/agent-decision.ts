@@ -60,7 +60,7 @@ export function deriveAgentDecision({
     }
   }
 
-  if (phase === "error") {
+  if (phase === "error" || phase === "failed") {
     return {
       kind: "failure",
       tone: "danger",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import type { AgentTraceEvent } from "../../../api/agent"
+import type { DurableAgentRunRecord } from "../../../api/agent-runtime"
 import { deriveAgentWorkspaceState } from "./agent-workspace-state"
 
 function event(
@@ -105,5 +106,47 @@ describe("ReAct workspace activity projection", () => {
     expect(state.activities[0].label).toBe("ReAct budget reached")
     expect(state.activities[0].detail).toContain("tool_call_budget_exhausted")
     expect(state.activities[0].detail).toContain("4 tool calls")
+  })
+})
+
+
+function durableRun(status: DurableAgentRunRecord["status"]): DurableAgentRunRecord {
+  return {
+    task_id: "task-durable",
+    run_id: "run-durable",
+    trace_id: "trace-durable",
+    runtime_profile: "long_task",
+    status,
+    created_at: "2026-09-22T00:00:00Z",
+    updated_at: "2026-09-22T00:00:01Z",
+    started_at: null,
+    finished_at: null,
+    graph_version: "",
+    state_schema_version: 0,
+    checkpoint_id: "",
+    budget_used_ms: 0,
+  }
+}
+
+describe("durable runtime phase projection", () => {
+  it.each([
+    ["queued", "queued"],
+    ["running", "running"],
+    ["pause_requested", "pausing"],
+    ["paused", "paused"],
+    ["recovering", "recovering"],
+    ["waiting", "waiting"],
+    ["completed", "completed"],
+    ["failed", "failed"],
+    ["cancelled", "cancelled"],
+  ] as const)("maps %s to %s from the authoritative run store", (status, phase) => {
+    const state = deriveAgentWorkspaceState({
+      trace: null,
+      durableRun: durableRun(status),
+      pending: false,
+    })
+    expect(state.phase).toBe(phase)
+    expect(state.runId).toBe("run-durable")
+    expect(state.traceId).toBe("trace-durable")
   })
 })

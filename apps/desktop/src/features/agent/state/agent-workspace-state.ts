@@ -1,12 +1,19 @@
 import type { AgentRunTraceResponse, AgentTraceEvent, AgentTraceEventType } from "../../../api/agent"
+import type { DurableAgentRunRecord } from "../../../api/agent-runtime"
 import type { AgentCitationRef, AgentEvidenceItem } from "../../evidence/evidence-types"
 
 export type AgentWorkspacePhase =
   | "idle"
+  | "queued"
   | "running"
+  | "pausing"
+  | "paused"
+  | "recovering"
+  | "waiting"
   | "cancelling"
   | "cancelled"
   | "completed"
+  | "failed"
   | "confirmation_required"
   | "error"
 
@@ -339,6 +346,7 @@ export function deriveAgentWorkspaceState({
   cancelRequested = false,
   cancelledMessage = "",
   errorMessage = "",
+  durableRun = null,
 }: {
   trace: AgentRunTraceResponse | null
   liveEvents?: AgentTraceEvent[]
@@ -346,6 +354,7 @@ export function deriveAgentWorkspaceState({
   cancelRequested?: boolean
   cancelledMessage?: string
   errorMessage?: string
+  durableRun?: DurableAgentRunRecord | null
 }): AgentWorkspaceViewState {
   const activities = activitySource(trace, liveEvents).map((event) => ({
     ...eventToActivity(event),
@@ -356,12 +365,37 @@ export function deriveAgentWorkspaceState({
     outputText: trace?.run.output_text ?? "",
     provider: trace?.run.provider ?? "",
     model: trace?.run.model ?? "",
-    runId: trace?.run_id ?? liveEvents.at(-1)?.run_id ?? "",
-    traceId: trace?.trace_id ?? liveEvents.at(-1)?.trace_id ?? "",
+    runId: durableRun?.run_id ?? trace?.run_id ?? liveEvents.at(-1)?.run_id ?? "",
+    traceId: durableRun?.trace_id ?? trace?.trace_id ?? liveEvents.at(-1)?.trace_id ?? "",
     totalDurationMs: trace?.total_duration_ms ?? liveEvents.at(-1)?.elapsed_ms ?? 0,
     activities,
     evidence: trace?.run.evidence ?? [],
     citations: trace?.run.citations ?? [],
+  }
+
+  if (durableRun) {
+    const confirmationRequired = durableRun.status === "waiting"
+      && trace?.run.status === "confirmation_required"
+    const phaseByStatus: Record<DurableAgentRunRecord["status"], AgentWorkspacePhase> = {
+      queued: "queued",
+      running: cancelRequested ? "cancelling" : "running",
+      waiting: confirmationRequired ? "confirmation_required" : "waiting",
+      pause_requested: "pausing",
+      paused: "paused",
+      recovering: "recovering",
+      completed: "completed",
+      failed: "failed",
+      cancelled: "cancelled",
+    }
+    const phase = phaseByStatus[durableRun.status]
+    return {
+      ...shared,
+      phase,
+      confirmationTool: confirmationRequired ? trace?.run.plan.tool_name ?? "" : "",
+      errorMessage: phase === "failed" ? errorMessage || "Agent run failed." : (
+        phase === "cancelled" ? cancelledMessage : ""
+      ),
+    }
   }
 
   if (errorMessage) {
