@@ -39,6 +39,7 @@ describe("Agent run request", () => {
       workspace_id: "",
       confirmed_write_tools: [],
       knowledge_context: null,
+      knowledge_access_policy: "auto",
     })
   })
 

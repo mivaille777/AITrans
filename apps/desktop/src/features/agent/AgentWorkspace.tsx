@@ -12,6 +12,7 @@ import { ContextCard } from "../companion/components/ContextCard"
 import { agentWorkspaceAreas } from "./agent-workspace-layout"
 import { AgentContextObservabilityCard } from "./components/AgentContextObservabilityCard"
 import { AgentDecisionPanel } from "./components/AgentDecisionPanel"
+import { AgentKnowledgeStateCard } from "./components/AgentKnowledgeStateCard"
 import { AgentTimeline } from "./components/AgentTimeline"
 import { TaskExecutionPanel } from "./components/TaskExecutionPanel"
 import { ResearchArtifactPanel } from "./components/ResearchArtifactPanel"
@@ -133,6 +134,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         knowledge_document_ids: resolved.documentIds,
         research_source_ids: [],
         knowledge_context: resolved.knowledgeContext,
+        knowledge_access_policy: "auto",
         request_id: 1,
       }
       const result = await runAgentTrace(payload)
@@ -151,6 +153,9 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
   }
 
   const runtimeRunning = ["queued", "running", "pausing", "recovering", "cancelling"].includes(runtime.viewState.phase)
+  const knowledgeDocumentCount = runtimeWorkspace.researchRetrievalScope?.knowledgeDocumentIds?.length ?? 0
+  const researchSourceCount = runtimeWorkspace.researchRetrievalScope?.researchSourceIds?.length ?? 0
+  const workspaceSelected = Boolean(runtimeWorkspace.activeResearchWorkspaceId?.trim())
   const canOfferKnowledgeWriteback = Boolean(
     knowledgeAgentContext?.writeback
     && runtime.viewState.phase === "completed"
@@ -204,12 +209,24 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]">
-        <ContextCard
-          text={runtime.sourceText}
-          title={runtime.context.resource_title}
-          section={runtime.context.section_heading}
-          sourceKind={runtime.context.source_kind}
-        />
+        <div className="space-y-4">
+          <ContextCard
+            text={runtime.sourceText}
+            title={runtime.context.resource_title}
+            section={runtime.context.section_heading}
+            sourceKind={runtime.context.source_kind}
+          />
+          <AgentKnowledgeStateCard
+            events={runtime.traceEvents}
+            pending={runtime.pending}
+            contextMode={runtime.contextMode}
+            contextTitle={runtime.context.resource_title}
+            contextSection={runtime.context.section_heading}
+            documentCount={knowledgeDocumentCount}
+            researchSourceCount={researchSourceCount}
+            workspaceSelected={workspaceSelected}
+          />
+        </div>
         <AgentTimeline
           activities={runtime.viewState.activities}
           running={runtimeRunning}

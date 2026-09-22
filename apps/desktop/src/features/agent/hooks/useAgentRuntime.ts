@@ -45,6 +45,7 @@ import {
 } from "../runtime/agent-context-resolver"
 import { buildAgentRunRequest } from "../runtime/agent-run-request"
 import { mergeAgentEvents } from "../runtime/agent-event-replay"
+import { defaultKnowledgeAccessPolicy } from "../runtime/knowledge-access-policy"
 import { deriveAgentWorkspaceState } from "../state/agent-workspace-state"
 
 export function useAgentRuntime(
@@ -613,6 +614,7 @@ export function useAgentRuntime(
       knowledgeDocumentIds: workspace.researchRetrievalScope.knowledgeDocumentIds,
       researchSourceIds: workspace.researchRetrievalScope.researchSourceIds,
       knowledgeContext,
+      knowledgeAccessPolicy: defaultKnowledgeAccessPolicy,
       temporary,
       workflowAction,
     })
