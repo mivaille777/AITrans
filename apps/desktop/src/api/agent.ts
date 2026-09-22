@@ -193,6 +193,9 @@ export interface AgentRunResponse {
 export interface AgentTraceEvent {
   sequence: number
   event_type: AgentTraceEventType
+  task_id?: string
+  step_id?: string
+  tool_call_id?: string
   timestamp: string
   run_id: string
   trace_id: string

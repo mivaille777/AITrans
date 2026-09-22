@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from backend.agent_core.events import AgentEvent
 from backend.agent_core.exceptions import AgentPauseRequestedError, AgentRuntimeError
 from backend.agent_core.reliability import AgentRunControl
-from backend.api.agent import _associate_workspace_result, _state_from_run_request
+from backend.api.agent import _associate_workspace_result, _run_response, _state_from_run_request
 from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
 from backend.api.agent_dependencies import (
     get_agent_conversation_service,
@@ -398,13 +398,7 @@ async def execute_persisted_agent_run(
             target = AgentRunStatus.FAILED
         return AgentRunOutcome(
             status=target,
-            result={
-                "output_text": str(result.response.get("output_text", "")),
-                "provider": str(result.response.get("provider", "")),
-                "model": str(result.response.get("model", "")),
-                "request_id": int(result.response.get("request_id", 0) or 0),
-                "conversation_id": result.conversation.conversation_id,
-            },
+            result=_run_response(result).model_dump(mode="json"),
         )
 
     return await asyncio.to_thread(execute)
