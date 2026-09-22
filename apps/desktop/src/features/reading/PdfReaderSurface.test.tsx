@@ -92,7 +92,7 @@ describe("PdfReaderSurface", () => {
     const onSelection = vi.fn()
     render(<PdfReaderSurface url="http://127.0.0.1:8000/paper.pdf" title="Paper" initialPage={1} onSelection={onSelection} />)
 
-    const canvas = await screen.findByLabelText("PDF page 1")
+    await screen.findByLabelText("PDF page 1")
     await waitFor(() => expect(getPage).toHaveBeenCalledWith(1))
     expect(createLocalPdfDocumentSource).toHaveBeenCalledWith("http://127.0.0.1:8000/paper.pdf")
 
