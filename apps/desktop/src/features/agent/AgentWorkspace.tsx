@@ -150,7 +150,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
     }
   }
 
-  const runtimeRunning = runtime.viewState.phase === "running" || runtime.viewState.phase === "cancelling"
+  const runtimeRunning = ["queued", "running", "pausing", "recovering", "cancelling"].includes(runtime.viewState.phase)
   const canOfferKnowledgeWriteback = Boolean(
     knowledgeAgentContext?.writeback
     && runtime.viewState.phase === "completed"
@@ -216,6 +216,7 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
           runId={runtime.viewState.runId}
           traceId={runtime.viewState.traceId}
           totalDurationMs={runtime.viewState.totalDurationMs}
+          runStatus={runtime.durableRun?.status ?? runtime.viewState.phase}
         />
       </div>
 

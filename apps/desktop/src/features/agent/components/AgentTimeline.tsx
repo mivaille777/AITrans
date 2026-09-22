@@ -4,6 +4,7 @@ import { AITPanel } from "@/shared/components/AITPanel"
 import type { AgentActivityItem } from "../state/agent-workspace-state"
 import { AgentRetrievalActivity } from "./AgentRetrievalActivity"
 import {
+  deriveAgentTimelineHierarchy,
   deriveAgentTimelineStages,
   getAgentTimelineEventLabel,
   type AgentTimelineStageStatus,
@@ -67,14 +68,17 @@ export function AgentTimeline({
   runId,
   traceId,
   totalDurationMs,
+  runStatus = "",
 }: {
   activities: AgentActivityItem[]
   running: boolean
   runId: string
   traceId: string
   totalDurationMs: number
+  runStatus?: string
 }) {
   const stages = deriveAgentTimelineStages(activities, running)
+  const hierarchy = deriveAgentTimelineHierarchy(activities)
 
   return (
     <AITPanel className="min-h-0 p-5">
@@ -96,8 +100,10 @@ export function AgentTimeline({
           {running ? (
             <span className="inline-flex items-center gap-1.5">
               <LoaderCircle size={12} className="animate-spin" />
-              Running
+              {runStatus ? runStatus.replaceAll("_", " ") : "Running"}
             </span>
+          ) : runStatus ? (
+            <span className="capitalize">{runStatus.replaceAll("_", " ")}</span>
           ) : totalDurationMs > 0 ? (
             <span>{totalDurationMs} ms</span>
           ) : null}
@@ -128,6 +134,47 @@ export function AgentTimeline({
           </div>
         ))}
       </div>
+
+
+      {activities.length > 0 ? (
+        <div className="mt-4 rounded-[16px] border border-slate-200/80 bg-slate-50/55 p-3" aria-label="Run step tool hierarchy">
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-1">Run</span>
+            <span className="font-mono normal-case tracking-normal text-slate-500">{runId || "current"}</span>
+          </div>
+          <div className="mt-3 space-y-2 border-l border-slate-200 pl-3">
+            {hierarchy.map((step) => (
+              <div key={step.stepId} className="rounded-[12px] border border-slate-200/80 bg-white/85 px-3 py-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Step</span>
+                  <span className="font-mono text-[10px] text-slate-700">{step.label}</span>
+                  <span className={`ml-auto text-[9px] font-medium ${step.warning ? "text-amber-700" : "text-slate-400"}`}>
+                    {step.eventCount} events
+                  </span>
+                </div>
+                {step.tools.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5 border-l border-slate-100 pl-3">
+                    {step.tools.map((tool) => (
+                      <span
+                        key={tool.toolCallId}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[9px] ${
+                          tool.warning
+                            ? "border-amber-200 bg-amber-50 text-amber-800"
+                            : "border-slate-200 bg-slate-50 text-slate-600"
+                        }`}
+                        title={tool.toolCallId}
+                      >
+                        Tool · {tool.toolName}
+                        <span className="text-slate-400">({tool.eventCount})</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <AgentRetrievalActivity activities={activities} running={running} />
 

@@ -138,3 +138,61 @@ export function deriveAgentTimelineStages(
     }
   })
 }
+
+
+export interface AgentTimelineToolGroup {
+  toolCallId: string
+  toolName: string
+  eventCount: number
+  warning: boolean
+}
+
+export interface AgentTimelineStepGroup {
+  stepId: string
+  label: string
+  eventCount: number
+  warning: boolean
+  tools: AgentTimelineToolGroup[]
+}
+
+function payloadText(item: AgentActivityItem, key: string): string {
+  const value = item.payload?.[key]
+  return typeof value === "string" ? value.trim() : ""
+}
+
+export function deriveAgentTimelineHierarchy(
+  activities: AgentActivityItem[],
+): AgentTimelineStepGroup[] {
+  const groups = new Map<string, AgentActivityItem[]>()
+  for (const item of activities) {
+    const stepId = item.stepId || payloadText(item, "step_id") || "runtime"
+    const current = groups.get(stepId) ?? []
+    current.push(item)
+    groups.set(stepId, current)
+  }
+
+  return [...groups.entries()].map(([stepId, items]) => {
+    const toolGroups = new Map<string, AgentActivityItem[]>()
+    for (const item of items) {
+      const toolCallId = item.toolCallId || payloadText(item, "tool_call_id")
+      if (!toolCallId) continue
+      const current = toolGroups.get(toolCallId) ?? []
+      current.push(item)
+      toolGroups.set(toolCallId, current)
+    }
+    return {
+      stepId,
+      label: stepId === "runtime" ? "Runtime lifecycle" : stepId,
+      eventCount: items.length,
+      warning: items.some((item) => item.tone === "warning"),
+      tools: [...toolGroups.entries()].map(([toolCallId, toolEvents]) => ({
+        toolCallId,
+        toolName:
+          toolEvents.map((item) => payloadText(item, "tool_name") || payloadText(item, "name"))
+            .find(Boolean) || "tool",
+        eventCount: toolEvents.length,
+        warning: toolEvents.some((item) => item.tone === "warning"),
+      })),
+    }
+  })
+}

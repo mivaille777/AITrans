@@ -26,6 +26,8 @@ export interface AgentActivityItem {
   detail: string
   tone: AgentActivityTone
   payload?: Record<string, unknown>
+  stepId: string
+  toolCallId: string
 }
 
 export interface AgentWorkspaceViewState {
@@ -359,6 +361,8 @@ export function deriveAgentWorkspaceState({
   const activities = activitySource(trace, liveEvents).map((event) => ({
     ...eventToActivity(event),
     payload: event.payload,
+    stepId: event.step_id ?? text(event.payload.step_id),
+    toolCallId: event.tool_call_id ?? text(event.payload.tool_call_id),
   }))
   const shared = {
     uiMode: trace?.ui_mode ?? "assistant",

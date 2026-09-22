@@ -149,4 +149,56 @@ describe("Agent execution timeline", () => {
 
     expect(stages.find((stage) => stage.id === "observation")?.activityCount).toBe(8)
   })
+
+  it("projects authoritative runtime events into Run → Step → Tool hierarchy", () => {
+    const activities: AgentActivityItem[] = [
+      {
+        sequence: 0,
+        eventType: "task_started",
+        label: "Step started",
+        detail: "Analyze",
+        tone: "neutral",
+        stepId: "step-1",
+        toolCallId: "",
+      },
+      {
+        sequence: 1,
+        eventType: "tool_call",
+        label: "Tool planned",
+        detail: "Search",
+        tone: "neutral",
+        stepId: "step-1",
+        toolCallId: "call-1",
+        payload: { tool_name: "knowledge_search" },
+      },
+      {
+        sequence: 2,
+        eventType: "tool_result",
+        label: "Tool completed",
+        detail: "Done",
+        tone: "success",
+        stepId: "step-1",
+        toolCallId: "call-1",
+        payload: { tool_name: "knowledge_search" },
+      },
+    ]
+
+    expect(deriveAgentTimelineHierarchy(activities)).toEqual([
+      {
+        stepId: "step-1",
+        label: "step-1",
+        eventCount: 3,
+        warning: false,
+        tools: [
+          {
+            toolCallId: "call-1",
+            toolName: "knowledge_search",
+            eventCount: 2,
+            warning: false,
+          },
+        ],
+      },
+    ])
+  })
+
 })
