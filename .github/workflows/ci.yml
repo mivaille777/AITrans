@@ -206,16 +206,9 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip check
 
-      - name: Run Runtime contract and lifecycle acceptance
+      - name: Run full Agent regression
         shell: pwsh
-        run: >-
-          python -m pytest -q
-          tests/agent/test_runtime_contract.py
-          tests/agent/test_agent_run_store.py
-          tests/agent/test_agent_runtime_scheduler.py
-          tests/agent/test_agent_pause_resume.py
-          tests/agent/test_agent_write_recovery.py
-          tests/agent/test_agent_tool_execution.py
+        run: python -m pytest -q tests/agent
 
       - name: Run Multi-Agent regression
         shell: pwsh
