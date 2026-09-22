@@ -147,6 +147,30 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
         )
     },
     "context_ready": frozenset({"source_kind"}),
+    "knowledge_decision": frozenset(
+        {
+            "mode",
+            "should_retrieve",
+            "reason_code",
+            "scope_strategy",
+            "confidence",
+            "query_chars",
+            "semantic_router_called",
+        }
+    ),
+    "knowledge_scope_resolved": frozenset(
+        {
+            "strategy",
+            "document_count",
+            "research_source_count",
+            "workspace_selected",
+            "allow_global",
+            "reason",
+        }
+    ),
+    "knowledge_skipped": frozenset(
+        {"reason_code", "scope_strategy", "query_chars"}
+    ),
     "plan_ready": frozenset(
         {
             "action",

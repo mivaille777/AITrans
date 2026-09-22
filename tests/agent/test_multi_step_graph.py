@@ -249,6 +249,9 @@ def test_reading_agent_graph_executes_bounded_react_loop_and_synthesizes_once() 
     assert [event.event_type for event in runtime.events] == [
         AgentEventType.AGENT_START,
         AgentEventType.CONTEXT_READY,
+        AgentEventType.KNOWLEDGE_DECISION,
+        AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
+        AgentEventType.KNOWLEDGE_SKIPPED,
         AgentEventType.PLAN_READY,
         AgentEventType.REACT_STARTED,
         AgentEventType.DECISION_READY,

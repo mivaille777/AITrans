@@ -15,7 +15,9 @@ from backend.models.agent_runtime import (
     AgentPlanStep,
     AgentRouteDecision,
 )
+from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.services.agent_conversation_service import AgentConversationService
+from backend.services.knowledge_access_router import KnowledgeAccessRouter
 
 _UI_MODE_BY_TOOL = {
     "translate_selection": "translation",
@@ -79,9 +81,11 @@ class ProductAgentRuntimeAdapter:
         self,
         service: Any,
         conversation_service: AgentConversationService | Any | None = None,
+        knowledge_access_router: KnowledgeAccessRouter | Any | None = None,
     ) -> None:
         self._service = service
         self._conversation_service = conversation_service
+        self._knowledge_access_router = knowledge_access_router or KnowledgeAccessRouter()
 
     @staticmethod
     def build_payload(state: AgentState) -> dict[str, Any]:
@@ -123,6 +127,7 @@ class ProductAgentRuntimeAdapter:
             "history": history,
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
             "enabled_tools": _scope_values(context.get("enabled_tools", ())),
+            "disabled_tools": _scope_values(context.get("disabled_tools", ())),
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
             "explicit_knowledge_document_ids": _scope_values(
                 context.get("explicit_knowledge_document_ids", ())
@@ -130,6 +135,12 @@ class ProductAgentRuntimeAdapter:
             "attached_document_id": str(
                 context.get("attached_document_id", "") or ""
             ).strip(),
+            "knowledge_scope_strategy": str(
+                context.get("knowledge_scope_strategy", "none") or "none"
+            ),
+            "knowledge_scope_allow_global": bool(
+                context.get("knowledge_scope_allow_global", False)
+            ),
             "research_source_ids": _scope_values(context.get("research_source_ids", ())),
             "knowledge_context": _structured(context.get("knowledge_context")),
             "memory_language_preferences": [
@@ -238,6 +249,127 @@ class ProductAgentRuntimeAdapter:
 
     _begin_conversation = begin_conversation
 
+    def _resolve_knowledge_access(
+        self,
+        state: AgentState,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        context = state.browser_context
+        explicit_ids = payload.get("explicit_knowledge_document_ids", ())
+        if not explicit_ids and not str(payload.get("workspace_id", "") or "").strip():
+            explicit_ids = payload.get("knowledge_document_ids", ())
+        attached_document = str(
+            payload.get("attached_document_id", "") or ""
+        ).strip()
+        decision = self._knowledge_access_router.route(
+            user_message=str(payload.get("user_message", "") or ""),
+            context_mode=str(payload.get("context_mode", "general") or "general"),
+            policy=str(
+                payload.get("knowledge_access_policy", KnowledgeAccessPolicy.AUTO.value)
+                or KnowledgeAccessPolicy.AUTO.value
+            ),
+            reading_context_available=bool(
+                str(payload.get("source_text", "") or "").strip()
+                or str(payload.get("context_before", "") or "").strip()
+                or str(payload.get("context_after", "") or "").strip()
+            ),
+            attached_document=attached_document,
+            explicit_scope_count=len(explicit_ids or ()),
+            workspace_available=bool(
+                str(
+                    context.get("active_research_workspace_id", "")
+                    or context.get("workspace_id", "")
+                    or ""
+                ).strip()
+            ),
+            knowledge_available=bool(context.get("knowledge_available", True)),
+            context_summary=" · ".join(
+                item
+                for item in (
+                    str(payload.get("resource_title", "") or "").strip(),
+                    str(payload.get("section_heading", "") or "").strip(),
+                )
+                if item
+            )[:1_000],
+        )
+        context["knowledge_decision"] = decision.model_dump(mode="json")
+        if decision.should_retrieve:
+            context.pop("disabled_tools", None)
+        else:
+            context["disabled_tools"] = sorted(self._knowledge_tool_names())
+        if (
+            bool(decision.should_retrieve)
+            and decision.scope_strategy.value == "global_knowledge"
+            and not payload.get("knowledge_document_ids")
+        ):
+            context["knowledge_scope_strategy"] = "global_knowledge"
+            context["knowledge_scope_allow_global"] = True
+        return decision.model_dump(mode="json")
+
+    def _knowledge_tool_names(self) -> set[str]:
+        registry = getattr(self._service, "_registry", None)
+        list_tools = getattr(registry, "list_tools", None)
+        if not callable(list_tools):
+            return set()
+        return {
+            str(getattr(item, "name", "") or "")
+            for item in list_tools()
+            if str(getattr(item, "name", "") or "")
+            in {
+                "search_knowledge_base",
+                "search_research_notes",
+                "search_research_memory",
+                "analyze_cross_document_research",
+                "search_evidence_ledger",
+            }
+        }
+
+    def registered_tools(self, state: AgentState | None = None) -> tuple[Any, ...]:
+        """Return tools visible to this run after the knowledge decision."""
+
+        registry = getattr(self._service, "_registry", None)
+        list_tools = getattr(registry, "list_tools", None)
+        if not callable(list_tools):
+            list_tools = getattr(self._service, "list_tools", None)
+        if not callable(list_tools):
+            return ()
+        tools = tuple(list_tools())
+        if state is None:
+            return tools
+        decision = state.browser_context.get("knowledge_decision", {})
+        if isinstance(decision, dict) and not bool(decision.get("should_retrieve", False)):
+            knowledge_tools = self._knowledge_tool_names()
+            return tuple(
+                tool
+                for tool in tools
+                if str(getattr(tool, "name", "") or "") not in knowledge_tools
+            )
+        return tools
+
+    def _restrict_non_retrieval_tools(
+        self,
+        payload: dict[str, Any],
+        knowledge_tools: set[str],
+    ) -> dict[str, Any]:
+        if not knowledge_tools:
+            return payload
+        registry = getattr(self._service, "_registry", None)
+        list_tools = getattr(registry, "list_tools", None)
+        if not callable(list_tools):
+            return payload
+        available = [str(getattr(item, "name", "") or "") for item in list_tools()]
+        payload["disabled_tools"] = sorted(knowledge_tools)
+        selected = payload.get("enabled_tools", ())
+        if selected:
+            payload["enabled_tools"] = [
+                name for name in selected if str(name) not in knowledge_tools
+            ]
+        else:
+            payload["enabled_tools"] = [
+                name for name in available if name and name not in knowledge_tools
+            ]
+        return payload
+
     def complete_conversation(self, run: Any, state: AgentState) -> None:
         if run is not None and self._conversation_service is not None:
             self._conversation_service.complete(run, state)
@@ -260,11 +392,17 @@ class ProductAgentRuntimeAdapter:
         *,
         control: AgentRunControl | None = None,
     ) -> tuple[AgentRouteDecision, dict[str, Any]]:
+        payload = self.build_payload(state)
+        decision = self._resolve_knowledge_access(state, payload)
+        knowledge_tools = self._knowledge_tool_names()
+        if not bool(decision.get("should_retrieve", False)):
+            payload = self._restrict_non_retrieval_tools(payload, knowledge_tools)
+
         resolve = getattr(self._service, "resolve_route", None)
         if callable(resolve):
             route, metadata = resolve(
                 control=control,
-                **self.build_payload(state),
+                **payload,
             )
         else:
             route = AgentRouteDecision(
@@ -280,6 +418,51 @@ class ProductAgentRuntimeAdapter:
                 "prompt_id": "",
                 "llm_called": False,
             }
+        if (
+            bool(decision.get("should_retrieve", False))
+            and str(decision.get("mode", "auto") or "auto") == "always"
+            and "search_knowledge_base" in knowledge_tools
+            and not (
+                route.kind == "tool"
+                and route.tool_name in knowledge_tools
+            )
+        ):
+            route = AgentRouteDecision(
+                kind="tool",
+                source="deterministic",
+                intent="search_knowledge_base",
+                tool_name="search_knowledge_base",
+                user_visible_reason="Knowledge policy is Always; perform the required retrieval first.",
+                arguments={"query": str(payload.get("user_message", "") or "")},
+            )
+        elif (
+            bool(decision.get("should_retrieve", False))
+            and route.kind == "answer"
+            and str(decision.get("reason_code", "") or "")
+            in {
+                "knowledge_request",
+                "cross_document_request",
+                "current_context_insufficient",
+                "document_grounding_required",
+                "research_grounding_required",
+            }
+            and "search_knowledge_base" in knowledge_tools
+        ):
+            route = AgentRouteDecision(
+                kind="tool",
+                source="deterministic",
+                intent="search_knowledge_base",
+                tool_name="search_knowledge_base",
+                user_visible_reason="Knowledge decision requires evidence retrieval.",
+                arguments={"query": str(payload.get("user_message", "") or "")},
+            )
+        metadata = {
+            **dict(metadata),
+            "knowledge_decision": decision,
+            "knowledge_tool_restricted": not bool(
+                decision.get("should_retrieve", False)
+            ),
+        }
         state.apply_route(route)
         return route, dict(metadata)
 

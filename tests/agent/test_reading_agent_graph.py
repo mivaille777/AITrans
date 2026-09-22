@@ -170,6 +170,9 @@ def test_reading_agent_graph_preserves_runtime_events_and_conversation_history()
     assert [event.event_type for event in runtime.events] == [
         AgentEventType.AGENT_START,
         AgentEventType.CONTEXT_READY,
+        AgentEventType.KNOWLEDGE_DECISION,
+        AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
+        AgentEventType.KNOWLEDGE_SKIPPED,
         AgentEventType.PLAN_READY,
         AgentEventType.TOOL_CALL,
         AgentEventType.TOOL_RESULT,

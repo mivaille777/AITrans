@@ -193,7 +193,14 @@ class ProductAgentService:
         selection, planning, and execution.
         """
         selected = _trusted_scope_ids(payload.get("enabled_tools", ()), limit=64)
-        tools = tuple(self._registry.list_tools())
+        blocked = set(
+            _trusted_scope_ids(payload.get("disabled_tools", ()), limit=64)
+        )
+        tools = tuple(
+            tool
+            for tool in self._registry.list_tools()
+            if str(getattr(tool, "name", "") or "") not in blocked
+        )
         if not selected:
             return tools
 

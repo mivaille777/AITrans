@@ -488,6 +488,12 @@ class ReadingAgentGraph:
             return tuple(list_tools())
         return ()
 
+    def _run_registered_tools(self, state: AgentState) -> tuple[Any, ...]:
+        visible = getattr(self._adapter, "registered_tools", None)
+        if callable(visible):
+            return tuple(visible(state))
+        return self._registered_tools()
+
     def _resolve_context(
         self,
         graph_state: ReadingAgentGraphState,
@@ -602,7 +608,7 @@ class ReadingAgentGraph:
         runtime: Runtime[ReadingAgentRuntimeContext],
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
-        _, control = self._runtime(runtime)
+        emit, control = self._runtime(runtime)
         if (
             state.browser_context.get("orchestration_direct_delivery")
             and state.response_state.status == "completed"
@@ -624,6 +630,58 @@ class ReadingAgentGraph:
         except Exception as exc:
             self._abort(graph_state, exc)
             raise
+        knowledge_decision = metadata.get("knowledge_decision")
+        if emit is not None and isinstance(knowledge_decision, dict):
+            decision_payload = {
+                key: value
+                for key, value in knowledge_decision.items()
+                if key != "query"
+            }
+            decision_payload["query_chars"] = len(
+                str(knowledge_decision.get("query", "") or "")
+            )
+            emit(AgentEventType.KNOWLEDGE_DECISION, decision_payload)
+            scope = state.browser_context
+            emit(
+                AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
+                {
+                    "strategy": str(
+                        scope.get("knowledge_scope_strategy", "none") or "none"
+                    ),
+                    "document_count": len(scope.get("knowledge_document_ids", ()) or ()),
+                    "research_source_count": len(
+                        scope.get("research_source_ids", ()) or ()
+                    ),
+                    "workspace_selected": bool(
+                        str(
+                            scope.get("active_research_workspace_id", "")
+                            or ""
+                        ).strip()
+                    ),
+                    "allow_global": bool(
+                        scope.get("knowledge_scope_allow_global", False)
+                    ),
+                    "reason": str(
+                        scope.get("knowledge_scope_reason", "") or ""
+                    )[:256],
+                },
+            )
+            if not bool(knowledge_decision.get("should_retrieve", False)):
+                emit(
+                    AgentEventType.KNOWLEDGE_SKIPPED,
+                    {
+                        "reason_code": str(
+                            knowledge_decision.get("reason_code", "") or ""
+                        ),
+                        "scope_strategy": str(
+                            knowledge_decision.get("scope_strategy", "none")
+                            or "none"
+                        ),
+                        "query_chars": len(
+                            str(knowledge_decision.get("query", "") or "")
+                        ),
+                    },
+                )
         return {
             "agent_state": _dump_agent_state(state),
             "route": route.model_dump(mode="json"),
@@ -754,7 +812,7 @@ class ReadingAgentGraph:
                 ),
             }
 
-        tools = self._registered_tools()
+        tools = self._run_registered_tools(state)
         if not tools:
             exc = AgentRuntimeError(
                 "Complex ReAct route has no registered tools.",
