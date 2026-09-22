@@ -1,5 +1,5 @@
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { buildReadingPaperPath } from "../reading/reading-navigation"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
@@ -37,8 +37,18 @@ export default function KnowledgeWorkspacePanel({
   const graphFocusId = requestedFocusId || fallbackFocusId
   const view = resolveKnowledgeView(searchParams)
   const legacyReaderPaperId = resolveLegacyKnowledgeReaderPaperId(searchParams)
+  const [visitedViews, setVisitedViews] = useState<Set<KnowledgePrimaryView>>(() => new Set([view]))
   const [searchRequest, setSearchRequest] = useState(0)
   const [newRequest, setNewRequest] = useState(0)
+
+  /* oxlint-disable react/set-state-in-effect -- retain each knowledge view after its first visit */
+  useEffect(() => {
+    setVisitedViews((current) => {
+      if (current.has(view)) return current
+      return new Set(current).add(view)
+    })
+  }, [view])
+  /* oxlint-enable react/set-state-in-effect */
 
   if (legacyReaderPaperId) {
     return <Navigate to={buildReadingPaperPath(legacyReaderPaperId)} replace />
@@ -79,9 +89,21 @@ export default function KnowledgeWorkspacePanel({
       <KnowledgeWorkspaceHeader view={view} onSelectView={setView} onSearch={requestSearch} onNew={requestNew} />
 
       <div className="knowledge-workspace-body">
-        {view === "canvas" ? <KnowledgeBoardPanel library={library} board={board} focusSearchRequest={searchRequest} createCardRequest={newRequest} /> : null}
-      {view === "graph" ? <KnowledgeGraphPanel library={library} board={board} focusItemId={graphFocusId} onFocusChange={openGraph} onOpenItem={openGraphItem} /> : null}
-        {view === "library" ? <KnowledgeLibraryPanel library={library} onOpenPaper={openPaper} onOpenGraph={openGraph} focusSearchRequest={searchRequest} createCardRequest={newRequest} /> : null}
+        {(["canvas", "graph", "library"] as const).map((panelView) => {
+          const visible = view === panelView
+          if (!visible && !visitedViews.has(panelView)) return null
+          return (
+            <div
+              key={panelView}
+              className={visible ? "min-h-0 flex-1" : "hidden"}
+              aria-hidden={!visible}
+            >
+              {panelView === "canvas" ? <KnowledgeBoardPanel library={library} board={board} focusSearchRequest={searchRequest} createCardRequest={newRequest} /> : null}
+              {panelView === "graph" ? <KnowledgeGraphPanel library={library} board={board} focusItemId={graphFocusId} onFocusChange={openGraph} onOpenItem={openGraphItem} /> : null}
+              {panelView === "library" ? <KnowledgeLibraryPanel library={library} onOpenPaper={openPaper} onOpenGraph={openGraph} focusSearchRequest={searchRequest} createCardRequest={newRequest} /> : null}
+            </div>
+          )
+        })}
       </div>
     </section>
   )

@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Navigate, Route, Routes, useLocation } from "react-router-dom"
+import { Navigate, useLocation } from "react-router-dom"
 
 import AgentWorkspace from "./features/agent/AgentWorkspace"
 import CompanionHandoffNavigator from "./features/companion/CompanionHandoffNavigator"
@@ -8,7 +8,7 @@ import BrowserReadingContextPanel from "./features/reading/BrowserReadingContext
 import TranslationWorkspace from "./features/translation/TranslationWorkspace"
 import { useTranslationWorkspace } from "./features/translation/useTranslationWorkspace"
 import WorkspaceShell from "./features/workspace/WorkspaceShell"
-import { workspaceRouteUsesFixedHeight } from "./features/workspace/workspace-navigation"
+import { type WorkspaceRoutePath, workspaceRouteUsesFixedHeight } from "./features/workspace/workspace-navigation"
 import WorkspaceRouteBoundary from "./shared/errors/WorkspaceRouteBoundary"
 import { getLlmRuntimeStatus, type LlmRuntimeStatus } from "./api/llm-settings"
 import { queryKeys, queryPolling } from "./shared/query/query-keys"
@@ -35,12 +35,108 @@ function WorkspaceRouteFallback() {
   )
 }
 
+type CachedWorkspaceRoutePath = Exclude<WorkspaceRoutePath, "/chat">
+
+const CACHED_WORKSPACE_PATHS: readonly CachedWorkspaceRoutePath[] = [
+  "/translation",
+  "/reading",
+  "/agent",
+  "/knowledge",
+  "/research",
+  "/settings",
+]
+
+function isCachedWorkspacePath(pathname: string): pathname is CachedWorkspaceRoutePath {
+  return CACHED_WORKSPACE_PATHS.includes(pathname as CachedWorkspaceRoutePath)
+}
+
+function renderCachedWorkspaceRoute(
+  path: CachedWorkspaceRoutePath,
+  workspace: ReturnType<typeof useTranslationWorkspace>,
+): ReactNode {
+  if (path === "/translation") {
+    return (
+      <div className="space-y-4">
+        <BrowserReadingContextPanel
+          browserStatus={workspace.browserStatus}
+          readingSelection={workspace.readingSelection}
+          browserPage={workspace.browserPage}
+          followBrowserSelection={workspace.followBrowserSelection}
+          autoTranslateSelection={workspace.autoTranslateSelection}
+          autoTranslating={workspace.autoTranslating}
+          onFollowBrowserSelectionChange={workspace.setFollowBrowserSelection}
+          onAutoTranslateSelectionChange={workspace.setAutoTranslateSelection}
+        />
+        <TranslationWorkspace workspace={workspace} />
+      </div>
+    )
+  }
+  if (path === "/reading") return <ReadingWorkspace workspace={workspace} />
+  if (path === "/agent") return <AgentWorkspace workspace={workspace} />
+  if (path === "/knowledge") {
+    return <KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />
+  }
+  if (path === "/research") {
+    return <ResearchRoute backendState={workspace.backendState} workspace={workspace} />
+  }
+  return <SettingsWorkspace workspace={workspace} />
+}
+
+function WorkspaceRouteCache({
+  activePath,
+  fixedHeight,
+  workspace,
+}: {
+  activePath: CachedWorkspaceRoutePath | null
+  fixedHeight: boolean
+  workspace: ReturnType<typeof useTranslationWorkspace>
+}) {
+  const [visitedPaths, setVisitedPaths] = useState<Set<CachedWorkspaceRoutePath>>(
+    () => (activePath ? new Set([activePath]) : new Set()),
+  )
+
+  /* oxlint-disable react/set-state-in-effect -- remember visited routes after router navigation so their local state survives */
+  useEffect(() => {
+    if (!activePath) return
+    setVisitedPaths((current) => {
+      if (current.has(activePath)) return current
+      return new Set(current).add(activePath)
+    })
+  }, [activePath])
+  /* oxlint-enable react/set-state-in-effect */
+
+  return (
+    <div className={fixedHeight ? "h-full min-h-0" : "min-h-0"}>
+      {CACHED_WORKSPACE_PATHS.map((path) => {
+        const visible = path === activePath
+        if (!visible && !visitedPaths.has(path)) return null
+        return (
+          <div
+            key={path}
+            className={visible
+              ? `${fixedHeight ? "h-full min-h-0 " : ""}workspace-route-enter`
+              : "hidden"}
+            aria-hidden={!visible}
+            data-workspace-route={path}
+          >
+            <WorkspaceRouteBoundary>
+              <Suspense fallback={<WorkspaceRouteFallback />}>
+                {renderCachedWorkspaceRoute(path, workspace)}
+              </Suspense>
+            </WorkspaceRouteBoundary>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function App() {
   const workspace = useTranslationWorkspace()
   const location = useLocation()
-  const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
   const [chatMounted, setChatMounted] = useState(() => location.pathname === "/chat")
   const showingChat = location.pathname === "/chat"
+  const activeCachedPath = isCachedWorkspacePath(location.pathname) ? location.pathname : null
 
   /* oxlint-disable react/set-state-in-effect -- remember the first Chat mount so its active stream survives route changes */
   useEffect(() => {
@@ -83,47 +179,12 @@ function App() {
           </Suspense>
         </div>
       )}
-      {!showingChat && (
-        <div
-          key={location.pathname}
-          className={`workspace-route-enter ${fixedHeightRoute ? "h-full min-h-0" : ""}`}
-        >
-          <WorkspaceRouteBoundary>
-            <Suspense fallback={<WorkspaceRouteFallback />}>
-              <Routes>
-                <Route path="/" element={<Navigate to="/chat" replace />} />
-                <Route
-                  path="/translation"
-                  element={(
-                    <div className="space-y-4">
-                      <BrowserReadingContextPanel
-                        browserStatus={workspace.browserStatus}
-                        readingSelection={workspace.readingSelection}
-                        browserPage={workspace.browserPage}
-                        followBrowserSelection={workspace.followBrowserSelection}
-                        autoTranslateSelection={workspace.autoTranslateSelection}
-                        autoTranslating={workspace.autoTranslating}
-                        onFollowBrowserSelectionChange={workspace.setFollowBrowserSelection}
-                        onAutoTranslateSelectionChange={workspace.setAutoTranslateSelection}
-                      />
-                      <TranslationWorkspace workspace={workspace} />
-                    </div>
-                  )}
-                />
-                <Route path="/reading" element={<ReadingWorkspace workspace={workspace} />} />
-                <Route path="/agent" element={<AgentWorkspace workspace={workspace} />} />
-                <Route path="/knowledge" element={<KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />} />
-                <Route
-                  path="/research"
-                  element={<ResearchRoute backendState={workspace.backendState} workspace={workspace} />}
-                />
-                <Route path="/settings" element={<SettingsWorkspace workspace={workspace} />} />
-                <Route path="*" element={<Navigate to="/chat" replace />} />
-              </Routes>
-            </Suspense>
-          </WorkspaceRouteBoundary>
-        </div>
-      )}
+      <WorkspaceRouteCache
+        activePath={showingChat ? null : activeCachedPath}
+        fixedHeight={workspaceRouteUsesFixedHeight(location.pathname)}
+        workspace={workspace}
+      />
+      {showingChat === false && activeCachedPath === null && <Navigate to="/chat" replace />}
     </WorkspaceShell>
   )
 }

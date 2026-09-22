@@ -256,10 +256,8 @@ export default function SettingsWorkspace({
           <span className="ait-settings-mantra">Your ideas stay with you.</span>
         </header>
 
-         {showRagDebug ? (
-           <RagDebugStudioTrace />
-         ) : (
-         <main className="ait-settings-content-body">
+        <div className={showRagDebug ? "hidden" : "block"}>
+          <main className="ait-settings-content-body">
           <SettingsSection
             id="general"
             title="Local-first runtime"
@@ -399,8 +397,11 @@ export default function SettingsWorkspace({
               <button type="button" className="ait-settings-outline-button" onClick={() => setDrawer("advanced")}>Open overlay settings <ChevronRight size={14} /></button>
             </SettingRow>
           </SettingsSection>
-         </main>
-         )}
+          </main>
+        </div>
+        <div className={showRagDebug ? "block h-full min-h-0" : "hidden"}>
+          <RagDebugStudioTrace />
+        </div>
 
         <footer className="ait-settings-actions">
           <button type="button" className="ait-settings-secondary-button" onClick={resetDefaults}><RotateCcw size={14} /> Reset to defaults</button>

@@ -91,6 +91,7 @@ const INITIAL_STAGES: RagDebugStage[] = [
 
 export default function RagDebugStudioTrace() {
   const [activeTab, setActiveTab] = useState<RagTab>("trace")
+  const [visitedTabs, setVisitedTabs] = useState<Set<RagTab>>(() => new Set(["trace"]))
   const [configs, setConfigs] = useState<RagDebugConfigProfile[]>([])
   const [datasets, setDatasets] = useState<RagDebugDataset[]>([])
   const [latestTrace, setLatestTrace] = useState<RagDebugTraceResponse | null>(null)
@@ -108,6 +109,14 @@ export default function RagDebugStudioTrace() {
   }
 
   useEffect(() => { void refreshBaseData() }, [])
+  /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
+  useEffect(() => {
+    setVisitedTabs((current) => {
+      if (current.has(activeTab)) return current
+      return new Set(current).add(activeTab)
+    })
+  }, [activeTab])
+  /* oxlint-enable react/set-state-in-effect */
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
@@ -129,13 +138,25 @@ export default function RagDebugStudioTrace() {
         </nav>
       </header>
 
-      <div key={activeTab} className="min-h-0 flex-1 animate-[ragFadeIn_.18s_ease-out]">
-        {activeTab === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} trace={latestTrace} onTraceChange={setLatestTrace} />}
-        {activeTab === "retrieval" && <RetrievalTab trace={latestTrace} />}
-        {activeTab === "chunks" && <ChunksTab />}
-        {activeTab === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} />}
-        {activeTab === "compare" && <CompareTab configs={configs} datasets={datasets} />}
-        {activeTab === "datasets" && <DatasetsTab datasets={datasets} onDatasetsChanged={refreshBaseData} />}
+      <div className="min-h-0 flex-1">
+        {TABS.map(({ id }) => {
+          const visible = activeTab === id
+          if (!visible && !visitedTabs.has(id)) return null
+          return (
+            <div
+              key={id}
+              className={visible ? "min-h-0 h-full animate-[ragFadeIn_.18s_ease-out]" : "hidden"}
+              aria-hidden={!visible}
+            >
+              {id === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} trace={latestTrace} onTraceChange={setLatestTrace} />}
+              {id === "retrieval" && <RetrievalTab trace={latestTrace} />}
+              {id === "chunks" && <ChunksTab />}
+              {id === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} />}
+              {id === "compare" && <CompareTab configs={configs} datasets={datasets} />}
+              {id === "datasets" && <DatasetsTab datasets={datasets} onDatasetsChanged={refreshBaseData} />}
+            </div>
+          )
+        })}
       </div>
     </section>
   )

@@ -81,6 +81,17 @@ describe("Batch 5 desktop entry isolation", () => {
     expect(content).toContain("useCompanionConversationRuntime")
   })
 
+  it("keeps visited workspace routes mounted across navigation", () => {
+    const app = read("../App.tsx")
+    const shell = read("../features/workspace/WorkspaceShell.tsx")
+
+    expect(app).toContain("function WorkspaceRouteCache")
+    expect(app).toContain("data-workspace-route={path}")
+    expect(app).not.toContain('key={location.pathname}')
+    expect(shell).not.toContain('if (location.pathname === "/reading")')
+    expect(shell).not.toContain('if (location.pathname === "/settings")')
+  })
+
   it("emits a Vite manifest and reports main versus overlay payloads after every production build", () => {
     const viteConfig = read("../../vite.config.ts")
     const packageJson = JSON.parse(read("../../package.json")) as {

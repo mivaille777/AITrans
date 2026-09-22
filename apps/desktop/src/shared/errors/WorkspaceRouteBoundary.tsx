@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react"
-import { Link, useLocation } from "react-router-dom"
+import { Link } from "react-router-dom"
 
 import { buttonClassName } from "../ui/button-styles"
 
@@ -30,12 +30,19 @@ class RouteBoundary extends Component<{ children: ReactNode }, RouteBoundaryStat
           This page failed without taking down the desktop shell.
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Navigate away to remount the route, or reload the WebView if the same page keeps failing.
+          Try the route again, or reload the WebView if the same page keeps failing.
         </p>
         <pre className="mt-4 max-h-32 overflow-auto rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-300">
           {this.state.error.message}
         </pre>
         <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            className={buttonClassName()}
+            onClick={() => this.setState({ error: null })}
+          >
+            Try again
+          </button>
           <Link to="/translation" className={buttonClassName({ variant: "primary" })}>
             Translation workspace
           </Link>
@@ -53,6 +60,5 @@ class RouteBoundary extends Component<{ children: ReactNode }, RouteBoundaryStat
 }
 
 export default function WorkspaceRouteBoundary({ children }: { children: ReactNode }) {
-  const location = useLocation()
-  return <RouteBoundary key={location.pathname}>{children}</RouteBoundary>
+  return <RouteBoundary>{children}</RouteBoundary>
 }

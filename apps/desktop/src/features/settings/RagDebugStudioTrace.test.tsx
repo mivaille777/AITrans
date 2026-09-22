@@ -135,7 +135,7 @@ vi.mock("../../desktop", () => ({
 
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
 import { addKnowledgeDocument, deleteKnowledgeDocument, reindexKnowledgeDocument } from "../../api/knowledge"
-import { startRagDebugRun } from "../../api/rag-debug"
+import { listRagDebugChunks, startRagDebugRun } from "../../api/rag-debug"
 import { desktop } from "../../desktop"
 
 afterEach(() => {
@@ -180,6 +180,11 @@ describe("RagDebugStudio", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Nature-based solutions offer multiple co-benefits/ })).toBeTruthy())
     fireEvent.click(screen.getByRole("button", { name: /Nature-based solutions offer multiple co-benefits/ }))
     expect(screen.getByText("2.1 Nature-based Solutions", { selector: "dd" })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Trace" }))
+    fireEvent.click(screen.getByRole("button", { name: "Chunks" }))
+    await waitFor(() => expect(screen.getByText("Document Structure")).toBeTruthy())
+    expect(listRagDebugChunks).toHaveBeenCalledTimes(1)
   })
 
   it("accepts a custom Top K value when starting a trace", async () => {
