@@ -1,4 +1,4 @@
-import type { AgentKnowledgeContext, AgentRunRequest, AgentWorkflowAction } from "../../../api/agent"
+import type { AgentKnowledgeContext, AgentRunRequest, AgentWorkflowAction, KnowledgeAccessPolicy } from "../../../api/agent"
 import type { ReadingContextFields } from "../../../api/types"
 import type { AgentContextMode } from "./agent-context-mode"
 
@@ -19,6 +19,9 @@ export interface BuildAgentRunRequestInput {
   confirmedWriteTools?: string[]
   enabledTools?: string[]
   knowledgeDocumentIds?: string[]
+  explicitKnowledgeDocumentIds?: string[]
+  attachedDocumentId?: string
+  knowledgeAccessPolicy?: KnowledgeAccessPolicy
   researchSourceIds?: string[]
   knowledgeContext?: AgentKnowledgeContext | null
   temporary?: boolean
@@ -42,6 +45,9 @@ export function buildAgentRunRequest({
   confirmedWriteTools = [],
   enabledTools = [],
   knowledgeDocumentIds = [],
+  explicitKnowledgeDocumentIds = [],
+  attachedDocumentId = "",
+  knowledgeAccessPolicy = "auto",
   researchSourceIds = [],
   knowledgeContext = null,
   temporary = false,
@@ -53,6 +59,7 @@ export function buildAgentRunRequest({
     client_id: clientId,
     client_surface: "main",
     context_mode: contextMode,
+    knowledge_access_policy: knowledgeAccessPolicy,
     trace_id: traceId,
     user_message: userMessage,
     source_text: sourceText,
@@ -65,6 +72,8 @@ export function buildAgentRunRequest({
     confirmed_write_tools: confirmedWriteTools,
     enabled_tools: enabledTools,
     knowledge_document_ids: knowledgeDocumentIds,
+    explicit_knowledge_document_ids: explicitKnowledgeDocumentIds,
+    attached_document_id: attachedDocumentId,
     research_source_ids: researchSourceIds,
     knowledge_context: knowledgeContext,
     request_id: requestId,

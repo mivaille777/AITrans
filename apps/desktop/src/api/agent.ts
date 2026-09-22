@@ -12,6 +12,8 @@ export type AgentToolEffect = "read" | "compute" | "write"
 export type AgentClientSurface = "main" | "overlay" | "unknown"
 export type AgentContextMode = "general" | "reading" | "knowledge" | "research" | "translation"
 export type AgentWorkflowAction = "" | "quick_read" | "analyze_visuals" | "compare_papers" | "curate_knowledge" | "draft_section"
+export type KnowledgeAccessPolicy = "auto" | "always" | "never"
+export type KnowledgeScopeStrategy = "none" | "attached_document" | "explicit_documents" | "research_workspace" | "global_knowledge"
 
 export interface AgentToolDefinition {
   name: string
@@ -155,6 +157,8 @@ export interface AgentRunRequest extends ReadingContextFields {
   client_id?: string
   client_surface?: AgentClientSurface
   context_mode?: AgentContextMode
+  knowledge_access_policy?: KnowledgeAccessPolicy
+  knowledge_enabled?: boolean
   user_message: string
   source_text: string
   translated_text: string
@@ -166,6 +170,8 @@ export interface AgentRunRequest extends ReadingContextFields {
   confirmed_write_tools?: string[]
   enabled_tools?: string[]
   knowledge_document_ids?: string[]
+  explicit_knowledge_document_ids?: string[]
+  attached_document_id?: string
   research_source_ids?: string[]
   knowledge_context?: AgentKnowledgeContext | null
   request_id?: number

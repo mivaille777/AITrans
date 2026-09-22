@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.models.agent_runtime import (
     AgentCitationRef,
     AgentEvidenceItem,
@@ -178,6 +179,8 @@ class AgentRunRequest(ReadingContextPayload):
     client_id: str = Field(default="", max_length=128)
     client_surface: AgentClientSurface = "unknown"
     context_mode: AgentContextMode = "reading"
+    knowledge_access_policy: KnowledgeAccessPolicy = KnowledgeAccessPolicy.AUTO
+    knowledge_enabled: bool | None = None
     user_message: str = Field(min_length=1, max_length=20_000)
     style: str = Field(default="academic", min_length=1, max_length=64)
     conversation_id: str = Field(default="", max_length=128)
@@ -185,6 +188,8 @@ class AgentRunRequest(ReadingContextPayload):
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
     enabled_tools: list[str] = Field(default_factory=list, max_length=64)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
+    explicit_knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
+    attached_document_id: str = Field(default="", max_length=256)
     research_source_ids: list[str] = Field(default_factory=list, max_length=100)
     knowledge_context: AgentKnowledgeContext | None = None
     knowledge_item_id: str = Field(default="", max_length=128)
@@ -195,6 +200,22 @@ class AgentRunRequest(ReadingContextPayload):
     temporary: bool = False
     workflow_action: AgentWorkflowAction = ""
     retry_task_id: str = Field(default="", max_length=256)
+
+    @model_validator(mode="after")
+    def migrate_legacy_knowledge_toggle(self) -> AgentRunRequest:
+        """Translate the legacy Boolean toggle only when no new policy was sent."""
+
+        if (
+            self.knowledge_enabled is not None
+            and "knowledge_access_policy" not in self.model_fields_set
+        ):
+            self.knowledge_access_policy = (
+                KnowledgeAccessPolicy.ALWAYS
+                if self.knowledge_enabled
+                else KnowledgeAccessPolicy.NEVER
+            )
+        self.attached_document_id = self.attached_document_id.strip()
+        return self
 
 
 class AgentRunResponse(BaseModel):

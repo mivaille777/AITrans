@@ -103,6 +103,10 @@ class ProductAgentRuntimeAdapter:
             "trace_id": state.trace_id,
             "user_message": state.user_input,
             "context_mode": str(context.get("context_mode", "reading") or "reading"),
+            "knowledge_access_policy": str(
+                context.get("knowledge_access_policy", "auto") or "auto"
+            ),
+            "knowledge_enabled": context.get("knowledge_enabled"),
             "source_text": derived_language_input or state.selected_text,
             "translated_text": str(context.get("translated_text", "") or ""),
             "source_language": str(context.get("source_language", "auto") or "auto"),
@@ -120,6 +124,12 @@ class ProductAgentRuntimeAdapter:
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
             "enabled_tools": _scope_values(context.get("enabled_tools", ())),
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
+            "explicit_knowledge_document_ids": _scope_values(
+                context.get("explicit_knowledge_document_ids", ())
+            ),
+            "attached_document_id": str(
+                context.get("attached_document_id", "") or ""
+            ).strip(),
             "research_source_ids": _scope_values(context.get("research_source_ids", ())),
             "knowledge_context": _structured(context.get("knowledge_context")),
             "memory_language_preferences": [
