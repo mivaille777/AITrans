@@ -56,6 +56,10 @@ from backend.services.agent_tool_registry import (
     AgentToolRegistry,
 )
 from backend.services.agent_trace_store_service import AgentTraceStoreService
+from backend.services.knowledge_scope_resolver import (
+    KnowledgeScopeResolver,
+    empty_workspace_scope_id,
+)
 from backend.services.research_note_service import (
     ResearchNoteService,
     research_source_id,
@@ -132,7 +136,7 @@ def _empty_workspace_scope_id(workspace_id: str, kind: str) -> str:
     cannot match generated document/source identifiers.
     """
 
-    return f"__workspace_empty_scope__:{kind}:{workspace_id}"
+    return empty_workspace_scope_id(workspace_id, kind)
 
 
 def _state_from_run_request(
@@ -149,29 +153,53 @@ def _state_from_run_request(
             "source_text",
         }
     )
-    workspace_id = payload.workspace_id.strip()
-    if workspace_id:
+    active_workspace_id = payload.workspace_id.strip()
+    workspace_document_ids: tuple[str, ...] = ()
+    workspace_research_source_ids: tuple[str, ...] = ()
+    if active_workspace_id:
         if workspace_service is None or research_notes is None:
             raise ValueError("Research workspace context is unavailable.")
-        workspace = workspace_service.get(workspace_id)
+        workspace = workspace_service.get(active_workspace_id)
         if workspace is None:
             raise ValueError("Research workspace not found.")
-        # A selected Workspace is authoritative. Client-side temporary scopes are
-        # ignored so the Agent receives the persisted research-project context.
-        # Empty project membership must remain an empty scope rather than falling
-        # through to the legacy global-search meaning of an empty list.
-        document_ids = list(workspace.document_ids)
-        research_source_ids = _workspace_research_source_ids(
+        workspace_document_ids = tuple(workspace.document_ids)
+        workspace_research_source_ids = tuple(_workspace_research_source_ids(
             workspace.note_ids,
             research_notes,
-        )
-        context["workspace_id"] = workspace_id
-        context["knowledge_document_ids"] = document_ids or [
-            _empty_workspace_scope_id(workspace_id, "document")
-        ]
-        context["research_source_ids"] = research_source_ids or [
-            _empty_workspace_scope_id(workspace_id, "research")
-        ]
+        ))
+
+    # The new field is the explicit user boundary. The legacy document list is
+    # retained for old clients, but a persisted workspace remains authoritative
+    # for those clients until they migrate to explicit_knowledge_document_ids.
+    explicit_document_ids = tuple(payload.explicit_knowledge_document_ids)
+    legacy_document_ids = tuple(payload.knowledge_document_ids)
+    if not explicit_document_ids and not active_workspace_id:
+        explicit_document_ids = legacy_document_ids
+    legacy_workspace_fallback = bool(
+        active_workspace_id
+        and not payload.attached_document_id.strip()
+        and not payload.explicit_knowledge_document_ids
+        and legacy_document_ids
+    )
+    scope = KnowledgeScopeResolver().resolve(
+        context_mode=payload.context_mode,
+        explicit_document_ids=explicit_document_ids,
+        attached_document_id=payload.attached_document_id,
+        workspace_id=active_workspace_id,
+        workspace_document_ids=workspace_document_ids,
+        research_source_ids=workspace_research_source_ids,
+        global_allowed=False,
+        legacy_workspace_fallback=legacy_workspace_fallback,
+    )
+    context["active_research_workspace_id"] = active_workspace_id
+    context["workspace_id"] = scope.workspace_id
+    context["knowledge_document_ids"] = list(scope.document_ids)
+    context["explicit_knowledge_document_ids"] = list(explicit_document_ids)
+    context["attached_document_id"] = payload.attached_document_id.strip()
+    context["research_source_ids"] = list(scope.research_source_ids)
+    context["knowledge_scope_strategy"] = scope.strategy.value
+    context["knowledge_scope_allow_global"] = scope.allow_global
+    context["knowledge_scope_reason"] = scope.reason
 
     kwargs: dict[str, Any] = {
         "session_id": payload.session_id,
