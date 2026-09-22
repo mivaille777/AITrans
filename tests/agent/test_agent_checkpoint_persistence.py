@@ -319,6 +319,11 @@ def test_resuming_completed_checkpoint_is_idempotent_after_reopen(tmp_path) -> N
 
     assert first_result.response["status"] == "completed"
     assert first_service.run_calls == 1
+    metadata = _runtime(first_service, first_store).checkpoint_metadata(run_id)
+    assert metadata is not None
+    assert metadata["graph_version"] == first_result.graph_version
+    assert metadata["state_schema_version"] == first_result.state_schema_version
+    assert metadata["checkpoint_id"]
     first_store.close()
 
     resumed_service = DirectAnswerService()
@@ -358,4 +363,56 @@ def test_pending_write_tool_is_never_automatically_replayed(tmp_path) -> None:
         runtime.restore_checkpoint(run_id)
 
     assert exc_info.value.fallback_reason == "write_checkpoint_requires_manual_recovery"
+    store.close()
+
+
+def test_cp01_checkpoints_are_scoped_to_their_run_id(tmp_path) -> None:
+    store = AgentCheckpointService(storage_path=tmp_path / "checkpoints.sqlite3")
+    runtime = _runtime(DirectAnswerService(), store)
+    runtime.execute(_state("run-owner"))
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        runtime.restore_checkpoint("run-other")
+    assert exc_info.value.fallback_reason == "checkpoint_not_found"
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("version_update", "reason"),
+    [
+        ({"graph_version": "future-graph-v99"}, "checkpoint_graph_version_unsupported"),
+        ({"state_schema_version": 999}, "checkpoint_schema_unsupported"),
+    ],
+)
+def test_cp02_cp03_unsupported_checkpoint_versions_are_rejected(
+    tmp_path, version_update, reason
+) -> None:
+    store = AgentCheckpointService(storage_path=tmp_path / "checkpoints.sqlite3")
+    runtime = _runtime(DirectAnswerService(), store)
+    run_id = "run-version-check"
+    runtime.execute(_state(run_id))
+    graph = runtime.workflow_adapter.compiled_graph
+    config = {"configurable": {"thread_id": run_id}}
+    snapshot = graph.get_state(config)
+    payload = {**snapshot.values["agent_state"], **version_update}
+    graph.update_state(config, {"agent_state": payload})
+    with pytest.raises(AgentRuntimeError) as exc_info:
+        runtime.restore_checkpoint(run_id)
+    assert exc_info.value.fallback_reason == reason
+    store.close()
+
+
+def test_cp04_legacy_checkpoint_loads_through_explicit_migration(tmp_path) -> None:
+    store = AgentCheckpointService(storage_path=tmp_path / "checkpoints.sqlite3")
+    runtime = _runtime(DirectAnswerService(), store)
+    run_id = "run-legacy-version"
+    runtime.execute(_state(run_id))
+    graph = runtime.workflow_adapter.compiled_graph
+    config = {"configurable": {"thread_id": run_id}}
+    payload = dict(graph.get_state(config).values["agent_state"])
+    payload["graph_version"] = "reading-agent-v1"
+    payload["state_schema_version"] = 1
+    graph.update_state(config, {"agent_state": payload})
+    restored = runtime.restore_checkpoint(run_id)
+    assert restored.checkpoint_source_graph_version == "reading-agent-v1"
+    assert restored.graph_version != "reading-agent-v1"
     store.close()

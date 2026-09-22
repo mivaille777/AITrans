@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from queue import Empty, Queue
 from threading import Event, Thread
 from time import monotonic
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
     AgentCancelledError,
     AgentDecisionTimeoutError,
+    AgentPauseRequestedError,
     AgentToolTimeoutError,
 )
 
@@ -62,6 +64,7 @@ class AgentExecutionPolicy:
 class AgentRunControl:
     policy: AgentExecutionPolicy = field(default_factory=AgentExecutionPolicy)
     cancel_event: Event = field(default_factory=Event)
+    pause_event: Event = field(default_factory=Event)
     started_at: float = field(default_factory=monotonic)
 
     @property
@@ -78,6 +81,14 @@ class AgentRunControl:
 
     def cancel(self) -> None:
         self.cancel_event.set()
+
+    def pause(self) -> None:
+        self.pause_event.set()
+
+    def pause_at_boundary(self, node: str) -> None:
+        self.checkpoint(node)
+        if self.pause_event.is_set():
+            raise AgentPauseRequestedError(f"Agent run paused before {node}.")
 
     def checkpoint(self, stage: str) -> None:
         if self.cancel_event.is_set():
@@ -117,7 +128,7 @@ def _run_bounded_operation(
     def worker() -> None:
         try:
             queue.put((True, operation()))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - propagate provider errors across thread
             queue.put((False, exc))
 
     Thread(target=worker, name=thread_name, daemon=True).start()

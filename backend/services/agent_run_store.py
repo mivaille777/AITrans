@@ -14,13 +14,14 @@ from backend.models.agent_run import (
     AgentRunStatus,
     AgentStepRecord,
     AgentToolCallRecord,
+    AgentToolCallStatus,
     AgentWorkerLeaseRecord,
     transition_run,
 )
 from backend.models.agent_tasks import AgentTaskRecord
 
 DEFAULT_AGENT_RUNTIME_FILENAME = "agent_runtime.sqlite3"
-AGENT_RUNTIME_SCHEMA_VERSION = 2
+AGENT_RUNTIME_SCHEMA_VERSION = 3
 
 
 class AgentRunStoreError(RuntimeError):
@@ -107,6 +108,10 @@ class AgentRunStore:
                 runtime_profile TEXT NOT NULL,
                 request_json TEXT NOT NULL DEFAULT '{}',
                 result_json TEXT,
+                graph_version TEXT NOT NULL DEFAULT '',
+                state_schema_version INTEGER NOT NULL DEFAULT 0,
+                checkpoint_id TEXT NOT NULL DEFAULT '',
+                budget_used_ms INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -184,6 +189,14 @@ class AgentRunStore:
                 )
             if "result_json" not in columns:
                 connection.execute("ALTER TABLE agent_runs ADD COLUMN result_json TEXT")
+            for name, declaration in (
+                ("graph_version", "TEXT NOT NULL DEFAULT ''"),
+                ("state_schema_version", "INTEGER NOT NULL DEFAULT 0"),
+                ("checkpoint_id", "TEXT NOT NULL DEFAULT ''"),
+                ("budget_used_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE agent_runs ADD COLUMN {name} {declaration}")
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(key, value)
@@ -268,6 +281,10 @@ class AgentRunStore:
             updated_at=_parse_datetime(row["updated_at"]),
             started_at=_parse_datetime(row["started_at"]),
             finished_at=_parse_datetime(row["finished_at"]),
+            graph_version=str(row["graph_version"]),
+            state_schema_version=int(row["state_schema_version"]),
+            checkpoint_id=str(row["checkpoint_id"]),
+            budget_used_ms=int(row["budget_used_ms"]),
         )
 
     def create_task(self, task: AgentTaskRecord) -> AgentTaskRecord:
@@ -464,6 +481,7 @@ class AgentRunStore:
         *,
         lease_owner: str,
         lease_seconds: float = 30.0,
+        budget_used_ms: int | None = None,
         now: datetime | None = None,
     ) -> bool:
         if lease_seconds <= 0:
@@ -477,7 +495,7 @@ class AgentRunStore:
                 WHERE run_id = ? AND lease_owner = ? AND lease_expires_at > ?
                   AND EXISTS (
                       SELECT 1 FROM agent_runs
-                      WHERE run_id = ? AND status = ?
+                      WHERE run_id = ? AND status IN (?, ?)
                   )
                 """,
                 (
@@ -488,8 +506,17 @@ class AgentRunStore:
                     _iso(heartbeat_at),
                     run_id,
                     AgentRunStatus.RUNNING.value,
+                    AgentRunStatus.PAUSE_REQUESTED.value,
                 ),
             )
+            if cursor.rowcount == 1 and budget_used_ms is not None:
+                connection.execute(
+                    """
+                    UPDATE agent_runs SET budget_used_ms = MAX(budget_used_ms, ?)
+                    WHERE run_id = ?
+                    """,
+                    (budget_used_ms, run_id),
+                )
             return cursor.rowcount == 1
 
     def recover_expired_runs(self, *, now: datetime | None = None) -> tuple[str, ...]:
@@ -497,31 +524,175 @@ class AgentRunStore:
         with self._write_transaction() as connection:
             rows = connection.execute(
                 """
-                SELECT r.run_id FROM agent_runs AS r
+                SELECT r.run_id, r.status FROM agent_runs AS r
                 JOIN agent_worker_leases AS l ON l.run_id = r.run_id
-                WHERE r.status = ? AND l.lease_expires_at <= ?
+                WHERE r.status IN (?, ?) AND l.lease_expires_at <= ?
                 ORDER BY r.created_at, r.run_id
                 """,
-                (AgentRunStatus.RUNNING.value, _iso(expired_at)),
+                (
+                    AgentRunStatus.RUNNING.value,
+                    AgentRunStatus.PAUSE_REQUESTED.value,
+                    _iso(expired_at),
+                ),
             ).fetchall()
             run_ids = tuple(str(row["run_id"]) for row in rows)
-            for run_id in run_ids:
+            for row in rows:
+                run_id = str(row["run_id"])
+                previous_status = AgentRunStatus(str(row["status"]))
+                target = (
+                    AgentRunStatus.PAUSED
+                    if previous_status is AgentRunStatus.PAUSE_REQUESTED
+                    else AgentRunStatus.RECOVERING
+                )
                 connection.execute(
                     """
                     UPDATE agent_runs SET status = ?, updated_at = ?
                     WHERE run_id = ? AND status = ?
                     """,
                     (
-                        AgentRunStatus.RECOVERING.value,
+                        target.value,
                         _iso(expired_at),
                         run_id,
-                        AgentRunStatus.RUNNING.value,
+                        previous_status.value,
                     ),
                 )
                 connection.execute(
                     "DELETE FROM agent_worker_leases WHERE run_id = ?", (run_id,)
                 )
         return run_ids
+
+    def pause_run(self, run_id: str) -> AgentRunRecord:
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreNotFoundError(f"run not found: {run_id}")
+            current = self._run_from_row(row)
+            if current.status in (AgentRunStatus.PAUSED, AgentRunStatus.PAUSE_REQUESTED):
+                return current
+            if current.status is not AgentRunStatus.RUNNING:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} cannot pause from {current.status.value}"
+                )
+            updated = transition_run(current, AgentRunStatus.PAUSE_REQUESTED)
+            connection.execute(
+                """
+                UPDATE agent_runs SET status = ?, updated_at = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    updated.status.value,
+                    _iso(updated.updated_at),
+                    run_id,
+                    current.status.value,
+                ),
+            )
+        return updated
+
+    def resume_run(self, run_id: str) -> AgentRunRecord:
+        return self.transition_run(
+            run_id,
+            expected_status=AgentRunStatus.PAUSED,
+            target_status=AgentRunStatus.RECOVERING,
+        )
+
+    def update_checkpoint_metadata(
+        self,
+        run_id: str,
+        *,
+        lease_owner: str,
+        graph_version: str,
+        state_schema_version: int,
+        checkpoint_id: str,
+        now: datetime | None = None,
+    ) -> AgentRunRecord:
+        checked_at = _as_utc(now)
+        if not graph_version or not checkpoint_id or state_schema_version < 1:
+            raise ValueError("complete checkpoint metadata is required")
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_runs
+                SET graph_version = ?, state_schema_version = ?, checkpoint_id = ?
+                WHERE run_id = ? AND status IN (?, ?)
+                  AND EXISTS (
+                    SELECT 1 FROM agent_worker_leases
+                    WHERE run_id = ? AND lease_owner = ? AND lease_expires_at > ?
+                  )
+                """,
+                (
+                    graph_version,
+                    state_schema_version,
+                    checkpoint_id,
+                    run_id,
+                    AgentRunStatus.RUNNING.value,
+                    AgentRunStatus.PAUSE_REQUESTED.value,
+                    run_id,
+                    lease_owner,
+                    _iso(checked_at),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} checkpoint cannot be updated by {lease_owner}"
+                )
+        return self.get_run(run_id)
+
+    def prepare_recovery_tool_calls(
+        self, run_id: str, *, lease_owner: str
+    ) -> tuple[str, ...]:
+        """Fence uncertain writes; reset interrupted read/compute calls for retry."""
+
+        blocked: list[str] = []
+        with self._write_transaction() as connection:
+            active = connection.execute(
+                """
+                SELECT 1 FROM agent_worker_leases AS l
+                JOIN agent_runs AS r ON r.run_id = l.run_id
+                WHERE l.run_id = ? AND l.lease_owner = ?
+                  AND l.lease_expires_at > ? AND r.status = ?
+                """,
+                (
+                    run_id,
+                    lease_owner,
+                    _iso(datetime.now(UTC)),
+                    AgentRunStatus.RUNNING.value,
+                ),
+            ).fetchone()
+            if active is None:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} recovery is not owned by {lease_owner}"
+                )
+            rows = connection.execute(
+                """
+                SELECT tool_call_id, record_json FROM agent_tool_calls
+                WHERE run_id = ? AND status = ?
+                """,
+                (run_id, AgentToolCallStatus.RUNNING.value),
+            ).fetchall()
+            for row in rows:
+                call = AgentToolCallRecord.model_validate_json(str(row["record_json"]))
+                if call.effect == "write":
+                    status = AgentToolCallStatus.BLOCKED_RECOVERY
+                    blocked.append(call.tool_call_id)
+                else:
+                    status = AgentToolCallStatus.PENDING
+                updated = call.model_copy(update={"status": status})
+                connection.execute(
+                    """
+                    UPDATE agent_tool_calls SET status = ?, record_json = ?
+                    WHERE tool_call_id = ? AND run_id = ? AND status = ?
+                    """,
+                    (
+                        status.value,
+                        updated.model_dump_json(),
+                        call.tool_call_id,
+                        run_id,
+                        AgentToolCallStatus.RUNNING.value,
+                    ),
+                )
+        return tuple(blocked)
 
     def cancel_run(self, run_id: str) -> AgentRunRecord:
         with self._write_transaction() as connection:
@@ -563,6 +734,7 @@ class AgentRunStore:
         lease_owner: str,
         target_status: AgentRunStatus,
         result_payload: dict[str, object] | None = None,
+        budget_used_ms: int | None = None,
         now: datetime | None = None,
     ) -> AgentRunRecord:
         if target_status not in (
@@ -570,20 +742,22 @@ class AgentRunStore:
             AgentRunStatus.FAILED,
             AgentRunStatus.WAITING,
             AgentRunStatus.CANCELLED,
+            AgentRunStatus.PAUSED,
         ):
-            raise ValueError("owned run can only finish as completed, failed, waiting or cancelled")
+            raise ValueError("unsupported owned run target status")
         finished_at = _as_utc(now)
         with self._write_transaction() as connection:
             row = connection.execute(
                 """
                 SELECT r.* FROM agent_runs AS r
                 JOIN agent_worker_leases AS l ON l.run_id = r.run_id
-                WHERE r.run_id = ? AND r.status = ? AND l.lease_owner = ?
+                WHERE r.run_id = ? AND r.status IN (?, ?) AND l.lease_owner = ?
                   AND l.lease_expires_at > ?
                 """,
                 (
                     run_id,
                     AgentRunStatus.RUNNING.value,
+                    AgentRunStatus.PAUSE_REQUESTED.value,
                     lease_owner,
                     _iso(finished_at),
                 ),
@@ -597,14 +771,21 @@ class AgentRunStore:
                 update={
                     "updated_at": finished_at,
                     "finished_at": (
-                        finished_at if target_status is not AgentRunStatus.WAITING else None
+                        finished_at
+                        if target_status not in (AgentRunStatus.WAITING, AgentRunStatus.PAUSED)
+                        else None
+                    ),
+                    "budget_used_ms": max(
+                        current.budget_used_ms,
+                        budget_used_ms if budget_used_ms is not None else 0,
                     ),
                 }
             )
             connection.execute(
                 """
                 UPDATE agent_runs
-                SET status = ?, updated_at = ?, finished_at = ?, result_json = ?
+                SET status = ?, updated_at = ?, finished_at = ?, result_json = ?,
+                    budget_used_ms = MAX(budget_used_ms, ?)
                 WHERE run_id = ? AND status = ?
                 """,
                 (
@@ -616,8 +797,9 @@ class AgentRunStore:
                         if result_payload is not None
                         else None
                     ),
+                    budget_used_ms if budget_used_ms is not None else current.budget_used_ms,
                     run_id,
-                    AgentRunStatus.RUNNING.value,
+                    current.status.value,
                 ),
             )
             connection.execute(

@@ -280,16 +280,16 @@ class ReadingAgentGraph:
             ReadingAgentGraphState,
             context_schema=ReadingAgentRuntimeContext,
         )
-        builder.add_node("resolve_context", self._resolve_context)
-        builder.add_node("run_collaboration", self._run_collaboration)
-        builder.add_node("prepare_conversation", self._prepare_conversation)
-        builder.add_node("route_request", self._route_request)
-        builder.add_node("execute_direct", self._execute_direct)
-        builder.add_node("start_react", self._start_react)
-        builder.add_node("decide_react", self._decide_react)
-        builder.add_node("execute_react_tool", self._execute_react_tool)
-        builder.add_node("finalize_react", self._finalize_react)
-        builder.add_node("finalize_conversation", self._finalize_conversation)
+        builder.add_node("resolve_context", self._pausable_node("resolve_context", self._resolve_context))
+        builder.add_node("run_collaboration", self._pausable_node("run_collaboration", self._run_collaboration))
+        builder.add_node("prepare_conversation", self._pausable_node("prepare_conversation", self._prepare_conversation, simple=True))
+        builder.add_node("route_request", self._pausable_node("route_request", self._route_request))
+        builder.add_node("execute_direct", self._pausable_node("execute_direct", self._execute_direct))
+        builder.add_node("start_react", self._pausable_node("start_react", self._start_react))
+        builder.add_node("decide_react", self._pausable_node("decide_react", self._decide_react))
+        builder.add_node("execute_react_tool", self._pausable_node("execute_react_tool", self._execute_react_tool))
+        builder.add_node("finalize_react", self._pausable_node("finalize_react", self._finalize_react))
+        builder.add_node("finalize_conversation", self._pausable_node("finalize_conversation", self._finalize_conversation, simple=True))
 
         builder.add_edge(START, "resolve_context")
         # Acquire durable conversation ownership before specialists read scope or
@@ -356,13 +356,22 @@ class ReadingAgentGraph:
     def _checkpoint_config(run_id: str) -> dict[str, dict[str, str]]:
         return {"configurable": {"thread_id": str(run_id).strip()}}
 
-    def checkpoint_state(self, run_id: str) -> AgentState | None:
-        """Load the latest durable state for one Agent run, if it exists."""
+    def _pausable_node(self, name: str, handler: Callable[..., dict[str, Any]], *, simple: bool = False):
+        def guarded(
+            graph_state: ReadingAgentGraphState,
+            runtime: Runtime[ReadingAgentRuntimeContext],
+        ) -> dict[str, Any]:
+            _, control = self._runtime(runtime)
+            control.pause_at_boundary(name)
+            return handler(graph_state) if simple else handler(graph_state, runtime)
 
-        normalized_run_id = str(run_id).strip()
-        if self._checkpointer is None or not normalized_run_id:
+        return guarded
+
+    def _checkpoint_snapshot(self, run_id: str):
+        normalized = str(run_id).strip()
+        if self._checkpointer is None or not normalized:
             return None
-        snapshot = self._compiled.get_state(self._checkpoint_config(normalized_run_id))
+        snapshot = self._compiled.get_state(self._checkpoint_config(normalized))
         unknown_nodes = sorted(set(snapshot.next) - set(self.node_names))
         if unknown_nodes:
             raise AgentRuntimeError(
@@ -373,18 +382,55 @@ class ReadingAgentGraph:
         payload = snapshot.values.get("agent_state") if snapshot.values else None
         if not isinstance(payload, dict):
             return None
-        state = _coerce_agent_state(payload)
+        try:
+            state = _coerce_agent_state(payload)
+        except ValueError as exc:
+            reason = (
+                "checkpoint_schema_unsupported"
+                if "schema" in str(exc)
+                else "checkpoint_graph_version_unsupported"
+            )
+            raise AgentRuntimeError(
+                str(exc), stage="checkpoint", fallback_reason=reason
+            ) from exc
+        if state.run_id != normalized:
+            raise AgentRuntimeError(
+                f"Checkpoint run identity does not match {normalized!r}.",
+                stage="checkpoint",
+                fallback_reason="checkpoint_run_mismatch",
+            )
+        return snapshot, state
+
+    def checkpoint_state(self, run_id: str) -> AgentState | None:
+        """Load the latest durable state for one Agent run, if it exists."""
+
+        resolved = self._checkpoint_snapshot(run_id)
+        if resolved is None:
+            return None
+        snapshot, state = resolved
         pending_write = self._pending_checkpoint_write_tool(state, snapshot.next)
         if pending_write:
             raise AgentRuntimeError(
                 (
-                    f"Checkpoint for run {normalized_run_id!r} is waiting to execute "
+                    f"Checkpoint for run {run_id!r} is waiting to execute "
                     f"write tool {pending_write!r}; automatic replay is blocked."
                 ),
                 stage="checkpoint",
                 fallback_reason="write_checkpoint_requires_manual_recovery",
             )
         return state
+
+    def checkpoint_metadata(self, run_id: str) -> dict[str, str | int] | None:
+        resolved = self._checkpoint_snapshot(run_id)
+        if resolved is None:
+            return None
+        snapshot, state = resolved
+        configurable = (snapshot.config or {}).get("configurable", {})
+        return {
+            "graph_version": state.graph_version,
+            "state_schema_version": state.state_schema_version,
+            "checkpoint_id": str(configurable.get("checkpoint_id", "") or ""),
+        }
 
     def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
         adapter = self._collaboration_adapter

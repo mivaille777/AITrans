@@ -8,6 +8,7 @@ from backend.agent_core.events import AgentEvent, AgentEventType
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
     AgentCancelledError,
+    AgentPauseRequestedError,
     AgentRuntimeError,
 )
 from backend.agent_core.reliability import AgentRunControl
@@ -144,6 +145,10 @@ class AgentRuntime:
         state.browser_context = context
         state.sync_contract()
         return state
+
+    def checkpoint_metadata(self, run_id: str) -> dict[str, str | int] | None:
+        loader = getattr(self.workflow_adapter, "checkpoint_metadata", None)
+        return loader(run_id) if callable(loader) else None
 
     def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
         """Reopen one failed orchestration task through the configured workflow."""
@@ -332,6 +337,10 @@ class AgentRuntime:
                 },
             )
             return state
+        except AgentPauseRequestedError:
+            # The graph has not started the next node; its previous checkpoint
+            # remains the exact point from which resume must continue.
+            raise
         except AgentCancelledError as exc:
             state.sync_contract()
             self._emit(

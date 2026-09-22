@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from backend.agent_core.events import AgentEvent
+from backend.agent_core.exceptions import AgentPauseRequestedError, AgentRuntimeError
 from backend.agent_core.reliability import AgentRunControl
 from backend.api.agent import _associate_workspace_result, _state_from_run_request
 from backend.api.agent_checkpoint_dependencies import get_agent_checkpoint_service
@@ -31,7 +32,11 @@ from backend.models.agent_run import AgentRunRecord, AgentRunStatus
 from backend.models.agent_runtime import AgentRuntimeProfile
 from backend.models.agent_tools import AgentRunRequest
 from backend.services.agent_run_scheduler import AgentRunScheduler
-from backend.services.agent_run_store import AgentRunStore, AgentRunStoreNotFoundError
+from backend.services.agent_run_store import (
+    AgentRunStore,
+    AgentRunStoreConflictError,
+    AgentRunStoreNotFoundError,
+)
 from backend.services.agent_run_worker import AgentRunOutcome
 
 router = APIRouter(prefix="/api/agent/runtime", tags=["agent-runtime-jobs"])
@@ -99,6 +104,26 @@ def cancel_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
         raise HTTPException(status_code=404, detail="Run not found") from exc
 
 
+@router.post("/runs/{run_id}/pause", response_model=AgentRunRecord)
+def pause_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    try:
+        return AgentRunScheduler(store).pause(run_id)
+    except AgentRunStoreNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except AgentRunStoreConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/resume", response_model=AgentRunRecord)
+def resume_runtime_run(run_id: str, store: StoreDependency) -> AgentRunRecord:
+    try:
+        return AgentRunScheduler(store).resume(run_id)
+    except AgentRunStoreNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except AgentRunStoreConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/runs/{run_id}/events", response_model=list[AgentEvent])
 def get_runtime_events(run_id: str, store: StoreDependency) -> tuple[AgentEvent, ...]:
     if store.get_run(run_id) is None:
@@ -146,28 +171,84 @@ async def execute_persisted_agent_run(
         if not raw_request:
             raise ValueError(f"Run {run.run_id} has no durable request payload")
         request = AgentRunRequest.model_validate(raw_request)
+        if recovering:
+            blocked = store.prepare_recovery_tool_calls(
+                run.run_id, lease_owner=lease_owner
+            )
+            if blocked:
+                return AgentRunOutcome(
+                    status=AgentRunStatus.WAITING,
+                    result={
+                        "code": "write_recovery_blocked",
+                        "tool_call_ids": list(blocked),
+                    },
+                )
         runtime = _build_runtime()
         research_workspace = get_research_workspace_service()
-        state = (
-            runtime.restore_checkpoint(run.run_id)
-            if recovering
-            else _state_from_run_request(
-                request,
-                workspace_service=research_workspace,
-                research_notes=get_research_note_service(),
+        try:
+            state = (
+                runtime.restore_checkpoint(run.run_id)
+                if recovering
+                else _state_from_run_request(
+                    request,
+                    workspace_service=research_workspace,
+                    research_notes=get_research_note_service(),
+                )
             )
-        )
+        except AgentRuntimeError as exc:
+            return AgentRunOutcome(
+                status=(
+                    AgentRunStatus.WAITING
+                    if exc.fallback_reason == "write_checkpoint_requires_manual_recovery"
+                    else AgentRunStatus.FAILED
+                ),
+                result={
+                    "code": (
+                        "write_recovery_blocked"
+                        if exc.fallback_reason == "write_checkpoint_requires_manual_recovery"
+                        else exc.fallback_reason
+                    ),
+                    "message": str(exc),
+                },
+            )
+        if recovering and (
+            state.task_id != run.task_id or state.trace_id != run.trace_id
+        ):
+            return AgentRunOutcome(
+                status=AgentRunStatus.FAILED,
+                result={"code": "checkpoint_identity_mismatch"},
+            )
+
+        def record_checkpoint() -> None:
+            metadata_loader = getattr(runtime, "checkpoint_metadata", None)
+            metadata = metadata_loader(run.run_id) if callable(metadata_loader) else None
+            if metadata is not None:
+                store.update_checkpoint_metadata(
+                    run.run_id,
+                    lease_owner=lease_owner,
+                    graph_version=str(metadata["graph_version"]),
+                    state_schema_version=int(metadata["state_schema_version"]),
+                    checkpoint_id=str(metadata["checkpoint_id"]),
+                )
+
+        if recovering:
+            record_checkpoint()
         state.task_id = run.task_id
         state.run_id = run.run_id
         state.trace_id = run.trace_id
         state.runtime_profile = run.runtime_profile
         state.sync_contract()
-        result = runtime.execute(
-            state,
-            control=control,
-            resume=recovering,
-            event_sink=lambda event: store.append_event(event, lease_owner=lease_owner),
-        )
+        try:
+            result = runtime.execute(
+                state,
+                control=control,
+                resume=recovering,
+                event_sink=lambda event: store.append_event(event, lease_owner=lease_owner),
+            )
+        except AgentPauseRequestedError:
+            record_checkpoint()
+            raise
+        record_checkpoint()
         _associate_workspace_result(request, result, research_workspace)
         response_status = str(result.response.get("status", "completed"))
         target = AgentRunStatus.COMPLETED

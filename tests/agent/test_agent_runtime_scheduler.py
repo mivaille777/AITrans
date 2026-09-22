@@ -234,6 +234,13 @@ async def test_worker_executes_persisted_request_outside_http(monkeypatch, tmp_p
     received = []
 
     class Runtime:
+        def checkpoint_metadata(self, run_id):
+            return {
+                "graph_version": "reading-agent-ma03-v1",
+                "state_schema_version": 2,
+                "checkpoint_id": "checkpoint-test",
+            }
+
         def execute(self, state, *, control, resume, event_sink):
             received.append((state.task_id, state.run_id, state.user_input, resume))
             control.checkpoint("test_runtime")
@@ -267,6 +274,10 @@ async def test_worker_executes_persisted_request_outside_http(monkeypatch, tmp_p
         AgentEventType.AGENT_START
     ]
     assert store.get_run_result(queued.run_id)["output_text"] == "done"
+    persisted = store.get_run(queued.run_id)
+    assert persisted.graph_version == "reading-agent-ma03-v1"
+    assert persisted.state_schema_version == 2
+    assert persisted.checkpoint_id == "checkpoint-test"
 
 
 def test_app_lifespan_starts_background_worker(monkeypatch, tmp_path) -> None:
@@ -335,4 +346,4 @@ def test_stage2_database_schema_upgrades_without_losing_runs(tmp_path) -> None:
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT value FROM agent_runtime_state WHERE key = 'schema_version'"
-        ).fetchone()[0] == "2"
+        ).fetchone()[0] == "3"

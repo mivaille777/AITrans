@@ -24,6 +24,13 @@ class AgentCancelledError(AgentRuntimeError):
         super().__init__(message, stage="cancellation", fallback_reason="user_cancelled")
 
 
+class AgentPauseRequestedError(AgentRuntimeError):
+    """A cooperative pause observed before the next graph node starts."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, stage="pause", fallback_reason="pause_requested")
+
+
 class AgentBudgetExceededError(AgentRuntimeError):
     """Raised when the total Agent execution budget is exhausted."""
 

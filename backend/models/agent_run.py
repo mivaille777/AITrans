@@ -66,6 +66,7 @@ _ALLOWED_RUN_TRANSITIONS: dict[AgentRunStatus, frozenset[AgentRunStatus]] = {
         {
             AgentRunStatus.RUNNING,
             AgentRunStatus.PAUSED,
+            AgentRunStatus.COMPLETED,
             AgentRunStatus.FAILED,
             AgentRunStatus.CANCELLED,
         }
@@ -94,6 +95,10 @@ class AgentRunRecord(TaskModel):
     updated_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    graph_version: str = ""
+    state_schema_version: int = 0
+    checkpoint_id: str = ""
+    budget_used_ms: int = Field(default=0, ge=0)
 
 
 class AgentStepRecord(TaskExecutionState):
@@ -115,6 +120,7 @@ class AgentToolCallStatus(str, Enum):
     TIMED_OUT = "timed_out"
     CANCELLED = "cancelled"
     BLOCKED = "blocked"
+    BLOCKED_RECOVERY = "blocked_recovery"
 
 
 class AgentToolCallRecord(TaskModel):

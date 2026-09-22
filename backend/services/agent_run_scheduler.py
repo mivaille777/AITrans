@@ -73,5 +73,11 @@ class AgentRunScheduler:
     def cancel(self, run_id: str) -> AgentRunRecord:
         return self.store.cancel_run(run_id)
 
+    def pause(self, run_id: str) -> AgentRunRecord:
+        return self.store.pause_run(run_id)
+
+    def resume(self, run_id: str) -> AgentRunRecord:
+        return self.store.resume_run(run_id)
+
 
 __all__ = ["PROFILE_BUDGETS", "AgentProfileBudget", "AgentRunScheduler"]
