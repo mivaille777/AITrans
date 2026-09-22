@@ -57,14 +57,18 @@ def test_exhausted_budget_blocks_new_dispatch_and_emits_event() -> None:
 
 
 def test_total_deadline_stops_dispatching_new_tasks() -> None:
-    def delayed(task):
-        sleep(0.05)
+    control = AgentRunControl(
+        policy=AgentExecutionPolicy(total_timeout_seconds=5.0)
+    )
+
+    def expire_after_first_dispatch(task):
+        # Advance the control clock only after task "a" has actually been
+        # dispatched. This tests the deadline fence deterministically instead
+        # of depending on a 10 ms wall-clock window on a busy CI runner.
+        control.started_at -= 10.0
         return success(task.task_id)
 
-    probe = FunctionExecutor(delayed)
-    control = AgentRunControl(
-        policy=AgentExecutionPolicy(total_timeout_seconds=0.01)
-    )
+    probe = FunctionExecutor(expire_after_first_dispatch)
     with pytest.raises(AgentBudgetExceededError):
         ParallelTaskGraphExecutor(
             {TaskRole.DOCUMENT: probe},
