@@ -54,7 +54,7 @@ JSONL 的调用方式相同，只需把文件名和 `format` 改为 `.jsonl` / `
 
 ### Evaluation
 
-选择 Dataset 和 RAG Config，点击 **Run evaluation**。当前报告展示 Recall@10、MRR、nDCG@10 和 No-answer accuracy，并逐 case 展示结果。
+选择 Dataset 和 RAG Config，点击 **Run evaluation**。当前报告展示 Recall@10、MRR、nDCG@10 和 No-answer accuracy，并逐 case 展示结果。评测中的可回答 case 会强制进入检索，以免被 Agent 的 `auto` 知识访问决策短路；`no_answer` case 保留自动路径，用于观察拒答指标。
 
 ### Compare
 

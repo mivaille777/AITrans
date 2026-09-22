@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from backend.models.knowledge_access import KnowledgeAccessPolicy
-from backend.models.rag_debug import RagDebugRunRequest
+from backend.models.rag_debug import RagDebugCase, RagDebugRunRequest
 from backend.rag.config import RagConfig
 from backend.services.rag_debug_service import RagDebugService
 from backend.services.rag_debug_store_service import RagDebugStoreService
@@ -83,5 +83,74 @@ def test_rag_debug_trace_exposes_knowledge_decision_and_scope_when_retrieval_is_
             "context",
             "answer",
         }
+    finally:
+        service.close()
+
+
+def test_rag_debug_evaluation_forces_retrieval_instead_of_auto_gate(
+    monkeypatch, tmp_path: Path
+) -> None:
+    service = RagDebugService(
+        store=RagDebugStoreService(storage_path=tmp_path / "rag-debug.sqlite3")
+    )
+    try:
+        dataset = service.store.create_dataset("evaluation")
+        service.store.save_case(
+            dataset.dataset_id,
+            RagDebugCase(
+                case_id="answerable",
+                query="Which chunk contains the answer?",
+                categories=["term"],
+                relevant_chunk_ids=["chunk-1"],
+            ),
+        )
+        service.store.save_case(
+            dataset.dataset_id,
+            RagDebugCase(
+                case_id="no-answer",
+                query="Which certification number is in the indexed corpus?",
+                categories=["no_answer"],
+                no_answer=True,
+                answerable=False,
+            ),
+        )
+        requests: list[RagDebugRunRequest] = []
+
+        def fake_run_trace(request: RagDebugRunRequest, *, runtime: object):
+            del runtime
+            requests.append(request)
+            candidate = (
+                SimpleNamespace(id="chunk-1")
+                if request.query.startswith("Which chunk")
+                else None
+            )
+            return SimpleNamespace(
+                candidates=[candidate] if candidate is not None else [],
+                metadata={},
+            )
+
+        monkeypatch.setattr(service, "run_trace_sync", fake_run_trace)
+        report = service.evaluate_dataset(
+            dataset_id=dataset.dataset_id,
+            config_id="default",
+            top_k=10,
+            case_ids=[],
+            runtime=SimpleNamespace(config=RagConfig()),
+        )
+
+        assert requests
+        policy_by_query = {
+            request.query: request.knowledge_access_policy for request in requests
+        }
+        assert (
+            policy_by_query["Which chunk contains the answer?"]
+            is KnowledgeAccessPolicy.ALWAYS
+        )
+        assert (
+            policy_by_query["Which certification number is in the indexed corpus?"]
+            is KnowledgeAccessPolicy.AUTO
+        )
+        assert report["retrieval"]["recall_at_10"] == 1.0
+        assert report["retrieval"]["no_answer_accuracy"] == 1.0
     finally:
         service.close()

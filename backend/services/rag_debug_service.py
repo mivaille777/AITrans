@@ -12,7 +12,10 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
-from backend.models.knowledge_access import KnowledgeScopeStrategy
+from backend.models.knowledge_access import (
+    KnowledgeAccessPolicy,
+    KnowledgeScopeStrategy,
+)
 from backend.models.rag_debug import (
     RagDebugCandidate,
     RagDebugCase,
@@ -322,12 +325,22 @@ class RagDebugService:
         predictions: list[RagEvaluationPrediction] = []
         summaries: list[dict[str, Any]] = []
         for case in selected:
+            evaluation_policy = (
+                KnowledgeAccessPolicy.AUTO
+                if case.no_answer
+                else KnowledgeAccessPolicy.ALWAYS
+            )
             trace = self.run_trace_sync(
                 RagDebugRunRequest(
                     query=case.query,
                     config_id=config_id,
                     top_k=top_k,
                     include_answer=False,
+                    # Answerable cases measure retrieval quality and must not be
+                    # short-circuited by the runtime's auto knowledge gate.
+                    # No-answer cases retain auto so the existing abstention
+                    # metric can still observe an empty retrieval result.
+                    knowledge_access_policy=evaluation_policy,
                 ),
                 runtime=runtime,
             )
@@ -377,12 +390,27 @@ class RagDebugService:
         baseline_hits: list[float] = []
         candidate_hits: list[float] = []
         for case in selected:
+            evaluation_policy = (
+                KnowledgeAccessPolicy.AUTO
+                if case.no_answer
+                else KnowledgeAccessPolicy.ALWAYS
+            )
             baseline = self.run_trace_sync(
-                RagDebugRunRequest(query=case.query, config_id=baseline_config_id, top_k=top_k),
+                RagDebugRunRequest(
+                    query=case.query,
+                    config_id=baseline_config_id,
+                    top_k=top_k,
+                    knowledge_access_policy=evaluation_policy,
+                ),
                 runtime=runtime,
             )
             candidate = self.run_trace_sync(
-                RagDebugRunRequest(query=case.query, config_id=candidate_config_id, top_k=top_k),
+                RagDebugRunRequest(
+                    query=case.query,
+                    config_id=candidate_config_id,
+                    top_k=top_k,
+                    knowledge_access_policy=evaluation_policy,
+                ),
                 runtime=runtime,
             )
             baseline_ids = [item.id for item in baseline.candidates]
