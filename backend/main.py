@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
+from functools import partial
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +15,21 @@ from backend.api.agent_knowledge import router as agent_knowledge_router
 from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_routing import router as agent_routing_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
+from backend.api.agent_runtime_jobs import (
+    close_agent_run_store,
+    execute_persisted_agent_run,
+    get_agent_run_store,
+)
+from backend.api.agent_runtime_jobs import (
+    router as agent_runtime_jobs_router,
+)
 from backend.api.browser_context import router as browser_context_router
 from backend.api.companion import router as companion_router
 from backend.api.companion_stream import router as companion_stream_router
 from backend.api.conversations import router as conversations_router
 from backend.api.curator import router as curator_router
 from backend.api.curator_dependencies import close_curator_commit_service
+from backend.api.dependencies import close_rag_debug_service
 from backend.api.evidence_ledger import router as evidence_ledger_router
 from backend.api.evidence_review import router as evidence_review_router
 from backend.api.health import router as health_router
@@ -35,17 +47,17 @@ from backend.api.memory import router as memory_router
 from backend.api.memory_dependencies import close_memory_coordinator
 from backend.api.overlay import router as overlay_router
 from backend.api.quick_actions import router as quick_actions_router
-from backend.api.rag_models import router as rag_models_router
 from backend.api.rag_debug import router as rag_debug_router
+from backend.api.rag_models import router as rag_models_router
 from backend.api.reading import router as reading_router
 from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
 from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
 from backend.api.translation import router as translation_router
-from backend.api.dependencies import close_rag_debug_service
 from backend.api.translation_cascade import router as translation_cascade_router
 from backend.api.writing import router as writing_router
 from backend.core.middleware import RequestLoggingMiddleware
+from backend.services.agent_run_worker import AgentRunWorker
 
 DEV_ORIGINS = [
     "http://localhost:5173",
@@ -88,9 +100,25 @@ def get_dev_origins():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    store = get_agent_run_store()
+    stop = asyncio.Event()
+    worker_id = f"worker-{uuid4().hex}"
+    worker = AgentRunWorker(
+        store,
+        partial(execute_persisted_agent_run, store=store, lease_owner=worker_id),
+        worker_id=worker_id,
+    )
+    worker_task = asyncio.create_task(worker.run_forever(stop))
     try:
         yield
     finally:
+        stop.set()
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+        close_agent_run_store()
         close_rag_debug_service()
         close_curator_commit_service()
         close_memory_coordinator()
@@ -120,6 +148,7 @@ def create_app():
         agent_routing_router,
         agent_observability_router,
         agent_runtime_config_router,
+        agent_runtime_jobs_router,
         memory_router,
         translation_router,
         translation_cascade_router,

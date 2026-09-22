@@ -20,7 +20,7 @@ from backend.models.agent_run import (
 from backend.models.agent_tasks import AgentTaskRecord
 
 DEFAULT_AGENT_RUNTIME_FILENAME = "agent_runtime.sqlite3"
-AGENT_RUNTIME_SCHEMA_VERSION = 1
+AGENT_RUNTIME_SCHEMA_VERSION = 2
 
 
 class AgentRunStoreError(RuntimeError):
@@ -105,6 +105,8 @@ class AgentRunStore:
                 task_id TEXT NOT NULL,
                 trace_id TEXT NOT NULL,
                 runtime_profile TEXT NOT NULL,
+                request_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -170,14 +172,31 @@ class AgentRunStore:
             );
             """
         )
-        connection.execute(
-            """
-            INSERT INTO agent_runtime_state(key, value)
-            VALUES('schema_version', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (str(AGENT_RUNTIME_SCHEMA_VERSION),),
-        )
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(agent_runs)")
+            }
+            if "request_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'"
+                )
+            if "result_json" not in columns:
+                connection.execute("ALTER TABLE agent_runs ADD COLUMN result_json TEXT")
+            connection.execute(
+                """
+                INSERT INTO agent_runtime_state(key, value)
+                VALUES('schema_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (str(AGENT_RUNTIME_SCHEMA_VERSION),),
+            )
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
 
     @contextmanager
     def _write_transaction(self) -> Iterator[sqlite3.Connection]:
@@ -202,19 +221,24 @@ class AgentRunStore:
         )
 
     @staticmethod
-    def _insert_run(connection: sqlite3.Connection, run: AgentRunRecord) -> None:
+    def _insert_run(
+        connection: sqlite3.Connection,
+        run: AgentRunRecord,
+        request_payload: dict[str, object] | None = None,
+    ) -> None:
         connection.execute(
             """
             INSERT INTO agent_runs(
-                run_id, task_id, trace_id, runtime_profile, status,
+                run_id, task_id, trace_id, runtime_profile, request_json, status,
                 created_at, updated_at, started_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run.run_id,
                 run.task_id,
                 run.trace_id,
                 run.runtime_profile.value,
+                json.dumps(request_payload or {}, ensure_ascii=False, sort_keys=True),
                 run.status.value,
                 _iso(run.created_at),
                 _iso(run.updated_at),
@@ -254,10 +278,12 @@ class AgentRunStore:
             raise AgentRunStoreConflictError(f"task already exists: {task.task_id}") from exc
         return task.model_copy(deep=True)
 
-    def create_run(self, run: AgentRunRecord) -> AgentRunRecord:
+    def create_run(
+        self, run: AgentRunRecord, *, request_payload: dict[str, object] | None = None
+    ) -> AgentRunRecord:
         try:
             with self._write_transaction() as connection:
-                self._insert_run(connection, run)
+                self._insert_run(connection, run, request_payload)
         except sqlite3.IntegrityError as exc:
             raise AgentRunStoreConflictError(
                 f"run cannot be created: {run.run_id}"
@@ -268,13 +294,15 @@ class AgentRunStore:
         self,
         task: AgentTaskRecord,
         run: AgentRunRecord,
+        *,
+        request_payload: dict[str, object] | None = None,
     ) -> tuple[AgentTaskRecord, AgentRunRecord]:
         if run.task_id != task.task_id:
             raise ValueError("run task_id must match the owning task")
         try:
             with self._write_transaction() as connection:
                 self._insert_task(connection, task)
-                self._insert_run(connection, run)
+                self._insert_run(connection, run, request_payload)
         except sqlite3.IntegrityError as exc:
             raise AgentRunStoreConflictError(
                 f"task or run already exists: {task.task_id}/{run.run_id}"
@@ -294,6 +322,22 @@ class AgentRunStore:
                 "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
             ).fetchone()
         return self._run_from_row(row) if row is not None else None
+
+    def get_run_request(self, run_id: str) -> dict[str, object] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT request_json FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return json.loads(str(row["request_json"])) if row is not None else None
+
+    def get_run_result(self, run_id: str) -> dict[str, object] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT result_json FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None or row["result_json"] is None:
+            return None
+        return json.loads(str(row["result_json"]))
 
     def transition_run(
         self,
@@ -343,6 +387,18 @@ class AgentRunStore:
         lease_seconds: float = 30.0,
         now: datetime | None = None,
     ) -> AgentRunRecord | None:
+        claim = self.claim_next_run(
+            lease_owner=lease_owner, lease_seconds=lease_seconds, now=now
+        )
+        return claim[0] if claim is not None else None
+
+    def claim_next_run(
+        self,
+        *,
+        lease_owner: str,
+        lease_seconds: float = 30.0,
+        now: datetime | None = None,
+    ) -> tuple[AgentRunRecord, bool] | None:
         owner = str(lease_owner or "").strip()
         if not owner:
             raise ValueError("lease_owner is required")
@@ -353,17 +409,23 @@ class AgentRunStore:
             row = connection.execute(
                 """
                 SELECT * FROM agent_runs
-                WHERE status = ?
-                ORDER BY created_at ASC, run_id ASC
+                WHERE status IN (?, ?)
+                ORDER BY CASE status WHEN ? THEN 0 ELSE 1 END,
+                         created_at ASC, run_id ASC
                 LIMIT 1
                 """,
-                (AgentRunStatus.QUEUED.value,),
+                (
+                    AgentRunStatus.RECOVERING.value,
+                    AgentRunStatus.QUEUED.value,
+                    AgentRunStatus.RECOVERING.value,
+                ),
             ).fetchone()
             if row is None:
                 return None
             current = self._run_from_row(row)
+            recovering = current.status is AgentRunStatus.RECOVERING
             updated = transition_run(current, AgentRunStatus.RUNNING).model_copy(
-                update={"started_at": claimed_at, "updated_at": claimed_at}
+                update={"started_at": current.started_at or claimed_at, "updated_at": claimed_at}
             )
             cursor = connection.execute(
                 """
@@ -376,7 +438,7 @@ class AgentRunStore:
                     _iso(updated.updated_at),
                     _iso(updated.started_at),
                     updated.run_id,
-                    AgentRunStatus.QUEUED.value,
+                    current.status.value,
                 ),
             )
             if cursor.rowcount != 1:
@@ -393,6 +455,173 @@ class AgentRunStore:
                     _iso(claimed_at + timedelta(seconds=lease_seconds)),
                     _iso(claimed_at),
                 ),
+            )
+        return updated, recovering
+
+    def heartbeat_lease(
+        self,
+        run_id: str,
+        *,
+        lease_owner: str,
+        lease_seconds: float = 30.0,
+        now: datetime | None = None,
+    ) -> bool:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        heartbeat_at = _as_utc(now)
+        with self._write_transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_worker_leases
+                SET heartbeat_at = ?, lease_expires_at = ?
+                WHERE run_id = ? AND lease_owner = ? AND lease_expires_at > ?
+                  AND EXISTS (
+                      SELECT 1 FROM agent_runs
+                      WHERE run_id = ? AND status = ?
+                  )
+                """,
+                (
+                    _iso(heartbeat_at),
+                    _iso(heartbeat_at + timedelta(seconds=lease_seconds)),
+                    run_id,
+                    lease_owner,
+                    _iso(heartbeat_at),
+                    run_id,
+                    AgentRunStatus.RUNNING.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def recover_expired_runs(self, *, now: datetime | None = None) -> tuple[str, ...]:
+        expired_at = _as_utc(now)
+        with self._write_transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.run_id FROM agent_runs AS r
+                JOIN agent_worker_leases AS l ON l.run_id = r.run_id
+                WHERE r.status = ? AND l.lease_expires_at <= ?
+                ORDER BY r.created_at, r.run_id
+                """,
+                (AgentRunStatus.RUNNING.value, _iso(expired_at)),
+            ).fetchall()
+            run_ids = tuple(str(row["run_id"]) for row in rows)
+            for run_id in run_ids:
+                connection.execute(
+                    """
+                    UPDATE agent_runs SET status = ?, updated_at = ?
+                    WHERE run_id = ? AND status = ?
+                    """,
+                    (
+                        AgentRunStatus.RECOVERING.value,
+                        _iso(expired_at),
+                        run_id,
+                        AgentRunStatus.RUNNING.value,
+                    ),
+                )
+                connection.execute(
+                    "DELETE FROM agent_worker_leases WHERE run_id = ?", (run_id,)
+                )
+        return run_ids
+
+    def cancel_run(self, run_id: str) -> AgentRunRecord:
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreNotFoundError(f"run not found: {run_id}")
+            current = self._run_from_row(row)
+            if current.status in (
+                AgentRunStatus.COMPLETED,
+                AgentRunStatus.FAILED,
+                AgentRunStatus.CANCELLED,
+            ):
+                return current
+            updated = transition_run(current, AgentRunStatus.CANCELLED)
+            connection.execute(
+                """
+                UPDATE agent_runs SET status = ?, updated_at = ?, finished_at = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    updated.status.value,
+                    _iso(updated.updated_at),
+                    _iso(updated.finished_at),
+                    run_id,
+                    current.status.value,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM agent_worker_leases WHERE run_id = ?", (run_id,)
+            )
+        return updated
+
+    def finish_owned_run(
+        self,
+        run_id: str,
+        *,
+        lease_owner: str,
+        target_status: AgentRunStatus,
+        result_payload: dict[str, object] | None = None,
+        now: datetime | None = None,
+    ) -> AgentRunRecord:
+        if target_status not in (
+            AgentRunStatus.COMPLETED,
+            AgentRunStatus.FAILED,
+            AgentRunStatus.WAITING,
+            AgentRunStatus.CANCELLED,
+        ):
+            raise ValueError("owned run can only finish as completed, failed, waiting or cancelled")
+        finished_at = _as_utc(now)
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT r.* FROM agent_runs AS r
+                JOIN agent_worker_leases AS l ON l.run_id = r.run_id
+                WHERE r.run_id = ? AND r.status = ? AND l.lease_owner = ?
+                  AND l.lease_expires_at > ?
+                """,
+                (
+                    run_id,
+                    AgentRunStatus.RUNNING.value,
+                    lease_owner,
+                    _iso(finished_at),
+                ),
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} is not running under lease {lease_owner}"
+                )
+            current = self._run_from_row(row)
+            updated = transition_run(current, target_status).model_copy(
+                update={
+                    "updated_at": finished_at,
+                    "finished_at": (
+                        finished_at if target_status is not AgentRunStatus.WAITING else None
+                    ),
+                }
+            )
+            connection.execute(
+                """
+                UPDATE agent_runs
+                SET status = ?, updated_at = ?, finished_at = ?, result_json = ?
+                WHERE run_id = ? AND status = ?
+                """,
+                (
+                    updated.status.value,
+                    _iso(updated.updated_at),
+                    _iso(updated.finished_at),
+                    (
+                        json.dumps(result_payload, ensure_ascii=False, sort_keys=True)
+                        if result_payload is not None
+                        else None
+                    ),
+                    run_id,
+                    AgentRunStatus.RUNNING.value,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM agent_worker_leases WHERE run_id = ?", (run_id,)
             )
         return updated
 
@@ -487,7 +716,13 @@ class AgentRunStore:
             return None
         return AgentToolCallRecord.model_validate_json(str(row["record_json"]))
 
-    def append_event(self, event: AgentEvent) -> AgentEvent:
+    def append_event(
+        self,
+        event: AgentEvent,
+        *,
+        lease_owner: str | None = None,
+        now: datetime | None = None,
+    ) -> AgentEvent:
         if event.sequence < -1:
             raise ValueError("event sequence cannot be less than -1")
         with self._write_transaction() as connection:
@@ -501,6 +736,25 @@ class AgentRunStore:
                 raise AgentRunStoreConflictError("event task_id does not match run")
             if event.trace_id != str(run_row["trace_id"]):
                 raise AgentRunStoreConflictError("event trace_id does not match run")
+            if lease_owner is not None:
+                active = connection.execute(
+                    """
+                    SELECT 1 FROM agent_worker_leases AS l
+                    JOIN agent_runs AS r ON r.run_id = l.run_id
+                    WHERE l.run_id = ? AND l.lease_owner = ?
+                      AND l.lease_expires_at > ? AND r.status = ?
+                    """,
+                    (
+                        event.run_id,
+                        lease_owner,
+                        _iso(_as_utc(now)),
+                        AgentRunStatus.RUNNING.value,
+                    ),
+                ).fetchone()
+                if active is None:
+                    raise AgentRunStoreConflictError(
+                        f"run {event.run_id} is not owned by {lease_owner}"
+                    )
             sequence = int(
                 connection.execute(
                     """
