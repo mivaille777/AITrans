@@ -54,7 +54,9 @@ JSONL 的调用方式相同，只需把文件名和 `format` 改为 `.jsonl` / `
 
 ### Evaluation
 
-选择 Dataset 和 RAG Config，点击 **Run evaluation**。当前报告展示 Recall@10、MRR、nDCG@10 和 No-answer accuracy，并逐 case 展示结果。评测中的可回答 case 会强制进入检索，以免被 Agent 的 `auto` 知识访问决策短路；`no_answer` case 保留自动路径，用于观察拒答指标。
+选择 Dataset 和 RAG Config，点击 **Run evaluation**。报告展示 Recall@10、MRR、nDCG@10、No-answer accuracy，以及基于真实 `AUTO` 路由的七项 routing/evidence 指标。评测中的可回答 case 会额外强制进入检索，用来隔离检索质量；`no_answer` case 保留自动路径，用于观察拒答和漏检索。
+
+路由指标的分母是固定定义的：Precision/Recall 使用 Dataset 的 expected retrieval label；Unnecessary Retrieval Rate 是预期不检索 case 中被错误触发的比例；Missing Retrieval Rate 是预期检索 case 中被跳过的比例；Scope Violation Rate 统计有明确 scope 时返回到 scope 外的候选 chunk；Second-round Retrieval Rate 以实际触发检索的 run 为分母；Evidence Sufficiency Rate 以实际 retrieval round 为分母，并由现有 deterministic evidence gate 的 `evidence_sufficient` 判定。
 
 ### Compare
 
@@ -73,6 +75,8 @@ Dataset 是一组“检索问题（evaluation cases）”，不是 PDF、Markdow
 | `relevance_grades` | 否 | `chunk_id → 非负整数`，用于 nDCG 等 graded 指标 |
 | `claims` | 否 | claim 级标注，每项为 `claim_id` 和对应的 `relevant_chunk_ids` |
 | `no_answer` | 否 | 没有足够证据时设为 `true` |
+| `expected_retrieval` | 否 | 路由金标准：该 query 是否应该访问知识库；省略时按 `not no_answer` 推导 |
+| `expected_scope_document_ids` | 否 | 路由允许访问的 document ID；省略时对可回答 case 回退到 `metadata.document_id`，支持用分号分隔多文档 |
 | `expected_answer` | 否 | 人工参考答案；用于记录和后续人工核对，不是当前检索 Recall 的唯一依据 |
 | `answerable` | 否 | `false` 会在导入时转换为 `no_answer: true`（建议直接写 `no_answer`） |
 | `tags` / `notes` | 否 | 维护数据集时的筛选标签和备注 |
@@ -83,6 +87,8 @@ Dataset 是一组“检索问题（evaluation cases）”，不是 PDF、Markdow
 
 - 可回答问题：填写至少一个 `relevant_chunk_ids`；可选填写 `relevance_grades`（例如 3=直接回答、2=部分支持、1=弱相关）。
 - 不可回答问题：`no_answer: true`、`categories` 包含 `no_answer`，并且不要填写 `relevant_chunk_ids` 或 `relevance_grades`。
+- 若 query 虽然可回答但不应访问知识库，显式写 `expected_retrieval: false`；若 query 必须检索，显式写 `expected_retrieval: true`。这样可以避免把 `no_answer` 当成唯一的路由标注。
+- 有 workspace/document 边界的 case 应填写 `expected_scope_document_ids`。没有该字段的旧 Dataset 仍可运行，但会对可回答 case 尝试使用 `metadata.document_id` 作为兼容回退。
 - 同一 Dataset 内 `case_id` 必须唯一；同一 case 内 chunk ID 和 claim ID 不要重复。
 - `categories` 使用当前后端允许的值，不要使用旧评测文件中的 `translation`、`reading` 等业务分类名。
 
@@ -100,6 +106,8 @@ JSON 文件必须是 case 数组：
     "categories": ["term"],
     "relevant_chunk_ids": ["真实_chunk_id"],
     "relevance_grades": {"真实_chunk_id": 3},
+    "expected_retrieval": true,
+    "expected_scope_document_ids": ["真实_document_id"],
     "expected_answer": "参考答案",
     "answerable": true,
     "tags": ["smoke"],
@@ -128,7 +136,7 @@ JSONL 每行一个完整 JSON 对象，不能把整个文件包在数组里：
 3. 打开 **Datasets → Import JSON/JSONL**，选择文件；导入后的 dataset 名默认取文件名。
 4. 回到 **Datasets**，抽查每个 case 的 query、gold chunk、Answerable 和 no-answer 标记。
 5. 进入 **Trace**，先用 1–2 条 query 观察 Query、Dense、BM25、Fusion、Rerank 和 Context 是否符合预期。
-6. 在 **Evaluation** 运行整套 Dataset，记录 Recall@10、MRR、nDCG@10 和 No-answer accuracy。
+6. 在 **Evaluation** 运行整套 Dataset，记录 Recall@10、MRR、nDCG@10、No-answer accuracy 和七项 routing/evidence 指标；若路由指标异常，先查看 Dataset 的 expected retrieval/scope 标注，再查看 Trace 中的 Knowledge Decision 和 Knowledge Scope。
 7. 若要调参：在 Trace 选择 profile，复制一个 config profile，调整 Dense/BM25/Fusion/Final top K 或 Small-to-big，保存后按提示重建索引（如标记为需要 reindex）。
 8. 在 **Compare** 用同一 Dataset 对比 baseline 与 candidate；只有在同一批 case、同一索引状态下比较指标才有意义。
 9. 需要归档时，在 Datasets 点击 **Export**；可选择 JSON 或 JSONL，导出的内容可再次导入。
@@ -143,7 +151,9 @@ JSONL 每行一个完整 JSON 对象，不能把整个文件包在数组里：
 
 **修改 profile 后结果没有变化**：如果 profile 显示需要 reindex，先在 Chunks 对相关文档执行 Re-chunk & reindex，再重新运行 Trace/Evaluation。
 
-**No-answer 指标异常**：确认不可回答 case 没有误填 `relevant_chunk_ids`；当前评测将“无 ranked chunks”作为 no-answer 命中条件。
+**No-answer 指标异常**：确认不可回答 case 没有误填 `relevant_chunk_ids`；当前评测将“无 ranked chunks”作为 no-answer 命中条件。若需要判断“应该不检索”而不只是“没有答案”，请同时设置 `expected_retrieval: false`。
+
+**Routing 指标显示为 0% 而不是未测量**：0% 表示报告已计算且该分母下没有命中；如果 Dataset 完全没有预期检索 case，Recall 和 Missing Retrieval 的分母为 0，结果按稳定契约返回 0%，应补充 `expected_retrieval` 标注。
 
 ## 7. 对应 API（脚本化使用）
 

@@ -31,6 +31,8 @@ class RagEvaluationCase(RagContractModel):
     relevance_grades: dict[str, int] = Field(default_factory=dict)
     claims: list[RagEvaluationClaim] = Field(default_factory=list)
     no_answer: bool = False
+    expected_retrieval: bool | None = None
+    expected_scope_document_ids: list[str] = Field(default_factory=list, max_length=100)
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -216,6 +216,11 @@ class RagDebugCase(RagDebugModel):
     relevance_grades: dict[str, int] = Field(default_factory=dict)
     claims: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     no_answer: bool = False
+    # Optional routing annotations.  Older datasets remain valid: the
+    # evaluator derives expected_retrieval from no_answer and derives a
+    # document scope from metadata.document_id when these are omitted.
+    expected_retrieval: bool | None = None
+    expected_scope_document_ids: list[str] = Field(default_factory=list, max_length=100)
     metadata: dict[str, str] = Field(default_factory=dict)
     query_type: str = "Factual"
     expected_answer: str = ""

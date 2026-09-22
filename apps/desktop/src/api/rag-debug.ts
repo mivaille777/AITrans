@@ -174,6 +174,8 @@ export interface RagDebugCase {
   relevance_grades: Record<string, number>
   claims: Array<Record<string, unknown>>
   no_answer: boolean
+  expected_retrieval: boolean | null
+  expected_scope_document_ids: string[]
   metadata: Record<string, string>
   query_type: string
   expected_answer: string

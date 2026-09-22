@@ -9,6 +9,7 @@
       {"claim_id": "study-objective", "relevant_chunk_ids": ["chunk_98a1c298f2e27f1baa42e996"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -32,6 +33,7 @@
       {"claim_id": "four-architectures", "relevant_chunk_ids": ["chunk_aa4906a854b707167a50f3d6"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -55,6 +57,7 @@
       {"claim_id": "simulation-language-pipeline", "relevant_chunk_ids": ["chunk_77ab16a78390f66fe1749fbe"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -78,6 +81,7 @@
       {"claim_id": "nominal-condition", "relevant_chunk_ids": ["chunk_8baaf601916e03fc63c8fb74"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -101,6 +105,7 @@
       {"claim_id": "measurement-bias", "relevant_chunk_ids": ["chunk_a40e0f1fd49a304d53f6b026"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -124,6 +129,7 @@
       {"claim_id": "measurement-drift", "relevant_chunk_ids": ["chunk_a92b15e8f6b34894d2dd8ca6"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -147,6 +153,7 @@
       {"claim_id": "disturbance-metrics", "relevant_chunk_ids": ["chunk_5659521fc06c9e7806ad8f67"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -170,6 +177,7 @@
       {"claim_id": "chinese-controller-list", "relevant_chunk_ids": ["chunk_aa4906a854b707167a50f3d6"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -197,6 +205,7 @@
       {"claim_id": "deterministic-safety-authority", "relevant_chunk_ids": ["chunk_ee8a42938333ac4a6a628996"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -226,6 +235,7 @@
       {"claim_id": "segment-objective-limit", "relevant_chunk_ids": ["chunk_4486fc63b43b688b59fdc5e9"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -252,6 +262,7 @@
       {"claim_id": "method-role-separation", "relevant_chunk_ids": ["chunk_b8620cb39a14b66d2c90b8bd", "chunk_cfb6944dd0bfa66b58ad7775"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -280,6 +291,7 @@
       {"claim_id": "fallback-rule", "relevant_chunk_ids": ["chunk_8a2690ac96545ed9ba9e7198"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -307,6 +319,7 @@
       {"claim_id": "execution-only-expansion", "relevant_chunk_ids": ["chunk_be24b02e3a45531dc0bb8e10"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -330,6 +343,7 @@
       {"claim_id": "proposed-nominal-metrics", "relevant_chunk_ids": ["chunk_d26dd2b41f8b61ba410a46de"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -353,6 +367,7 @@
       {"claim_id": "scenario-wise-robustness", "relevant_chunk_ids": ["chunk_5fe711841a2d4587e334c9c7"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -380,6 +395,7 @@
       {"claim_id": "mechanism-channel", "relevant_chunk_ids": ["chunk_52880796d049aa111ee99080"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -407,6 +423,7 @@
       {"claim_id": "robustness-scope", "relevant_chunk_ids": ["chunk_b67164bb34b1756432162af3"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -433,6 +450,7 @@
       {"claim_id": "chinese-safety-admission", "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773", "chunk_8a2690ac96545ed9ba9e7198"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -456,6 +474,7 @@
       {"claim_id": "restricted-empty-scope", "relevant_chunk_ids": ["chunk_363c85c0faff14d12d675b4d"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -479,6 +498,7 @@
       {"claim_id": "scope-context-contract", "relevant_chunk_ids": ["chunk_0f096b37fadf2c8842a6aff8"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -503,6 +523,7 @@
       {"claim_id": "task-plan-validation", "relevant_chunk_ids": ["chunk_641e8ad1b69ca9581f9d29da"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -526,6 +547,7 @@
       {"claim_id": "routing-modes", "relevant_chunk_ids": ["chunk_ac90728903af3c32b9f8da4c"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -553,6 +575,7 @@
       {"claim_id": "event-contract", "relevant_chunk_ids": ["chunk_efb3a4457fc8dec89dfa54df"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -580,6 +603,7 @@
       {"claim_id": "memory-workspace-boundary", "relevant_chunk_ids": ["chunk_1c5224bfe4aeb4254500280d"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -607,6 +631,7 @@
       {"claim_id": "quality-targets-not-measurements", "relevant_chunk_ids": ["chunk_2ad0207405b96f06d262b936"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -630,6 +655,7 @@
       {"claim_id": "migration-path", "relevant_chunk_ids": ["chunk_a4a6953ab416ef665faea51e"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -656,6 +682,7 @@
       {"claim_id": "chinese-empty-scope", "relevant_chunk_ids": ["chunk_363c85c0faff14d12d675b4d", "chunk_0f096b37fadf2c8842a6aff8"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -684,6 +711,7 @@
       {"claim_id": "measurement-bounded-proposal", "relevant_chunk_ids": ["chunk_e945d21fa311da2062a272c1", "chunk_ee8a42938333ac4a6a628996"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2;doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Computers and Chemical Engineering; Measurement",
@@ -711,6 +739,7 @@
       {"claim_id": "measurement-safety-admission", "relevant_chunk_ids": ["chunk_930dfeac492a0f882399f773"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2;doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Computers and Chemical Engineering; Measurement",
@@ -739,6 +768,7 @@
       {"claim_id": "traceable-delivery", "relevant_chunk_ids": ["chunk_6896e5d9c1695a23f43b90b6", "chunk_2ad0207405b96f06d262b936"]}
     ],
     "no_answer": false,
+    "expected_retrieval": true,
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812;doc_4432bb1a79dbe230742cd82b",
       "document_title": "Measurement; AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -760,6 +790,7 @@
     "relevance_grades": {},
     "claims": [],
     "no_answer": true,
+    "expected_retrieval": false,
     "metadata": {
       "document_id": "current-index",
       "document_title": "All currently indexed documents",
@@ -781,6 +812,7 @@
     "relevance_grades": {},
     "claims": [],
     "no_answer": true,
+    "expected_retrieval": false,
     "metadata": {
       "document_id": "current-index",
       "document_title": "All currently indexed documents",
@@ -802,6 +834,7 @@
     "relevance_grades": {},
     "claims": [],
     "no_answer": true,
+    "expected_retrieval": false,
     "metadata": {
       "document_id": "current-index",
       "document_title": "All currently indexed documents",

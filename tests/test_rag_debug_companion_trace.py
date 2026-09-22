@@ -152,5 +152,95 @@ def test_rag_debug_evaluation_forces_retrieval_instead_of_auto_gate(
         )
         assert report["retrieval"]["recall_at_10"] == 1.0
         assert report["retrieval"]["no_answer_accuracy"] == 1.0
+        assert report["retrieval"]["routing_cases"] == 2
+    finally:
+        service.close()
+
+
+def test_rag_debug_evaluation_computes_routing_scope_round_and_gate_metrics(
+    monkeypatch, tmp_path: Path
+) -> None:
+    service = RagDebugService(
+        store=RagDebugStoreService(storage_path=tmp_path / "rag-debug.sqlite3")
+    )
+    try:
+        dataset = service.store.create_dataset("routing metrics")
+        service.store.save_case(
+            dataset.dataset_id,
+            RagDebugCase(
+                case_id="retrieval-needed",
+                query="Find the answer",
+                categories=["term"],
+                relevant_chunk_ids=["chunk-1"],
+                expected_retrieval=True,
+                expected_scope_document_ids=["doc-a"],
+            ),
+        )
+        service.store.save_case(
+            dataset.dataset_id,
+            RagDebugCase(
+                case_id="context-only",
+                query="Hello",
+                categories=["no_answer"],
+                no_answer=True,
+                answerable=False,
+                expected_retrieval=False,
+            ),
+        )
+
+        candidate = SimpleNamespace(id="chunk-1", document_id="doc-a")
+
+        def fake_run_trace(request: RagDebugRunRequest, *, runtime: object):
+            del runtime
+            if request.knowledge_access_policy is KnowledgeAccessPolicy.AUTO:
+                if request.query == "Find the answer":
+                    return SimpleNamespace(
+                        candidates=[candidate],
+                        metadata={
+                            "retrieval_skipped": False,
+                            "retrieval_round_count": 2,
+                            "evidence_gate_rounds": [
+                                {"sufficient": False},
+                                {"sufficient": True},
+                            ],
+                            "evidence_sufficient": True,
+                        },
+                    )
+                return SimpleNamespace(
+                    candidates=[],
+                    metadata={
+                        "retrieval_skipped": True,
+                        "retrieval_round_count": 0,
+                        "evidence_gate_rounds": [],
+                        "evidence_sufficient": False,
+                    },
+                )
+            return SimpleNamespace(
+                candidates=[candidate],
+                metadata={
+                    "retrieval_skipped": False,
+                    "retrieval_round_count": 1,
+                    "total_rag_ms": 1,
+                },
+            )
+
+        monkeypatch.setattr(service, "run_trace_sync", fake_run_trace)
+        report = service.evaluate_dataset(
+            dataset_id=dataset.dataset_id,
+            config_id="default",
+            top_k=10,
+            case_ids=[],
+            runtime=SimpleNamespace(config=RagConfig()),
+        )
+
+        retrieval = report["retrieval"]
+        assert retrieval["retrieval_trigger_precision"] == 1.0
+        assert retrieval["retrieval_trigger_recall"] == 1.0
+        assert retrieval["unnecessary_retrieval_rate"] == 0.0
+        assert retrieval["missing_retrieval_rate"] == 0.0
+        assert retrieval["scope_violation_rate"] == 0.0
+        assert retrieval["second_round_retrieval_rate"] == 1.0
+        assert retrieval["evidence_sufficiency_rate"] == 0.5
+        assert report["routing"]["scope_checked_candidates"] == 1
     finally:
         service.close()

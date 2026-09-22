@@ -88,6 +88,18 @@ class RagRetrievalMetrics(RagContractModel):
     ndcg_at_10: float = Field(ge=0.0, le=1.0)
     no_answer_accuracy: float = Field(ge=0.0, le=1.0)
     no_answer_cases: int = Field(ge=0)
+    # Routing and evidence metrics are kept beside retrieval metrics because
+    # the Evaluation tab renders this object directly.  They default to zero
+    # so a report always has a stable, measurable shape, including for an
+    # empty or legacy dataset.
+    routing_cases: int = Field(default=0, ge=0)
+    retrieval_trigger_precision: float = Field(default=0.0, ge=0.0, le=1.0)
+    retrieval_trigger_recall: float = Field(default=0.0, ge=0.0, le=1.0)
+    unnecessary_retrieval_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    missing_retrieval_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    scope_violation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    second_round_retrieval_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence_sufficiency_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class RagRerankerComparison(RagContractModel):

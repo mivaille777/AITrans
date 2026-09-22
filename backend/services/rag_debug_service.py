@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
+from backend.models.agent_react import AgentRetrievalObservation
 from backend.models.knowledge_access import (
     KnowledgeAccessPolicy,
     KnowledgeScopeStrategy,
@@ -55,6 +56,7 @@ from backend.rag.structure_retrieval import (
     detect_structural_intent,
     promote_structural_candidates,
 )
+from backend.services.agent_evidence_gate_service import AgentEvidenceGateService
 from backend.services.knowledge_access_router import KnowledgeAccessRouter
 from backend.services.knowledge_scope_resolver import KnowledgeScopeResolver
 from backend.services.rag_debug_store_service import RagDebugStoreService
@@ -321,31 +323,90 @@ class RagDebugService:
         runtime: Any,
     ) -> dict[str, Any]:
         cases = self.store.list_cases(dataset_id)
-        selected = [case for case in cases if not case_ids or case.case_id in set(case_ids)]
+        selected_ids = set(case_ids)
+        selected = [case for case in cases if not selected_ids or case.case_id in selected_ids]
         predictions: list[RagEvaluationPrediction] = []
         summaries: list[dict[str, Any]] = []
+
+        # Routing is evaluated against the real AUTO decision.  Retrieval
+        # quality is evaluated separately with ALWAYS for answerable cases so
+        # a routing miss cannot masquerade as a bad retriever.  This gives the
+        # report both dimensions without changing the production path.
+        true_positive = 0
+        false_positive = 0
+        false_negative = 0
+        expected_retrieval_cases = 0
+        triggered_retrieval_cases = 0
+        scope_checked_candidates = 0
+        scope_violations = 0
+        retrieval_runs = 0
+        second_round_runs = 0
+        evidence_gate_rounds = 0
+        evidence_sufficient_rounds = 0
         for case in selected:
-            evaluation_policy = (
-                KnowledgeAccessPolicy.AUTO
-                if case.no_answer
-                else KnowledgeAccessPolicy.ALWAYS
-            )
-            trace = self.run_trace_sync(
+            scope_document_ids = self._expected_scope_document_ids(case)
+            routing_trace = self.run_trace_sync(
                 RagDebugRunRequest(
                     query=case.query,
                     config_id=config_id,
+                    document_ids=list(scope_document_ids),
                     top_k=top_k,
                     include_answer=False,
-                    # Answerable cases measure retrieval quality and must not be
-                    # short-circuited by the runtime's auto knowledge gate.
-                    # No-answer cases retain auto so the existing abstention
-                    # metric can still observe an empty retrieval result.
-                    knowledge_access_policy=evaluation_policy,
+                    knowledge_access_policy=KnowledgeAccessPolicy.AUTO,
                 ),
                 runtime=runtime,
             )
+            expected_retrieval = self._expected_retrieval(case)
+            triggered = self._trace_retrieval_triggered(routing_trace)
+            expected_retrieval_cases += int(expected_retrieval)
+            triggered_retrieval_cases += int(triggered)
+            if expected_retrieval and triggered:
+                true_positive += 1
+            elif expected_retrieval:
+                false_negative += 1
+            elif triggered:
+                false_positive += 1
+
+            # Keep no-answer cases on the real AUTO path so abstention remains
+            # observable.  Answerable cases get a second, forced trace for
+            # retrieval/ranking quality, independent of routing.
+            if case.no_answer:
+                trace = routing_trace
+            else:
+                trace = self.run_trace_sync(
+                    RagDebugRunRequest(
+                        query=case.query,
+                        config_id=config_id,
+                        document_ids=list(scope_document_ids),
+                        top_k=top_k,
+                        include_answer=False,
+                        knowledge_access_policy=KnowledgeAccessPolicy.ALWAYS,
+                    ),
+                    runtime=runtime,
+                )
             ranked = [candidate.id for candidate in trace.candidates]
             metadata = trace.metadata
+            routing_metadata = routing_trace.metadata
+            if triggered:
+                retrieval_runs += 1
+                round_count = self._trace_round_count(routing_trace)
+                second_round_runs += int(round_count > 1)
+                gate_rounds = routing_metadata.get("evidence_gate_rounds", [])
+                if isinstance(gate_rounds, list):
+                    evidence_gate_rounds += len(gate_rounds)
+                    evidence_sufficient_rounds += sum(
+                        int(bool(item.get("sufficient")))
+                        for item in gate_rounds
+                        if isinstance(item, dict)
+                    )
+
+            if scope_document_ids and triggered:
+                scope_checked_candidates += len(routing_trace.candidates)
+                scope_violations += sum(
+                    int(candidate.document_id not in scope_document_ids)
+                    for candidate in routing_trace.candidates
+                )
+
             predictions.append(
                 RagEvaluationPrediction(
                     case_id=case.case_id,
@@ -367,10 +428,73 @@ class RagDebugService:
                     "type": case.query_type,
                     "answerable": case.answerable,
                     "tags": case.tags,
+                    "expected_retrieval": expected_retrieval,
+                    "retrieval_triggered": triggered,
+                    "scope_document_ids": list(scope_document_ids),
+                    "scope_checked_candidates": (
+                        len(routing_trace.candidates)
+                        if scope_document_ids and triggered
+                        else 0
+                    ),
+                    "scope_violation_count": (
+                        sum(
+                            int(candidate.document_id not in scope_document_ids)
+                            for candidate in routing_trace.candidates
+                        )
+                        if scope_document_ids and triggered
+                        else 0
+                    ),
+                    "retrieval_round_count": self._trace_round_count(routing_trace),
+                    "evidence_sufficiency": bool(
+                        routing_metadata.get("evidence_sufficient", False)
+                    ),
                 }
             )
         evaluation_cases = [self._evaluation_case(case) for case in selected]
         report = evaluate_rag(evaluation_cases, predictions).model_dump(mode="json")
+        expected_no_retrieval_cases = len(selected) - expected_retrieval_cases
+        true_negative = expected_no_retrieval_cases - false_positive
+        routing_metrics = {
+            "routing_cases": len(selected),
+            "retrieval_trigger_precision": self._ratio(
+                true_positive, triggered_retrieval_cases
+            ),
+            "retrieval_trigger_recall": self._ratio(
+                true_positive, expected_retrieval_cases
+            ),
+            "unnecessary_retrieval_rate": self._ratio(
+                false_positive, expected_no_retrieval_cases
+            ),
+            "missing_retrieval_rate": self._ratio(
+                false_negative, expected_retrieval_cases
+            ),
+            "scope_violation_rate": self._ratio(
+                scope_violations, scope_checked_candidates
+            ),
+            "second_round_retrieval_rate": self._ratio(
+                second_round_runs, retrieval_runs
+            ),
+            "evidence_sufficiency_rate": self._ratio(
+                evidence_sufficient_rounds, evidence_gate_rounds
+            ),
+        }
+        report["retrieval"].update(routing_metrics)
+        report["routing"] = {
+            **routing_metrics,
+            "expected_retrieval_cases": expected_retrieval_cases,
+            "expected_no_retrieval_cases": expected_no_retrieval_cases,
+            "triggered_retrieval_cases": triggered_retrieval_cases,
+            "true_positive": true_positive,
+            "false_positive": false_positive,
+            "true_negative": true_negative,
+            "false_negative": false_negative,
+            "scope_checked_candidates": scope_checked_candidates,
+            "scope_violations": scope_violations,
+            "retrieval_runs": retrieval_runs,
+            "second_round_runs": second_round_runs,
+            "evidence_gate_rounds": evidence_gate_rounds,
+            "evidence_sufficient_rounds": evidence_sufficient_rounds,
+        }
         report["case_details"] = summaries
         return report
 
@@ -603,6 +727,8 @@ class RagDebugService:
                     "retrieval_skipped": True,
                     "retrieval_round_count": 0,
                     "retrieval_queries": [],
+                    "evidence_gate_rounds": [],
+                    "evidence_sufficient": False,
                     "skip_reason": knowledge_decision_model.reason_code,
                 },
             )
@@ -650,6 +776,11 @@ class RagDebugService:
         evidence = build_agent_evidence(merged)
         citations = build_evidence_citations(evidence)
         grounded = GroundedContextBuilder().build(evidence, citations)
+        evidence_gate_rounds = self._evidence_gate_rounds(retrievals, retrieval_errors)
+        evidence_sufficient = bool(
+            evidence_gate_rounds
+            and evidence_gate_rounds[-1].get("sufficient", False)
+        )
         stage_update("context", "complete", elapsed_ms=(perf_counter() - started) * 1000 - sum(item.elapsed_ms for item in response_stages[:6]), count=len(evidence), summary={"estimated_tokens": grounded.estimated_tokens, "included": len(grounded.included_evidence_ids), "omitted": len(grounded.omitted_evidence_ids)})
 
         answer = ""
@@ -705,6 +836,8 @@ class RagDebugService:
             "knowledge_scope": knowledge_scope,
             "retrieval_skipped": False,
             "retrieval_round_count": len(retrieval_queries),
+            "evidence_gate_rounds": evidence_gate_rounds,
+            "evidence_sufficient": evidence_sufficient,
         }
         return RagDebugTraceResponse(
             run_id=run_id,
@@ -774,6 +907,119 @@ class RagDebugService:
     @staticmethod
     def _metric(results: list[RetrievalResult], key: str) -> float:
         return round(sum(float(item.metadata.get(key, 0.0) or 0.0) for item in results), 3)
+
+    @staticmethod
+    def _ratio(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round(max(0.0, min(1.0, float(numerator) / float(denominator))), 6)
+
+    @staticmethod
+    def _expected_retrieval(case: RagDebugCase) -> bool:
+        """Return the routing gold label with a backward-compatible default."""
+
+        if case.expected_retrieval is not None:
+            return bool(case.expected_retrieval)
+        return not case.no_answer
+
+    @classmethod
+    def _expected_scope_document_ids(cls, case: RagDebugCase) -> tuple[str, ...]:
+        """Resolve dataset scope annotations without breaking old datasets.
+
+        The current-index dataset predates the explicit scope field.  Its
+        answerable cases already carry ``metadata.document_id``; using that as
+        a fallback keeps the imported dataset useful while allowing future
+        datasets to declare exact scope IDs directly.
+        """
+
+        raw_values: list[object] = list(case.expected_scope_document_ids)
+        if not raw_values and not case.no_answer:
+            raw_values.extend(
+                [
+                    case.metadata.get("scope_document_ids", ""),
+                    case.metadata.get("document_id", ""),
+                ]
+            )
+        ignored = {"", "all", "current-index", "global", "none", "*"}
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw in raw_values:
+            values = raw if isinstance(raw, (list, tuple, set)) else str(raw or "").replace(",", ";").split(";")
+            for value in values:
+                document_id = str(value or "").strip()
+                if not document_id or document_id.lower() in ignored or document_id in seen:
+                    continue
+                result.append(document_id)
+                seen.add(document_id)
+        return tuple(result)
+
+    @staticmethod
+    def _trace_retrieval_triggered(trace: Any) -> bool:
+        metadata = getattr(trace, "metadata", {}) or {}
+        if "retrieval_skipped" in metadata:
+            return not bool(metadata.get("retrieval_skipped"))
+        # Keeps lightweight test doubles and older trace records measurable.
+        return bool(getattr(trace, "candidates", ()) or ())
+
+    @classmethod
+    def _trace_round_count(cls, trace: Any) -> int:
+        metadata = getattr(trace, "metadata", {}) or {}
+        try:
+            count = max(0, int(metadata.get("retrieval_round_count", 0) or 0))
+        except (TypeError, ValueError):
+            count = 0
+        if count == 0 and cls._trace_retrieval_triggered(trace):
+            return 1
+        return count
+
+    @staticmethod
+    def _evidence_gate_rounds(
+        retrievals: list[RetrievalResult],
+        retrieval_errors: list[str],
+    ) -> list[dict[str, Any]]:
+        """Assess cumulative evidence after each actual retrieval round.
+
+        The gate receives structured evidence items rather than raw retrieval
+        scores.  ``remaining_searches`` is kept at least one for this
+        measurement so the result answers whether evidence was sufficient,
+        instead of merely reporting that the configured budget ended.
+        """
+
+        gate = AgentEvidenceGateService()
+        cumulative: dict[str, Any] = {}
+        rounds: list[dict[str, Any]] = []
+        for index, result in enumerate(retrievals, start=1):
+            round_evidence = build_agent_evidence(result)
+            novel = [item for item in round_evidence if item.evidence_id not in cumulative]
+            for item in round_evidence:
+                cumulative.setdefault(item.evidence_id, item)
+            fallback_reason = "; ".join(retrieval_errors)
+            if not fallback_reason:
+                fallback_reason = str(result.metadata.get("fallback_reason", "") or "")
+            observation = AgentRetrievalObservation(
+                query=result.query,
+                retrieval_strategy=result.retrieval_strategy,
+                result_count=len(result.candidates),
+                evidence_count=len(round_evidence),
+                novel_evidence_count=len(novel),
+                fallback_reason=fallback_reason,
+            )
+            assessment = gate.assess(
+                evidence=list(cumulative.values()),
+                latest_retrieval=observation,
+                search_count=index,
+                remaining_searches=max(1, len(retrievals) - index),
+            )
+            payload = assessment.model_dump(mode="json")
+            payload.update(
+                {
+                    "round": index,
+                    "query": result.query,
+                    "sufficient": "evidence_sufficient" in assessment.reason_codes,
+                }
+            )
+            rounds.append(payload)
+        return rounds
 
     @staticmethod
     def _retriever_for_profile(runtime: Any, profile: RagDebugConfigProfile) -> Any:
@@ -874,6 +1120,8 @@ class RagDebugService:
             relevance_grades={} if case.no_answer else case.relevance_grades,
             claims=claims,
             no_answer=case.no_answer,
+            expected_retrieval=case.expected_retrieval,
+            expected_scope_document_ids=list(case.expected_scope_document_ids),
             metadata=case.metadata,
         )
 
