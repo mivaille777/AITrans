@@ -10,6 +10,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -34,6 +35,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -58,6 +60,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -82,6 +85,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -106,6 +110,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -130,6 +135,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -154,6 +160,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -178,6 +185,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2",
       "document_title": "Computers and Chemical Engineering",
@@ -206,6 +214,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -236,6 +245,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -263,6 +273,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -292,6 +303,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -320,6 +332,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -344,6 +357,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -368,6 +382,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -396,6 +411,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -424,6 +440,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -451,6 +468,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Measurement",
@@ -475,6 +493,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -499,6 +518,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -524,6 +544,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -548,6 +569,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -576,6 +598,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -604,6 +627,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -632,6 +656,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -656,6 +681,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -683,6 +709,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_4432bb1a79dbe230742cd82b",
       "document_title": "AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -712,6 +739,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2", "doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2;doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Computers and Chemical Engineering; Measurement",
@@ -740,6 +768,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_2b42b53ebf3c031253883ad2", "doc_d4d1a15d06f79a7534f4a812"],
     "metadata": {
       "document_id": "doc_2b42b53ebf3c031253883ad2;doc_d4d1a15d06f79a7534f4a812",
       "document_title": "Computers and Chemical Engineering; Measurement",
@@ -769,6 +798,7 @@
     ],
     "no_answer": false,
     "expected_retrieval": true,
+    "expected_scope_document_ids": ["doc_d4d1a15d06f79a7534f4a812", "doc_4432bb1a79dbe230742cd82b"],
     "metadata": {
       "document_id": "doc_d4d1a15d06f79a7534f4a812;doc_4432bb1a79dbe230742cd82b",
       "document_title": "Measurement; AITrans 科研多 Agent 系统：分阶段开发任务书",
@@ -791,6 +821,7 @@
     "claims": [],
     "no_answer": true,
     "expected_retrieval": false,
+    "expected_scope_document_ids": [],
     "metadata": {
       "document_id": "current-index",
       "document_title": "All currently indexed documents",
@@ -813,6 +844,7 @@
     "claims": [],
     "no_answer": true,
     "expected_retrieval": false,
+    "expected_scope_document_ids": [],
     "metadata": {
       "document_id": "current-index",
       "document_title": "All currently indexed documents",
@@ -835,6 +867,7 @@
     "claims": [],
     "no_answer": true,
     "expected_retrieval": false,
+    "expected_scope_document_ids": [],
     "metadata": {
       "document_id": "current-index",
       "document_title": "All currently indexed documents",
