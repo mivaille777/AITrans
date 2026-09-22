@@ -157,6 +157,7 @@ def test_rt_s05_event_sequence_is_monotonic_under_concurrency(tmp_path) -> None:
     assert sorted(event.sequence for event in persisted) == list(range(100))
     events = store.list_events("run-store")
     assert [event.sequence for event in events] == list(range(100))
+    assert [event.sequence for event in store.list_events_after("run-store", after_sequence=94)] == list(range(95, 100))
     assert len({event.event_id for event in events}) == 100
     assert {event.elapsed_ms for event in events} == set(range(100))
 

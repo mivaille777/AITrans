@@ -4,7 +4,7 @@ import asyncio
 from threading import Lock
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
 from backend.agent_core.events import AgentEvent
@@ -193,6 +193,83 @@ def get_canonical_runtime_events(run_id: str, store: StoreDependency) -> tuple[A
 @canonical_router.get("/runs/{run_id}/result")
 def get_canonical_runtime_result(run_id: str, store: StoreDependency) -> dict[str, object]:
     return get_runtime_result(run_id, store)
+
+
+@canonical_router.websocket("/runs/{run_id}/stream")
+async def stream_canonical_runtime_run(
+    websocket: WebSocket,
+    run_id: str,
+    store: StoreDependency,
+    after_sequence: int = -1,
+) -> None:
+    await websocket.accept()
+    if after_sequence < -1:
+        await websocket.send_json(
+            {"type": "error", "code": "invalid_sequence", "message": "after_sequence must be >= -1"}
+        )
+        await websocket.close(code=4400)
+        return
+
+    run = await asyncio.to_thread(store.get_run, run_id)
+    if run is None:
+        await websocket.send_json(
+            {"type": "error", "code": "run_not_found", "message": "Run not found"}
+        )
+        await websocket.close(code=4404)
+        return
+
+    cursor = after_sequence
+    last_status = ""
+    try:
+        while True:
+            run = await asyncio.to_thread(store.get_run, run_id)
+            if run is None:
+                await websocket.send_json(
+                    {"type": "error", "code": "run_not_found", "message": "Run not found"}
+                )
+                await websocket.close(code=4404)
+                return
+
+            if run.status.value != last_status:
+                last_status = run.status.value
+                await websocket.send_json(
+                    {"type": "run", "run": run.model_dump(mode="json")}
+                )
+
+            events = await asyncio.to_thread(
+                store.list_events_after,
+                run_id,
+                after_sequence=cursor,
+            )
+            for event in events:
+                cursor = event.sequence
+                await websocket.send_json(
+                    {"type": "event", "event": event.model_dump(mode="json")}
+                )
+
+            if run.status in {
+                AgentRunStatus.COMPLETED,
+                AgentRunStatus.FAILED,
+                AgentRunStatus.CANCELLED,
+            }:
+                await websocket.send_json(
+                    {
+                        "type": "terminal",
+                        "run": run.model_dump(mode="json"),
+                        "last_sequence": cursor,
+                    }
+                )
+                await websocket.close(code=1000)
+                return
+
+            try:
+                message = await asyncio.wait_for(websocket.receive(), timeout=0.15)
+                if message.get("type") == "websocket.disconnect":
+                    return
+            except TimeoutError:
+                pass
+    except WebSocketDisconnect:
+        return
 
 
 def _build_runtime():

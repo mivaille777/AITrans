@@ -242,6 +242,47 @@ def test_canonical_runtime_api_supports_create_lookup_and_retry(tmp_path) -> Non
     assert store.get_run_request(second["run_id"])["user_message"] == "Analyze durable runtime"
 
 
+def test_canonical_runtime_stream_replays_after_sequence_and_closes_on_terminal(tmp_path) -> None:
+    store = _store(tmp_path)
+    run = AgentRunScheduler(store).enqueue(goal="Replay events")
+    for index in range(3):
+        store.append_event(
+            AgentEvent(
+                event_id=f"stream-event-{index}",
+                event_type=AgentEventType.TASK_PROGRESS,
+                task_id=run.task_id,
+                run_id=run.run_id,
+                trace_id=run.trace_id,
+                payload={"index": index},
+            )
+        )
+    store.transition_run(
+        run.run_id,
+        expected_status=AgentRunStatus.QUEUED,
+        target_status=AgentRunStatus.CANCELLED,
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_agent_run_store] = lambda: store
+    client = TestClient(app)
+    with client.websocket_connect(
+        f"/api/agent/runs/{run.run_id}/stream?after_sequence=0"
+    ) as websocket:
+        snapshot = websocket.receive_json()
+        first = websocket.receive_json()
+        second = websocket.receive_json()
+        terminal = websocket.receive_json()
+
+    assert snapshot["type"] == "run"
+    assert snapshot["run"]["status"] == "cancelled"
+    assert [first["event"]["sequence"], second["event"]["sequence"]] == [1, 2]
+    assert terminal == {
+        "type": "terminal",
+        "run": snapshot["run"],
+        "last_sequence": 2,
+    }
+
+
 def test_run_request_survives_reopened_store_and_events_are_fenced(tmp_path) -> None:
     path = tmp_path / "agent_runtime.sqlite3"
     store = AgentRunStore(storage_path=path)

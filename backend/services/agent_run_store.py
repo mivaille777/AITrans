@@ -1035,13 +1035,21 @@ class AgentRunStore:
         return persisted
 
     def list_events(self, run_id: str) -> tuple[AgentEvent, ...]:
+        return self.list_events_after(run_id, after_sequence=-1)
+
+    def list_events_after(
+        self, run_id: str, *, after_sequence: int = -1
+    ) -> tuple[AgentEvent, ...]:
+        if after_sequence < -1:
+            raise ValueError("after_sequence cannot be less than -1")
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM agent_runtime_events
-                WHERE run_id = ? ORDER BY sequence ASC
+                WHERE run_id = ? AND sequence > ?
+                ORDER BY sequence ASC
                 """,
-                (run_id,),
+                (run_id, after_sequence),
             ).fetchall()
         return tuple(
             AgentEvent(
