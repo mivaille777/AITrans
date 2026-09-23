@@ -91,8 +91,14 @@ vi.mock("../../api/rag-debug", () => {
     ]),
     listRagDebugConfigs: vi.fn().mockResolvedValue([config, { ...config, config_id: "candidate", name: "Candidate", active: false }]),
     listRagDebugDatasets: vi.fn().mockResolvedValue([dataset]),
+    getQasperDebugCase: vi.fn(),
+    getQasperDebugRun: vi.fn(),
+    listQasperDebugCases: vi.fn().mockResolvedValue([]),
+    listQasperDebugChunks: vi.fn().mockResolvedValue({ chunks: [], total: 0, page: 1, page_size: 50 }),
+    listQasperDebugRuns: vi.fn().mockResolvedValue([]),
     saveRagDebugCase: vi.fn(),
     startRagDebugRun: vi.fn().mockResolvedValue({ run_id: "run-1", trace_id: "trace-1", status: "completed" }),
+    startQasperDebugRun: vi.fn().mockResolvedValue({ run_id: "debug-qasper-validation-test", status: "queued", split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "CURRENT", question_count: 0, error: "", started_at: "", completed_at: "", metrics: {} }),
     updateRagDebugCase: vi.fn(),
     updateRagDebugConfig: vi.fn(),
   }
@@ -135,7 +141,7 @@ vi.mock("../../desktop", () => ({
 
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
 import { addKnowledgeDocument, deleteKnowledgeDocument, reindexKnowledgeDocument } from "../../api/knowledge"
-import { listRagDebugChunks, startRagDebugRun } from "../../api/rag-debug"
+import { getQasperDebugCase, listQasperDebugCases, listQasperDebugRuns, listRagDebugChunks, startQasperDebugRun, startRagDebugRun } from "../../api/rag-debug"
 import { desktop } from "../../desktop"
 
 afterEach(() => {
@@ -162,6 +168,51 @@ describe("RagDebugStudio", () => {
     for (const label of ["Trace", "Retrieval", "Chunks", "Evaluation", "Compare", "Datasets"]) {
       expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(false)
     }
+  })
+
+  it("starts a QASPER preset with an automatically mapped paragraph gold set", async () => {
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Datasets" }))
+    expect(screen.getByText("QASPER benchmark preset")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "Run QASPER" }))
+
+    await waitFor(() => expect(startQasperDebugRun).toHaveBeenCalledWith({
+      split: "validation",
+      sample_size: "20",
+      seed: 42,
+      config_id: "default",
+      variant: "CURRENT",
+      include_answer: false,
+    }))
+    expect(screen.getByText(/Gold Chunk IDs are not entered by hand/)).toBeTruthy()
+  })
+
+  it("loads a QASPER question into the Trace tab with gold and gate details", async () => {
+    const run = { run_id: "debug-qasper-validation-1", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "adaptive:evidence_gated", question_count: 1, error: "", started_at: "", completed_at: "", metrics: {} }
+    const qasperCase = {
+      question_id: "q1",
+      paper_id: "paper-1",
+      question: "What result did the authors report?",
+      no_answer: false,
+      gold_paragraph_ids: ["paragraph-1"],
+      qrel: {},
+      prediction: { answer: "", predicted_evidence: ["reported evidence"], predicted_evidence_paragraph_ids: ["paragraph-1"] },
+      trace: { question_id: "q1", latency_ms: 9, final_candidates: [], stages: {}, retrieval_rounds: [{ round: 1, query: "What result did the authors report?", gate: { action: "stop", reason_codes: ["evidence_sufficient"] } }] },
+      metrics: { gold_evidence_recall_at_10: 1, "Answer F1": 0, "Evidence F1": 1 },
+    }
+    vi.mocked(listQasperDebugRuns).mockResolvedValueOnce([run])
+    vi.mocked(listQasperDebugCases).mockResolvedValueOnce([{ question_id: "q1", paper_id: "paper-1", question: qasperCase.question, no_answer: false, gold_paragraph_ids: ["paragraph-1"] }])
+    vi.mocked(getQasperDebugCase).mockResolvedValueOnce(qasperCase)
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Datasets" }))
+    await waitFor(() => expect(getQasperDebugCase).toHaveBeenCalledWith(run.run_id, "q1"))
+    fireEvent.click(screen.getByRole("button", { name: "Trace" }))
+
+    expect(await screen.findByText("QASPER gold evidence trace")).toBeTruthy()
+    expect(screen.getByText("Gold hit · 1/1")).toBeTruthy()
+    expect(screen.getByText(/evidence_sufficient/)).toBeTruthy()
   })
 
   it("opens the retrieval trace tab before a run", () => {

@@ -283,7 +283,69 @@ class RagDebugCompareResponse(RagDebugModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
 
 
+class QasperDebugRunRequest(RagDebugModel):
+    split: Literal["train", "validation"] = "validation"
+    sample_size: Literal["20", "100", "full"] = "20"
+    seed: int = Field(default=42, ge=0, le=2_147_483_647)
+    config_id: str = Field(default="default", min_length=1, max_length=128)
+    variant: str = Field(default="CURRENT", min_length=1, max_length=64)
+    include_answer: bool = False
+
+
+class QasperDebugRunSummary(RagDebugModel):
+    run_id: str
+    status: RagDebugRunStatus
+    split: str
+    sample_size: str
+    seed: int
+    config_id: str = "default"
+    variant: str = "CURRENT"
+    question_count: int = Field(default=0, ge=0)
+    error: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class QasperDebugCaseIndex(RagDebugModel):
+    question_id: str
+    paper_id: str
+    question: str
+    no_answer: bool = False
+    gold_paragraph_ids: list[str] = Field(default_factory=list)
+
+
+class QasperDebugCase(QasperDebugCaseIndex):
+    qrel: dict[str, Any] = Field(default_factory=dict)
+    prediction: dict[str, Any] = Field(default_factory=dict)
+    trace: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class QasperDebugChunk(RagDebugModel):
+    chunk_id: str
+    document_id: str
+    title: str = ""
+    text: str = ""
+    section_path: list[str] = Field(default_factory=list)
+    source_paragraph_ids: list[str] = Field(default_factory=list)
+    gold_question_count: int = Field(default=0, ge=0)
+
+
+class QasperDebugChunkPage(RagDebugModel):
+    chunks: list[QasperDebugChunk] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+
+
 __all__ = [
+    "QasperDebugCase",
+    "QasperDebugCaseIndex",
+    "QasperDebugChunk",
+    "QasperDebugChunkPage",
+    "QasperDebugRunRequest",
+    "QasperDebugRunSummary",
     "RagDebugCandidate",
     "RagDebugCase",
     "RagDebugChunk",

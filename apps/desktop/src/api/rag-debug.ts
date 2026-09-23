@@ -225,6 +225,53 @@ export interface RagDebugRunAccepted {
   status: RagDebugRunStatus
 }
 
+export interface QasperDebugRunSummary {
+  run_id: string
+  status: RagDebugRunStatus
+  split: string
+  sample_size: string
+  seed: number
+  config_id: string
+  variant: string
+  question_count: number
+  error: string
+  started_at: string
+  completed_at: string
+  metrics: Record<string, unknown>
+}
+
+export interface QasperDebugCaseIndex {
+  question_id: string
+  paper_id: string
+  question: string
+  no_answer: boolean
+  gold_paragraph_ids: string[]
+}
+
+export interface QasperDebugCase extends QasperDebugCaseIndex {
+  qrel: Record<string, unknown>
+  prediction: Record<string, unknown>
+  trace: Record<string, unknown>
+  metrics: Record<string, unknown>
+}
+
+export interface QasperDebugChunk {
+  chunk_id: string
+  document_id: string
+  title: string
+  text: string
+  section_path: string[]
+  source_paragraph_ids: string[]
+  gold_question_count: number
+}
+
+export interface QasperDebugChunkPage {
+  chunks: QasperDebugChunk[]
+  total: number
+  page: number
+  page_size: number
+}
+
 const ROOT = "/api/rag/debug"
 
 export function listRagDebugCompanionTraces(limit = 20): Promise<RagDebugCompanionTrace[]> {
@@ -335,4 +382,33 @@ export function evaluateRagDebugDataset(payload: { dataset_id: string; config_id
 
 export function compareRagDebugDataset(payload: { dataset_id: string; baseline_config_id: string; candidate_config_id: string; top_k: number; case_ids?: string[] }): Promise<RagDebugCompareResponse> {
   return apiPost(`${ROOT}/compare`, payload)
+}
+
+export function listQasperDebugRuns(): Promise<QasperDebugRunSummary[]> {
+  return apiGet(`${ROOT}/qasper/runs`)
+}
+
+export function startQasperDebugRun(payload: { split: "train" | "validation"; sample_size: "20" | "100" | "full"; seed: number; config_id: string; variant: string; include_answer: boolean }): Promise<QasperDebugRunSummary> {
+  return apiPost(`${ROOT}/qasper/runs`, payload)
+}
+
+export function getQasperDebugRun(runId: string): Promise<QasperDebugRunSummary> {
+  return apiGet(`${ROOT}/qasper/runs/${encodeURIComponent(runId)}`)
+}
+
+export function listQasperDebugCases(runId: string): Promise<QasperDebugCaseIndex[]> {
+  return apiGet(`${ROOT}/qasper/runs/${encodeURIComponent(runId)}/cases`)
+}
+
+export function getQasperDebugCase(runId: string, questionId: string): Promise<QasperDebugCase> {
+  return apiGet(`${ROOT}/qasper/runs/${encodeURIComponent(runId)}/cases/${encodeURIComponent(questionId)}`)
+}
+
+export function listQasperDebugChunks(runId: string, params: { page?: number; pageSize?: number; query?: string } = {}): Promise<QasperDebugChunkPage> {
+  const search = new URLSearchParams()
+  if (params.page) search.set("page", String(params.page))
+  if (params.pageSize) search.set("page_size", String(params.pageSize))
+  if (params.query) search.set("query", params.query)
+  const query = search.size ? `?${search.toString()}` : ""
+  return apiGet(`${ROOT}/qasper/runs/${encodeURIComponent(runId)}/chunks${query}`)
 }

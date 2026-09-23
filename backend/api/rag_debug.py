@@ -4,11 +4,28 @@ import asyncio
 import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 
+from backend.api.dependencies import (
+    get_companion_chat_service,
+    get_rag_debug_service,
+    get_rag_debug_store_service,
+)
 from backend.api.knowledge_dependencies import get_rag_runtime
-from backend.api.dependencies import get_companion_chat_service, get_rag_debug_service, get_rag_debug_store_service
 from backend.models.rag_debug import (
+    QasperDebugCase,
+    QasperDebugCaseIndex,
+    QasperDebugChunkPage,
+    QasperDebugRunRequest,
+    QasperDebugRunSummary,
     RagDebugCase,
     RagDebugCompanionTrace,
     RagDebugCompareRequest,
@@ -28,9 +45,16 @@ from backend.models.rag_debug import (
     RagDebugRunRequest,
     RagDebugTraceResponse,
 )
+from backend.services.qasper_debug_service import (
+    get_qasper_debug_case,
+    get_qasper_debug_run,
+    list_qasper_debug_cases,
+    list_qasper_debug_chunks,
+    list_qasper_debug_runs,
+    start_qasper_debug_run,
+)
 from backend.services.rag_debug_service import RagDebugService
 from backend.services.rag_debug_store_service import RagDebugStoreService
-
 
 router = APIRouter(prefix="/api/rag/debug", tags=["rag-debug"])
 RuntimeDependency = Annotated[Any, Depends(get_rag_runtime)]
@@ -45,7 +69,7 @@ def _not_found(detail: str) -> HTTPException:
 
 def _case_payload(raw: object) -> RagDebugCase:
     if not isinstance(raw, dict):
-        raise ValueError("Each dataset record must be a JSON object.")
+        raise TypeError("Each dataset record must be a JSON object.")
     payload = dict(raw)
     aliases = {
         "case_id": ("case_id", "id"),
@@ -95,7 +119,7 @@ def _records_from_import(content: str, file_format: str | None) -> list[object]:
     if isinstance(payload, dict):
         payload = payload.get("cases", payload.get("data", [payload]))
     if not isinstance(payload, list):
-        raise ValueError("JSON datasets must contain an array of cases.")
+        raise TypeError("JSON datasets must contain an array of cases.")
     return payload
 
 
@@ -398,6 +422,80 @@ def compare_dataset(
         )
     except KeyError as exc:
         raise _not_found("RAG evaluation dataset or config profile not found.") from exc
+
+
+@router.get("/qasper/runs", response_model=list[QasperDebugRunSummary])
+def list_qasper_runs() -> list[QasperDebugRunSummary]:
+    return list_qasper_debug_runs()
+
+
+@router.post(
+    "/qasper/runs",
+    response_model=QasperDebugRunSummary,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_qasper_run(
+    payload: QasperDebugRunRequest,
+    store: DebugStoreDependency,
+) -> QasperDebugRunSummary:
+    profile = store.get_config(payload.config_id)
+    if profile is None:
+        raise _not_found("RAG config profile not found.")
+    try:
+        return start_qasper_debug_run(payload, profile.config)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+@router.get("/qasper/runs/{run_id}", response_model=QasperDebugRunSummary)
+def get_qasper_run(run_id: str) -> QasperDebugRunSummary:
+    run = get_qasper_debug_run(run_id)
+    if run is None:
+        raise _not_found("QASPER debug run not found.")
+    return run
+
+
+@router.get("/qasper/runs/{run_id}/cases", response_model=list[QasperDebugCaseIndex])
+def list_qasper_cases(run_id: str) -> list[QasperDebugCaseIndex]:
+    run = get_qasper_debug_run(run_id)
+    if run is None:
+        raise _not_found("QASPER debug run not found.")
+    try:
+        return list_qasper_debug_cases(run_id)
+    except FileNotFoundError:
+        return []
+
+
+@router.get("/qasper/runs/{run_id}/cases/{question_id}", response_model=QasperDebugCase)
+def get_qasper_case(run_id: str, question_id: str) -> QasperDebugCase:
+    run = get_qasper_debug_run(run_id)
+    if run is None:
+        raise _not_found("QASPER debug run not found.")
+    try:
+        case = get_qasper_debug_case(run_id, question_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="QASPER run artifacts are not ready yet.")
+    if case is None:
+        raise _not_found("QASPER question not found in this run.")
+    return case
+
+
+@router.get("/qasper/runs/{run_id}/chunks", response_model=QasperDebugChunkPage)
+def list_qasper_chunks(
+    run_id: str,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+    query: Annotated[str, Query(max_length=500)] = "",
+) -> QasperDebugChunkPage:
+    run = get_qasper_debug_run(run_id)
+    if run is None:
+        raise _not_found("QASPER debug run not found.")
+    try:
+        return list_qasper_debug_chunks(run_id, page=page, page_size=page_size, query=query)
+    except FileNotFoundError:
+        return QasperDebugChunkPage(chunks=[], total=0, page=page, page_size=page_size)
 
 
 __all__ = ["router"]

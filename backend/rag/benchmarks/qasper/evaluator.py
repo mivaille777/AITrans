@@ -299,6 +299,7 @@ def evaluate_qasper_run(
     routing_counts: dict[str, int] = {}
     second_round_cases = 0
     second_round_observed_cases = 0
+    retrieval_round_counts: list[float] = []
     sufficiency_cases = 0
     sufficiency_observed_cases = 0
     sufficient_cases = 0
@@ -350,6 +351,7 @@ def evaluate_qasper_run(
         retrieval_rounds = trace.get("retrieval_rounds", [])
         if not isinstance(retrieval_rounds, list):
             retrieval_rounds = []
+        retrieval_round_counts.append(float(len(retrieval_rounds) or 1))
         round_context_paragraphs = [
             {
                 str(value)
@@ -730,6 +732,7 @@ def evaluate_qasper_run(
         },
         "adaptive_retrieval": {
             "evaluated_cases": len(initial_evidence_coverage),
+            "Mean Retrieval Rounds": _mean(retrieval_round_counts),
             "Initial Evidence Coverage": _mean(initial_evidence_coverage),
             "Final Evidence Coverage": _mean(final_evidence_coverage),
             "Coverage Gain": _mean(coverage_gain),

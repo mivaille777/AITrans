@@ -27,7 +27,7 @@ import {
   Upload,
   X,
 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
 import { desktop } from "../../desktop"
 import { addKnowledgeDocument, deleteKnowledgeDocument, listKnowledgeDocuments, reindexKnowledgeDocument } from "../../api/knowledge"
@@ -50,6 +50,11 @@ import {
   listRagDebugCompanionTraces,
   listRagDebugConfigs,
   listRagDebugDatasets,
+  getQasperDebugCase,
+  listQasperDebugCases,
+  listQasperDebugChunks,
+  listQasperDebugRuns,
+  startQasperDebugRun,
   type RagConfig,
   type RagDebugCase,
   type RagDebugCandidate,
@@ -61,6 +66,10 @@ import {
   type RagDebugEvaluationResponse,
   type RagDebugStage,
   type RagDebugTraceResponse,
+  type QasperDebugCase,
+  type QasperDebugCaseIndex,
+  type QasperDebugChunk,
+  type QasperDebugRunSummary,
   saveRagDebugCase,
   startRagDebugRun,
   updateRagDebugCase,
@@ -83,8 +92,10 @@ const INITIAL_STAGES: RagDebugStage[] = [
   { key: "rewrite", label: "Rewrite", status: "pending", elapsed_ms: 0, note: "Generate standalone retrieval queries", summary: {}, candidate_count: 0 },
   { key: "dense", label: "Dense Retrieval", status: "pending", elapsed_ms: 0, note: "Vector search from the active index", summary: {}, candidate_count: 0 },
   { key: "bm25", label: "BM25 Retrieval", status: "pending", elapsed_ms: 0, note: "Sparse lexical search from the active index", summary: {}, candidate_count: 0 },
+  { key: "structural", label: "Structural Retrieval", status: "pending", elapsed_ms: 0, note: "Section-aware retrieval from the active index", summary: {}, candidate_count: 0 },
   { key: "fusion", label: "Fusion", status: "pending", elapsed_ms: 0, note: "Merge retrieval lists with the configured strategy", summary: {}, candidate_count: 0 },
   { key: "rerank", label: "Rerank", status: "pending", elapsed_ms: 0, note: "Apply the configured reranker when available", summary: {}, candidate_count: 0 },
+  { key: "final", label: "Final Results", status: "pending", elapsed_ms: 0, note: "Final ranked evidence candidates", summary: {}, candidate_count: 0 },
   { key: "context", label: "Context Building", status: "pending", elapsed_ms: 0, note: "Build bounded grounded context", summary: {}, candidate_count: 0 },
   { key: "answer", label: "Answer Generation", status: "pending", elapsed_ms: 0, note: "Optional answer generation from context", summary: {}, candidate_count: 0 },
 ]
@@ -95,7 +106,10 @@ export default function RagDebugStudioTrace() {
   const [configs, setConfigs] = useState<RagDebugConfigProfile[]>([])
   const [datasets, setDatasets] = useState<RagDebugDataset[]>([])
   const [latestTrace, setLatestTrace] = useState<RagDebugTraceResponse | null>(null)
+  const [qasperRuns, setQasperRuns] = useState<QasperDebugRunSummary[]>([])
+  const [selectedQasperRun, setSelectedQasperRun] = useState<QasperDebugRunSummary | null>(null)
   const [baseError, setBaseError] = useState("")
+  const selectedQasperRunRef = useRef<QasperDebugRunSummary | null>(null)
 
   async function refreshBaseData() {
     const [configResult, datasetResult] = await Promise.allSettled([listRagDebugConfigs(), listRagDebugDatasets()])
@@ -109,6 +123,22 @@ export default function RagDebugStudioTrace() {
   }
 
   useEffect(() => { void refreshBaseData() }, [])
+  useEffect(() => { selectedQasperRunRef.current = selectedQasperRun }, [selectedQasperRun])
+  useEffect(() => {
+    let disposed = false
+    const refresh = () => listQasperDebugRuns().then((runs) => {
+      if (disposed) return
+      setQasperRuns(runs)
+      setSelectedQasperRun((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : runs[0] ?? null)
+    }).catch(() => undefined)
+    void refresh()
+    const timer = window.setInterval(() => { void refresh() }, 3000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [])
+  const qasperCaseSelected = useCallback((item: QasperDebugCase) => {
+    const run = selectedQasperRunRef.current
+    if (run) setLatestTrace(qasperCaseToDebugTrace(run, item))
+  }, [])
   /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
   useEffect(() => {
     setVisitedTabs((current) => {
@@ -150,10 +180,10 @@ export default function RagDebugStudioTrace() {
             >
               {id === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} trace={latestTrace} onTraceChange={setLatestTrace} />}
               {id === "retrieval" && <RetrievalTab trace={latestTrace} />}
-              {id === "chunks" && <ChunksTab />}
-              {id === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} />}
-              {id === "compare" && <CompareTab configs={configs} datasets={datasets} />}
-              {id === "datasets" && <DatasetsTab datasets={datasets} onDatasetsChanged={refreshBaseData} />}
+              {id === "chunks" && <ChunksTab qasperRunId={selectedQasperRun?.run_id ?? ""} />}
+              {id === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} qasperRun={selectedQasperRun} />}
+              {id === "compare" && <CompareTab configs={configs} datasets={datasets} qasperRuns={qasperRuns} />}
+              {id === "datasets" && <DatasetsTab datasets={datasets} configs={configs} onDatasetsChanged={refreshBaseData} qasperRuns={qasperRuns} onQasperRunSelected={setSelectedQasperRun} onQasperCaseSelected={qasperCaseSelected} />}
             </div>
           )
         })}
@@ -347,10 +377,11 @@ function TraceTab({
         </section>
 
         <ConfigTuningPanel config={selectedConfig} onSaved={onConfigsChanged} onNotice={setNotice} />
-        {trace ? <KnowledgeDebugCards trace={trace} /> : null}
+        {trace && !trace.metadata.qasper_run_id ? <KnowledgeDebugCards trace={trace} /> : null}
+        {trace?.metadata.qasper_case ? <QasperTraceSummary trace={trace} /> : null}
 
         <section className="rounded-[10px] border border-slate-200 px-4 py-4">
-          <div className="grid grid-cols-4 gap-2 md:grid-cols-8">{(trace?.stages ?? INITIAL_STAGES).map((item) => <StagePill key={item.key} stage={item} active={activeStage === item.key} />)}</div>
+          <div className="grid grid-cols-5 gap-2 md:grid-cols-10">{(trace?.stages ?? INITIAL_STAGES).map((item) => <StagePill key={item.key} stage={item} active={activeStage === item.key} />)}</div>
           {trace && <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-500"><span className="inline-flex items-center gap-1"><Clock3 size={12} />{formatMs(Number(trace.metadata.total_rag_ms ?? 0))}</span><span>{trace.candidates.length} final candidates</span><span>{trace.context.source_count} evidence items</span><span className="rounded-full bg-slate-100 px-2 py-1">{trace.status}</span></div>}
         </section>
 
@@ -396,6 +427,140 @@ function KnowledgeDebugCards({ trace }: { trace: RagDebugTraceResponse }) {
   )
 }
 
+function QasperTraceSummary({ trace }: { trace: RagDebugTraceResponse }) {
+  const item = (trace.metadata.qasper_case ?? {}) as Record<string, unknown>
+  const gold = debugStringArray(item.gold_paragraph_ids)
+  const retrieved = debugStringArray(item.source_paragraph_ids)
+  const hits = gold.filter((paragraphId) => retrieved.includes(paragraphId))
+  const gate = (item.gate ?? {}) as Record<string, unknown>
+  const reasons = debugStringArray(gate.reason_codes)
+  const rounds = Array.isArray(item.retrieval_rounds) ? item.retrieval_rounds.length : debugNumber(item.retrieval_round_count)
+  const evidenceCoverage = item.evidence_coverage
+  return (
+    <section className="rounded-[10px] border border-amber-200 bg-amber-50/40 p-4" aria-label="QASPER evidence trace">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[13px] font-semibold text-slate-900">QASPER gold evidence trace</h2>
+        <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${hits.length ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+          {hits.length ? `Gold hit · ${hits.length}/${gold.length}` : "Gold miss"}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <DebugDetail label="Evidence Coverage / Recall@10" value={evidenceCoverage == null ? "—" : percent(evidenceCoverage)} />
+        <DebugDetail label="Retrieval rounds" value={`${rounds}${item.second_retrieval === true ? " · second retrieval" : " · one pass"}`} />
+        <DebugDetail label="Gate decision" value={`${debugText(gate.action) || "not recorded"}${reasons.length ? ` · ${reasons.join(", ")}` : ""}`} />
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <DebugDetail label="Gold paragraph IDs" value={gold.join(", ") || "No mapped gold paragraph"} />
+        <DebugDetail label="Retrieved source paragraph IDs" value={retrieved.join(", ") || "No source paragraph IDs"} />
+      </div>
+    </section>
+  )
+}
+
+function qasperCaseToDebugTrace(run: QasperDebugRunSummary, item: QasperDebugCase): RagDebugTraceResponse {
+  const rawTrace = item.trace
+  const rawCandidates = Array.isArray(rawTrace.final_candidates) ? rawTrace.final_candidates as Array<Record<string, unknown>> : []
+  const rawStageIds = (rawTrace.stages ?? {}) as Record<string, unknown>
+  const roundRecords = Array.isArray(rawTrace.retrieval_rounds) ? rawTrace.retrieval_rounds as Array<Record<string, unknown>> : []
+  const retrievalMetadata = (rawTrace.retrieval_metadata ?? {}) as Record<string, unknown>
+  const candidateIds = (key: string) => debugStringArray(rawStageIds[key])
+  const finalIds = rawCandidates.map((candidate) => String(candidate.chunk_id ?? "")).filter(Boolean)
+  const contextSources = debugStringArray(item.prediction.predicted_evidence_paragraph_ids)
+  const allSources = [...new Set(contextSources.length ? contextSources : rawCandidates.flatMap((candidate) => debugStringArray(candidate.source_paragraph_ids)))]
+  const lastRound = roundRecords.at(-1) ?? {}
+  const gate = (lastRound.gate ?? rawTrace.sufficiency ?? {}) as Record<string, unknown>
+  const evidenceCoverage = item.metrics.gold_evidence_recall_at_10
+  const stageSpecs = [
+    ["query", "Query", 0, 1],
+    ["rewrite", "Query Planning", 0, debugNumber(rawTrace.query_planner_invoked) ? 2 : 0],
+    ["dense", "Dense", debugNumber(retrievalMetadata.dense_search_ms), candidateIds("dense_chunk_ids").length],
+    ["bm25", "BM25", debugNumber(retrievalMetadata.sparse_search_ms), candidateIds("sparse_chunk_ids").length],
+    ["structural", "Structural", debugNumber(retrievalMetadata.structural_search_ms), candidateIds("structural_chunk_ids").length],
+    ["fusion", "Fusion", debugNumber(retrievalMetadata.fusion_ms), candidateIds("pre_rerank_chunk_ids").length],
+    ["rerank", "Rerank", debugNumber(retrievalMetadata.rerank_ms), finalIds.length],
+    ["final", "Final", 0, finalIds.length],
+    ["context", "Evidence Context", 0, allSources.length],
+    ["answer", "Answer", debugNumber((item.prediction.answer_generation as Record<string, unknown> | undefined)?.latency_ms), item.prediction.answer ? 1 : 0],
+  ] as const
+  const stages: RagDebugStage[] = stageSpecs.map(([key, label, elapsed, count]) => ({
+    key,
+    label,
+    status: count > 0 ? "complete" : "skipped",
+    elapsed_ms: elapsed,
+    note: count > 0 ? `${count} results` : "No results recorded for this stage",
+    summary: { count },
+    candidate_count: count,
+  }))
+  const candidates: RagDebugCandidate[] = rawCandidates.map((candidate, index) => {
+    const scores = (candidate.scores ?? {}) as Record<string, unknown>
+    const maybeScore = (value: unknown) => value == null ? null : Number(value)
+    const chunkId = String(candidate.chunk_id ?? `candidate-${index + 1}`)
+    const before = candidateIds("pre_rerank_chunk_ids").indexOf(chunkId)
+    return {
+      id: chunkId,
+      document_id: String(candidate.document_id ?? `qasper:${run.split}:${item.paper_id}`),
+      source: String(candidate.title ?? "QASPER paper"),
+      section: String(candidate.section_heading ?? ""),
+      page: null,
+      tokens: debugNumber(candidate.token_count),
+      dense: maybeScore(scores.dense),
+      bm25: maybeScore(scores.sparse),
+      fusion: maybeScore(scores.fusion),
+      rerank: maybeScore(scores.rerank),
+      before: before >= 0 ? before + 1 : null,
+      after: index + 1,
+      text: String(candidate.text ?? ""),
+      chunk_type: "qasper_paragraph_group",
+      start: 0,
+      end: String(candidate.text ?? "").length,
+      metadata: { source_paragraph_ids: debugStringArray(candidate.source_paragraph_ids), section_path: candidate.section_path ?? [] },
+    }
+  })
+  const contextTokens = debugNumber(item.metrics.context_token_count)
+  const qasperInfo = {
+    question_id: item.question_id,
+    gold_paragraph_ids: item.gold_paragraph_ids,
+    source_paragraph_ids: allSources,
+    evidence_coverage: evidenceCoverage,
+    second_retrieval: roundRecords.length > 1 || rawTrace.second_round === true,
+    retrieval_round_count: roundRecords.length || 1,
+    retrieval_rounds: roundRecords,
+    gate,
+  }
+  return {
+    run_id: run.run_id,
+    trace_id: `qasper:${run.run_id}:${item.question_id}`,
+    status: run.status,
+    query: item.question,
+    config_id: run.config_id,
+    query_plan: (rawTrace.query_plan ?? {}) as Record<string, unknown>,
+    stages,
+    candidates,
+    context: {
+      text: candidates.map((candidate) => candidate.text).join("\n\n"),
+      estimated_tokens: contextTokens || candidates.reduce((total, candidate) => total + candidate.tokens, 0),
+      included_evidence_ids: finalIds,
+      omitted_evidence_ids: [],
+      source_count: allSources.length,
+    },
+    evidence: Array.isArray(item.prediction.predicted_evidence) ? (item.prediction.predicted_evidence as unknown[]).map((text) => ({ text: String(text) })) : [],
+    citations: [],
+    answer: String(item.prediction.answer ?? ""),
+    knowledge_decision: { mode: "qasper_benchmark", should_retrieve: true, reason_code: "isolated_paper_scoped_retrieval" },
+    knowledge_scope: { strategy: "single_paper", document_count: 1, document_ids: [`qasper:${run.split}:${item.paper_id}`], reason: "QASPER benchmark keeps retrieval within the question's source paper." },
+    metadata: {
+      qasper_run_id: run.run_id,
+      qasper_case: qasperInfo,
+      retrieval_queries: roundRecords.map((record) => String(record.query ?? "")).filter(Boolean),
+      retrieval_round_count: roundRecords.length || 1,
+      total_rag_ms: debugNumber(rawTrace.latency_ms),
+      answer_f1: item.metrics["Answer F1"],
+      official_evidence_f1: item.metrics["Evidence F1"],
+    },
+    error: String(rawTrace.error ?? ""),
+  }
+}
+
 function RetrievalTab({ trace }: { trace: RagDebugTraceResponse | null }) {
   if (!trace) {
     return <ScrollSurface><EmptyState title="No retrieval trace" description="Run a trace from the Trace tab to inspect the query, scope, and retrieval rounds here." /></ScrollSurface>
@@ -415,8 +580,10 @@ function RetrievalTab({ trace }: { trace: RagDebugTraceResponse | null }) {
   const pipeline = [
     { label: "Dense", key: "dense", count: stage("dense")?.candidate_count ?? debugNumber(stage("dense")?.summary.count) },
     { label: "BM25", key: "bm25", count: stage("bm25")?.candidate_count ?? debugNumber(stage("bm25")?.summary.count) },
+    { label: "Structural", key: "structural", count: stage("structural")?.candidate_count ?? debugNumber(stage("structural")?.summary.count) },
     { label: "Fusion", key: "fusion", count: stage("fusion")?.candidate_count ?? debugNumber(stage("fusion")?.summary.count) },
     { label: "Rerank", key: "rerank", count: stage("rerank")?.candidate_count ?? debugNumber(stage("rerank")?.summary.count) },
+    { label: "Final", key: "final", count: stage("final")?.candidate_count ?? debugNumber(stage("final")?.summary.count) },
   ]
 
   return (
@@ -444,7 +611,7 @@ function RetrievalTab({ trace }: { trace: RagDebugTraceResponse | null }) {
             <h2 className="text-[13px] font-semibold text-slate-900">Pipeline</h2>
             <span className="text-[10px] text-slate-400">{formatMs(Number(metadata.total_rag_ms ?? 0))}</span>
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
             {pipeline.map((item) => {
               const current = stage(item.key)
               return (
@@ -522,7 +689,47 @@ function ConfigTuningPanel({ config, onSaved, onNotice }: { config?: RagDebugCon
   return <section className="rounded-[10px] border border-slate-200"><button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center justify-between px-4 py-3 text-left"><span className="inline-flex items-center gap-2 text-[12px] font-semibold"><SlidersHorizontal size={14} />Retrieval tuning · {profile.name}</span><ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} /></button>{open && <div className="grid gap-3 border-t border-slate-100 px-4 py-4 md:grid-cols-5"><NumberField label="Dense top K" value={draft.dense_top_k} onChange={(value) => setDraft({ ...draft, dense_top_k: value })} /><NumberField label="BM25 top K" value={draft.sparse_top_k} onChange={(value) => setDraft({ ...draft, sparse_top_k: value })} /><NumberField label="Fusion top K" value={draft.fusion_top_k} onChange={(value) => setDraft({ ...draft, fusion_top_k: value })} /><NumberField label="Final top K" value={draft.final_top_k} onChange={(value) => setDraft({ ...draft, final_top_k: value })} /><label className="text-[10px] text-slate-600">Fusion<select value={draft.fusion} onChange={(event) => setDraft({ ...draft, fusion: event.target.value })} className={smallSelectClass}><option value="rrf">RRF</option></select></label><label className="inline-flex items-center gap-2 text-[10px] text-slate-600"><input type="checkbox" checked={draft.small_to_big_enabled} onChange={(event) => setDraft({ ...draft, small_to_big_enabled: event.target.checked })} className="accent-slate-950" />Small-to-big context</label><div className="md:col-span-5 flex justify-end gap-2"><SecondaryButton onClick={() => setOpen(false)}>Cancel</SecondaryButton><PrimaryButton onClick={save}><Save size={13} />Save profile</PrimaryButton></div></div>}</section>
 }
 
-function ChunksTab() {
+function QasperChunkCatalog({ runId }: { runId: string }) {
+  const [chunkPage, setChunkPage] = useState<{ key: string; chunks: QasperDebugChunk[]; total: number }>({ key: "", chunks: [], total: 0 })
+  const [page, setPage] = useState(1)
+  const [selectedId, setSelectedId] = useState("")
+  const [query, setQuery] = useState("")
+  const [error, setError] = useState("")
+  const requestKey = `${runId}:${page}:${query}`
+  useEffect(() => {
+    let disposed = false
+    if (!runId) return () => { disposed = true }
+    void listQasperDebugChunks(runId, { page, pageSize: 50, query }).then((result) => {
+      if (disposed) return
+      setChunkPage({ key: requestKey, chunks: result.chunks, total: result.total })
+      setError("")
+      setSelectedId((current) => result.chunks.some((item) => item.chunk_id === current) ? current : result.chunks[0]?.chunk_id ?? "")
+    }).catch((reason) => { if (!disposed) setError(errorText(reason)) })
+    return () => { disposed = true }
+  }, [runId, page, query, requestKey])
+  const rows = chunkPage.key === requestKey ? chunkPage.chunks : []
+  const total = chunkPage.key === requestKey ? chunkPage.total : 0
+  const selected = rows.find((chunk) => chunk.chunk_id === selectedId) ?? rows[0]
+  return (
+    <section className="rounded-[10px] border border-cyan-200 p-4">
+      <PanelHeader title="QASPER paragraph chunks" right={runId ? `${total} chunks · ${runId}` : "Choose a QASPER run in Datasets"} />
+      {!runId ? <EmptyState title="No QASPER run selected" description="Start or choose a benchmark run in the Datasets tab to inspect its paragraph mappings." /> : <>
+        <input value={query} onChange={(event) => { setPage(1); setQuery(event.target.value) }} placeholder="Filter chunk, section, or paragraph ID" className={inputClass("mt-3 h-9 w-full")} />
+        {error && <p role="alert" className="mt-2 text-[10px] text-rose-700">{error}</p>}
+        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(260px,.8fr)]">
+          <div className="ait-scroll-page max-h-[380px] overflow-auto rounded-[8px] border border-slate-100">
+            <table className="w-full table-fixed text-left text-[10px]"><thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="w-[145px] px-2 py-2">Chunk ID</th><th className="w-[175px] px-2">Section mapping</th><th className="px-2">QASPER paragraph IDs</th><th className="w-[88px] px-2">Gold-hit Qs</th></tr></thead><tbody>{rows.map((chunk) => <tr key={chunk.chunk_id} onClick={() => setSelectedId(chunk.chunk_id)} className={`cursor-pointer border-t border-slate-100 ${selected?.chunk_id === chunk.chunk_id ? "bg-cyan-50" : "hover:bg-slate-50"}`}><td className="truncate px-2 py-2 font-medium">{chunk.chunk_id}</td><td className="truncate px-2 text-slate-600">{chunk.section_path.join(" / ") || "—"}</td><td className="truncate px-2 text-slate-600">{chunk.source_paragraph_ids.join(", ") || "—"}</td><td className="px-2 tabular-nums">{chunk.gold_question_count}</td></tr>)}</tbody></table>
+            {!rows.length && <p className="p-4 text-[10px] text-slate-500">No matching chunks.</p>}
+          </div>
+          {selected ? <div className="rounded-[8px] border border-slate-100 p-3"><div className="flex items-start justify-between gap-2"><strong className="break-all text-[11px]">{selected.chunk_id}</strong><span className="rounded-full bg-amber-50 px-2 py-1 text-[9px] text-amber-800">{selected.gold_question_count} gold-hit questions</span></div><p className="mt-2 text-[9px] text-slate-500">{selected.section_path.join(" / ") || "No section mapping"}</p><p className="mt-2 text-[9px] text-slate-500">Paragraph IDs: {selected.source_paragraph_ids.join(", ") || "none"}</p><div className="ait-scroll-page mt-3 max-h-[260px] overflow-y-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-[10px] leading-4 text-slate-700">{selected.text}</div></div> : null}
+        </div>
+        <div className="mt-2 flex items-center justify-end gap-2"><span className="mr-2 text-[9px] text-slate-500">Page {page} of {Math.max(1, Math.ceil(total / 50))}</span><PaginationButton disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={12} /></PaginationButton><PaginationButton disabled={page * 50 >= total} onClick={() => setPage((value) => value + 1)}><ChevronRight size={12} /></PaginationButton></div>
+      </>}
+    </section>
+  )
+}
+
+function ChunksTab({ qasperRunId }: { qasperRunId: string }) {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [documentId, setDocumentId] = useState("")
   const [query, setQuery] = useState("")
@@ -680,6 +887,7 @@ function ChunksTab() {
   return (
     <ScrollSurface>
       <div className="mx-auto max-w-[1240px] space-y-4">
+        <QasperChunkCatalog runId={qasperRunId} />
         <section className="rounded-[10px] border border-slate-200 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -1060,7 +1268,28 @@ function ChunkMeta({ label, value }: { label: string; value: string }) {
   )
 }
 
-function EvaluationTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[] }) {
+function QasperEvaluationPanel({ run }: { run: QasperDebugRunSummary | null }) {
+  if (!run) return <section className="rounded-[10px] border border-cyan-100 p-4"><PanelHeader title="QASPER Evaluation" right="No benchmark run selected" /><p className="mt-3 text-[10px] text-slate-500">Start a QASPER preset from the Datasets tab to see gold evidence and official evaluation metrics here.</p></section>
+  const metrics = run.metrics
+  const official = (metrics.official_qasper ?? {}) as Record<string, unknown>
+  const officialAll = (official.all_evidence ?? {}) as Record<string, unknown>
+  const evidence = (metrics.paragraph_evidence ?? {}) as Record<string, unknown>
+  const adaptive = (metrics.adaptive_retrieval ?? {}) as Record<string, unknown>
+  const performance = (metrics.performance_ms ?? {}) as Record<string, unknown>
+  const totalLatency = (performance.total_rag_ms ?? {}) as Record<string, unknown>
+  const context = (metrics.context_metrics ?? {}) as Record<string, unknown>
+  const values = [
+    ["Evidence Recall@10", evidence["Gold Evidence Recall@10"], "rate"],
+    ["Official Evidence F1", officialAll["Evidence F1"], "rate"],
+    ["Official Answer F1", officialAll["Answer F1"], "rate"],
+    ["Premature Stop Rate", adaptive["Premature Stop Rate"], "rate"],
+    ["Retrieval p95", totalLatency.p95, "ms"],
+    ["Avg Context Tokens", context["Context Tokens"], "number"],
+  ] as const
+  return <section className="rounded-[10px] border border-cyan-100 p-4"><PanelHeader title="QASPER Evaluation" right={`${run.variant} · ${run.question_count} questions`} /><div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">{values.map(([label, value, format]) => <div key={label} className="rounded-[8px] bg-slate-50 px-3 py-2"><p className="text-[9px] text-slate-500">{label}</p><p className="mt-1 text-[15px] font-semibold">{formatQasperMetric(value, format)}</p></div>)}</div><p className="mt-2 text-[9px] text-slate-500">Official answer/evidence metrics come from the bundled QASPER evaluator. Metrics that the selected variant does not record are shown as —.</p></section>
+}
+
+function EvaluationTab({ configs, datasets, qasperRun }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[]; qasperRun: QasperDebugRunSummary | null }) {
   const [datasetId, setDatasetId] = useState("")
   const [configId, setConfigId] = useState("default")
   const [cases, setCases] = useState<RagDebugCase[]>([])
@@ -1082,10 +1311,52 @@ function EvaluationTab({ configs, datasets }: { configs: RagDebugConfigProfile[]
     { key: "second_round_retrieval_rate", title: "Second-round Retrieval Rate", detail: "Runs that issued a constrained second query.", icon: <RefreshCw size={15} /> },
     { key: "evidence_sufficiency_rate", title: "Evidence Sufficiency Rate", detail: "Retrieval rounds that met the evidence gate.", icon: <BarChart3 size={15} /> },
   ]
-  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_140px]"><Field label="Evaluation Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name} · {item.case_count} cases</option>)}</select></Field><Field label="RAG Config"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !cases.length || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Evaluating" : "Run evaluation"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-4"><MetricCard title="Recall@10" value={percent(retrieval.recall_at_10)} delta={report ? `${Number(retrieval.evaluated_cases ?? 0)} cases` : "—"} detail="Relevant chunks found in the top ten." icon={<Target size={15} />} /><MetricCard title="MRR" value={percent(retrieval.mrr)} delta={report ? "measured" : "—"} detail="Mean reciprocal rank after reranking." icon={<BarChart3 size={15} />} /><MetricCard title="nDCG@10" value={percent(retrieval.ndcg_at_10)} delta={report ? "graded" : "—"} detail="Position-aware relevance quality." icon={<CheckCircle2 size={15} />} /><MetricCard title="No-answer" value={percent(retrieval.no_answer_accuracy)} delta={report ? `${Number(retrieval.no_answer_cases ?? 0)} cases` : "—"} detail="Correctly abstained cases." icon={<HelpCircle size={15} />} /></div><div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">{routingMetrics.map((metric) => { const rawValue = retrieval[metric.key] ?? report?.[metric.key]; const measured = rawValue !== undefined && rawValue !== null; return <MetricCard key={metric.key} title={metric.title} value={measured ? percent(rawValue) : "—"} delta={measured ? "measured" : "not measured"} deltaTone={measured ? "positive" : "muted"} detail={metric.detail} icon={metric.icon} /> })}</div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Case Results</h2><p className="mt-1 text-[10px] text-slate-500">Metrics are calculated from the selected dataset and real retrieval responses.</p></div><span className="text-[10px] text-slate-400">{cases.length} cases</span></div>{!cases.length ? <EmptyState title="No evaluation cases" description="Create or import cases in Datasets before running an evaluation." /> : <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Query</th><th className="w-28 px-2">Type</th><th className="w-24 px-2">Recall@10</th><th className="w-20 px-2">MRR</th><th className="w-20 px-2">Status</th></tr></thead><tbody>{cases.map((item, index) => { const metric = rows[index] ?? {}; const recall = Number(metric.recall_at_10 ?? 0); return <tr key={item.case_id} className="border-t border-slate-100"><td className="max-w-[480px] truncate px-3 py-2.5 font-medium">{item.query}</td><td className="px-2 text-slate-500">{item.query_type}</td><td className="px-2">{report ? percent(recall) : "—"}</td><td className="px-2">{report ? percent(Number(metric.reciprocal_rank ?? 0)) : "—"}</td><td className="px-2">{report ? <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 size={12} />Measured</span> : <span className="text-slate-400">Pending</span>}</td></tr> })}</tbody></table></div>}</section></div></ScrollSurface>
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><QasperEvaluationPanel run={qasperRun} /><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_140px]"><Field label="Evaluation Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name} · {item.case_count} cases</option>)}</select></Field><Field label="RAG Config"><select value={configId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !cases.length || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Evaluating" : "Run evaluation"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-4"><MetricCard title="Recall@10" value={percent(retrieval.recall_at_10)} delta={report ? `${Number(retrieval.evaluated_cases ?? 0)} cases` : "—"} detail="Relevant chunks found in the top ten." icon={<Target size={15} />} /><MetricCard title="MRR" value={percent(retrieval.mrr)} delta={report ? "measured" : "—"} detail="Mean reciprocal rank after reranking." icon={<BarChart3 size={15} />} /><MetricCard title="nDCG@10" value={percent(retrieval.ndcg_at_10)} delta={report ? "graded" : "—"} detail="Position-aware relevance quality." icon={<CheckCircle2 size={15} />} /><MetricCard title="No-answer" value={percent(retrieval.no_answer_accuracy)} delta={report ? `${Number(retrieval.no_answer_cases ?? 0)} cases` : "—"} detail="Correctly abstained cases." icon={<HelpCircle size={15} />} /></div><div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">{routingMetrics.map((metric) => { const rawValue = retrieval[metric.key] ?? report?.[metric.key]; const measured = rawValue !== undefined && rawValue !== null; return <MetricCard key={metric.key} title={metric.title} value={measured ? percent(rawValue) : "—"} delta={measured ? "measured" : "not measured"} deltaTone={measured ? "positive" : "muted"} detail={metric.detail} icon={metric.icon} /> })}</div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Case Results</h2><p className="mt-1 text-[10px] text-slate-500">Metrics are calculated from the selected dataset and real retrieval responses.</p></div><span className="text-[10px] text-slate-400">{cases.length} cases</span></div>{!cases.length ? <EmptyState title="No evaluation cases" description="Create or import cases in Datasets before running an evaluation." /> : <div className="mt-3 overflow-hidden rounded-[8px] border border-slate-100"><table className="w-full text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Query</th><th className="w-28 px-2">Type</th><th className="w-24 px-2">Recall@10</th><th className="w-20 px-2">MRR</th><th className="w-20 px-2">Status</th></tr></thead><tbody>{cases.map((item, index) => { const metric = rows[index] ?? {}; const recall = Number(metric.recall_at_10 ?? 0); return <tr key={item.case_id} className="border-t border-slate-100"><td className="max-w-[480px] truncate px-3 py-2.5 font-medium">{item.query}</td><td className="px-2 text-slate-500">{item.query_type}</td><td className="px-2">{report ? percent(recall) : "—"}</td><td className="px-2">{report ? percent(Number(metric.reciprocal_rank ?? 0)) : "—"}</td><td className="px-2">{report ? <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 size={12} />Measured</span> : <span className="text-slate-400">Pending</span>}</td></tr> })}</tbody></table></div>}</section></div></ScrollSurface>
 }
 
-function CompareTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[] }) {
+function QasperComparePanel({ runs }: { runs: QasperDebugRunSummary[] }) {
+  const completedRuns = useMemo(() => runs.filter((run) => run.status === "completed"), [runs])
+  const [baselineId, setBaselineId] = useState("")
+  const [candidateId, setCandidateId] = useState("")
+  const selectedBaselineId = completedRuns.some((run) => run.run_id === baselineId) ? baselineId : completedRuns[0]?.run_id ?? ""
+  const selectedCandidateId = completedRuns.some((run) => run.run_id === candidateId && run.run_id !== selectedBaselineId)
+    ? candidateId
+    : completedRuns.find((run) => run.run_id !== selectedBaselineId)?.run_id ?? ""
+  const baseline = completedRuns.find((run) => run.run_id === selectedBaselineId)
+  const candidate = completedRuns.find((run) => run.run_id === selectedCandidateId)
+  const metrics = [
+    ["Evidence Recall@10", ["paragraph_evidence", "Gold Evidence Recall@10"], "rate"],
+    ["Evidence F1@10", ["paragraph_evidence", "Evidence F1@10"], "rate"],
+    ["Official Answer F1", ["official_qasper", "all_evidence", "Answer F1"], "rate"],
+    ["MRR", ["ai_trans_retrieval", "MRR"], "rate"],
+    ["nDCG@10", ["ai_trans_retrieval", "nDCG@10"], "rate"],
+    ["Retrieval p95", ["performance_ms", "total_rag_ms", "p95"], "ms"],
+    ["Avg Context Tokens", ["context_metrics", "Context Tokens"], "number"],
+    ["Retrieval rounds", ["adaptive_retrieval", "Mean Retrieval Rounds"], "number"],
+  ] as const
+  const answerTypeValues = (run: QasperDebugRunSummary | undefined) => {
+    const official = (run?.metrics.official_qasper ?? {}) as Record<string, unknown>
+    const all = (official.all_evidence ?? {}) as Record<string, unknown>
+    return (all["Answer F1 by type"] ?? {}) as Record<string, unknown>
+  }
+  const baselineTypes = answerTypeValues(baseline)
+  const candidateTypes = answerTypeValues(candidate)
+  return (
+    <section className="rounded-[10px] border border-cyan-100 p-4">
+      <PanelHeader title="QASPER paired run comparison" right="Same question IDs are evaluated from each run" />
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr]">
+        <Field label="Baseline run"><select value={selectedBaselineId} onChange={(event) => setBaselineId(event.target.value)} className={selectClass}><option value="">Choose run</option>{completedRuns.map((run) => <option key={run.run_id} value={run.run_id}>{run.run_id} · {run.variant}</option>)}</select></Field>
+        <Field label="Candidate run"><select value={selectedCandidateId} onChange={(event) => setCandidateId(event.target.value)} className={selectClass}><option value="">Choose run</option>{completedRuns.map((run) => <option key={run.run_id} value={run.run_id}>{run.run_id} · {run.variant}</option>)}</select></Field>
+      </div>
+      {!baseline || !candidate ? <p className="mt-3 text-[10px] text-slate-500">Complete two QASPER runs to compare retrieval, official scores, latency, context size, and rounds.</p> : <>
+        <div className="mt-3 overflow-x-auto rounded-[8px] border border-slate-100"><table className="w-full min-w-[650px] text-left text-[10px]"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Metric</th><th className="px-3">Baseline</th><th className="px-3">Candidate</th><th className="px-3">Delta</th></tr></thead><tbody>{metrics.map(([label, path, format]) => { const a = qasperMetricAt(baseline.metrics, path); const b = qasperMetricAt(candidate.metrics, path); const delta = typeof a === "number" && typeof b === "number" ? b - a : null; return <tr key={label} className="border-t border-slate-100"><td className="px-3 py-2 font-medium">{label}</td><td className="px-3">{formatQasperMetric(a, format)}</td><td className="px-3">{formatQasperMetric(b, format)}</td><td className="px-3">{delta == null ? "—" : `${delta >= 0 ? "+" : ""}${formatQasperMetric(delta, format)}`}</td></tr> })}</tbody></table></div>
+        <div className="mt-3 rounded-[8px] bg-slate-50 p-3"><p className="text-[10px] font-semibold">Per-answer-type delta</p><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">{["extractive", "abstractive", "boolean", "none"].map((type) => { const a = Number(baselineTypes[type]); const b = Number(candidateTypes[type]); const delta = Number.isFinite(a) && Number.isFinite(b) ? b - a : null; return <span key={type} className="text-[10px] text-slate-600">{type}: {delta == null ? "—" : `${delta >= 0 ? "+" : ""}${formatQasperMetric(delta, "rate")}`}</span> })}</div></div>
+      </>}
+    </section>
+  )
+}
+
+function CompareTab({ configs, datasets, qasperRuns }: { configs: RagDebugConfigProfile[]; datasets: RagDebugDataset[]; qasperRuns: QasperDebugRunSummary[] }) {
   const [datasetId, setDatasetId] = useState("")
   const [baselineId, setBaselineId] = useState("default")
   const [candidateId, setCandidateId] = useState("")
@@ -1096,10 +1367,93 @@ function CompareTab({ configs, datasets }: { configs: RagDebugConfigProfile[]; d
   useEffect(() => { if (configs.length) { if (!configs.some((item) => item.config_id === baselineId)) setBaselineId(configs[0].config_id); if (!candidateId || !configs.some((item) => item.config_id === candidateId)) setCandidateId(configs.find((item) => item.config_id !== baselineId)?.config_id ?? configs[0].config_id) } }, [configs, baselineId, candidateId])
   async function run() { if (!datasetId || !candidateId || running) return; setRunning(true); setError(""); try { setResult(await compareRagDebugDataset({ dataset_id: datasetId, baseline_config_id: baselineId, candidate_config_id: candidateId, top_k: 20 })) } catch (reason) { setError(errorText(reason)) } finally { setRunning(false) } }
   const metrics = result?.metrics ?? {}
-  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_1fr_140px]"><Field label="Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name}</option>)}</select></Field><Field label="Baseline"><select value={baselineId} onChange={(event) => setBaselineId(event.target.value)} className={selectClass}>{configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>)}</select></Field><Field label="Candidate"><select value={candidateId} onChange={(event) => setCandidateId(event.target.value)} className={selectClass}>{configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>)}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !candidateId || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Comparing" : "Compare"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-3"><CompareMetric title="Recall@10" a={percent(Number(metrics.baseline_recall_at_10 ?? 0))} b={percent(Number(metrics.candidate_recall_at_10 ?? 0))} delta={signedPercent(Number(metrics.recall_delta ?? 0))} percent="Candidate − baseline" /><CompareMetric title="Evaluated cases" a={String(metrics.evaluated_cases ?? "—")} b={String(metrics.evaluated_cases ?? "—")} delta="—" percent="Same dataset" /><CompareMetric title="Result" a="Baseline" b="Candidate" delta={Number(metrics.recall_delta ?? 0) >= 0 ? "Improved" : "Regressed"} percent="Top-10 recall" /></div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Query Comparison</h2><p className="mt-1 text-[10px] text-slate-500">Each row is generated by running the same query through both profiles.</p></div><span className="text-[10px] text-slate-400">{result?.cases.length ?? 0} comparisons</span></div>{!result?.cases.length ? <EmptyState title="Run a comparison" description="Choose a dataset and two profiles to see rank and latency changes." /> : <div className="mt-3 space-y-2">{result.cases.map((item) => <div key={item.case_id} className="grid gap-2 rounded-[8px] border border-slate-100 px-3 py-3 md:grid-cols-[minmax(0,1fr)_100px_100px_100px]"><div className="min-w-0"><p className="truncate text-[11px] font-semibold">{item.query}</p><p className="mt-1 text-[9px] text-slate-500">{item.case_id} · {item.baseline_latency_ms.toFixed(0)} ms / {item.candidate_latency_ms.toFixed(0)} ms</p></div><MiniStat label="Baseline rank" value={item.baseline_rank ? String(item.baseline_rank) : "—"} /><MiniStat label="Candidate rank" value={item.candidate_rank ? String(item.candidate_rank) : "—"} /><span className={`self-center text-[10px] font-medium ${item.candidate_rank && (!item.baseline_rank || item.candidate_rank < item.baseline_rank) ? "text-emerald-600" : "text-slate-500"}`}>{item.candidate_rank && item.baseline_rank ? item.candidate_rank - item.baseline_rank : "No gold hit"}</span></div>)}</div>}</section></div></ScrollSurface>
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><QasperComparePanel runs={qasperRuns} /><section className="rounded-[10px] border border-slate-200 p-4"><div className="grid items-end gap-3 md:grid-cols-[1fr_1fr_1fr_140px]"><Field label="Dataset"><select value={datasetId} onChange={(event) => setDatasetId(event.target.value)} className={selectClass}><option value="">Select a dataset</option>{datasets.map((item) => <option key={item.dataset_id} value={item.dataset_id}>{item.name}</option>)}</select></Field><Field label="Baseline"><select value={baselineId} onChange={(event) => setBaselineId(event.target.value)} className={selectClass}>{configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>)}</select></Field><Field label="Candidate"><select value={candidateId} onChange={(event) => setCandidateId(event.target.value)} className={selectClass}>{configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>)}</select></Field><PrimaryButton onClick={run} disabled={!datasetId || !candidateId || running}>{running ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}{running ? "Comparing" : "Compare"}</PrimaryButton></div></section>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}<div className="grid gap-3 md:grid-cols-3"><CompareMetric title="Recall@10" a={percent(Number(metrics.baseline_recall_at_10 ?? 0))} b={percent(Number(metrics.candidate_recall_at_10 ?? 0))} delta={signedPercent(Number(metrics.recall_delta ?? 0))} percent="Candidate − baseline" /><CompareMetric title="Evaluated cases" a={String(metrics.evaluated_cases ?? "—")} b={String(metrics.evaluated_cases ?? "—")} delta="—" percent="Same dataset" /><CompareMetric title="Result" a="Baseline" b="Candidate" delta={Number(metrics.recall_delta ?? 0) >= 0 ? "Improved" : "Regressed"} percent="Top-10 recall" /></div><section className="rounded-[10px] border border-slate-200 p-4"><div className="flex items-center justify-between"><div><h2 className="text-[13px] font-semibold">Query Comparison</h2><p className="mt-1 text-[10px] text-slate-500">Each row is generated by running the same query through both profiles.</p></div><span className="text-[10px] text-slate-400">{result?.cases.length ?? 0} comparisons</span></div>{!result?.cases.length ? <EmptyState title="Run a comparison" description="Choose a dataset and two profiles to see rank and latency changes." /> : <div className="mt-3 space-y-2">{result.cases.map((item) => <div key={item.case_id} className="grid gap-2 rounded-[8px] border border-slate-100 px-3 py-3 md:grid-cols-[minmax(0,1fr)_100px_100px_100px]"><div className="min-w-0"><p className="truncate text-[11px] font-semibold">{item.query}</p><p className="mt-1 text-[9px] text-slate-500">{item.case_id} · {item.baseline_latency_ms.toFixed(0)} ms / {item.candidate_latency_ms.toFixed(0)} ms</p></div><MiniStat label="Baseline rank" value={item.baseline_rank ? String(item.baseline_rank) : "—"} /><MiniStat label="Candidate rank" value={item.candidate_rank ? String(item.candidate_rank) : "—"} /><span className={`self-center text-[10px] font-medium ${item.candidate_rank && (!item.baseline_rank || item.candidate_rank < item.baseline_rank) ? "text-emerald-600" : "text-slate-500"}`}>{item.candidate_rank && item.baseline_rank ? item.candidate_rank - item.baseline_rank : "No gold hit"}</span></div>)}</div>}</section></div></ScrollSurface>
 }
 
-function DatasetsTab({ datasets, onDatasetsChanged }: { datasets: RagDebugDataset[]; onDatasetsChanged: () => Promise<void> }) {
+function QasperBenchmarkPanel({ configs, runs, onRunSelected, onCaseSelected }: { configs: RagDebugConfigProfile[]; runs: QasperDebugRunSummary[]; onRunSelected: (run: QasperDebugRunSummary) => void; onCaseSelected: (item: QasperDebugCase) => void }) {
+  const [split, setSplit] = useState<"train" | "validation">("validation")
+  const [sampleSize, setSampleSize] = useState<"20" | "100" | "full">("20")
+  const [seed, setSeed] = useState("42")
+  const [configId, setConfigId] = useState("default")
+  const [variant, setVariant] = useState("CURRENT")
+  const [includeAnswer, setIncludeAnswer] = useState(false)
+  const [selectedRunId, setSelectedRunId] = useState("")
+  const [selectedQuestionId, setSelectedQuestionId] = useState("")
+  const [caseIndex, setCaseIndex] = useState<{ runId: string; questions: QasperDebugCaseIndex[] } | null>(null)
+  const [selectedCase, setSelectedCase] = useState<QasperDebugCase | null>(null)
+  const [launching, setLaunching] = useState(false)
+  const [error, setError] = useState("")
+  const [accepted, setAccepted] = useState<QasperDebugRunSummary | null>(null)
+  const effectiveRunId = selectedRunId || runs[0]?.run_id || accepted?.run_id || ""
+  const activeRun = runs.find((run) => run.run_id === effectiveRunId) ?? (accepted?.run_id === effectiveRunId ? accepted : null)
+  const questions = caseIndex && caseIndex.runId === activeRun?.run_id ? caseIndex.questions : []
+  const activeRunId = activeRun?.run_id ?? ""
+  const activeRunStatus = activeRun?.status ?? ""
+  const selectedConfigId = configs.some((item) => item.config_id === configId) ? configId : configs[0]?.config_id ?? "default"
+  const activeTask = runs.some((run) => run.status === "queued" || run.status === "running")
+  useEffect(() => {
+    let disposed = false
+    if (!activeRunId || activeRunStatus !== "completed") return () => { disposed = true }
+    void listQasperDebugCases(activeRunId).then((items) => {
+      if (disposed) return
+      setCaseIndex({ runId: activeRunId, questions: items })
+      setSelectedQuestionId((current) => current && items.some((item) => item.question_id === current) ? current : items[0]?.question_id ?? "")
+    }).catch((reason) => { if (!disposed) setError(errorText(reason)) })
+    return () => { disposed = true }
+  }, [activeRunId, activeRunStatus])
+  useEffect(() => {
+    let disposed = false
+    if (activeRunStatus !== "completed" || !activeRunId || !selectedQuestionId) return () => { disposed = true }
+    void getQasperDebugCase(activeRunId, selectedQuestionId).then((item) => {
+      if (disposed) return
+      setSelectedCase(item)
+      onCaseSelected(item)
+    }).catch((reason) => { if (!disposed) setError(errorText(reason)) })
+    return () => { disposed = true }
+  }, [activeRunId, activeRunStatus, selectedQuestionId, onCaseSelected])
+  async function launch() {
+    const parsedSeed = Number(seed)
+    if (!Number.isInteger(parsedSeed) || parsedSeed < 0 || parsedSeed > 2_147_483_647 || launching) return
+    setLaunching(true)
+    setError("")
+    try {
+      const run = await startQasperDebugRun({ split, sample_size: sampleSize, seed: parsedSeed, config_id: selectedConfigId, variant, include_answer: includeAnswer })
+      setAccepted(run)
+      setSelectedRunId(run.run_id)
+      setSelectedQuestionId("")
+      setSelectedCase(null)
+      onRunSelected(run)
+    } catch (reason) { setError(errorText(reason)) } finally { setLaunching(false) }
+  }
+  return (
+    <section className="rounded-[10px] border border-cyan-200 bg-cyan-50/25 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-[13px] font-semibold">QASPER benchmark preset</h2><p className="mt-1 text-[10px] text-slate-500">Run an isolated validation or train benchmark. Gold evidence is mapped from source paragraphs automatically.</p></div>
+        {activeRun && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-medium text-slate-700">{activeRun.status} · {activeRun.question_count || activeRun.sample_size} questions</span>}
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Field label="Split"><select value={split} onChange={(event) => setSplit(event.target.value as "train" | "validation")} className={selectClass}><option value="validation">Validation</option><option value="train">Train</option></select></Field>
+        <Field label="Sample"><select value={sampleSize} onChange={(event) => setSampleSize(event.target.value as "20" | "100" | "full")} className={selectClass}><option value="20">20 · smoke</option><option value="100">100 · dev</option><option value="full">Full split</option></select></Field>
+        <Field label="Seed"><input type="number" min={0} max={2147483647} value={seed} onChange={(event) => setSeed(event.target.value)} className={inputClass("h-10 w-full")} /></Field>
+        <Field label="RAG Config"><select value={selectedConfigId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field>
+        <Field label="Variant"><select value={variant} onChange={(event) => setVariant(event.target.value)} className={selectClass}><optgroup label="RAG ablation">{["CURRENT", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "FULL"].map((item) => <option key={item} value={item}>{item}</option>)}</optgroup><optgroup label="Adaptive retrieval">{["one_shot", "multi_query", "evidence_gated", "requirement_aware"].map((item) => <option key={item} value={`adaptive:${item}`}>{item}</option>)}</optgroup><optgroup label="Evidence selection">{["raw_top_k", "rerank_top_k", "evidence_selection"].map((item) => <option key={item} value={`evidence:${item}`}>{item}</option>)}</optgroup></select></Field>
+        <div className="flex items-end"><SecondaryButton onClick={launch} disabled={launching || activeTask || !/^\d+$/.test(seed)}><Play size={13} />{launching ? "Starting…" : "Run QASPER"}</SecondaryButton></div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={includeAnswer} onChange={(event) => setIncludeAnswer(event.target.checked)} className="accent-slate-950" />Generate grounded answers (uses configured provider)</label>
+        <span>No QASPER paper is imported into your personal library, and Gold Chunk IDs are not entered by hand.</span>
+      </div>
+      {error && <p role="alert" className="mt-3 text-[10px] text-rose-700">{error}</p>}
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(220px,.8fr)_minmax(0,2fr)]">
+        <Field label="Benchmark run"><select value={effectiveRunId} onChange={(event) => { const runId = event.target.value; setSelectedRunId(runId); setSelectedQuestionId(""); setSelectedCase(null); setError(""); const run = runs.find((item) => item.run_id === runId) ?? (accepted?.run_id === runId ? accepted : undefined); if (run) onRunSelected(run) }} className={selectClass}><option value="">Select a QASPER run</option>{runs.map((run) => <option key={run.run_id} value={run.run_id}>{run.run_id} · {run.status} · {run.sample_size}</option>)}{accepted && !runs.some((run) => run.run_id === accepted.run_id) && <option value={accepted.run_id}>{accepted.run_id} · {accepted.status}</option>}</select></Field>
+        <Field label="Question Trace"><select value={selectedQuestionId} onChange={(event) => setSelectedQuestionId(event.target.value)} disabled={!questions.length} className={selectClass}><option value="">{activeRun?.status === "completed" ? "Select a question" : "Run must complete first"}</option>{questions.map((item) => <option key={item.question_id} value={item.question_id}>{item.question_id} · {item.question}</option>)}</select></Field>
+      </div>
+      {selectedCase && <p className="mt-2 text-[10px] text-slate-600">Gold paragraph IDs: {selectedCase.gold_paragraph_ids.join(", ") || "none annotated"} · {selectedCase.no_answer ? "unanswerable" : "answerable"}</p>}
+    </section>
+  )
+}
+
+function DatasetsTab({ datasets, configs, onDatasetsChanged, qasperRuns, onQasperRunSelected, onQasperCaseSelected }: { datasets: RagDebugDataset[]; configs: RagDebugConfigProfile[]; onDatasetsChanged: () => Promise<void>; qasperRuns: QasperDebugRunSummary[]; onQasperRunSelected: (run: QasperDebugRunSummary) => void; onQasperCaseSelected: (item: QasperDebugCase) => void }) {
   const [datasetId, setDatasetId] = useState("")
   const [cases, setCases] = useState<RagDebugCase[]>([])
   const [selectedId, setSelectedId] = useState("")
@@ -1119,7 +1473,7 @@ function DatasetsTab({ datasets, onDatasetsChanged }: { datasets: RagDebugDatase
   async function exportFile() { if (!datasetId) return; try { const result = await exportRagDebugDataset(datasetId); const url = URL.createObjectURL(new Blob([result.content], { type: "application/json" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${result.dataset.name}.json`; anchor.click(); URL.revokeObjectURL(url) } catch (reason) { setError(errorText(reason)) } }
   function createCase() { setDraft({ case_id: `case-${Date.now()}`, query: "", categories: [], relevant_chunk_ids: [], relevance_grades: {}, claims: [], no_answer: false, expected_retrieval: true, expected_scope_document_ids: [], metadata: {}, query_type: "Factual", expected_answer: "", answerable: true, tags: [], notes: "", updated_at: "" }); setSelectedId("") }
   function patchDraft(update: Partial<RagDebugCase>) { setDraft((value) => value ? { ...value, ...update } : value) }
-  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><section className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-slate-200 p-4"><div><h2 className="text-[13px] font-semibold">Evaluation Datasets</h2><p className="mt-1 text-[10px] text-slate-500">Persist retrieval test cases locally and reuse them for evaluation and comparison.</p></div><div className="flex gap-2"><SecondaryButton onClick={newDataset}><Plus size={13} />New dataset</SecondaryButton><SecondaryButton onClick={() => inputRef.current?.click()}><Upload size={13} />Import JSON/JSONL</SecondaryButton><input ref={inputRef} type="file" accept=".json,.jsonl,application/json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); event.currentTarget.value = "" }} /><SecondaryButton onClick={() => void exportFile()} disabled={!datasetId}><Download size={13} />Export</SecondaryButton></div></section><div className="grid min-h-[520px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]"><section className="rounded-[10px] border border-slate-200 p-3"><PanelHeader title="Evaluation Cases" right={dataset ? `${cases.length} cases` : undefined} />{datasets.length === 0 ? <EmptyState title="No datasets" description="Create a dataset or import JSON/JSONL cases." /> : <div className="mt-3 space-y-1">{datasets.map((item) => <button key={item.dataset_id} type="button" onClick={() => setDatasetId(item.dataset_id)} className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] ${datasetId === item.dataset_id ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}><Database size={13} /><span className="min-w-0 flex-1 truncate">{item.name}</span><span className="text-slate-400">{item.case_count}</span></button>)}{dataset && <div className="mt-4 border-t border-slate-100 pt-3"><button type="button" onClick={createCase} className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] text-slate-600 hover:bg-slate-50"><Plus size={13} />New case</button><button type="button" onClick={() => void removeDataset()} className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] text-rose-600 hover:bg-rose-50"><Trash2 size={13} />Delete dataset</button></div>}{cases.map((item) => <button key={item.case_id} type="button" onClick={() => setSelectedId(item.case_id)} className={`mt-1 block w-full truncate rounded-[7px] px-2 py-2 text-left text-[10px] ${selectedId === item.case_id ? "bg-slate-50 font-semibold" : "text-slate-600 hover:bg-slate-50"}`}>{item.query || item.case_id}</button>)}</div>}</section><section className="rounded-[10px] border border-slate-200">{draft ? <><PanelHeader title="Case Details" right={<span>{draft.case_id}</span>} /><div className="ait-scroll-page max-h-[560px] space-y-3 overflow-y-auto p-4"><EditorLabel label="Query" required><textarea value={draft.query} onChange={(event) => patchDraft({ query: event.target.value })} rows={3} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel><EditorLabel label="Query Type"><select value={draft.query_type} onChange={(event) => patchDraft({ query_type: event.target.value })} className={selectClass}><option>Factual</option><option>Analytical</option><option>Comparative</option><option>Creative</option></select></EditorLabel><EditorLabel label="Gold Chunk IDs"><input value={draft.relevant_chunk_ids.join(", ")} onChange={(event) => patchDraft({ relevant_chunk_ids: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="chunk_id_1, chunk_id_2" className={inputClass("h-9 w-full text-[10px]")} /></EditorLabel><EditorLabel label="Expected Answer"><textarea value={draft.expected_answer} onChange={(event) => patchDraft({ expected_answer: event.target.value })} rows={5} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel><label className="flex items-center gap-2 text-[10px] text-slate-700"><input type="checkbox" checked={draft.answerable} onChange={(event) => patchDraft({ answerable: event.target.checked, no_answer: !event.target.checked })} className="accent-slate-950" />Answerable</label><EditorLabel label="Tags"><input value={draft.tags.join(", ")} onChange={(event) => patchDraft({ tags: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="retrieval, multilingual" className={inputClass("h-9 w-full text-[10px]")} /></EditorLabel><EditorLabel label="Notes"><textarea value={draft.notes} onChange={(event) => patchDraft({ notes: event.target.value })} rows={3} className={inputClass("w-full resize-none text-[10px]")} /></EditorLabel></div><div className="flex items-center justify-end gap-2 border-t border-slate-100 p-3"><SecondaryButton onClick={() => void removeCase()}><Trash2 size={13} />Delete</SecondaryButton><PrimaryButton onClick={() => void save()}><Save size={13} />Save Changes</PrimaryButton></div></> : <EmptyState title="Select or create a case" description="Cases are stored in the local RAG Debug Studio database." />}</section></div>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}{notice && <div className="rounded-[10px] bg-slate-950 px-4 py-2.5 text-[11px] text-white">{notice}</div>}</div></ScrollSurface>
+  return <ScrollSurface><div className="mx-auto max-w-[1240px] space-y-4"><QasperBenchmarkPanel configs={configs} runs={qasperRuns} onRunSelected={onQasperRunSelected} onCaseSelected={onQasperCaseSelected} /><section className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-slate-200 p-4"><div><h2 className="text-[13px] font-semibold">Evaluation Datasets</h2><p className="mt-1 text-[10px] text-slate-500">Persist retrieval test cases locally and reuse them for evaluation and comparison.</p></div><div className="flex gap-2"><SecondaryButton onClick={newDataset}><Plus size={13} />New dataset</SecondaryButton><SecondaryButton onClick={() => inputRef.current?.click()}><Upload size={13} />Import JSON/JSONL</SecondaryButton><input ref={inputRef} type="file" accept=".json,.jsonl,application/json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); event.currentTarget.value = "" }} /><SecondaryButton onClick={() => void exportFile()} disabled={!datasetId}><Download size={13} />Export</SecondaryButton></div></section><div className="grid min-h-[520px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]"><section className="rounded-[10px] border border-slate-200 p-3"><PanelHeader title="Evaluation Cases" right={dataset ? `${cases.length} cases` : undefined} />{datasets.length === 0 ? <EmptyState title="No datasets" description="Create a dataset or import JSON/JSONL cases." /> : <div className="mt-3 space-y-1">{datasets.map((item) => <button key={item.dataset_id} type="button" onClick={() => setDatasetId(item.dataset_id)} className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] ${datasetId === item.dataset_id ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}><Database size={13} /><span className="min-w-0 flex-1 truncate">{item.name}</span><span className="text-slate-400">{item.case_count}</span></button>)}{dataset && <div className="mt-4 border-t border-slate-100 pt-3"><button type="button" onClick={createCase} className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] text-slate-600 hover:bg-slate-50"><Plus size={13} />New case</button><button type="button" onClick={() => void removeDataset()} className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[10px] text-rose-600 hover:bg-rose-50"><Trash2 size={13} />Delete dataset</button></div>}{cases.map((item) => <button key={item.case_id} type="button" onClick={() => setSelectedId(item.case_id)} className={`mt-1 block w-full truncate rounded-[7px] px-2 py-2 text-left text-[10px] ${selectedId === item.case_id ? "bg-slate-50 font-semibold" : "text-slate-600 hover:bg-slate-50"}`}>{item.query || item.case_id}</button>)}</div>}</section><section className="rounded-[10px] border border-slate-200">{draft ? <><PanelHeader title="Case Details" right={<span>{draft.case_id}</span>} /><div className="ait-scroll-page max-h-[560px] space-y-3 overflow-y-auto p-4"><EditorLabel label="Query" required><textarea value={draft.query} onChange={(event) => patchDraft({ query: event.target.value })} rows={3} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel><EditorLabel label="Query Type"><select value={draft.query_type} onChange={(event) => patchDraft({ query_type: event.target.value })} className={selectClass}><option>Factual</option><option>Analytical</option><option>Comparative</option><option>Creative</option></select></EditorLabel><EditorLabel label="Gold Chunk IDs"><input value={draft.relevant_chunk_ids.join(", ")} onChange={(event) => patchDraft({ relevant_chunk_ids: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="chunk_id_1, chunk_id_2" className={inputClass("h-9 w-full text-[10px]")} /></EditorLabel><EditorLabel label="Expected Answer"><textarea value={draft.expected_answer} onChange={(event) => patchDraft({ expected_answer: event.target.value })} rows={5} className={inputClass("w-full resize-none py-2.5 text-[10px]")} /></EditorLabel><label className="flex items-center gap-2 text-[10px] text-slate-700"><input type="checkbox" checked={draft.answerable} onChange={(event) => patchDraft({ answerable: event.target.checked, no_answer: !event.target.checked })} className="accent-slate-950" />Answerable</label><EditorLabel label="Tags"><input value={draft.tags.join(", ")} onChange={(event) => patchDraft({ tags: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="retrieval, multilingual" className={inputClass("h-9 w-full text-[10px]")} /></EditorLabel><EditorLabel label="Notes"><textarea value={draft.notes} onChange={(event) => patchDraft({ notes: event.target.value })} rows={3} className={inputClass("w-full resize-none text-[10px]")} /></EditorLabel></div><div className="flex items-center justify-end gap-2 border-t border-slate-100 p-3"><SecondaryButton onClick={() => void removeCase()}><Trash2 size={13} />Delete</SecondaryButton><PrimaryButton onClick={() => void save()}><Save size={13} />Save Changes</PrimaryButton></div></> : <EmptyState title="Select or create a case" description="Cases are stored in the local RAG Debug Studio database." />}</section></div>{error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}{notice && <div className="rounded-[10px] bg-slate-950 px-4 py-2.5 text-[11px] text-white">{notice}</div>}</div></ScrollSurface>
 }
 
 function StagePill({ stage, active }: { stage: RagDebugStage; active: boolean }) { const icon = stage.status === "complete" ? <CheckCircle2 size={13} className="text-emerald-600" /> : stage.status === "failed" ? <AlertCircle size={13} className="text-rose-600" /> : stage.status === "active" || active ? <LoaderCircle size={13} className="animate-spin text-slate-950" /> : <span className="h-2 w-2 rounded-full border border-slate-300" />; return <div className={`flex min-w-0 items-center gap-1.5 rounded-[7px] border px-2 py-2 ${active ? "border-slate-950 bg-slate-50" : "border-slate-100"}`} title={stage.note}><span className="shrink-0">{icon}</span><span className="min-w-0 truncate text-[9px] font-medium">{stage.label}</span></div> }
@@ -1143,6 +1497,8 @@ function PaginationButton({ children, disabled, onClick }: { children: ReactNode
 function EmptyState({ title, description, loading = false }: { title: string; description: string; loading?: boolean }) { return <div className="flex min-h-[220px] flex-col items-center justify-center text-center"><span className="text-slate-300">{loading ? <LoaderCircle size={22} className="animate-spin" /> : <Search size={22} />}</span><p className="mt-3 text-[12px] font-semibold text-slate-700">{title}</p><p className="mt-1 max-w-[300px] text-[10px] text-slate-500">{description}</p></div> }
 function formatScore(value: number | null | undefined) { return value == null || !Number.isFinite(value) ? "—" : value.toFixed(Math.abs(value) > 2 ? 2 : 3) }
 function formatMs(value: number) { return Number.isFinite(value) && value > 0 ? `${value.toFixed(0)} ms` : "—" }
+function qasperMetricAt(metrics: Record<string, unknown>, path: readonly string[]): number | null { let value: unknown = metrics; for (const key of path) { if (!value || typeof value !== "object") return null; value = (value as Record<string, unknown>)[key] } return typeof value === "number" && Number.isFinite(value) ? value : null }
+function formatQasperMetric(value: unknown, format: "rate" | "ms" | "number"): string { if (value == null || typeof value !== "number" || !Number.isFinite(value)) return "—"; if (format === "rate") return `${(value * 100).toFixed(1)}%`; if (format === "ms") return `${value.toFixed(1)} ms`; return value.toFixed(1) }
 function percent(value: unknown) { const number = Number(value ?? 0); return Number.isFinite(number) ? `${(number * 100).toFixed(0)}%` : "—" }
 function signedPercent(value: number) { return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%` }
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : "Request failed." }
