@@ -102,7 +102,7 @@ python scripts/compare_qasper_runs.py --baseline data/benchmarks/qasper/results/
 
 ### Q1-0 实际验收
 
-Q1-0 于 2026-09-24 完成。真实 Smoke20 / Dev100 指标、分层、逐题人工审阅、错误 Python 环境排除过程、统计口径和复跑命令见 [`qasper-p1-q1-0-baseline-report.md`](qasper-p1-q1-0-baseline-report.md)。Smoke20 的 20/20 和 Dev100 的 100/100 题均实际执行 Dense、BM25、reranker 与真实 DeepSeek 回答；审计均通过、0 错误、0 跨论文候选。比较器已按有映射 Gold 的同题子集计算 Gold Evidence Recall@10/MRR，官方 Answer/Evidence F1 仍使用全部题目。
+Q1-0 于 2026-09-24 完成，阶段审计修正与验收报告提交为 `5c839945254e32b8ba4f7bf968d233325db191d5`。真实 Smoke20 / Dev100 指标、分层、逐题人工审阅、错误 Python 环境排除过程、统计口径和复跑命令见 [`qasper-p1-q1-0-baseline-report.md`](qasper-p1-q1-0-baseline-report.md)。Smoke20 的 20/20 和 Dev100 的 100/100 题均实际执行 Dense、BM25、reranker 与真实 DeepSeek 回答；审计均通过、0 错误、0 跨论文候选。比较器已按有映射 Gold 的同题子集计算 Gold Evidence Recall@10/MRR，官方 Answer/Evidence F1 仍使用全部题目。
 
 ## 5. Q1-1：证据收窄与精确映射
 
