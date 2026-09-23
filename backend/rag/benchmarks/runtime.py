@@ -47,9 +47,13 @@ def _resolved_root(
     production_storage_paths: tuple[Path, ...],
 ) -> Path:
     if storage_root is None:
-        from app.infrastructure.paths import data_root
-
-        storage_root = data_root() / "benchmarks" / "qasper" / "runtime"
+        storage_root = (
+            Path(__file__).resolve().parents[3]
+            / "data"
+            / "benchmarks"
+            / "qasper"
+            / "runtime"
+        )
     root = Path(storage_root).expanduser().resolve()
     for production_storage in production_storage_paths:
         if root == production_storage or root in production_storage.parents:
