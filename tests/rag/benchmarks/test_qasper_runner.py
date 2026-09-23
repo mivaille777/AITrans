@@ -207,6 +207,20 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     assert result.run_status == "complete"
     assert result.question_count == 3
     assert result.error_count == 0
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["git_sha"] and manifest["git_sha"] != "unknown"
+    assert manifest["dataset"] == "qasper"
+    assert manifest["dataset_version"] == "0.3"
+    assert manifest["split"] == "validation"
+    assert manifest["seed"] == 42
+    assert manifest["variant"]
+    assert len(manifest["config_hash"]) == 64
+    assert manifest["index_fingerprint"] == manifest["index"]["fingerprint"]
+    assert manifest["embedding_model"] == manifest["embedding"]["model"]
+    assert manifest["reranker_model"] == config.reranker.model
+    assert manifest["hardware"]["python_version"]
+    assert manifest["cache_hits"]["index"] is False
+    assert manifest["cache_hits"]["indexed_paper_count"] == manifest["paper_count"]
     for output_path in (
         result.manifest_path,
         result.predictions_path,

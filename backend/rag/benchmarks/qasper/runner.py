@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import platform
 import re
+import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,6 +21,7 @@ from backend.models.agent_react import AgentRetrievalObservation
 from backend.models.agent_runtime import AgentEvidenceItem
 from backend.rag.benchmarks.cache import qasper_sample_hash
 from backend.rag.benchmarks.common import (
+    REPOSITORY_ROOT,
     atomic_write_json,
     atomic_write_jsonl,
     benchmark_root,
@@ -1025,6 +1030,57 @@ def _new_run_id(split: str, mode: str) -> str:
     return f"qasper-{split}-{mode}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 
+def _git_sha() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def _config_hash(config: RagConfig) -> str:
+    canonical = json.dumps(
+        config.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _run_variant_label(
+    selected_variant: QasperAblationVariant,
+    *,
+    adaptive_variant: str | None,
+    evidence_selection_variant: str | None,
+    raptor_variant: str | None,
+) -> str:
+    labels = [
+        f"adaptive:{adaptive_variant}" if adaptive_variant else "",
+        f"evidence:{evidence_selection_variant}" if evidence_selection_variant else "",
+        f"raptor:{raptor_variant}" if raptor_variant else "",
+    ]
+    return "+".join(label for label in labels if label) or selected_variant.variant_id
+
+
+def _hardware_manifest() -> dict[str, Any]:
+    return {
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python_version": platform.python_version(),
+        "cpu_count": os.cpu_count(),
+    }
+
+
 def run_qasper_benchmark(
     dataset: QasperDataset,
     *,
@@ -1134,9 +1190,11 @@ def run_qasper_benchmark(
     ]
     atomic_write_jsonl(qrels_path, qrels_records)
     source_config = (config or RagConfig()).model_copy(deep=True)
+    config_digest = _config_hash(source_config)
     manifest: dict[str, Any] = {
         "manifest_version": 1,
         "run_id": selected_run_id,
+        "git_sha": _git_sha(),
         "status": "running",
         "dataset": "qasper",
         "dataset_version": selected.dataset_version,
@@ -1147,6 +1205,22 @@ def run_qasper_benchmark(
         "mode": normalized_mode,
         "limit": limit,
         "seed": seed,
+        "variant": _run_variant_label(
+            selected_variant,
+            adaptive_variant=normalized_adaptive_variant,
+            evidence_selection_variant=normalized_evidence_selection_variant,
+            raptor_variant=normalized_raptor_variant,
+        ),
+        "config_hash": config_digest,
+        "index_fingerprint": None,
+        "embedding_model": source_config.embedding.model,
+        "reranker_model": source_config.reranker.model,
+        "hardware": _hardware_manifest(),
+        "cache_hits": {
+            "index": None,
+            "reused_paper_count": None,
+            "indexed_paper_count": None,
+        },
         "question_count": len(selected.questions),
         "paper_count": len(selected.papers),
         "selected_question_ids": [question.question_id for question in selected.questions],
@@ -1226,6 +1300,13 @@ def run_qasper_benchmark(
             "reused_paper_count": index.result.reused_paper_count,
             "indexed_paper_count": index.result.indexed_paper_count,
             "chunk_count": index.result.chunk_count,
+        }
+        manifest["index_fingerprint"] = index.result.fingerprint
+        manifest["embedding_model"] = index.runtime.embedding_provider.model_name
+        manifest["cache_hits"] = {
+            "index": bool(index.result.cache_hit),
+            "reused_paper_count": int(index.result.reused_paper_count),
+            "indexed_paper_count": int(index.result.indexed_paper_count),
         }
         manifest["embedding"] = {
             "provider": index.runtime.config.embedding.provider,
