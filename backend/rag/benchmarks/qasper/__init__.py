@@ -10,6 +10,8 @@ from backend.rag.benchmarks.qasper.alignment import (
     AlignmentError,
     QasperAlignment,
     align_qasper_evidence,
+    map_gold_paragraphs_to_chunks,
+    map_paragraphs_to_chunks,
 )
 from backend.rag.benchmarks.qasper.loader import (
     download_qasper_split,
@@ -40,4 +42,6 @@ __all__ = [
     "align_qasper_evidence",
     "download_qasper_split",
     "load_qasper",
+    "map_gold_paragraphs_to_chunks",
+    "map_paragraphs_to_chunks",
 ]

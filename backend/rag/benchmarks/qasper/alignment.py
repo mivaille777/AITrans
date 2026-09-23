@@ -6,6 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from backend.rag.benchmarks.qasper.schema import QasperDataset
+from backend.rag.models import DocumentChunk
 
 _WHITESPACE = re.compile(r"\s+")
 
@@ -169,10 +170,48 @@ def align_qasper_evidence(dataset: QasperDataset) -> QasperAlignment:
     )
 
 
+def map_paragraphs_to_chunks(
+    chunks: list[DocumentChunk],
+) -> dict[str, tuple[str, ...]]:
+    """Build the current chunking variant's paragraph-to-chunk projection."""
+
+    paragraph_chunks: dict[str, list[str]] = {}
+    for chunk in chunks:
+        benchmark_metadata = chunk.metadata.get("benchmark")
+        if not isinstance(benchmark_metadata, dict):
+            continue
+        paragraph_ids = benchmark_metadata.get("source_paragraph_ids", [])
+        if not isinstance(paragraph_ids, list):
+            continue
+        for paragraph_id in paragraph_ids:
+            if not isinstance(paragraph_id, str) or not paragraph_id:
+                continue
+            paragraph_chunks.setdefault(paragraph_id, []).append(chunk.chunk_id)
+    return {
+        paragraph_id: tuple(dict.fromkeys(chunk_ids))
+        for paragraph_id, chunk_ids in paragraph_chunks.items()
+    }
+
+
+def map_gold_paragraphs_to_chunks(
+    paragraph_ids: list[str] | tuple[str, ...],
+    chunks: list[DocumentChunk],
+) -> tuple[str, ...]:
+    """Resolve stable gold paragraph IDs into chunk IDs for one index variant."""
+
+    paragraph_chunks = map_paragraphs_to_chunks(chunks)
+    selected: list[str] = []
+    for paragraph_id in paragraph_ids:
+        selected.extend(paragraph_chunks.get(paragraph_id, ()))
+    return tuple(dict.fromkeys(selected))
+
+
 __all__ = [
     "AlignedAnswerEvidence",
     "AlignmentError",
     "QasperAlignment",
     "align_qasper_evidence",
+    "map_gold_paragraphs_to_chunks",
+    "map_paragraphs_to_chunks",
     "normalize_evidence_text",
 ]

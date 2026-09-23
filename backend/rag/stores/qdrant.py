@@ -210,6 +210,32 @@ class QdrantLocalVectorStore:
         chunk = self._chunk_from_payload(records[0].payload)
         return chunk if chunk.chunk_id == chunk_id else None
 
+    def count_chunks(self, document_ids: list[str] | None = None) -> int:
+        """Count indexed chunks, optionally scoped to the supplied documents."""
+
+        self.ensure_collection()
+        if document_ids is not None and not document_ids:
+            return 0
+        count_filter = None
+        if document_ids:
+            count_filter = qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="document_id",
+                        match=qdrant_models.MatchAny(any=document_ids),
+                    )
+                ]
+            )
+        try:
+            result = self._client.count(
+                collection_name=self.collection_name,
+                count_filter=count_filter,
+                exact=True,
+            )
+        except Exception as exc:
+            raise RagVectorStoreError("failed to count Qdrant chunks") from exc
+        return int(result.count)
+
     def close(self) -> None:
         if self._owns_client:
             self._client.close()

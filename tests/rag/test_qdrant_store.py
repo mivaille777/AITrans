@@ -86,6 +86,30 @@ def test_upsert_and_dense_search(tmp_path: Path) -> None:
         store.close()
 
 
+def test_count_chunks_can_scope_to_documents(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "qdrant")
+    try:
+        store.upsert_chunks(
+            [
+                make_chunk("chunk_one", document_id="doc_one"),
+                make_chunk("chunk_two", document_id="doc_one"),
+                make_chunk("chunk_three", document_id="doc_two"),
+            ],
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        )
+
+        assert store.count_chunks() == 3
+        assert store.count_chunks(["doc_one"]) == 2
+        assert store.count_chunks(["doc_one", "doc_two"]) == 3
+        assert store.count_chunks([]) == 0
+    finally:
+        store.close()
+
+
 def test_get_chunk_uses_deterministic_point_identity(tmp_path: Path) -> None:
     store = make_store(tmp_path / "qdrant")
     try:
