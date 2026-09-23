@@ -110,6 +110,7 @@ class RetrievalService:
         )
         fusion_ms = (perf_counter() - fusion_started) * 1000
         fusion_count = len(candidates)
+        pre_rerank_chunk_ids = [candidate.chunk.chunk_id for candidate in candidates]
         strategy = self._strategy(
             dense_error=dense_error,
             sparse_error=sparse_error,
@@ -174,6 +175,10 @@ class RetrievalService:
                 "structural_count": len(structural),
                 "fusion_count": fusion_count,
                 "final_count": len(candidates),
+                "dense_chunk_ids": [item.chunk.chunk_id for item in dense],
+                "sparse_chunk_ids": [item.chunk.chunk_id for item in sparse],
+                "structural_chunk_ids": [item.chunk.chunk_id for item in structural],
+                "pre_rerank_chunk_ids": pre_rerank_chunk_ids,
                 "embedding_ms": embedding_ms,
                 "dense_search_ms": dense_ms,
                 "sparse_search_ms": sparse_ms,

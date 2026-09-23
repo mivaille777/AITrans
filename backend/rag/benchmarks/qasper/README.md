@@ -14,6 +14,21 @@ prepare a local QASPER JSON file. Dataset, normalized corpus, qrels, alignment
 errors, and manifests are written below the ignored
 `data/benchmarks/qasper/` directory.
 
+Run the AITrans known-paper baseline from the repository root:
+
+```powershell
+python scripts/run_qasper_benchmark.py --mode smoke
+python scripts/run_qasper_benchmark.py --mode dev --seed 42
+python scripts/run_qasper_benchmark.py --mode full
+```
+
+Smoke selects up to 20 questions, dev selects up to 100 questions, and full
+uses every question in the selected split. Each question is retrieved with a
+`document_id` filter for its own paper. The default run generates a grounded
+answer through the configured AITrans chat provider; add `--retrieval-only`
+to capture retrieval traces without calling a chat model. Results, run-local
+qrels, and cache manifests remain under the ignored benchmark directory.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it

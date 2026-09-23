@@ -4,11 +4,10 @@ import argparse
 import hashlib
 import json
 import os
-import random
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 from backend.rag.benchmarks.qasper.adapter import adapt_qasper_paper
 from backend.rag.benchmarks.qasper.alignment import align_qasper_evidence
 from backend.rag.benchmarks.qasper.loader import download_qasper_split, load_qasper
-from backend.rag.benchmarks.qasper.schema import QasperDataset
+from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -53,33 +52,6 @@ def _atomic_write(path: Path, payload: bytes) -> None:
         raise
 
 
-def _sample_dataset(dataset: QasperDataset, *, limit: int | None, seed: int) -> QasperDataset:
-    if limit is None:
-        return dataset
-    if limit <= 0:
-        raise ValueError("limit must be positive")
-    selected = dataset.questions
-    if limit < len(selected):
-        chosen = set(random.Random(seed).sample(range(len(selected)), limit))
-        selected = tuple(
-            question for index, question in enumerate(dataset.questions) if index in chosen
-        )
-    paper_ids = {question.paper_id for question in selected}
-    papers = {
-        paper_id: replace(
-            paper,
-            question_ids=tuple(
-                question.question_id
-                for question in selected
-                if question.paper_id == paper_id
-            ),
-        )
-        for paper_id, paper in dataset.papers.items()
-        if paper_id in paper_ids
-    }
-    return replace(dataset, papers=papers, questions=tuple(selected))
-
-
 def prepare_dataset(
     *,
     root: Path,
@@ -96,7 +68,11 @@ def prepare_dataset(
         manifest_directory=root / "manifests",
         redownload=redownload,
     )
-    dataset = _sample_dataset(load_qasper(raw_path, split=split), limit=limit, seed=seed)
+    dataset = sample_qasper_dataset(
+        load_qasper(raw_path, split=split),
+        limit=limit,
+        seed=seed,
+    )
     alignment = align_qasper_evidence(dataset)
 
     normalized_records: list[dict[str, Any]] = []

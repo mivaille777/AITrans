@@ -125,6 +125,9 @@ def test_hybrid_retrieval_fuses_and_deduplicates() -> None:
         "sparse",
     ]
     assert result.metadata["fusion_count"] == 3
+    assert result.metadata["pre_rerank_chunk_ids"] == ["shared", "dense", "sparse"]
+    assert result.metadata["dense_chunk_ids"] == ["shared", "dense"]
+    assert result.metadata["sparse_chunk_ids"] == ["shared", "sparse"]
 
 
 def test_filters_are_pushed_to_both_stores() -> None:

@@ -17,6 +17,7 @@ from backend.rag.benchmarks.qasper.loader import (
     download_qasper_split,
     load_qasper,
 )
+from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
 from backend.rag.benchmarks.qasper.schema import (
     QasperAnswer,
     QasperDataset,
@@ -44,4 +45,5 @@ __all__ = [
     "load_qasper",
     "map_gold_paragraphs_to_chunks",
     "map_paragraphs_to_chunks",
+    "sample_qasper_dataset",
 ]

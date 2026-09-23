@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -52,10 +53,39 @@ def read_json(path: str | Path) -> dict[str, Any] | None:
     return payload
 
 
+def atomic_write_jsonl(path: str | Path, records: Iterable[dict[str, Any]]) -> Path:
+    destination = Path(path).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(
+        json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        for record in records
+    ).encode("utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, destination)
+    except OSError:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
+    return destination
+
+
 __all__ = [
     "DEFAULT_BENCHMARK_ROOT",
     "REPOSITORY_ROOT",
     "atomic_write_json",
+    "atomic_write_jsonl",
     "benchmark_root",
     "read_json",
 ]
