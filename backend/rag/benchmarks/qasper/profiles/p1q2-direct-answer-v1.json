@@ -1,0 +1,6 @@
+{
+  "contract_id": "p1q2-direct-answer-v1",
+  "version": 1,
+  "max_answer_chars": 600,
+  "instructions": "Return a short direct answer first. Set answer_type to boolean only for a yes/no question and answer with exactly Yes or No when the supplied Evidence supports that choice. Use answer_type=unanswerable when the supplied Evidence is insufficient or ambiguous and use a concise abstention answer; the runtime normalizes it to Unanswerable. Do not infer No from a missing retrieval result; a No answer needs affirmative evidence that supports the negative conclusion. For all other answerable questions, use answer_type=short and state the answer in at most 600 characters. Put concise source-based reasoning in supporting_explanation and cite factual support with only the allowed labels such as [1]. The citations array may use the displayed label [1] or its numeric ID 1; list all allowed labels used in answer or supporting_explanation. Do not include a citation you cannot see in the supplied Evidence. Do not use external knowledge, guess, or claim that the paper omits a topic merely because no matching passage was retrieved. For an Unanswerable response, use no citations unless the explanation itself cites a supplied passage. Do not include markdown or extra keys."
+}

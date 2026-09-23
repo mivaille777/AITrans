@@ -174,6 +174,9 @@ def audit_qasper_run(
     out_of_scope_retrieval_candidates: list[str] = []
     invalid_selected_evidence_offsets: list[str] = []
     missing_answers: list[str] = []
+    invalid_answer_contracts: list[str] = []
+    invalid_answer_contract_citations: list[str] = []
+    answer_contract_parse_fallbacks: list[str] = []
     for question_id in sorted(expected_ids):
         qrel = qrels.get(question_id, {})
         prediction = predictions.get(question_id, {})
@@ -409,6 +412,43 @@ def audit_qasper_run(
                 provider_counts[provider] += 1
             else:
                 missing_answers.append(question_id)
+        answer_contract = manifest.get("answer_contract")
+        if isinstance(answer_contract, dict):
+            answer_generation = prediction.get("answer_generation", {})
+            answer_metadata = (
+                answer_generation.get("metadata", {})
+                if isinstance(answer_generation, dict)
+                else {}
+            )
+            if not isinstance(answer_metadata, dict):
+                answer_metadata = {}
+            contract_status = answer_metadata.get("answer_contract_status")
+            if contract_status == "invalid_format_fallback":
+                safe_fallback = (
+                    bool(str(answer_metadata.get("answer_contract_parse_error", "")).strip())
+                    and prediction.get("answer") == "Unanswerable"
+                    and prediction.get("user_visible_answer") == "Unanswerable"
+                    and answer_metadata.get("direct_answer") == "Unanswerable"
+                )
+                if safe_fallback:
+                    answer_contract_parse_fallbacks.append(question_id)
+                else:
+                    invalid_answer_contracts.append(question_id)
+            elif contract_status not in {"valid", "not_invoked"}:
+                invalid_answer_contracts.append(question_id)
+            elif contract_status == "valid":
+                if answer_metadata.get("answer_contract_citation_validation_passed") is not True:
+                    invalid_answer_contract_citations.append(question_id)
+                if answer_metadata.get("direct_answer") != prediction.get("answer"):
+                    issues.append(
+                        f"{question_id}: official answer differs from the validated direct answer"
+                    )
+                if answer_metadata.get("user_visible_final_output") != prediction.get(
+                    "user_visible_answer"
+                ):
+                    issues.append(
+                        f"{question_id}: visible answer differs from the validated contract output"
+                    )
     if out_of_scope_candidates:
         issues.append(f"out-of-scope final candidates: {sorted(set(out_of_scope_candidates))[:10]}")
     if out_of_scope_retrieval_candidates:
@@ -428,6 +468,16 @@ def audit_qasper_run(
         issues.append("run used retrieval-only mode; answer generation is required")
     if missing_answers:
         issues.append(f"missing answer provider record for questions: {missing_answers[:10]}")
+    if invalid_answer_contracts:
+        issues.append(
+            "answer contract was invalid or missing for questions: "
+            + str(sorted(set(invalid_answer_contracts))[:10])
+        )
+    if invalid_answer_contract_citations:
+        issues.append(
+            "answer contract citations failed validation for questions: "
+            + str(sorted(set(invalid_answer_contract_citations))[:10])
+        )
 
     groundedness = metrics.get("groundedness_metrics", {})
     performance = metrics.get("performance_ms", {})
@@ -454,10 +504,22 @@ def audit_qasper_run(
         "answer_provider_counts": dict(sorted(provider_counts.items())),
         "verification_fallback_count": verification_fallback_count,
         "policy_abstention_count": policy_abstention_count,
+        "answer_contract": manifest.get("answer_contract"),
+        "answer_contract_invalid_count": len(set(invalid_answer_contracts)),
+        "answer_contract_invalid_citation_count": len(
+            set(invalid_answer_contract_citations)
+        ),
+        "answer_contract_parse_fallback_count": len(
+            set(answer_contract_parse_fallbacks)
+        ),
+        "answer_contract_parse_fallback_question_ids": sorted(
+            set(answer_contract_parse_fallbacks)
+        ),
         "unsupported_claim_rate": groundedness.get("Unsupported Claim Rate"),
         "performance_ms": performance,
         "context_metrics": metrics.get("context_metrics", {}),
         "official_qasper": metrics.get("official_qasper", {}),
+        "answer_behavior": metrics.get("answer_behavior", {}),
         "quality_stratification": metrics.get("quality_stratification", {}),
     }
     return result

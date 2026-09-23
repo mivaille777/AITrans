@@ -173,6 +173,41 @@ def test_audit_accepts_explicit_policy_abstention_without_provider_call(tmp_path
     assert report["policy_abstention_count"] == 1
 
 
+def test_audit_accepts_contract_parse_failure_only_with_safe_abstention(tmp_path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    run = _write_run(tmp_path / "contract-fallback", source_path=source)
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["answer_contract"] = {"contract_id": "test-v1", "version": 1}
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    prediction_path = run / "predictions.jsonl"
+    prediction = json.loads(prediction_path.read_text(encoding="utf-8"))
+    prediction["answer"] = "Unanswerable"
+    prediction["user_visible_answer"] = "Unanswerable"
+    prediction["answer_generation"]["metadata"] = {
+        "answer_contract_status": "invalid_format_fallback",
+        "answer_contract_parse_error": "missing required field",
+        "direct_answer": "Unanswerable",
+        "user_visible_final_output": "Unanswerable",
+    }
+    prediction_path.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
+
+    report = audit_qasper_run(run)
+
+    assert report["ok"] is True
+    assert report["answer_contract_parse_fallback_count"] == 1
+
+    prediction["user_visible_answer"] = "Unsupported generated claim"
+    prediction["answer_generation"]["metadata"]["user_visible_final_output"] = (
+        "Unsupported generated claim"
+    )
+    prediction_path.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
+    unsafe_report = audit_qasper_run(run)
+    assert unsafe_report["ok"] is False
+    assert unsafe_report["answer_contract_invalid_count"] == 1
+
+
 def test_audit_rejects_selected_excerpt_with_invalid_source_offset(tmp_path) -> None:
     source = tmp_path / "source.json"
     source.write_text("{}", encoding="utf-8")

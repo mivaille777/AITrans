@@ -153,6 +153,131 @@ def _is_unanswerable_answer(answer: str) -> bool:
     }
 
 
+def _answer_behavior_metrics(
+    qrels: dict[str, dict[str, Any]],
+    predictions: dict[str, dict[str, Any]],
+    *,
+    contract_enabled: bool,
+) -> dict[str, Any]:
+    answerable_count = 0
+    unanswerable_count = 0
+    false_abstentions = 0
+    missed_abstentions = 0
+    boolean_count = 0
+    boolean_answerable_count = 0
+    boolean_correct = 0
+    contract_response_count = 0
+    contract_valid_count = 0
+    citation_valid_count = 0
+    model_abstention_count = 0
+    answer_token_estimates: list[float] = []
+    visible_token_estimates: list[float] = []
+
+    for question_id, qrel in qrels.items():
+        prediction = predictions.get(question_id, {})
+        answer = str(prediction.get("answer", "") or "")
+        generation = prediction.get("answer_generation", {})
+        details = generation.get("metadata", {}) if isinstance(generation, dict) else {}
+        if not isinstance(details, dict):
+            details = {}
+        gold_unanswerable = bool(qrel.get("no_answer"))
+        predicted_unanswerable = (
+            str(details.get("answer_contract_answer_type", "")) == "unanswerable"
+            or _is_unanswerable_answer(answer)
+        )
+        if gold_unanswerable:
+            unanswerable_count += 1
+            missed_abstentions += int(not predicted_unanswerable)
+        else:
+            answerable_count += 1
+            false_abstentions += int(predicted_unanswerable)
+
+        references = _references(qrel)
+        gold_boolean_values = {
+            bool(reference["yes_no"])
+            for reference in references
+            if isinstance(reference.get("yes_no"), bool)
+        }
+        if gold_boolean_values:
+            boolean_count += 1
+            if not gold_unanswerable:
+                boolean_answerable_count += 1
+                normalized_prediction = re.sub(
+                    r"[^a-z]+", "", unicodedata.normalize("NFKC", answer).casefold()
+                )
+                boolean_correct += int(
+                    normalized_prediction in {"yes", "no"}
+                    and any(
+                        (normalized_prediction == "yes") == value
+                        for value in gold_boolean_values
+                    )
+                )
+
+        if details.get("answer_contract_status") not in {None, "not_invoked"}:
+            contract_response_count += 1
+            is_valid = details.get("answer_contract_status") == "valid"
+            contract_valid_count += int(is_valid)
+            citation_valid_count += int(
+                is_valid
+                and details.get("answer_contract_citation_validation_passed") is True
+            )
+        model_abstention_count += int(
+            details.get("answer_contract_model_abstained") is True
+        )
+        answer_estimate = details.get("answer_token_estimate")
+        visible_estimate = details.get("user_visible_token_estimate")
+        if not isinstance(answer_estimate, (int, float)):
+            answer_estimate = (len(answer) + 3) // 4 if answer else 0
+        if not isinstance(visible_estimate, (int, float)):
+            visible = str(prediction.get("user_visible_answer", answer) or answer)
+            visible_estimate = (len(visible) + 3) // 4 if visible else 0
+        answer_token_estimates.append(float(answer_estimate))
+        visible_token_estimates.append(float(visible_estimate))
+
+    return {
+        "gold_answerable_question_count": answerable_count,
+        "gold_unanswerable_question_count": unanswerable_count,
+        "false_abstention_count": false_abstentions,
+        "false_abstention_rate": (
+            false_abstentions / answerable_count if answerable_count else None
+        ),
+        "missed_abstention_count": missed_abstentions,
+        "missed_abstention_rate": (
+            missed_abstentions / unanswerable_count if unanswerable_count else None
+        ),
+        "boolean_question_count": boolean_count,
+        "boolean_answerable_question_count": boolean_answerable_count,
+        "boolean_answer_accuracy": (
+            boolean_correct / boolean_answerable_count
+            if boolean_answerable_count
+            else None
+        ),
+        "model_unanswerable_count": model_abstention_count,
+        "answer_contract_enabled": contract_enabled,
+        "answer_contract_response_count": contract_response_count,
+        "answer_contract_valid_count": contract_valid_count,
+        "answer_contract_parse_failure_count": (
+            contract_response_count - contract_valid_count
+        ),
+        "answer_contract_valid_rate": (
+            contract_valid_count / contract_response_count
+            if contract_response_count
+            else None
+        ),
+        "answer_contract_citation_valid_count": citation_valid_count,
+        "answer_contract_citation_valid_rate": (
+            citation_valid_count / contract_response_count
+            if contract_response_count
+            else None
+        ),
+        "mean_answer_token_estimate": _mean(answer_token_estimates),
+        "p95_answer_token_estimate": percentile(answer_token_estimates, 95),
+        "mean_user_visible_token_estimate": _mean(visible_token_estimates),
+        "p95_user_visible_token_estimate": percentile(visible_token_estimates, 95),
+        "token_estimate_definition": "ceil(character_count / 4); provider token usage was not available in ChatResult",
+    }
+
+
 def _classify_error_types(
     qrel: dict[str, Any],
     prediction: dict[str, Any],
@@ -1171,6 +1296,11 @@ def evaluate_qasper_run(
         "counts": error_counts,
         "multi_label": True,
     }
+    metrics["answer_behavior"] = _answer_behavior_metrics(
+        qrel_by_id,
+        prediction_by_id,
+        contract_enabled=bool(manifest.get("answer_contract")),
+    )
     tagged_raptor_questions = {
         str(item["question_id"]): str(item["raptor_category"])
         for item in per_question

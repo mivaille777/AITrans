@@ -71,6 +71,11 @@ def _parser() -> argparse.ArgumentParser:
         default="extractive",
     )
     parser.add_argument("--config-json", type=Path)
+    parser.add_argument(
+        "--answer-contract",
+        type=Path,
+        help="Versioned JSON answer contract; omitted uses the legacy answer prompt.",
+    )
     parser.add_argument("--retrieval-only", action="store_true")
     return parser
 
@@ -99,7 +104,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not isinstance(quality_profile, dict):
         raise TypeError("quality profile JSON must contain an object")
     profile_sha256 = hashlib.sha256(profile_bytes).hexdigest()
-    answerer = None if args.retrieval_only else GroundedQasperAnswerer()
+    answer_contract = None
+    answer_contract_sha256 = None
+    if args.answer_contract is not None:
+        contract_path = args.answer_contract.expanduser().resolve()
+        contract_bytes = contract_path.read_bytes()
+        answer_contract = json.loads(contract_bytes.decode("utf-8"))
+        if not isinstance(answer_contract, dict):
+            raise TypeError("answer contract JSON must contain an object")
+        answer_contract_sha256 = hashlib.sha256(contract_bytes).hexdigest()
+    answerer = (
+        None
+        if args.retrieval_only
+        else GroundedQasperAnswerer(
+            answer_contract=answer_contract,
+            answer_contract_sha256=answer_contract_sha256,
+        )
+    )
     excerpt_provider = (
         LLMQueryEvidenceExcerptProvider() if args.extractor == "llm" else None
     )
@@ -136,6 +157,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "comparison": str(result.comparison_path),
                 "quality_profile": str(profile_path),
                 "quality_profile_sha256": profile_sha256,
+                "answer_contract": (
+                    str(args.answer_contract.expanduser().resolve())
+                    if args.answer_contract
+                    else None
+                ),
+                "answer_contract_sha256": answer_contract_sha256,
             },
             ensure_ascii=False,
             indent=2,

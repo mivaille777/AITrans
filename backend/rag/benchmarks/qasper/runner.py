@@ -8,7 +8,7 @@ import re
 import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -33,6 +33,13 @@ from backend.rag.benchmarks.qasper.ablation import (
     get_qasper_ablation_variant,
 )
 from backend.rag.benchmarks.qasper.alignment import align_qasper_evidence
+from backend.rag.benchmarks.qasper.answer_contract import (
+    QasperAnswerContract,
+    QasperContractAnswer,
+    parse_qasper_contract_answer,
+    render_contract_answer,
+    render_contract_for_verification,
+)
 from backend.rag.benchmarks.qasper.index import build_qasper_index
 from backend.rag.benchmarks.qasper.sampling import (
     read_question_ids_file,
@@ -113,12 +120,22 @@ class QasperGeneratedAnswer:
     model: str = ""
     latency_ms: float = 0.0
     metadata: dict[str, Any] | None = None
+    user_visible_answer: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QasperAnswerInput:
+    """Gold-free input passed to any runtime answerer."""
+
+    question_id: str
+    paper_id: str
+    question: str
 
 
 class QasperAnswerer(Protocol):
     def __call__(
         self,
-        question: QasperQuestion,
+        question: QasperAnswerInput,
         retrieval: RetrievalResult,
     ) -> QasperGeneratedAnswer | str: ...
 
@@ -180,30 +197,80 @@ class QasperAdaptiveRetrievalSuiteResult:
 
 
 class _GroundedChatAdapter:
-    def __init__(self, chat_service: AIChatService) -> None:
+    def __init__(
+        self,
+        chat_service: AIChatService,
+        *,
+        answer_contract: QasperAnswerContract | None = None,
+    ) -> None:
         self._chat_service = chat_service
+        self._answer_contract = answer_contract
+        self.last_raw_model_output = ""
+        self.last_normalized_output = ""
+        self.last_contract_answer: QasperContractAnswer | None = None
+        self.last_contract_error = ""
 
     def send(self, **kwargs: Any) -> Any:
+        user_message = str(kwargs.get("user_message", "") or "")
+        self.last_raw_model_output = ""
+        self.last_normalized_output = ""
+        self.last_contract_answer = None
+        self.last_contract_error = ""
+        if self._answer_contract is not None:
+            user_message = self._answer_contract.append_prompt(user_message)
         request = ChatRequest(
             session_id=str(kwargs.get("session_id", "qasper") or "qasper"),
-            user_message=str(kwargs.get("user_message", "") or ""),
+            user_message=user_message,
             context=ChatContext(),
             tool_name=str(kwargs.get("tool_name", "search_knowledge_base") or ""),
             tool_context=str(kwargs.get("tool_context", "") or ""),
         )
-        return self._chat_service.execute(request)
+        answer = self._chat_service.execute(request)
+        self.last_raw_model_output = str(answer.output_text or "")
+        if self._answer_contract is None:
+            self.last_normalized_output = self.last_raw_model_output
+            return answer
+        try:
+            parsed = parse_qasper_contract_answer(
+                self.last_raw_model_output,
+                contract=self._answer_contract,
+                allowed_citations=kwargs.get("answer_contract_citation_labels", ()),
+            )
+        except (TypeError, ValueError) as exc:
+            self.last_contract_error = str(exc)
+            self.last_normalized_output = self.last_raw_model_output
+            return answer
+        self.last_contract_answer = parsed
+        self.last_normalized_output = render_contract_for_verification(parsed)
+        return replace(answer, output_text=self.last_normalized_output)
 
 
 class GroundedQasperAnswerer:
     """Generate answers through AITrans chat and grounded synthesis services."""
 
-    def __init__(self, text_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        text_service: Any | None = None,
+        *,
+        answer_contract: QasperAnswerContract | Mapping[str, Any] | None = None,
+        answer_contract_sha256: str | None = None,
+    ) -> None:
+        if isinstance(answer_contract, Mapping):
+            answer_contract = QasperAnswerContract.from_mapping(
+                answer_contract,
+                raw_sha256=answer_contract_sha256,
+            )
+        self._answer_contract = answer_contract
         self._text_service = text_service or LLMGateway().create_text_service(
             "agent_synthesis"
         )
         self._chat_service = AIChatService(self._text_service)
+        self._chat_adapter = _GroundedChatAdapter(
+            self._chat_service,
+            answer_contract=answer_contract,
+        )
         self._grounded = GroundedSynthesisService(
-            chat_service=_GroundedChatAdapter(self._chat_service)
+            chat_service=self._chat_adapter
         )
 
     @property
@@ -214,18 +281,33 @@ class GroundedQasperAnswerer:
     def model(self) -> str:
         return str(getattr(self._text_service, "model", "") or "")
 
+    @property
+    def answer_contract_manifest(self) -> dict[str, Any] | None:
+        return (
+            self._answer_contract.manifest()
+            if self._answer_contract is not None
+            else None
+        )
+
     def __call__(
         self,
-        question: QasperQuestion,
+        question: QasperAnswerInput | QasperQuestion,
         retrieval: RetrievalResult,
     ) -> QasperGeneratedAnswer:
         evidence = build_agent_evidence(retrieval)
         if not evidence:
+            metadata: dict[str, Any] = {
+                "abstained": True,
+                "reason": "no_retrieved_evidence",
+            }
+            if self._answer_contract is not None:
+                metadata["answer_contract_status"] = "not_invoked"
             return QasperGeneratedAnswer(
                 answer="Unanswerable",
                 provider="policy",
                 model="insufficient-evidence",
-                metadata={"abstained": True, "reason": "no_retrieved_evidence"},
+                metadata=metadata,
+                user_visible_answer="Unanswerable",
             )
         citations = build_evidence_citations(evidence)
         context_overrides = _supplemental_context_overrides(retrieval)
@@ -236,38 +318,115 @@ class GroundedQasperAnswerer:
             context_overrides=context_overrides,
             session_id=f"qasper-{question.question_id}",
             user_message=question.question,
+            answer_contract_citation_labels=[item.label for item in citations],
         )
+        metadata = {
+            "fallback_applied": result.fallback_applied,
+            "partial_grounding": result.partial_grounding,
+            "verification_passed": (
+                bool(result.verification.passed)
+                if result.verification is not None
+                else None
+            ),
+            "claim_count": (
+                int(result.verification.claim_count)
+                if result.verification is not None
+                else 0
+            ),
+            "unsupported_claim_count": (
+                int(result.verification.unsupported_claim_count)
+                if result.verification is not None
+                else 0
+            ),
+            "unsupported_claim_rate": (
+                result.verification.unsupported_claim_count
+                / result.verification.claim_count
+                if result.verification is not None
+                and result.verification.claim_count > 0
+                else None
+            ),
+        }
+        answer_text = result.answer.output_text
+        user_visible_answer = answer_text
+        if self._answer_contract is not None:
+            parsed = self._chat_adapter.last_contract_answer
+            contract_status = "valid" if parsed is not None else "invalid_format_fallback"
+            verification_fallback = bool(result.fallback_applied)
+            if parsed is None or verification_fallback:
+                answer_text = "Unanswerable"
+                user_visible_answer = "Unanswerable"
+            else:
+                answer_text = parsed.answer
+                user_visible_answer = render_contract_answer(
+                    parsed,
+                    include_partial_grounding_notice=(
+                        "部分解释未能逐句通过引用一致性校验。"
+                        if result.partial_grounding
+                        else ""
+                    ),
+                )
+            metadata.update(
+                {
+                    "answer_contract_status": contract_status,
+                    "answer_contract_id": self._answer_contract.contract_id,
+                    "answer_contract_version": self._answer_contract.version,
+                    "answer_contract_parse_error": self._chat_adapter.last_contract_error,
+                    "answer_contract_answer_type": (
+                        parsed.answer_type
+                        if parsed is not None
+                        else "invalid_format_fallback"
+                    ),
+                    "answer_contract_citations": (
+                        list(parsed.citations) if parsed is not None else []
+                    ),
+                    "answer_contract_citation_reconciled": (
+                        parsed.citation_reconciled if parsed is not None else False
+                    ),
+                    "answer_contract_citation_label_normalization_count": (
+                        parsed.citation_label_normalization_count
+                        if parsed is not None
+                        else 0
+                    ),
+                    "answer_contract_normalized_extra_keys": (
+                        list(parsed.normalized_extra_keys) if parsed is not None else []
+                    ),
+                    "answer_contract_boolean_prefix_normalized": (
+                        parsed.boolean_prefix_normalized
+                        if parsed is not None
+                        else False
+                    ),
+                    "answer_contract_citation_validation_passed": parsed is not None,
+                    "answer_contract_model_abstained": (
+                        parsed.is_unanswerable if parsed is not None else False
+                    ),
+                    "direct_answer": answer_text,
+                    "supporting_explanation": (
+                        parsed.supporting_explanation if parsed is not None else ""
+                    ),
+                    "raw_model_output": self._chat_adapter.last_raw_model_output,
+                    "grounded_verification_input": self._chat_adapter.last_normalized_output,
+                    "verified_final_output": result.answer.output_text,
+                    "user_visible_final_output": user_visible_answer,
+                    "answer_token_estimate": (len(answer_text) + 3) // 4,
+                    "user_visible_token_estimate": (len(user_visible_answer) + 3) // 4,
+                    "abstention_reason": (
+                        "invalid_answer_contract"
+                        if parsed is None
+                        else (
+                            "grounding_verification_fallback"
+                            if verification_fallback
+                            else ("model_unanswerable" if parsed.is_unanswerable else "")
+                        )
+                    ),
+                }
+            )
         return QasperGeneratedAnswer(
-            answer=result.answer.output_text,
+            answer=answer_text,
             provider=result.answer.provider or self.provider,
             model=result.answer.model or self.model,
             latency_ms=(perf_counter() - started) * 1000,
-            metadata={
-                "fallback_applied": result.fallback_applied,
-                "partial_grounding": result.partial_grounding,
-                "verification_passed": (
-                    bool(result.verification.passed)
-                    if result.verification is not None
-                    else None
-                ),
-                "claim_count": (
-                    int(result.verification.claim_count)
-                    if result.verification is not None
-                    else 0
-                ),
-                "unsupported_claim_count": (
-                    int(result.verification.unsupported_claim_count)
-                    if result.verification is not None
-                    else 0
-                ),
-                "unsupported_claim_rate": (
-                    result.verification.unsupported_claim_count
-                    / result.verification.claim_count
-                    if result.verification is not None
-                    and result.verification.claim_count > 0
-                    else None
-                ),
-            },
+            metadata=metadata,
+            user_visible_answer=user_visible_answer,
         )
 
     def close(self) -> None:
@@ -1431,6 +1590,11 @@ def run_qasper_benchmark(
         "started_at": started_at.isoformat(),
         "rag_config": source_config.model_dump(mode="json"),
         "answer_generation": answerer is not None,
+        "answer_contract": (
+            getattr(answerer, "answer_contract_manifest", None)
+            if answerer is not None
+            else None
+        ),
         "ablation_variant": selected_variant.as_dict(),
         "evidence_selection_variant": normalized_evidence_selection_variant,
         "quality_profile": resolved_quality_profile,
@@ -1561,6 +1725,7 @@ def run_qasper_benchmark(
                 retrieval_result: RetrievalResult | None = None
                 retrieval_candidate_pool: list[RetrievalCandidate] = []
                 predicted_answer = ""
+                user_visible_answer = ""
                 answer_info: dict[str, Any] = {}
                 query_error = ""
                 document_id = f"qasper:{selected.split}:{question.paper_id}"
@@ -1951,10 +2116,20 @@ def run_qasper_benchmark(
                 if retrieval_result is not None and answerer is not None:
                     answer_started = perf_counter()
                     try:
-                        generated = answerer(question, retrieval_result)
+                        answer_input = QasperAnswerInput(
+                            question_id=question.question_id,
+                            paper_id=question.paper_id,
+                            question=question.question,
+                        )
+                        generated = answerer(answer_input, retrieval_result)
                         measured_ms = (perf_counter() - answer_started) * 1000
                         if isinstance(generated, QasperGeneratedAnswer):
                             predicted_answer = generated.answer
+                            user_visible_answer = (
+                                generated.user_visible_answer
+                                if generated.user_visible_answer is not None
+                                else generated.answer
+                            )
                             answer_info = {
                                 "provider": generated.provider,
                                 "model": generated.model,
@@ -1964,6 +2139,7 @@ def run_qasper_benchmark(
                             answer_latencies.append(float(answer_info["latency_ms"]))
                         else:
                             predicted_answer = str(generated)
+                            user_visible_answer = predicted_answer
                             answer_info = {"provider": answer_provider, "model": answer_model}
                             answer_latencies.append(measured_ms)
                         answer_count += 1
@@ -2030,6 +2206,9 @@ def run_qasper_benchmark(
                         selected_variant.multi_query and query_planner is not None
                     ),
                     "answer": predicted_answer,
+                    "user_visible_answer": (
+                        user_visible_answer if answerer is not None else predicted_answer
+                    ),
                     "answer_generation": answer_info,
                     "error": query_error,
                     "retrieved_chunk_ids": (
@@ -2576,6 +2755,11 @@ def run_qasper_evidence_selection_ablation(
         "extractor_model": shared_selector.extractor_model,
         "prompt_version": shared_selector.prompt_version,
         "answer_generation": answerer is not None,
+        "answer_contract": (
+            getattr(answerer, "answer_contract_manifest", None)
+            if answerer is not None
+            else None
+        ),
         "completed_runs": [],
         "started_at": datetime.now(UTC).isoformat(),
     }
@@ -3161,6 +3345,7 @@ __all__ = [
     "GroundedQasperAnswerer",
     "QasperAblationSuiteResult",
     "QasperAdaptiveRetrievalSuiteResult",
+    "QasperAnswerInput",
     "QasperAnswerer",
     "QasperBenchmarkRunResult",
     "QasperEvidenceSelectionSuiteResult",

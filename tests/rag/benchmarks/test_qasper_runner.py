@@ -54,6 +54,7 @@ class _FakeAnswerer:
     model = "test-answerer"
 
     def __call__(self, question, retrieval):
+        assert not hasattr(question, "answers")
         assert retrieval.candidates
         assert all(
             item.chunk.document_id == f"qasper:validation:{question.paper_id}"

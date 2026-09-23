@@ -1,0 +1,18 @@
+{
+  "manifest_version": 1,
+  "purpose": "Q1-2 answer-contract challenge smoke; combines the frozen Smoke20 with eight offline-selected boolean/unanswerable cases",
+  "dataset": "qasper",
+  "split": "validation",
+  "source_sha256": "2ae7ee62a65b1c4225791c70de80c2aad4e8998cf1fd4f09a53103db4f21af93",
+  "parent_smoke20_file": "validation-smoke20-seed42.txt",
+  "parent_smoke20_sha256": "8390a28d3d88b68373ab49c60653ea52fc723c48779b5c212dd522fb4bf41e9e",
+  "question_ids_file": "validation-p1q2-smoke28-seed42.txt",
+  "question_ids_file_sha256": "f16837ff97ae9998ff16512ade014711ba57bb320fcbec0ae073aa3869a92830",
+  "question_count": 28,
+  "added_challenge_question_count": 8,
+  "added_challenge_category_counts": {
+    "boolean": 5,
+    "unanswerable": 3
+  },
+  "question_ids_sha256": "f16837ff97ae9998ff16512ade014711ba57bb320fcbec0ae073aa3869a92830"
+}
