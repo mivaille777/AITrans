@@ -68,6 +68,26 @@ recall, and F1, premature stops among labeled stop decisions, and unnecessary
 retrievals among extra rounds. Questions with no mapped gold evidence are
 excluded from the sufficiency classification and counted separately.
 
+Run the Phase 7 RAPTOR variants with a cached recursive summary tree:
+
+```powershell
+python scripts/run_qasper_raptor_ablation.py --mode smoke --retrieval-only
+python scripts/run_qasper_raptor_ablation.py --mode dev --summary-provider llm
+```
+
+R0 is the flat + structural baseline. R1 mixes dense leaf retrieval with
+summary-node retrieval, R2 searches summary nodes and expands them to leaf
+evidence, and R3 joins RAPTOR candidates with dense + BM25 + RRF before
+reranking. The CLI defaults to an offline extractive summary provider; select
+`--summary-provider llm` to use the configured AI synthesis model. Each tree
+cache key includes the leaf content, embedding model, summary model, prompt
+version, clustering version, and branching factor, but excludes query-time
+settings. Tree nodes retain child links and descendant chunk/paragraph IDs.
+Results include Local, Cross-section, Global, and Overall groups; scope is
+derived from the number of QASPER sections in a complete annotator evidence
+set, with questions lacking mapped evidence counted separately as unanswerable
+or unclassified depending on the source annotation.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it

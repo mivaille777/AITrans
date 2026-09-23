@@ -94,6 +94,17 @@ from backend.rag.performance import (
     performance_sweeps,
 )
 from backend.rag.query_planner import RagQueryPlan, RagQueryPlanner, merge_query_results
+from backend.rag.raptor import (
+    ExtractiveRaptorSummaryProvider,
+    LLMRaptorSummaryProvider,
+    RaptorSearchHit,
+    RaptorSummaryChild,
+    RaptorSummaryNode,
+    RaptorSummaryProvider,
+    RaptorTree,
+    RaptorTreeBuilder,
+    rank_summary_nodes,
+)
 from backend.rag.semantic_chunking import (
     SEMANTIC_CHUNKER_VERSION,
     SemanticStructureAwareChunker,
@@ -105,9 +116,9 @@ from backend.rag.tokenization import (
     TransformersTokenCounter,
 )
 from backend.rag.vision import (
-    OpenAICompatibleVisualDescriptionProvider,
     VISUAL_DESCRIPTION_INDEX_VERSION,
     VISUAL_DESCRIPTION_PROMPT_ID,
+    OpenAICompatibleVisualDescriptionProvider,
     VisualDescriptionProvider,
     VisualDescriptionStats,
     create_visual_description_provider,
@@ -139,6 +150,7 @@ __all__ = [
     "EmbeddingProvider",
     "EmbeddingRuntimeSnapshot",
     "EmbeddingRuntimeStatus",
+    "ExtractiveRaptorSummaryProvider",
     "GroundedContext",
     "GroundedContextBuilder",
     "HeuristicTokenCounter",
@@ -148,6 +160,7 @@ __all__ = [
     "IndexService",
     "IndexStatus",
     "KnowledgeDocument",
+    "LLMRaptorSummaryProvider",
     "ModelManager",
     "NormalizedDocument",
     "OpenAICompatibleVisualDescriptionProvider",
@@ -181,6 +194,12 @@ __all__ = [
     "RagVectorStoreConfig",
     "RagVectorStoreError",
     "RagVisualUnderstandingConfig",
+    "RaptorSearchHit",
+    "RaptorSummaryChild",
+    "RaptorSummaryNode",
+    "RaptorSummaryProvider",
+    "RaptorTree",
+    "RaptorTreeBuilder",
     "RetrievalCandidate",
     "RetrievalContextWindow",
     "RetrievalResult",
@@ -214,5 +233,6 @@ __all__ = [
     "merge_query_results",
     "parse_document",
     "performance_sweeps",
+    "rank_summary_nodes",
     "visual_description_index_version",
 ]

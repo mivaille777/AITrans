@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,9 +36,18 @@ from backend.rag.config import RagConfig
 from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
 from backend.rag.evaluation import percentile
 from backend.rag.evidence_builder import build_agent_evidence
+from backend.rag.fusion import rrf_fuse
 from backend.rag.model_manager import ModelManager
-from backend.rag.models import RetrievalResult
+from backend.rag.models import RetrievalCandidate, RetrievalResult
 from backend.rag.query_planner import RagQueryPlan, merge_query_results
+from backend.rag.raptor import (
+    ExtractiveRaptorSummaryProvider,
+    RaptorSearchHit,
+    RaptorSummaryProvider,
+    RaptorTree,
+    RaptorTreeBuilder,
+    rank_summary_nodes,
+)
 from backend.rag.rerankers import Qwen3RerankerProvider
 from backend.rag.stores.base import VectorSearchFilter
 from backend.rag.structure_retrieval import detect_structural_intent
@@ -93,6 +102,17 @@ class QasperAblationSuiteResult:
     manifest_path: Path
     comparison_path: Path
     variant_count: int
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class QasperRaptorAblationSuiteResult:
+    suite_id: str
+    suite_directory: Path
+    manifest_path: Path
+    comparison_path: Path
+    variant_count: int
+    tree_count: int
     status: str
 
 
@@ -304,6 +324,211 @@ _RETRIEVAL_STAGE_IDS = (
 
 def _identity_query_plan(query: str) -> RagQueryPlan:
     return RagQueryPlan(original_query=query, rewritten_query=query, subqueries=[])
+
+
+def _raptor_summary_candidates(
+    hits: Sequence[RaptorSearchHit],
+    *,
+    index: Any,
+) -> list[RetrievalCandidate]:
+    candidates: list[RetrievalCandidate] = []
+    seen_chunk_ids: set[str] = set()
+    for hit in hits:
+        for chunk_id in hit.node.descendant_chunk_ids:
+            if chunk_id in seen_chunk_ids:
+                continue
+            chunk = index.runtime.sparse_retriever.get_chunk(chunk_id)
+            if chunk is None:
+                continue
+            seen_chunk_ids.add(chunk_id)
+            candidates.append(
+                RetrievalCandidate(
+                    chunk=chunk,
+                    fusion_score=hit.score,
+                    rank=len(candidates) + 1,
+                    metadata={
+                        "raptor_summary_node_id": hit.node.node_id,
+                        "raptor_summary_level": hit.node.level,
+                        "raptor_summary_score": hit.score,
+                    },
+                )
+            )
+    return candidates
+
+
+def _raptor_hit_trace(hits: Sequence[RaptorSearchHit]) -> list[dict[str, Any]]:
+    return [
+        {
+            "node_id": hit.node.node_id,
+            "level": hit.node.level,
+            "score": hit.score,
+            "descendant_chunk_count": len(hit.node.descendant_chunk_ids),
+            "descendant_paragraph_ids": list(hit.node.descendant_paragraph_ids),
+        }
+        for hit in hits
+    ]
+
+
+def _retrieve_raptor_question(
+    query: str,
+    *,
+    index: Any,
+    document_id: str,
+    tree: RaptorTree,
+    variant: str,
+) -> tuple[RetrievalResult, dict[str, Any]]:
+    if variant not in {"R0", "R1", "R2", "R3"}:
+        raise ValueError("RAPTOR variant must be R0, R1, R2, or R3")
+    started = perf_counter()
+    filters = VectorSearchFilter(document_ids=[document_id])
+    summary_hits: list[RaptorSearchHit] = []
+    summary_search_ms = 0.0
+    fallback_reason = ""
+
+    if variant == "R0":
+        intent = detect_structural_intent(query)
+        result = index.runtime.retrieval_service.retrieve(
+            query,
+            filters=filters,
+            section_hints=intent.section_aliases,
+            final_top_k=BENCHMARK_FINAL_TOP_K,
+            dense_enabled=True,
+            sparse_enabled=True,
+            structural_enabled=True,
+            reranker_enabled=True,
+            small_to_big_enabled=False,
+        )
+        candidates = result.candidates
+        strategy = "flat-structural"
+    else:
+        query_vector = index.runtime.embedding_provider.embed_query(query)
+        summary_started = perf_counter()
+        summary_hits = rank_summary_nodes(query_vector, tree, top_k=8)
+        summary_search_ms = (perf_counter() - summary_started) * 1000
+        summary_candidates = _raptor_summary_candidates(summary_hits, index=index)
+
+        if variant == "R1":
+            leaf_candidates = index.runtime.vector_store.search(
+                query_vector,
+                top_k=BENCHMARK_FINAL_TOP_K,
+                filters=filters,
+            )
+            candidates = rrf_fuse(
+                [leaf_candidates, summary_candidates],
+                limit=BENCHMARK_FINAL_TOP_K,
+            )
+            strategy = "raptor-mixed-leaf-summary"
+        elif variant == "R2":
+            candidates = rrf_fuse(
+                [summary_candidates],
+                limit=BENCHMARK_FINAL_TOP_K,
+            )
+            strategy = "raptor-collapsed-summary"
+        else:
+            base_result = index.runtime.retrieval_service.retrieve(
+                query,
+                filters=filters,
+                final_top_k=BENCHMARK_FINAL_TOP_K,
+                dense_enabled=True,
+                sparse_enabled=True,
+                structural_enabled=False,
+                reranker_enabled=False,
+                small_to_big_enabled=False,
+            )
+            candidates = rrf_fuse(
+                [base_result.candidates, summary_candidates],
+                limit=max(BENCHMARK_FINAL_TOP_K, index.runtime.config.retrieval.fusion_top_k),
+            )
+            try:
+                candidates = index.runtime.reranker.rerank(
+                    query,
+                    candidates,
+                    top_k=min(BENCHMARK_FINAL_TOP_K, len(candidates)),
+                )
+            except Exception as exc:  # noqa: BLE001 - retain fused RAPTOR candidates
+                fallback_reason = str(exc) or exc.__class__.__name__
+            strategy = "raptor-hybrid-rerank"
+
+        if variant != "R2" and not candidates:
+            fallback_reason = fallback_reason or "empty_raptor_candidate_pool"
+
+        result = RetrievalResult(
+            query=query,
+            candidates=candidates,
+            retrieval_strategy=strategy,
+            elapsed_ms=(perf_counter() - started) * 1000,
+            metadata={},
+        )
+
+    total_ms = (perf_counter() - started) * 1000
+    result.metadata.update(
+        {
+            "raptor_variant": variant,
+            "raptor_tree_fingerprint": tree.fingerprint,
+            "raptor_tree_cache_hit": tree.cache_hit,
+            "raptor_summary_node_count": len(tree.nodes),
+            "raptor_summary_search_ms": summary_search_ms,
+            "raptor_summary_hits": _raptor_hit_trace(summary_hits),
+            "raptor_fallback_reason": fallback_reason,
+            "query_planning_ms": 0.0,
+        }
+    )
+    result.elapsed_ms = total_ms
+    source_paragraph_ids = list(
+        dict.fromkeys(
+            paragraph_id
+            for candidate in result.candidates
+            for context_chunk in _candidate_context_chunks(candidate)
+            for paragraph_id in _source_paragraph_ids(context_chunk)
+        )
+    )
+    round_trace = {
+        "round": 1,
+        "query": query,
+        "latency_ms": total_ms,
+        "candidate_chunk_ids": [item.chunk.chunk_id for item in result.candidates],
+        "source_paragraph_ids": source_paragraph_ids,
+        "context_evidence_paragraph_ids": source_paragraph_ids,
+        "context_token_count": sum(item.chunk.token_count for item in result.candidates),
+        "new_chunk_count": len(result.candidates),
+        "raptor_summary_hits": _raptor_hit_trace(summary_hits),
+    }
+    return result, round_trace
+
+
+def _raptor_question_category(
+    *,
+    question: QasperQuestion,
+    paper: Any,
+    aligned_answers: Sequence[Any],
+) -> str:
+    section_by_paragraph = {
+        paragraph.paragraph_id: paragraph.section_index
+        for paragraph in paper.paragraphs
+    }
+    breadth = max(
+        (
+            len(
+                {
+                    section_by_paragraph[paragraph_id]
+                    for paragraph_id in answer.paragraph_ids
+                    if paragraph_id in section_by_paragraph
+                }
+            )
+            for answer in aligned_answers
+            if answer.paragraph_ids and answer.evidence_complete
+        ),
+        default=0,
+    )
+    if not breadth:
+        if all(answer.unanswerable for answer in question.answers):
+            return "unanswerable"
+        return "unclassified"
+    if breadth == 1:
+        return "local"
+    if breadth == 2:
+        return "cross_section"
+    return "global"
 
 
 def _aggregate_retrievals(
@@ -534,6 +759,8 @@ def run_qasper_benchmark(
     answerer: QasperAnswerer | None = None,
     query_planner: Any | None = None,
     variant: QasperAblationVariant | str | None = None,
+    raptor_variant: str | None = None,
+    raptor_trees: Mapping[str, RaptorTree] | None = None,
     run_id: str | None = None,
     rebuild_index: bool = False,
 ) -> QasperBenchmarkRunResult:
@@ -548,6 +775,18 @@ def run_qasper_benchmark(
         raise ValueError("limit must be positive")
     selected = sample_qasper_dataset(dataset, limit=limit, seed=seed)
     selected_variant = get_qasper_ablation_variant(variant)
+    normalized_raptor_variant = (
+        str(raptor_variant).strip().upper() if raptor_variant is not None else None
+    )
+    if normalized_raptor_variant is not None and normalized_raptor_variant not in {
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+    }:
+        raise ValueError("raptor_variant must be one of R0, R1, R2, or R3")
+    if normalized_raptor_variant is not None and raptor_trees is None:
+        raise ValueError("raptor_trees are required for a RAPTOR benchmark run")
     benchmark_directory = benchmark_root(root)
     selected_run_id = run_id or _new_run_id(selected.split, normalized_mode)
     if not _RUN_ID.fullmatch(selected_run_id):
@@ -594,6 +833,15 @@ def run_qasper_benchmark(
         "rag_config": source_config.model_dump(mode="json"),
         "answer_generation": answerer is not None,
         "ablation_variant": selected_variant.as_dict(),
+        "raptor_variant": normalized_raptor_variant,
+        "raptor_tree_fingerprints": (
+            {
+                document_id: tree.fingerprint
+                for document_id, tree in sorted(raptor_trees.items())
+            }
+            if raptor_trees is not None
+            else {}
+        ),
         "files": {
             "predictions": predictions_path.name,
             "retrieval_trace": trace_path.name,
@@ -649,21 +897,48 @@ def run_qasper_benchmark(
                 answer_info: dict[str, Any] = {}
                 query_error = ""
                 document_id = f"qasper:{selected.split}:{question.paper_id}"
+                raptor_category = (
+                    _raptor_question_category(
+                        question=question,
+                        paper=selected.papers[question.paper_id],
+                        aligned_answers=alignment.by_question[question.question_id],
+                    )
+                    if normalized_raptor_variant is not None
+                    else ""
+                )
                 retrieval_started = perf_counter()
                 try:
-                    (
-                        retrieval_result,
-                        query_plan,
-                        retrieval_rounds,
-                        sufficiency,
-                        query_planning_ms,
-                    ) = _retrieve_variant_question(
-                        question,
-                        index=index,
-                        document_id=document_id,
-                        variant=selected_variant,
-                        query_planner=query_planner,
-                    )
+                    if normalized_raptor_variant is not None:
+                        tree = (raptor_trees or {}).get(document_id)
+                        if tree is None:
+                            raise ValueError(
+                                f"RAPTOR tree is missing for {document_id!r}"
+                            )
+                        retrieval_result, raptor_round = _retrieve_raptor_question(
+                            question.question,
+                            index=index,
+                            document_id=document_id,
+                            tree=tree,
+                            variant=normalized_raptor_variant,
+                        )
+                        query_plan = _identity_query_plan(question.question)
+                        retrieval_rounds = [raptor_round]
+                        sufficiency = None
+                        query_planning_ms = 0.0
+                    else:
+                        (
+                            retrieval_result,
+                            query_plan,
+                            retrieval_rounds,
+                            sufficiency,
+                            query_planning_ms,
+                        ) = _retrieve_variant_question(
+                            question,
+                            index=index,
+                            document_id=document_id,
+                            variant=selected_variant,
+                            query_planner=query_planner,
+                        )
                     retrieval_result.metadata["query_planning_ms"] = query_planning_ms
                     retrieval_ms = (perf_counter() - retrieval_started) * 1000
                     retrieval_latencies.append(retrieval_ms)
@@ -738,6 +1013,7 @@ def run_qasper_benchmark(
                     "paper_id": question.paper_id,
                     "question": question.question,
                     "ablation_variant": selected_variant.variant_id,
+                    "raptor_variant": normalized_raptor_variant,
                     "query_plan": (
                         query_plan.model_dump(mode="json")
                         if retrieval_result is not None
@@ -821,6 +1097,8 @@ def run_qasper_benchmark(
                     ),
                     "context_evidence_paragraph_ids": evidence_paragraph_ids,
                     "ablation_variant": selected_variant.as_dict(),
+                    "raptor_variant": normalized_raptor_variant,
+                    "raptor_category": raptor_category or None,
                     "query_plan": (
                         query_plan.model_dump(mode="json")
                         if retrieval_result is not None
@@ -1106,6 +1384,252 @@ def run_qasper_ablation(
     )
 
 
+def run_qasper_raptor_ablation(
+    dataset: QasperDataset,
+    *,
+    root: str | Path | None = None,
+    mode: str = "smoke",
+    limit: int | None = None,
+    seed: int = 42,
+    config: RagConfig | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    reranker: Any | None = None,
+    summary_provider: RaptorSummaryProvider | None = None,
+    answerer: QasperAnswerer | None = None,
+    variants: Sequence[str] = ("R0", "R1", "R2", "R3"),
+    suite_id: str | None = None,
+) -> QasperRaptorAblationSuiteResult:
+    """Compare flat, mixed, collapsed, and hybrid RAPTOR retrieval variants."""
+
+    normalized_mode = mode.strip().casefold()
+    if normalized_mode not in RUN_LIMITS:
+        raise ValueError(f"mode must be one of: {', '.join(RUN_LIMITS)}")
+    selected_limit = RUN_LIMITS[normalized_mode] if limit is None else limit
+    if selected_limit is not None and selected_limit <= 0:
+        raise ValueError("limit must be positive")
+    selected_dataset = sample_qasper_dataset(
+        dataset,
+        limit=selected_limit,
+        seed=seed,
+    )
+    selected_variants = [str(value).strip().upper() for value in variants]
+    if not selected_variants:
+        raise ValueError("at least one RAPTOR variant is required")
+    if any(value not in {"R0", "R1", "R2", "R3"} for value in selected_variants):
+        raise ValueError("RAPTOR variants must be selected from R0, R1, R2, and R3")
+    if len(set(selected_variants)) != len(selected_variants):
+        raise ValueError("RAPTOR variants must be unique")
+
+    benchmark_directory = benchmark_root(root)
+    source_config = (config or RagConfig()).model_copy(deep=True)
+    model_manager: ModelManager | None = None
+    if embedding_provider is None or reranker is None:
+        model_manager = ModelManager()
+    shared_embedding = embedding_provider or create_embedding_provider(
+        source_config.embedding,
+        model_manager=model_manager,
+    )
+    shared_reranker = reranker or Qwen3RerankerProvider(
+        source_config.reranker,
+        model_manager=model_manager,
+    )
+    shared_summarizer = summary_provider or ExtractiveRaptorSummaryProvider()
+
+    selected_suite_id = suite_id or _new_run_id(
+        selected_dataset.split,
+        f"raptor-{normalized_mode}",
+    )
+    if not _RUN_ID.fullmatch(selected_suite_id):
+        raise ValueError("suite_id may contain only letters, digits, dots, underscores, and hyphens")
+    suite_directory = benchmark_directory / "raptor" / "ablation" / selected_suite_id
+    suite_directory.mkdir(parents=True, exist_ok=False)
+    manifest_path = suite_directory / "manifest.json"
+    comparison_path = suite_directory / "comparison.json"
+    suite_manifest: dict[str, Any] = {
+        "manifest_version": 1,
+        "suite_id": selected_suite_id,
+        "dataset": "qasper",
+        "dataset_version": selected_dataset.dataset_version,
+        "split": selected_dataset.split,
+        "mode": normalized_mode,
+        "limit": selected_limit,
+        "seed": seed,
+        "status": "building_trees",
+        "index_rebuild": False,
+        "variants": selected_variants,
+        "summary_model": shared_summarizer.model_name,
+        "prompt_version": shared_summarizer.prompt_version,
+        "tree_cache_parameters": {
+            "branching_factor": 4,
+            "clustering_version": "greedy-cosine-medoid-v1",
+            "query_parameters_included": False,
+        },
+        "completed_runs": [],
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    atomic_write_json(manifest_path, suite_manifest)
+
+    index = None
+    try:
+        index = build_qasper_index(
+            selected_dataset,
+            storage_root=benchmark_directory,
+            config=source_config,
+            embedding_provider=shared_embedding,
+            reranker=shared_reranker,
+            rebuild=False,
+        )
+        chunks_by_document: dict[str, list[Any]] = {}
+        expected_document_ids = {
+            f"qasper:{selected_dataset.split}:{paper_id}"
+            for paper_id in selected_dataset.papers
+        }
+        for chunk in index.runtime.sparse_retriever.list_chunks():
+            if chunk.document_id in expected_document_ids:
+                chunks_by_document.setdefault(chunk.document_id, []).append(chunk)
+
+        tree_builder = RaptorTreeBuilder(
+            embedding_provider=index.runtime.embedding_provider,
+            summary_provider=shared_summarizer,
+            cache_directory=benchmark_directory / "raptor" / "trees",
+            branching_factor=4,
+        )
+        trees: dict[str, RaptorTree] = {}
+        tree_manifest: dict[str, Any] = {}
+        for document_id in sorted(expected_document_ids):
+            chunks = chunks_by_document.get(document_id, [])
+            if not chunks:
+                raise ValueError(f"no leaf chunks found for RAPTOR document {document_id!r}")
+            tree = tree_builder.build(chunks)
+            trees[document_id] = tree
+            tree_manifest[document_id] = {
+                "fingerprint": tree.fingerprint,
+                "leaf_fingerprint": tree.leaf_fingerprint,
+                "cache_path": str(tree.cache_path),
+                "cache_hit": tree.cache_hit,
+                "summary_node_count": len(tree.nodes),
+                "summary_calls": tree.summary_calls if not tree.cache_hit else 0,
+                "root_node_ids": list(tree.root_node_ids),
+            }
+        suite_manifest.update(
+            {
+                "status": "running",
+                "index": {
+                    "fingerprint": index.result.fingerprint,
+                    "fingerprint_inputs": index.result.fingerprint_inputs,
+                    "cache_hit": index.result.cache_hit,
+                    "chunk_count": index.result.chunk_count,
+                },
+                "trees": tree_manifest,
+                "tree_count": len(trees),
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+        index.close()
+        index = None
+
+        comparison_rows: list[dict[str, Any]] = []
+        for variant in selected_variants:
+            run_id = f"{selected_suite_id}-{variant.lower()}"
+            result = run_qasper_benchmark(
+                dataset,
+                root=benchmark_directory,
+                mode=normalized_mode,
+                limit=selected_limit,
+                seed=seed,
+                config=source_config,
+                embedding_provider=shared_embedding,
+                reranker=shared_reranker,
+                answerer=answerer,
+                variant=None,
+                raptor_variant=variant,
+                raptor_trees=trees,
+                run_id=run_id,
+                rebuild_index=False,
+            )
+            from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
+
+            metrics = evaluate_qasper_run(result.run_directory, root=benchmark_directory)
+            run_manifest = read_json(result.manifest_path) or {}
+            row = {
+                "variant_id": variant,
+                "run_id": result.run_id,
+                "run_directory": str(result.run_directory),
+                "run_status": result.run_status,
+                "error_count": result.error_count,
+                "index_cache_hit": bool(run_manifest.get("index", {}).get("cache_hit")),
+                "raptor_category_metrics": metrics.get("raptor_category_metrics", {}),
+                "ai_trans_retrieval": metrics["ai_trans_retrieval"],
+                "paragraph_evidence": metrics["paragraph_evidence"],
+                "official_qasper": metrics["official_qasper"],
+                "performance_ms": metrics["performance_ms"],
+                "context_metrics": metrics.get("context_metrics", {}),
+            }
+            comparison_rows.append(row)
+            suite_manifest["completed_runs"].append(
+                {
+                    "variant_id": variant,
+                    "run_id": result.run_id,
+                    "run_status": result.run_status,
+                    "index_cache_hit": row["index_cache_hit"],
+                }
+            )
+            atomic_write_json(manifest_path, suite_manifest)
+
+        comparison = {
+            "metric_version": 1,
+            "suite_id": selected_suite_id,
+            "variant_count": len(comparison_rows),
+            "definition": {
+                "index_rebuild": False,
+                "summary_cache_excludes_query_time_parameters": True,
+                "R0": "current dense + BM25 + structural retrieval + reranker",
+                "R1": "dense leaf retrieval mixed with ranked RAPTOR summaries, expanded to leaves",
+                "R2": "ranked summary nodes only, collapsed to descendant leaf evidence",
+                "R3": "current dense + BM25 + RRF joined with RAPTOR summary candidates before reranking",
+                "category_definition": {
+                    "Local": "gold evidence paragraphs all belong to one QASPER section",
+                    "Cross-section": "a complete annotator gold set spans two sections",
+                    "Global": "a complete annotator gold set spans at least three sections",
+                    "Overall": "all questions, including questions without mapped evidence",
+                },
+            },
+            "variants": comparison_rows,
+        }
+        atomic_write_json(comparison_path, comparison)
+        suite_manifest.update(
+            {
+                "status": "complete",
+                "completed_at": datetime.now(UTC).isoformat(),
+                "comparison_path": str(comparison_path),
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+    except BaseException as exc:
+        suite_manifest.update(
+            {
+                "status": "failed",
+                "completed_at": datetime.now(UTC).isoformat(),
+                "error": str(exc) or exc.__class__.__name__,
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+        raise
+    finally:
+        if index is not None:
+            index.close()
+
+    return QasperRaptorAblationSuiteResult(
+        suite_id=selected_suite_id,
+        suite_directory=suite_directory,
+        manifest_path=manifest_path,
+        comparison_path=comparison_path,
+        variant_count=len(selected_variants),
+        tree_count=len(trees),
+        status="complete",
+    )
+
+
 __all__ = [
     "RUN_LIMITS",
     "GroundedQasperAnswerer",
@@ -1113,6 +1637,8 @@ __all__ = [
     "QasperAnswerer",
     "QasperBenchmarkRunResult",
     "QasperGeneratedAnswer",
+    "QasperRaptorAblationSuiteResult",
     "run_qasper_ablation",
     "run_qasper_benchmark",
+    "run_qasper_raptor_ablation",
 ]

@@ -30,6 +30,7 @@ class BenchmarkRagRuntime:
     manifest: IndexManifest
     chunker: StructureAwareChunker
     retrieval_service: RetrievalService
+    reranker: RerankerProvider
     index_service: IndexService
 
     def close(self) -> None:
@@ -129,16 +130,16 @@ def build_benchmark_rag_runtime(
     manifest = IndexManifest(root / "index_manifest.json")
     manifest.recover_interrupted_operations()
     chunker = StructureAwareChunker(isolated_config.chunking)
+    resolved_reranker = reranker or Qwen3RerankerProvider(
+        isolated_config.reranker,
+        model_manager=model_manager,
+    )
     retrieval = RetrievalService(
         embedding_provider=embedding,
         vector_store=vector_store,
         sparse_retriever=sparse,
         config=isolated_config.retrieval,
-        reranker=reranker
-        or Qwen3RerankerProvider(
-            isolated_config.reranker,
-            model_manager=model_manager,
-        ),
+        reranker=resolved_reranker,
     )
     index = IndexService(
         chunker=chunker,
@@ -157,6 +158,7 @@ def build_benchmark_rag_runtime(
         manifest=manifest,
         chunker=chunker,
         retrieval_service=retrieval,
+        reranker=resolved_reranker,
         index_service=index,
     )
 

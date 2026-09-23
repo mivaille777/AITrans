@@ -10,11 +10,13 @@ from backend.rag.benchmarks.qasper.runner import (
     QasperGeneratedAnswer,
     run_qasper_ablation,
     run_qasper_benchmark,
+    run_qasper_raptor_ablation,
 )
 from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
 from backend.rag.config import RagConfig, RagEmbeddingConfig
 from backend.rag.models import RetrievalResult
 from backend.rag.query_planner import RagQueryPlan
+from backend.rag.raptor import ExtractiveRaptorSummaryProvider
 
 
 class _FakeEmbedding:
@@ -329,6 +331,53 @@ def test_ablation_suite_reuses_one_index_and_records_variant_metrics(tmp_path) -
     assert trace["retrieval_metadata"]["dense_enabled"] is True
     assert trace["retrieval_metadata"]["sparse_enabled"] is False
     assert b0_trace_path.exists()
+
+
+def test_raptor_suite_caches_trees_and_groups_results_by_evidence_scope(tmp_path) -> None:
+    embedding = _FakeEmbedding()
+    config = RagConfig(
+        embedding=RagEmbeddingConfig(
+            model=embedding.model_name,
+            dimension=embedding.dimension,
+        )
+    )
+    result = run_qasper_raptor_ablation(
+        _dataset(tmp_path),
+        root=tmp_path / "raptor-ablation",
+        mode="full",
+        config=config,
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        summary_provider=ExtractiveRaptorSummaryProvider(),
+        answerer=_FakeAnswerer(),
+        suite_id="test-qasper-raptor-ablation",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    rows = {row["variant_id"]: row for row in comparison["variants"]}
+
+    assert result.status == "complete"
+    assert result.variant_count == 4
+    assert result.tree_count == 3
+    assert manifest["tree_cache_parameters"]["query_parameters_included"] is False
+    assert all(not item["cache_hit"] for item in manifest["trees"].values())
+    assert all(item["index_cache_hit"] for item in manifest["completed_runs"])
+    assert rows["R1"]["raptor_category_metrics"]["Local"]["question_count"] == 2
+    assert rows["R2"]["raptor_category_metrics"]["Overall"]["question_count"] == 3
+    assert rows["R3"]["raptor_category_metrics"]["unanswerable_question_count"] == 1
+
+    r2_directory = Path(rows["R2"]["run_directory"])
+    trace = json.loads(
+        (r2_directory / "retrieval_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    assert trace["raptor_variant"] == "R2"
+    assert trace["raptor_category"] == "local"
+    assert trace["retrieval_metadata"]["raptor_variant"] == "R2"
+    assert trace["retrieval_metadata"]["raptor_summary_hits"]
+    assert trace["final_candidates"]
 
 
 def test_question_sampling_is_reproducible_and_keeps_only_used_papers(tmp_path) -> None:

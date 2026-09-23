@@ -288,6 +288,7 @@ def evaluate_qasper_run(
         "fusion_ms": [],
         "rerank_ms": [],
         "small_to_big_ms": [],
+        "raptor_summary_search_ms": [],
         "answer_generation_ms": [],
     }
     answerer_counts: dict[str, int] = {}
@@ -382,6 +383,9 @@ def evaluate_qasper_run(
             "relevant_chunk_count": len(relevant_union),
             "gold_paragraph_count_by_annotator": [len(item) for item in paragraph_sets],
         }
+        raptor_category = str(trace.get("raptor_category", "") or "")
+        if raptor_category:
+            case_metrics["raptor_category"] = raptor_category
         context_token_count = sum(
             int(
                 candidate.get("context_window", {}).get("token_count", 0)
@@ -440,6 +444,8 @@ def evaluate_qasper_run(
             ai_ndcg.append(ai_ndcg_value)
             pre_mrr.append(pre_mrr_value)
             pre_ndcg.append(pre_ndcg_value)
+        case_metrics["MRR"] = ai_mrr_value
+        case_metrics["nDCG@10"] = ai_ndcg_value
         first_relevant_rank = next(
             (
                 rank
@@ -487,8 +493,11 @@ def evaluate_qasper_run(
                 "query_planning_ms",
                 "dense_search_ms",
                 "sparse_search_ms",
+                "structural_search_ms",
+                "fusion_ms",
                 "rerank_ms",
                 "small_to_big_ms",
+                "raptor_summary_search_ms",
             ):
                 component_latencies[key].append(float(retrieval_metadata.get(key, 0.0) or 0.0))
         query_planner_invocations += int(bool(trace.get("query_planner_invoked")))
@@ -746,6 +755,77 @@ def evaluate_qasper_run(
         "answer_provider_counts": dict(sorted(answerer_counts.items())),
         "per_question": per_question,
     }
+    tagged_raptor_questions = {
+        str(item["question_id"]): str(item["raptor_category"])
+        for item in per_question
+        if item.get("raptor_category")
+    }
+    if tagged_raptor_questions:
+        qrel_by_id_for_categories = qrel_by_id
+        prediction_by_id_for_categories = prediction_by_id
+        category_ids = {
+            "Local": [
+                question_id
+                for question_id, category in tagged_raptor_questions.items()
+                if category == "local"
+            ],
+            "Cross-section": [
+                question_id
+                for question_id, category in tagged_raptor_questions.items()
+                if category == "cross_section"
+            ],
+            "Global": [
+                question_id
+                for question_id, category in tagged_raptor_questions.items()
+                if category == "global"
+            ],
+            "Overall": list(tagged_raptor_questions),
+        }
+        case_by_id = {str(item["question_id"]): item for item in per_question}
+        category_metrics: dict[str, Any] = {}
+        for category_name, question_ids in category_ids.items():
+            cases = [case_by_id[question_id] for question_id in question_ids]
+            eligible_cases = [case for case in cases if case["relevant_chunk_count"] > 0]
+            category_qrels = [qrel_by_id_for_categories[item] for item in question_ids]
+            category_predictions = [
+                prediction_by_id_for_categories.get(item, {"question_id": item})
+                for item in question_ids
+            ]
+            official = _official_qasper_metrics(
+                category_qrels,
+                category_predictions,
+                text_evidence_only=False,
+            ) if question_ids else {}
+            category_metrics[category_name] = {
+                "question_count": len(question_ids),
+                "evidence_evaluated_cases": len(eligible_cases),
+                "Recall@10": _mean(
+                    [float(case["recall_at_10"]) for case in eligible_cases]
+                ) if eligible_cases else None,
+                "Gold Evidence Recall@10": _mean(
+                    [float(case["gold_evidence_recall_at_10"]) for case in eligible_cases]
+                ) if eligible_cases else None,
+                "Evidence F1@20": _mean(
+                    [float(case["evidence_f1_at_20"]) for case in eligible_cases]
+                ) if eligible_cases else None,
+                "MRR": _mean([float(case["MRR"]) for case in eligible_cases])
+                if eligible_cases
+                else None,
+                "nDCG@10": _mean(
+                    [float(case["nDCG@10"]) for case in eligible_cases]
+                ) if eligible_cases else None,
+                "Context Evidence Coverage": _mean(
+                    [float(case["context_evidence_coverage"]) for case in eligible_cases]
+                ) if eligible_cases else None,
+                "official_qasper": official,
+            }
+        category_metrics["unanswerable_question_count"] = sum(
+            category == "unanswerable" for category in tagged_raptor_questions.values()
+        )
+        category_metrics["unclassified_question_count"] = sum(
+            category == "unclassified" for category in tagged_raptor_questions.values()
+        )
+        metrics["raptor_category_metrics"] = category_metrics
     if write_metrics:
         atomic_write_json(run_path / "metrics.json", metrics)
     return metrics
