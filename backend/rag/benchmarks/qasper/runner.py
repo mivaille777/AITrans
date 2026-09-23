@@ -35,6 +35,7 @@ RUN_LIMITS: dict[str, int | None] = {
     "dev": 100,
     "full": None,
 }
+BENCHMARK_FINAL_TOP_K = 20
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -181,9 +182,26 @@ def _answer_fields(question: QasperQuestion, aligned: tuple[Any, ...]) -> dict[s
     }
 
 
+def _source_paragraph_ids(chunk: Any) -> list[str]:
+    benchmark = chunk.metadata.get("benchmark", {})
+    paragraph_ids = (
+        benchmark.get("source_paragraph_ids", [])
+        if isinstance(benchmark, dict)
+        else []
+    )
+    return [item for item in paragraph_ids if isinstance(item, str)]
+
+
+def _candidate_context_chunks(candidate: Any) -> list[Any]:
+    context_window = candidate.context_window
+    if context_window is not None and context_window.chunks:
+        return context_window.chunks
+    return [candidate.chunk]
+
+
 def _candidate_trace(candidate: Any) -> dict[str, Any]:
     chunk = candidate.chunk
-    benchmark = chunk.metadata.get("benchmark", {})
+    context_window = candidate.context_window
     return {
         "chunk_id": chunk.chunk_id,
         "document_id": chunk.document_id,
@@ -192,11 +210,7 @@ def _candidate_trace(candidate: Any) -> dict[str, Any]:
         "title": chunk.title,
         "section_heading": chunk.section_heading,
         "section_path": chunk.section_path,
-        "source_paragraph_ids": (
-            benchmark.get("source_paragraph_ids", [])
-            if isinstance(benchmark, dict)
-            else []
-        ),
+        "source_paragraph_ids": _source_paragraph_ids(chunk),
         "scores": {
             "dense": candidate.dense_score,
             "sparse": candidate.sparse_score,
@@ -204,6 +218,23 @@ def _candidate_trace(candidate: Any) -> dict[str, Any]:
             "rerank": candidate.rerank_score,
         },
         "metadata": candidate.metadata,
+        "context_window": (
+            {
+                "anchor_chunk_id": context_window.anchor_chunk_id,
+                "chunk_ids": [item.chunk_id for item in context_window.chunks],
+                "source_paragraph_ids": list(
+                    dict.fromkeys(
+                        paragraph_id
+                        for context_chunk in context_window.chunks
+                        for paragraph_id in _source_paragraph_ids(context_chunk)
+                    )
+                ),
+                "text": context_window.text,
+                "token_count": context_window.token_count,
+            }
+            if context_window is not None
+            else None
+        ),
     }
 
 
@@ -341,6 +372,7 @@ def run_qasper_benchmark(
                     retrieval_result = index.runtime.retrieval_service.retrieve(
                         question.question,
                         filters=VectorSearchFilter(document_ids=[document_id]),
+                        final_top_k=BENCHMARK_FINAL_TOP_K,
                     )
                     retrieval_ms = (perf_counter() - retrieval_started) * 1000
                     retrieval_latencies.append(retrieval_ms)
@@ -430,7 +462,31 @@ def run_qasper_benchmark(
                         if retrieval_result is not None
                         else []
                     ),
+                    "predicted_evidence_paragraph_ids": (
+                        list(
+                            dict.fromkeys(
+                                paragraph_id
+                                for candidate in retrieval_result.candidates
+                                for context_chunk in _candidate_context_chunks(candidate)
+                                for paragraph_id in _source_paragraph_ids(context_chunk)
+                            )
+                        )
+                        if retrieval_result is not None
+                        else []
+                    ),
                 }
+                evidence_paragraph_ids = prediction[
+                    "predicted_evidence_paragraph_ids"
+                ]
+                paragraph_text_by_id = {
+                    paragraph.paragraph_id: paragraph.text
+                    for paragraph in selected.papers[question.paper_id].paragraphs
+                }
+                prediction["predicted_evidence"] = [
+                    paragraph_text_by_id[paragraph_id]
+                    for paragraph_id in evidence_paragraph_ids
+                    if paragraph_id in paragraph_text_by_id
+                ]
                 trace = {
                     "question_id": question.question_id,
                     "paper_id": question.paper_id,
@@ -454,6 +510,24 @@ def run_qasper_benchmark(
                             "pre_rerank_chunk_ids",
                         )
                     },
+                    "pre_rerank_candidates": (
+                        [
+                            {
+                                "chunk_id": chunk_id,
+                                "source_paragraph_ids": _source_paragraph_ids(
+                                    index.runtime.sparse_retriever.get_chunk(chunk_id)
+                                ),
+                            }
+                            for chunk_id in retrieval_result.metadata.get(
+                                "pre_rerank_chunk_ids", []
+                            )
+                            if index.runtime.sparse_retriever.get_chunk(chunk_id)
+                            is not None
+                        ]
+                        if retrieval_result is not None
+                        else []
+                    ),
+                    "context_evidence_paragraph_ids": evidence_paragraph_ids,
                     "final_candidates": (
                         [_candidate_trace(item) for item in retrieval_result.candidates]
                         if retrieval_result is not None

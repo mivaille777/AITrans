@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backend.rag.benchmarks.common import benchmark_root
+from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import download_qasper_split, load_qasper
 from backend.rag.benchmarks.qasper.runner import (
     RUN_LIMITS,
@@ -71,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if answerer is not None:
             answerer.close()
+    evaluation = evaluate_qasper_run(result.run_directory, root=root)
     print(
         json.dumps(
             {
@@ -83,6 +85,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "predictions": str(result.predictions_path),
                 "retrieval_trace": str(result.retrieval_trace_path),
                 "metrics": str(result.metrics_path),
+                "official_answer_f1": evaluation["official_qasper"]["all_evidence"][
+                    "Answer F1"
+                ],
+                "official_evidence_f1": evaluation["official_qasper"]["all_evidence"][
+                    "Evidence F1"
+                ],
                 "errors": str(result.errors_path),
                 "qrels": str(result.qrels_path),
             },

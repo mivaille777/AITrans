@@ -29,6 +29,18 @@ answer through the configured AITrans chat provider; add `--retrieval-only`
 to capture retrieval traces without calling a chat model. Results, run-local
 qrels, and cache manifests remain under the ignored benchmark directory.
 
+Each completed run also writes a full `metrics.json` with AITrans chunk-level
+retrieval and reranking metrics, paragraph-level evidence coverage, latency
+percentiles, and the official QASPER Answer/Evidence F1. Re-evaluate a run with:
+
+```powershell
+python scripts/evaluate_qasper.py --run-directory data/benchmarks/qasper/results/<run-id>
+```
+
+The evaluator uses the run manifest's sample qrels and indexed chunk catalogue.
+It reports both all-evidence and text-evidence-only official scores; the latter
+excludes QASPER figure/table evidence marked `FLOAT SELECTED`.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it

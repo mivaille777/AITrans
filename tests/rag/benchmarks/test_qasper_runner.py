@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import load_qasper
 from backend.rag.benchmarks.qasper.runner import (
     GroundedQasperAnswerer,
@@ -112,6 +113,29 @@ def _dataset(tmp_path):
                         }
                     ],
                 },
+                "paper-c": {
+                    "title": "Unanswerable paper C",
+                    "abstract": "Context for question C.",
+                    "full_text": [
+                        {
+                            "section_name": "Results",
+                            "paragraphs": ["The results do not address question C."],
+                        }
+                    ],
+                    "qas": [
+                        {
+                            "question_id": "q-c",
+                            "question": "Does the paper address question C?",
+                            "answers": [
+                                {
+                                    "annotation_id": "a-c",
+                                    "answer": {"unanswerable": True},
+                                    "evidence": [],
+                                }
+                            ],
+                        }
+                    ],
+                },
             }
         ),
         encoding="utf-8",
@@ -139,7 +163,7 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     )
 
     assert result.run_status == "complete"
-    assert result.question_count == 2
+    assert result.question_count == 3
     assert result.error_count == 0
     for output_path in (
         result.manifest_path,
@@ -164,10 +188,11 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
         for line in result.qrels_path.read_text(encoding="utf-8").splitlines()
     ]
 
-    assert [item["question_id"] for item in predictions] == ["q-a", "q-b"]
+    assert [item["question_id"] for item in predictions] == ["q-a", "q-b", "q-c"]
     assert [item["answer"] for item in predictions] == [
         "Evidence for q-a.",
         "Evidence for q-b.",
+        "Evidence for q-c.",
     ]
     assert all(
         trace["scope_document_id"] == f"qasper:validation:{trace['paper_id']}"
@@ -178,9 +203,53 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
         for trace in traces
     )
     assert all(trace["stages"]["pre_rerank_chunk_ids"] for trace in traces)
+    unanswerable_trace = next(trace for trace in traces if trace["question_id"] == "q-c")
+    assert unanswerable_trace["final_candidates"]
     assert all(qrel["expected_retrieval"] for qrel in qrels)
-    assert all(qrel["gold_evidence_paragraph_ids"] for qrel in qrels)
-    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["answer_count"] == 2
+    assert all(qrel["gold_evidence_paragraph_ids"] for qrel in qrels[:2])
+    assert qrels[2]["gold_evidence_paragraph_ids"] == []
+    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["answer_count"] == 3
+
+    metrics = evaluate_qasper_run(result.run_directory, root=tmp_path / "benchmark")
+    assert metrics["question_count"] == 3
+    assert metrics["ai_trans_retrieval"]["evaluated_cases"] == 2
+    assert metrics["performance_ms"]["total_rag_ms"]["samples"] == 3
+    assert metrics["official_qasper"]["all_evidence"]["Missing predictions"] == 0
+    assert 0 <= metrics["official_qasper"]["all_evidence"]["Answer F1"] <= 1
+    assert 0 <= metrics["official_qasper"]["text_evidence_only"]["Evidence F1"] <= 1
+    assert metrics["paragraph_evidence"]["evaluated_cases"] == 2
+    assert metrics["paragraph_evidence"]["Gold Evidence Recall@20"] > 0
+    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["metric_version"] == 2
+
+
+def test_official_qasper_text_evidence_metric_excludes_float_evidence() -> None:
+    from backend.rag.benchmarks.qasper.evaluator import _official_qasper_metrics
+
+    qrels = [
+        {
+            "question_id": "q-float",
+            "answers": [
+                {
+                    "answer": "Yes",
+                    "answer_type": "boolean",
+                    "evidence_texts": ["text paragraph", "FLOAT SELECTED Figure 1"],
+                }
+            ],
+        }
+    ]
+    predictions = [
+        {
+            "question_id": "q-float",
+            "answer": "Yes",
+            "predicted_evidence": ["text paragraph"],
+        }
+    ]
+
+    full = _official_qasper_metrics(qrels, predictions, text_evidence_only=False)
+    text_only = _official_qasper_metrics(qrels, predictions, text_evidence_only=True)
+
+    assert full["Evidence F1"] < text_only["Evidence F1"]
+    assert text_only["Evidence F1"] == 1.0
 
 
 def test_question_sampling_is_reproducible_and_keeps_only_used_papers(tmp_path) -> None:

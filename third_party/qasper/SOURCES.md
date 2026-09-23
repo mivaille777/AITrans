@@ -17,3 +17,12 @@ Upstream references:
 The benchmark dataset is downloaded from AllenAI's official QASPER v0.3
 archive. Dataset files, prepared corpora, indexes, and experiment outputs stay
 under the ignored `data/benchmarks/qasper/` directory and are not committed.
+
+The vendored official Answer F1 and Evidence F1 implementation is from
+`allenai/qasper-led-baseline/scripts/evaluator.py` (Apache-2.0). Its metric
+logic is retained; AITrans calls the evaluator functions through the QASPER
+benchmark adapter. The upstream license is retained in
+[`LICENSE-allenai.txt`](LICENSE-allenai.txt).
+
+- <https://github.com/allenai/qasper-led-baseline/blob/main/scripts/evaluator.py>
+- <https://github.com/allenai/qasper-led-baseline/blob/main/LICENSE>
