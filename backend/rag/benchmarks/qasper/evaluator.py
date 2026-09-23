@@ -128,6 +128,46 @@ def _best_paragraph_coverage(
     )
 
 
+def _gold_sufficient(
+    context_paragraph_ids: set[str],
+    references: Sequence[set[str]],
+) -> bool:
+    return any(
+        bool(gold) and gold.issubset(context_paragraph_ids)
+        for gold in references
+    )
+
+
+def _binary_sufficiency_metrics(
+    predictions: Sequence[bool],
+    labels: Sequence[bool],
+) -> dict[str, int | float]:
+    if len(predictions) != len(labels):
+        raise ValueError("sufficiency predictions and labels must have equal length")
+    true_positive = sum(predicted and label for predicted, label in zip(predictions, labels))
+    false_positive = sum(
+        predicted and not label for predicted, label in zip(predictions, labels)
+    )
+    false_negative = sum(
+        not predicted and label for predicted, label in zip(predictions, labels)
+    )
+    true_negative = sum(
+        not predicted and not label for predicted, label in zip(predictions, labels)
+    )
+    precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
+    recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        "true_positive": true_positive,
+        "false_positive": false_positive,
+        "false_negative": false_negative,
+        "true_negative": true_negative,
+        "Sufficiency Precision": precision if predictions else None,
+        "Sufficiency Recall": recall if predictions else None,
+        "Sufficiency F1": f1 if predictions else None,
+    }
+
+
 def _mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
@@ -260,7 +300,16 @@ def evaluate_qasper_run(
     sufficiency_observed_cases = 0
     sufficient_cases = 0
     gate_observed_cases = 0
+    gate_evaluation_cases = 0
+    gate_excluded_no_gold_cases = 0
+    gate_observed_decisions = 0
+    gate_sufficiency_predictions: list[bool] = []
+    gate_sufficiency_labels: list[bool] = []
+    labeled_stop_decisions = 0
+    premature_stop_decisions = 0
     premature_stop_cases = 0
+    additional_retrieval_rounds = 0
+    unnecessary_retrieval_rounds = 0
     unnecessary_retrieval_cases = 0
     initial_evidence_coverage: list[float] = []
     final_evidence_coverage: list[float] = []
@@ -298,9 +347,14 @@ def evaluate_qasper_run(
             for round_record in retrieval_rounds
             if isinstance(round_record, dict)
         ]
+        cumulative_round_contexts: list[set[str]] = []
+        cumulative_context: set[str] = set()
+        for round_context in round_context_paragraphs:
+            cumulative_context.update(round_context)
+            cumulative_round_contexts.append(set(cumulative_context))
         final_round_context = (
-            set().union(*round_context_paragraphs)
-            if round_context_paragraphs
+            cumulative_round_contexts[-1]
+            if cumulative_round_contexts
             else {
                 str(value)
                 for value in trace.get("context_evidence_paragraph_ids", [])
@@ -464,26 +518,75 @@ def evaluate_qasper_run(
             second_round_observed_cases += 1
             second_round_cases += int(bool(trace.get("second_round")))
         sufficiency = trace.get("sufficiency")
+        gate_round_metrics: list[dict[str, Any]] = []
+        query_gate_observed = False
+        query_gate_evaluable = bool(paragraph_sets)
+        query_premature_stop = False
+        query_unnecessary_retrieval = False
+        observed_gate_rounds = [
+            (index, round_record, round_record.get("gate"))
+            for index, round_record in enumerate(retrieval_rounds)
+            if isinstance(round_record, dict)
+            and isinstance(round_record.get("gate"), dict)
+        ]
+        if not observed_gate_rounds and isinstance(sufficiency, dict):
+            observed_gate_rounds = [(-1, {}, sufficiency)]
+        for round_index, round_record, gate in observed_gate_rounds:
+            query_gate_observed = True
+            gate_observed_decisions += 1
+            if round_index >= 0 and round_index < len(cumulative_round_contexts):
+                round_context = cumulative_round_contexts[round_index]
+            else:
+                round_context = final_round_context
+            gold_sufficient = _gold_sufficient(round_context, paragraph_sets)
+            action = str(gate.get("action", ""))
+            reasons = gate.get("reason_codes", [])
+            predicted_sufficient = gate.get("sufficient")
+            if not isinstance(predicted_sufficient, bool):
+                predicted_sufficient = (
+                    action == "stop"
+                    and isinstance(reasons, list)
+                    and "evidence_sufficient" in reasons
+                )
+            if query_gate_evaluable:
+                gate_sufficiency_predictions.append(predicted_sufficient)
+                gate_sufficiency_labels.append(gold_sufficient)
+                if action == "stop":
+                    labeled_stop_decisions += 1
+                    if not gold_sufficient:
+                        premature_stop_decisions += 1
+                        query_premature_stop = True
+            if round_index > 0:
+                additional_retrieval_rounds += int(query_gate_evaluable)
+                previous_context = cumulative_round_contexts[round_index - 1]
+                if query_gate_evaluable and _gold_sufficient(previous_context, paragraph_sets):
+                    unnecessary_retrieval_rounds += 1
+                    query_unnecessary_retrieval = True
+            gate_round_metrics.append(
+                {
+                    "round": round_record.get("round", round_index + 1),
+                    "action": action,
+                    "predicted_sufficient": predicted_sufficient,
+                    "gold_sufficient": gold_sufficient if query_gate_evaluable else None,
+                    "cumulative_context_paragraph_ids": sorted(round_context),
+                    "reason_codes": reasons if isinstance(reasons, list) else [],
+                }
+            )
+        if query_gate_observed:
+            gate_observed_cases += 1
+            if query_gate_evaluable:
+                gate_evaluation_cases += 1
+            else:
+                gate_excluded_no_gold_cases += 1
+            premature_stop_cases += int(query_premature_stop)
+            unnecessary_retrieval_cases += int(query_unnecessary_retrieval)
+        case_metrics["evidence_gate_rounds"] = gate_round_metrics
         if isinstance(sufficiency, dict):
             sufficiency_cases += 1
-            gate_observed_cases += 1
             sufficient = sufficiency.get("sufficient", sufficiency.get("is_sufficient"))
             if isinstance(sufficient, bool):
                 sufficiency_observed_cases += 1
                 sufficient_cases += int(sufficient)
-            gate_stopped = str(sufficiency.get("action", "")) == "stop"
-            gold_sufficient = any(
-                gold.issubset(final_round_context) for gold in paragraph_sets if gold
-            )
-            premature_stop_cases += int(gate_stopped and not gold_sufficient)
-            unnecessary_retrieval_cases += int(
-                bool(trace.get("second_round"))
-                and any(
-                    gold.issubset(initial_round_context)
-                    for gold in paragraph_sets
-                    if gold
-                )
-            )
 
     prediction_records = list(prediction_by_id.values())
     official_full = _official_qasper_metrics(
@@ -498,7 +601,7 @@ def evaluate_qasper_run(
     )
     retrieval_count = len(qrel_by_id)
     metrics: dict[str, Any] = {
-        "metric_version": 2,
+        "metric_version": 3,
         "run_id": manifest.get("run_id", run_path.name),
         "dataset": manifest.get("dataset", "qasper"),
         "split": manifest.get("split", ""),
@@ -567,17 +670,49 @@ def evaluate_qasper_run(
                 else None
             ),
             "Premature Stop Rate": (
-                premature_stop_cases / gate_observed_cases if gate_observed_cases else None
+                premature_stop_decisions / labeled_stop_decisions
+                if labeled_stop_decisions
+                else None
             ),
             "Unnecessary Retrieval Rate": (
-                unnecessary_retrieval_cases / gate_observed_cases
-                if gate_observed_cases
+                unnecessary_retrieval_rounds / additional_retrieval_rounds
+                if additional_retrieval_rounds
+                else None
+            ),
+            "Premature Stop Case Rate": (
+                premature_stop_cases / gate_evaluation_cases
+                if gate_evaluation_cases
+                else None
+            ),
+            "Unnecessary Retrieval Case Rate": (
+                unnecessary_retrieval_cases / gate_evaluation_cases
+                if gate_evaluation_cases
                 else None
             ),
             "gate_observed_cases": gate_observed_cases,
+            "gate_evaluation_cases": gate_evaluation_cases,
+            "gate_observed_decisions": gate_observed_decisions,
+            "premature_stop_decisions": premature_stop_decisions,
+            "labeled_stop_decisions": labeled_stop_decisions,
+            "additional_retrieval_rounds": additional_retrieval_rounds,
+            "unnecessary_retrieval_rounds": unnecessary_retrieval_rounds,
             "query_planner_invocations": query_planner_invocations,
             "answerer_invocations": answerer_invocations,
             "estimated_llm_invocations": query_planner_invocations + answerer_invocations,
+        },
+        "evidence_gate_evaluation": {
+            "evaluated_decisions": len(gate_sufficiency_labels),
+            "evaluated_question_count": gate_evaluation_cases,
+            "excluded_no_gold_evidence_cases": gate_excluded_no_gold_cases,
+            "definition": {
+                "gold_sufficient": "cumulative context includes every paragraph in at least one annotator's complete non-empty evidence set",
+                "sufficiency_metrics": "one binary prediction/label pair per observed gate decision",
+                "empty_gold": "questions without mapped gold evidence are excluded from sufficiency classification",
+            },
+            **_binary_sufficiency_metrics(
+                gate_sufficiency_predictions,
+                gate_sufficiency_labels,
+            ),
         },
         "adaptive_metrics": {
             "routing_cases": routing_cases,

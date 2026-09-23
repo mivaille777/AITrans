@@ -1046,6 +1046,7 @@ def run_qasper_ablation(
                 "performance_ms": metrics["performance_ms"],
                 "context_metrics": metrics.get("context_metrics", {}),
                 "adaptive_retrieval": metrics.get("adaptive_retrieval", {}),
+                "evidence_gate_evaluation": metrics.get("evidence_gate_evaluation", {}),
                 "adaptive_metrics": metrics["adaptive_metrics"],
             }
             comparison_rows.append(row)

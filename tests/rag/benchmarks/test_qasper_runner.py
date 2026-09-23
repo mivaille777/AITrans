@@ -229,7 +229,26 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     assert 0 <= metrics["official_qasper"]["text_evidence_only"]["Evidence F1"] <= 1
     assert metrics["paragraph_evidence"]["evaluated_cases"] == 2
     assert metrics["paragraph_evidence"]["Gold Evidence Recall@20"] > 0
-    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["metric_version"] == 2
+    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["metric_version"] == 3
+    assert metrics["evidence_gate_evaluation"]["evaluated_decisions"] == 0
+    assert metrics["evidence_gate_evaluation"]["excluded_no_gold_evidence_cases"] == 0
+
+
+def test_gate_sufficiency_metrics_compare_predictions_with_qasper_gold() -> None:
+    from backend.rag.benchmarks.qasper.evaluator import _binary_sufficiency_metrics
+
+    metrics = _binary_sufficiency_metrics(
+        predictions=[True, True, False, False],
+        labels=[True, False, True, False],
+    )
+
+    assert metrics["true_positive"] == 1
+    assert metrics["false_positive"] == 1
+    assert metrics["false_negative"] == 1
+    assert metrics["true_negative"] == 1
+    assert metrics["Sufficiency Precision"] == 0.5
+    assert metrics["Sufficiency Recall"] == 0.5
+    assert metrics["Sufficiency F1"] == 0.5
 
 
 def test_official_qasper_text_evidence_metric_excludes_float_evidence() -> None:
@@ -296,6 +315,9 @@ def test_ablation_suite_reuses_one_index_and_records_variant_metrics(tmp_path) -
     assert all(item["index_cache_hit"] for item in manifest["completed_runs"][1:])
     assert rows["B5"]["context_metrics"]["Context Tokens"] > 0
     assert rows["B7"]["adaptive_retrieval"]["gate_observed_cases"] == 3
+    assert rows["B7"]["evidence_gate_evaluation"]["evaluated_question_count"] == 2
+    assert rows["B7"]["evidence_gate_evaluation"]["excluded_no_gold_evidence_cases"] == 1
+    assert rows["B7"]["evidence_gate_evaluation"]["evaluated_decisions"] > 0
 
     b0_trace = rows["B0"]["run_directory"]
     b0_trace_path = tmp_path / "ablation" / "results"

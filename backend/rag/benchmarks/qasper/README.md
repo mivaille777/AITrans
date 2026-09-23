@@ -61,6 +61,13 @@ BM25 retrieval, RRF, reranking, Small-to-Big context, and query planning. The
 incremental B4-B7 variants additionally enable structural retrieval before
 progressively adding Small-to-Big, query planning, and the evidence gate.
 
+Phase 6 evaluates each B7 Gate decision against QASPER gold: cumulative context
+is gold-sufficient only when it contains every paragraph in at least one
+annotator's complete evidence set. The metrics report sufficiency precision,
+recall, and F1, premature stops among labeled stop decisions, and unnecessary
+retrievals among extra rounds. Questions with no mapped gold evidence are
+excluded from the sufficiency classification and counted separately.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it
