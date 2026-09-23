@@ -35,6 +35,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=tuple(RUN_LIMITS), default="smoke")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--question-ids-file", type=Path)
     parser.add_argument("--suite-id")
     parser.add_argument(
         "--variants",
@@ -81,6 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mode=args.mode,
             limit=args.limit,
             seed=args.seed,
+            question_ids_file=args.question_ids_file,
             config=config,
             variants=args.variants,
             answerer=answerer,

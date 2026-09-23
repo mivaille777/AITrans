@@ -48,8 +48,9 @@
 
 ### 固定样本
 
-- Smoke：现有 `--mode smoke --seed 42` 的 20 题，题目 ID 清单固定到实验协议。
-- Dev：现有 `--mode dev --seed 42` 的 100 题，作为调参与策略选择集。
+- 固定清单位于 `backend/rag/benchmarks/qasper/sample_ids/`，由 `scripts/freeze_qasper_p1_sample_ids.py` 生成；每个 ID 文件及其生成规则的 SHA 都记录在同目录 manifest。Smoke20 保持现有 seed 42 的样本，Dev100 使用 seed 42 的独立抽样，Holdout905 是 Dev100 的补集。
+- Smoke：固定 ID 文件中的 20 题，用于冒烟和故障发现。
+- Dev：固定 ID 文件中的 100 题，作为调参与策略选择集。
 - Holdout：validation 中不属于 Dev100 的 905 题；仅在方案冻结后评估。完整 1005 题可做规模与稳定性检查，但它包含 Dev100，**不是独立测试集**。
 - 另设少量真实 challenge cases，覆盖 boolean、unanswerable、多段落、多 section、证据缺失和二次检索。该清单在实验开始前冻结；允许用 Gold 做离线分层，但运行时不可使用 Gold。
 
@@ -81,15 +82,15 @@
 
 ```powershell
 python scripts/prepare_qasper.py prepare --split validation
-python scripts/run_qasper_benchmark.py --mode smoke --seed 42 --run-id p1q0-smoke-current
-python scripts/run_qasper_benchmark.py --mode dev --seed 42 --run-id p1q0-dev-current
+python scripts/run_qasper_benchmark.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --run-id p1q0-smoke-current
+python scripts/run_qasper_benchmark.py --mode dev --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-dev100-seed42.txt --run-id p1q0-dev-current
 python scripts/evaluate_qasper.py --run-directory data/benchmarks/qasper/results/p1q0-dev-current
 ```
 
 Q1-0 实现后统一增加以下审计命令；入口应将错误写到标准错误并返回非零退出码，比较报告默认保存在 candidate 的 `comparison/` 下：
 
 ```powershell
-python scripts/check_qasper_run.py --run-directory data/benchmarks/qasper/results/p1q0-dev-current
+python scripts/check_qasper_run.py --run-directory data/benchmarks/qasper/results/p1q0-dev-current --output data/benchmarks/qasper/results/p1q0-dev-current/audit.json
 python scripts/compare_qasper_runs.py --baseline data/benchmarks/qasper/results/p1q0-dev-current --candidate data/benchmarks/qasper/results/p1q0-dev-current --resamples 5000 --seed 42
 ```
 

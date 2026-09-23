@@ -304,6 +304,69 @@ def _mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+def _qasper_question_category(qrel: dict[str, Any]) -> str:
+    breadth = max(
+        (
+            len(
+                {
+                    int(value)
+                    for value in answer.get("evidence_section_indices", [])
+                    if isinstance(value, int) and not isinstance(value, bool)
+                }
+            )
+            for answer in _references(qrel)
+            if answer.get("evidence_paragraph_ids") and answer.get("evidence_complete", True)
+        ),
+        default=0,
+    )
+    if breadth == 1:
+        return "local"
+    if breadth == 2:
+        return "cross_section"
+    if breadth >= 3:
+        return "global"
+    if qrel.get("no_answer") or all(
+        answer.get("answer_type") == "none" for answer in _references(qrel)
+    ):
+        return "unanswerable"
+    return "unclassified"
+
+
+def _quality_stratification(cases: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    def summarize(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
+        retrieval_items = [item for item in items if int(item.get("relevant_chunk_count", 0)) > 0]
+        return {
+            "question_count": len(items),
+            "mapped_gold_question_count": len(retrieval_items),
+            "Answer F1": _mean([float(item["official_answer_f1"]) for item in items]),
+            "Evidence F1": _mean([float(item["official_evidence_f1"]) for item in items]),
+            "Recall@10": _mean([float(item["recall_at_10"]) for item in retrieval_items]),
+            "MRR": _mean([float(item["MRR"]) for item in retrieval_items]),
+            "retrieval_metric_denominator": len(retrieval_items),
+        }
+
+    type_groups: dict[str, list[dict[str, Any]]] = {}
+    mapped_groups: dict[str, list[dict[str, Any]]] = {"mapped": [], "unmapped": []}
+    category_groups: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        mapped_groups["mapped" if case.get("mapped_gold_evidence") else "unmapped"].append(case)
+        category_groups.setdefault(str(case.get("question_category", "unclassified")), []).append(case)
+        for answer_type in case.get("answer_types", []):
+            type_groups.setdefault(str(answer_type), []).append(case)
+    return {
+        "by_answer_type": {
+            name: summarize(items) for name, items in sorted(type_groups.items())
+        },
+        "by_mapped_gold_evidence": {
+            name: summarize(items) for name, items in mapped_groups.items()
+        },
+        "by_evidence_scope": {
+            name: summarize(items) for name, items in sorted(category_groups.items())
+        },
+        "answer_type_groups_are_multi_label": True,
+    }
+
+
 def _official_qasper_metrics(
     qrels: Sequence[dict[str, Any]],
     predictions: Sequence[dict[str, Any]],
@@ -527,6 +590,14 @@ def evaluate_qasper_run(
             "question_id": question_id,
             "relevant_chunk_count": len(relevant_union),
             "gold_paragraph_count_by_annotator": [len(item) for item in paragraph_sets],
+            "answer_types": sorted(
+                {
+                    str(answer.get("answer_type", "abstractive"))
+                    for answer in _references(qrel)
+                }
+            ),
+            "mapped_gold_evidence": bool(relevant_union),
+            "question_category": _qasper_question_category(qrel),
         }
         requirement_records = trace.get("evidence_requirements", [])
         if (
@@ -670,6 +741,9 @@ def evaluate_qasper_run(
         )
         case_metrics["official_answer_f1"] = official_case["Answer F1"]
         case_metrics["official_evidence_f1"] = official_case["Evidence F1"]
+        case_metrics["official_answer_f1_by_type"] = official_case[
+            "Answer F1 by type"
+        ]
         per_question.append(case_metrics)
 
         latency = float(trace.get("latency_ms", 0.0) or 0.0)
@@ -1004,6 +1078,7 @@ def evaluate_qasper_run(
             "extractor_invocations": evidence_extractor_invocations,
         },
         "per_question": per_question,
+        "quality_stratification": _quality_stratification(per_question),
     }
     error_counts = {
         "retrieval_miss": 0,

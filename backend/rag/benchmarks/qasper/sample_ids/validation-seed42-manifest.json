@@ -1,0 +1,44 @@
+{
+  "dataset": "qasper",
+  "dataset_version": "0.3",
+  "split": "validation",
+  "source_sha256": "2ae7ee62a65b1c4225791c70de80c2aad4e8998cf1fd4f09a53103db4f21af93",
+  "seed": 42,
+  "selection_algorithm": "random.Random(seed).sample(dataset question indexes), restored to source order; holdout is the Dev100 complement",
+  "smoke20_dev100_overlap_count": 20,
+  "samples": {
+    "validation-smoke20-seed42.txt": {
+      "question_count": 20,
+      "file_sha256": "8390a28d3d88b68373ab49c60653ea52fc723c48779b5c212dd522fb4bf41e9e",
+      "question_ids_sha256": "8390a28d3d88b68373ab49c60653ea52fc723c48779b5c212dd522fb4bf41e9e",
+      "answer_type_counts": {
+        "abstractive": 8,
+        "boolean": 7,
+        "extractive": 18,
+        "none": 2
+      }
+    },
+    "validation-dev100-seed42.txt": {
+      "question_count": 100,
+      "file_sha256": "856af943ff1f51ba2bc36e392286a731c417dacfb2746e5f575c1ba81076596a",
+      "question_ids_sha256": "856af943ff1f51ba2bc36e392286a731c417dacfb2746e5f575c1ba81076596a",
+      "answer_type_counts": {
+        "abstractive": 44,
+        "boolean": 31,
+        "extractive": 89,
+        "none": 19
+      }
+    },
+    "validation-holdout905-after-dev100-seed42.txt": {
+      "question_count": 905,
+      "file_sha256": "4582affc953b10b1c77e83fe0a05150ff85b8a4bdf747d9b78c83fa8cea7ccde",
+      "question_ids_sha256": "4582affc953b10b1c77e83fe0a05150ff85b8a4bdf747d9b78c83fa8cea7ccde",
+      "answer_type_counts": {
+        "abstractive": 387,
+        "boolean": 177,
+        "extractive": 873,
+        "none": 144
+      }
+    }
+  }
+}

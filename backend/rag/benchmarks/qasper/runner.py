@@ -34,7 +34,10 @@ from backend.rag.benchmarks.qasper.ablation import (
 )
 from backend.rag.benchmarks.qasper.alignment import align_qasper_evidence
 from backend.rag.benchmarks.qasper.index import build_qasper_index
-from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
+from backend.rag.benchmarks.qasper.sampling import (
+    read_question_ids_file,
+    sample_qasper_dataset,
+)
 from backend.rag.benchmarks.qasper.schema import QasperDataset, QasperQuestion
 from backend.rag.citation_service import build_evidence_citations
 from backend.rag.config import RagConfig
@@ -1100,6 +1103,7 @@ def run_qasper_benchmark(
     evidence_selector: EvidenceSelectionService | None = None,
     adaptive_variant: str | None = None,
     run_id: str | None = None,
+    question_ids_file: str | Path | None = None,
     rebuild_index: bool = False,
 ) -> QasperBenchmarkRunResult:
     """Run the current AITrans RAG path with strict known-paper scoping."""
@@ -1111,7 +1115,20 @@ def run_qasper_benchmark(
         limit = RUN_LIMITS[normalized_mode]
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
-    selected = sample_qasper_dataset(dataset, limit=limit, seed=seed)
+    question_ids: tuple[str, ...] | None = None
+    question_ids_file_sha256: str | None = None
+    resolved_question_ids_file: Path | None = None
+    if question_ids_file is not None:
+        resolved_question_ids_file = Path(question_ids_file).expanduser().resolve()
+        question_ids, question_ids_file_sha256 = read_question_ids_file(
+            resolved_question_ids_file
+        )
+    selected = sample_qasper_dataset(
+        dataset,
+        limit=limit,
+        seed=seed,
+        question_ids=question_ids,
+    )
     normalized_evidence_selection_variant = (
         str(evidence_selection_variant).strip().casefold()
         if evidence_selection_variant is not None
@@ -1189,11 +1206,24 @@ def run_qasper_benchmark(
         for question in selected.questions
     ]
     for question, qrel in zip(selected.questions, qrels_records, strict=True):
+        paper = selected.papers[question.paper_id]
+        section_by_paragraph = {
+            paragraph.paragraph_id: paragraph.section_index
+            for paragraph in paper.paragraphs
+        }
         gold_paragraph_ids = set(qrel["gold_evidence_paragraph_ids"])
+        for answer in qrel["answers"]:
+            answer["evidence_section_indices"] = sorted(
+                {
+                    section_by_paragraph[paragraph_id]
+                    for paragraph_id in answer["evidence_paragraph_ids"]
+                    if paragraph_id in section_by_paragraph
+                }
+            )
         qrel["gold_evidence_section_indices"] = sorted(
             {
                 paragraph.section_index
-                for paragraph in selected.papers[question.paper_id].paragraphs
+                for paragraph in paper.paragraphs
                 if paragraph.paragraph_id in gold_paragraph_ids
             }
         )
@@ -1233,6 +1263,17 @@ def run_qasper_benchmark(
         "question_count": len(selected.questions),
         "paper_count": len(selected.papers),
         "selected_question_ids": [question.question_id for question in selected.questions],
+        "question_id_selection": (
+            {
+                "file_name": resolved_question_ids_file.name,
+                "file_sha256": question_ids_file_sha256,
+                "question_ids_sha256": hashlib.sha256(
+                    ("\n".join(question.question_id for question in selected.questions) + "\n").encode("utf-8")
+                ).hexdigest(),
+            }
+            if resolved_question_ids_file is not None
+            else None
+        ),
         "qrels_path": str(qrels_path),
         "started_at": started_at.isoformat(),
         "rag_config": source_config.model_dump(mode="json"),
@@ -1797,6 +1838,7 @@ def run_qasper_ablation(
     answerer: QasperAnswerer | None = None,
     query_planner: Any | None = None,
     suite_id: str | None = None,
+    question_ids_file: str | Path | None = None,
 ) -> QasperAblationSuiteResult:
     """Run the query-time ablation matrix against one shared QASPER index."""
 
@@ -1868,6 +1910,7 @@ def run_qasper_ablation(
                 query_planner=query_planner,
                 variant=variant,
                 run_id=run_id,
+                question_ids_file=question_ids_file,
                 rebuild_index=False,
             )
             from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
@@ -1972,6 +2015,7 @@ def run_qasper_evidence_selection_ablation(
     excerpt_provider: EvidenceExcerptProvider | None = None,
     evidence_selector: EvidenceSelectionService | None = None,
     suite_id: str | None = None,
+    question_ids_file: str | Path | None = None,
 ) -> QasperEvidenceSelectionSuiteResult:
     """Compare raw, reranked, and query-selected QASPER evidence on one index."""
 
@@ -2060,6 +2104,7 @@ def run_qasper_evidence_selection_ablation(
                 evidence_selection_variant=variant_id,
                 evidence_selector=shared_selector,
                 run_id=run_id,
+                question_ids_file=question_ids_file,
                 rebuild_index=False,
             )
             from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
@@ -2166,6 +2211,7 @@ def run_qasper_adaptive_retrieval_ablation(
     answerer: QasperAnswerer | None = None,
     query_planner: Any | None = None,
     suite_id: str | None = None,
+    question_ids_file: str | Path | None = None,
 ) -> QasperAdaptiveRetrievalSuiteResult:
     """Compare one-shot, multi-query, gate, and requirement-aware retrieval."""
 
@@ -2256,6 +2302,7 @@ def run_qasper_adaptive_retrieval_ablation(
                 query_planner=query_planner,
                 adaptive_variant=variant_id,
                 run_id=run_id,
+                question_ids_file=question_ids_file,
                 rebuild_index=False,
             )
             from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
@@ -2355,6 +2402,7 @@ def run_qasper_raptor_ablation(
     answerer: QasperAnswerer | None = None,
     variants: Sequence[str] = ("R0", "R1", "R2", "R3"),
     suite_id: str | None = None,
+    question_ids_file: str | Path | None = None,
 ) -> QasperRaptorAblationSuiteResult:
     """Compare flat, mixed, collapsed, and hybrid RAPTOR retrieval variants."""
 
@@ -2364,10 +2412,14 @@ def run_qasper_raptor_ablation(
     selected_limit = RUN_LIMITS[normalized_mode] if limit is None else limit
     if selected_limit is not None and selected_limit <= 0:
         raise ValueError("limit must be positive")
+    question_ids: tuple[str, ...] | None = None
+    if question_ids_file is not None:
+        question_ids, _ = read_question_ids_file(question_ids_file)
     selected_dataset = sample_qasper_dataset(
         dataset,
         limit=selected_limit,
         seed=seed,
+        question_ids=question_ids,
     )
     selected_variants = [str(value).strip().upper() for value in variants]
     if not selected_variants:
@@ -2502,6 +2554,7 @@ def run_qasper_raptor_ablation(
                 raptor_variant=variant,
                 raptor_trees=trees,
                 run_id=run_id,
+                question_ids_file=question_ids_file,
                 rebuild_index=False,
             )
             from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run

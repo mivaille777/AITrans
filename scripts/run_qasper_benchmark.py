@@ -36,6 +36,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--run-id")
+    parser.add_argument("--question-ids-file", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--retrieval-only", action="store_true")
     parser.add_argument("--rebuild-index", action="store_true")
@@ -67,6 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config=config,
             answerer=answerer,
             run_id=args.run_id,
+            question_ids_file=args.question_ids_file,
             rebuild_index=args.rebuild_index,
         )
     finally:
