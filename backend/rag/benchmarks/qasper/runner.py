@@ -36,6 +36,12 @@ from backend.rag.config import RagConfig
 from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
 from backend.rag.evaluation import percentile
 from backend.rag.evidence_builder import build_agent_evidence
+from backend.rag.evidence_requirements import (
+    EvidenceRequirement,
+    assess_evidence_requirements,
+    evidence_requirement_coverage,
+    infer_evidence_requirements,
+)
 from backend.rag.evidence_selection import (
     EvidenceExcerptProvider,
     EvidenceSelectionService,
@@ -122,6 +128,16 @@ class QasperRaptorAblationSuiteResult:
 
 @dataclass(frozen=True, slots=True)
 class QasperEvidenceSelectionSuiteResult:
+    suite_id: str
+    suite_directory: Path
+    manifest_path: Path
+    comparison_path: Path
+    variant_count: int
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class QasperAdaptiveRetrievalSuiteResult:
     suite_id: str
     suite_directory: Path
     manifest_path: Path
@@ -882,6 +898,128 @@ def _evidence_selection_round(
     }
 
 
+def _adaptive_ablation_variant(variant_id: str) -> QasperAblationVariant:
+    names = {
+        "one_shot": "One-shot hybrid retrieval",
+        "multi_query": "Multi-query hybrid retrieval",
+        "evidence_gated": "Evidence-gated re-retrieval",
+        "requirement_aware": "Requirement-aware re-retrieval",
+    }
+    return QasperAblationVariant(
+        variant_id=f"AR_{variant_id.upper()}",
+        name=names[variant_id],
+        dense=True,
+        sparse=True,
+        reranker=True,
+        structural=False,
+        small_to_big=False,
+        multi_query=variant_id in {"multi_query", "evidence_gated"},
+        evidence_gate=variant_id == "evidence_gated",
+    )
+
+
+def _retrieve_requirement_aware_question(
+    question: QasperQuestion,
+    *,
+    index: Any,
+    document_id: str,
+    maximum_rounds: int = 3,
+) -> tuple[RetrievalResult, list[dict[str, Any]], tuple[EvidenceRequirement, ...]]:
+    requirements = infer_evidence_requirements(question.question)
+    retrievals: list[RetrievalResult] = []
+    round_traces: list[dict[str, Any]] = []
+    attempted_requirement_ids: set[str] = set()
+    for round_number in range(1, maximum_rounds + 1):
+        if not retrievals:
+            retrieval_query = question.question
+        else:
+            missing = next(
+                (
+                    item
+                    for item in requirements
+                    if item.status == "missing"
+                    and item.id not in attempted_requirement_ids
+                ),
+                None,
+            )
+            if missing is None:
+                break
+            attempted_requirement_ids.add(missing.id)
+            retrieval_query = missing.query
+        started = perf_counter()
+        result = index.runtime.retrieval_service.retrieve(
+            retrieval_query,
+            filters=VectorSearchFilter(document_ids=[document_id]),
+            final_top_k=BENCHMARK_FINAL_TOP_K,
+            dense_enabled=True,
+            sparse_enabled=True,
+            structural_enabled=False,
+            reranker_enabled=True,
+            small_to_big_enabled=False,
+        )
+        round_latency_ms = (perf_counter() - started) * 1000
+        returned_document_ids = {item.chunk.document_id for item in result.candidates}
+        if returned_document_ids.difference({document_id}):
+            raise RuntimeError("known-paper retrieval returned a chunk from another paper")
+        retrievals.append(result)
+        cumulative = _aggregate_retrievals(question.question, retrievals)
+        requirements = assess_evidence_requirements(
+            requirements,
+            cumulative.candidates,
+        )
+        context_paragraph_ids = list(
+            dict.fromkeys(
+                paragraph_id
+                for candidate in cumulative.candidates
+                for paragraph_id in _source_paragraph_ids(candidate.chunk)
+            )
+        )
+        round_traces.append(
+            {
+                "round": round_number,
+                "query": retrieval_query,
+                "latency_ms": round_latency_ms,
+                "candidate_chunk_ids": [
+                    item.chunk.chunk_id for item in result.candidates
+                ],
+                "source_paragraph_ids": list(
+                    dict.fromkeys(
+                        paragraph_id
+                        for candidate in result.candidates
+                        for paragraph_id in _source_paragraph_ids(candidate.chunk)
+                    )
+                ),
+                "context_evidence_paragraph_ids": context_paragraph_ids,
+                "context_token_count": sum(
+                    item.context_window.token_count
+                    if item.context_window is not None
+                    else item.chunk.token_count
+                    for item in cumulative.candidates
+                ),
+                "new_chunk_count": len(result.candidates),
+                "evidence_requirements": [item.as_dict() for item in requirements],
+                "requirement_coverage": evidence_requirement_coverage(requirements),
+                "missing_requirement_ids": [
+                    item.id for item in requirements if item.status == "missing"
+                ],
+            }
+        )
+        if not any(item.status == "missing" for item in requirements):
+            break
+
+    merged = _aggregate_retrievals(question.question, retrievals)
+    merged.metadata.update(
+        {
+            "adaptive_variant": "requirement_aware",
+            "evidence_requirements": [item.as_dict() for item in requirements],
+            "requirement_coverage": evidence_requirement_coverage(requirements),
+            "requirement_round_count": len(retrievals),
+            "requirement_retrieval_queries": [item.query for item in retrievals],
+        }
+    )
+    return merged, round_traces, requirements
+
+
 def _new_run_id(split: str, mode: str) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     return f"qasper-{split}-{mode}-{stamp}-{uuid.uuid4().hex[:8]}"
@@ -904,6 +1042,7 @@ def run_qasper_benchmark(
     raptor_trees: Mapping[str, RaptorTree] | None = None,
     evidence_selection_variant: str | None = None,
     evidence_selector: EvidenceSelectionService | None = None,
+    adaptive_variant: str | None = None,
     run_id: str | None = None,
     rebuild_index: bool = False,
 ) -> QasperBenchmarkRunResult:
@@ -930,10 +1069,33 @@ def run_qasper_benchmark(
         raise ValueError(
             "evidence_selection_variant must be raw_top_k, rerank_top_k, or evidence_selection"
         )
+    normalized_adaptive_variant = (
+        str(adaptive_variant).strip().casefold()
+        if adaptive_variant is not None
+        else None
+    )
+    if normalized_adaptive_variant is not None and normalized_adaptive_variant not in {
+        "one_shot",
+        "multi_query",
+        "evidence_gated",
+        "requirement_aware",
+    }:
+        raise ValueError(
+            "adaptive_variant must be one_shot, multi_query, evidence_gated, or requirement_aware"
+        )
+    if (
+        normalized_evidence_selection_variant is not None
+        and normalized_adaptive_variant is not None
+    ):
+        raise ValueError("evidence-selection and adaptive variants cannot be combined")
     selected_variant = (
         _evidence_selection_ablation_variant(normalized_evidence_selection_variant)
         if normalized_evidence_selection_variant is not None
-        else get_qasper_ablation_variant(variant)
+        else (
+            _adaptive_ablation_variant(normalized_adaptive_variant)
+            if normalized_adaptive_variant is not None
+            else get_qasper_ablation_variant(variant)
+        )
     )
     normalized_raptor_variant = (
         str(raptor_variant).strip().upper() if raptor_variant is not None else None
@@ -994,6 +1156,7 @@ def run_qasper_benchmark(
         "answer_generation": answerer is not None,
         "ablation_variant": selected_variant.as_dict(),
         "evidence_selection_variant": normalized_evidence_selection_variant,
+        "adaptive_variant": normalized_adaptive_variant,
         "evidence_selection_parameters": (
             {
                 "candidate_pool_size": 20,
@@ -1183,6 +1346,19 @@ def run_qasper_benchmark(
                                     latency_ms=retrieval_result.elapsed_ms,
                                 )
                             ]
+                        elif normalized_adaptive_variant == "requirement_aware":
+                            (
+                                retrieval_result,
+                                retrieval_rounds,
+                                _evidence_requirements,
+                            ) = _retrieve_requirement_aware_question(
+                                question,
+                                index=index,
+                                document_id=document_id,
+                            )
+                            query_plan = _identity_query_plan(question.question)
+                            sufficiency = None
+                            query_planning_ms = 0.0
                         else:
                             (
                                 retrieval_result,
@@ -1274,6 +1450,7 @@ def run_qasper_benchmark(
                     "question": question.question,
                     "ablation_variant": selected_variant.variant_id,
                     "evidence_selection_variant": normalized_evidence_selection_variant,
+                    "adaptive_variant": normalized_adaptive_variant,
                     "raptor_variant": normalized_raptor_variant,
                     "query_plan": (
                         query_plan.model_dump(mode="json")
@@ -1359,6 +1536,7 @@ def run_qasper_benchmark(
                     "context_evidence_paragraph_ids": evidence_paragraph_ids,
                     "ablation_variant": selected_variant.as_dict(),
                     "evidence_selection_variant": normalized_evidence_selection_variant,
+                    "adaptive_variant": normalized_adaptive_variant,
                     "raptor_variant": normalized_raptor_variant,
                     "raptor_category": raptor_category or None,
                     "query_plan": (
@@ -1372,10 +1550,19 @@ def run_qasper_benchmark(
                     "retrieval_rounds": (
                         retrieval_rounds if retrieval_result is not None else []
                     ),
+                    "evidence_requirements": (
+                        retrieval_result.metadata.get("evidence_requirements", [])
+                        if retrieval_result is not None
+                        else []
+                    ),
                     "sufficiency": sufficiency if retrieval_result is not None else None,
                     **(
                         {"second_round": len(retrieval_rounds) > 1}
-                        if selected_variant.evidence_gate and retrieval_result is not None
+                        if (
+                            selected_variant.evidence_gate
+                            or normalized_adaptive_variant == "requirement_aware"
+                        )
+                        and retrieval_result is not None
                         else {}
                     ),
                     "final_candidates": (
@@ -1840,6 +2027,200 @@ def run_qasper_evidence_selection_ablation(
     )
 
 
+def run_qasper_adaptive_retrieval_ablation(
+    dataset: QasperDataset,
+    *,
+    root: str | Path | None = None,
+    mode: str = "smoke",
+    limit: int | None = None,
+    seed: int = 42,
+    config: RagConfig | None = None,
+    variants: Sequence[str] = (
+        "one_shot",
+        "multi_query",
+        "evidence_gated",
+        "requirement_aware",
+    ),
+    embedding_provider: EmbeddingProvider | None = None,
+    reranker: Any | None = None,
+    answerer: QasperAnswerer | None = None,
+    query_planner: Any | None = None,
+    suite_id: str | None = None,
+) -> QasperAdaptiveRetrievalSuiteResult:
+    """Compare one-shot, multi-query, gate, and requirement-aware retrieval."""
+
+    normalized_mode = mode.strip().casefold()
+    if normalized_mode not in RUN_LIMITS:
+        raise ValueError(f"mode must be one of: {', '.join(RUN_LIMITS)}")
+    selected_limit = RUN_LIMITS[normalized_mode] if limit is None else limit
+    if selected_limit is not None and selected_limit <= 0:
+        raise ValueError("limit must be positive")
+    selected_variants = [str(value).strip().casefold() for value in variants]
+    allowed_variants = {
+        "one_shot",
+        "multi_query",
+        "evidence_gated",
+        "requirement_aware",
+    }
+    if not selected_variants:
+        raise ValueError("at least one adaptive-retrieval variant is required")
+    if any(value not in allowed_variants for value in selected_variants):
+        raise ValueError(
+            "adaptive-retrieval variants must be one_shot, multi_query, evidence_gated, or requirement_aware"
+        )
+    if len(set(selected_variants)) != len(selected_variants):
+        raise ValueError("adaptive-retrieval variants must be unique")
+    if query_planner is None and set(selected_variants).intersection(
+        {"multi_query", "evidence_gated"}
+    ):
+        raise ValueError(
+            "a query_planner is required for multi_query and evidence_gated variants"
+        )
+
+    benchmark_directory = benchmark_root(root)
+    source_config = (config or RagConfig()).model_copy(deep=True)
+    model_manager: ModelManager | None = None
+    if embedding_provider is None or reranker is None:
+        model_manager = ModelManager()
+    shared_embedding = embedding_provider or create_embedding_provider(
+        source_config.embedding,
+        model_manager=model_manager,
+    )
+    shared_reranker = reranker or Qwen3RerankerProvider(
+        source_config.reranker,
+        model_manager=model_manager,
+    )
+    selected_suite_id = suite_id or _new_run_id(
+        dataset.split,
+        f"adaptive-retrieval-{normalized_mode}",
+    )
+    if not _RUN_ID.fullmatch(selected_suite_id):
+        raise ValueError("suite_id may contain only letters, digits, dots, underscores, and hyphens")
+    suite_directory = benchmark_directory / "adaptive_retrieval" / selected_suite_id
+    suite_directory.mkdir(parents=True, exist_ok=False)
+    manifest_path = suite_directory / "manifest.json"
+    comparison_path = suite_directory / "comparison.json"
+    suite_manifest: dict[str, Any] = {
+        "manifest_version": 1,
+        "suite_id": selected_suite_id,
+        "dataset": "qasper",
+        "dataset_version": dataset.dataset_version,
+        "split": dataset.split,
+        "mode": normalized_mode,
+        "limit": selected_limit,
+        "seed": seed,
+        "index_rebuild": False,
+        "status": "running",
+        "variants": selected_variants,
+        "query_planner": type(query_planner).__name__ if query_planner else None,
+        "requirement_max_retrieval_rounds": 3,
+        "completed_runs": [],
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    atomic_write_json(manifest_path, suite_manifest)
+
+    comparison_rows: list[dict[str, Any]] = []
+    try:
+        for variant_id in selected_variants:
+            run_id = f"{selected_suite_id[:100]}-ar-{variant_id.replace('_', '-')}"
+            result = run_qasper_benchmark(
+                dataset,
+                root=benchmark_directory,
+                mode=normalized_mode,
+                limit=selected_limit,
+                seed=seed,
+                config=source_config,
+                embedding_provider=shared_embedding,
+                reranker=shared_reranker,
+                answerer=answerer,
+                query_planner=query_planner,
+                adaptive_variant=variant_id,
+                run_id=run_id,
+                rebuild_index=False,
+            )
+            from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
+
+            metrics = evaluate_qasper_run(result.run_directory, root=benchmark_directory)
+            run_manifest = read_json(result.manifest_path) or {}
+            row = {
+                "variant_id": variant_id,
+                "name": _adaptive_ablation_variant(variant_id).name,
+                "run_id": result.run_id,
+                "run_directory": str(result.run_directory),
+                "run_status": result.run_status,
+                "error_count": result.error_count,
+                "index_cache_hit": bool(run_manifest.get("index", {}).get("cache_hit")),
+                "paragraph_evidence": metrics["paragraph_evidence"],
+                "official_qasper": metrics["official_qasper"],
+                "performance_ms": metrics["performance_ms"],
+                "context_metrics": metrics.get("context_metrics", {}),
+                "adaptive_retrieval": metrics.get("adaptive_retrieval", {}),
+                "evidence_gate_evaluation": metrics.get("evidence_gate_evaluation", {}),
+                "evidence_requirement_evaluation": metrics.get(
+                    "evidence_requirement_evaluation", {}
+                ),
+            }
+            comparison_rows.append(row)
+            suite_manifest["completed_runs"].append(
+                {
+                    "variant_id": variant_id,
+                    "run_id": result.run_id,
+                    "run_status": result.run_status,
+                    "index_cache_hit": row["index_cache_hit"],
+                }
+            )
+            atomic_write_json(manifest_path, suite_manifest)
+
+        comparison = {
+            "metric_version": 1,
+            "suite_id": selected_suite_id,
+            "variant_count": len(comparison_rows),
+            "definition": {
+                "index_rebuild": False,
+                "shared_index_fingerprint": "all variants use identical corpus, chunking, and embedding configuration",
+                "one_shot": "one hybrid Dense + BM25 + RRF retrieval followed by reranking",
+                "multi_query": "bounded Query Planner rewrite and subqueries, fused through the existing retrieval merge",
+                "evidence_gated": "multi-query retrieval with the existing evidence gate controlling bounded re-retrieval",
+                "requirement_aware": "infer lightweight evidence requirements, assess lexical coverage, and re-retrieve only the first uncovered requirement for up to three total rounds",
+                "requirement_coverage": "heuristic runtime coverage is reported separately from QASPER gold evidence recall",
+            },
+            "variants": comparison_rows,
+        }
+        atomic_write_json(comparison_path, comparison)
+        suite_status = (
+            "complete"
+            if all(row["run_status"] == "complete" for row in comparison_rows)
+            else "partial"
+        )
+        suite_manifest.update(
+            {
+                "status": suite_status,
+                "completed_at": datetime.now(UTC).isoformat(),
+                "comparison_path": str(comparison_path),
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+    except BaseException as exc:
+        suite_manifest.update(
+            {
+                "status": "failed",
+                "completed_at": datetime.now(UTC).isoformat(),
+                "error": str(exc) or exc.__class__.__name__,
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+        raise
+
+    return QasperAdaptiveRetrievalSuiteResult(
+        suite_id=selected_suite_id,
+        suite_directory=suite_directory,
+        manifest_path=manifest_path,
+        comparison_path=comparison_path,
+        variant_count=len(comparison_rows),
+        status=suite_manifest["status"],
+    )
+
+
 def run_qasper_raptor_ablation(
     dataset: QasperDataset,
     *,
@@ -2090,12 +2471,14 @@ __all__ = [
     "RUN_LIMITS",
     "GroundedQasperAnswerer",
     "QasperAblationSuiteResult",
+    "QasperAdaptiveRetrievalSuiteResult",
     "QasperAnswerer",
     "QasperBenchmarkRunResult",
     "QasperEvidenceSelectionSuiteResult",
     "QasperGeneratedAnswer",
     "QasperRaptorAblationSuiteResult",
     "run_qasper_ablation",
+    "run_qasper_adaptive_retrieval_ablation",
     "run_qasper_benchmark",
     "run_qasper_evidence_selection_ablation",
     "run_qasper_raptor_ablation",

@@ -106,6 +106,22 @@ the source chunk. Run results retain source chunk IDs, offsets, paragraph IDs,
 extraction/scoring latency, context token counts, official QASPER Answer and
 Evidence F1, and unsupported claim rate when answer generation is enabled.
 
+Run the Phase 9 adaptive-retrieval comparison:
+
+```powershell
+python scripts/run_qasper_adaptive_retrieval_ablation.py --mode smoke --retrieval-only
+python scripts/run_qasper_adaptive_retrieval_ablation.py --mode dev --seed 42
+```
+
+The suite compares one-shot hybrid retrieval, Query Planner multi-query,
+evidence-gated re-retrieval, and requirement-aware re-retrieval on one index.
+The requirement-aware variant infers lightweight `EvidenceRequirement` records
+from question cues, marks each as covered or missing from retrieved text and
+section labels, then spends at most three retrieval rounds targeting uncovered
+requirements. Its runtime coverage heuristic is reported separately from
+gold-labeled QASPER evidence recall. The multi-query and evidence-gated variants
+use the configured AITrans Query Planner.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it

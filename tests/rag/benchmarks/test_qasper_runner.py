@@ -9,6 +9,7 @@ from backend.rag.benchmarks.qasper.runner import (
     GroundedQasperAnswerer,
     QasperGeneratedAnswer,
     run_qasper_ablation,
+    run_qasper_adaptive_retrieval_ablation,
     run_qasper_benchmark,
     run_qasper_evidence_selection_ablation,
     run_qasper_raptor_ablation,
@@ -509,6 +510,98 @@ def test_qasper_evidence_selection_suite(tmp_path) -> None:
     ]
     assert paragraph_candidates
     assert all(candidate["text"] in paragraph for candidate in paragraph_candidates)
+
+
+def test_qasper_adaptive_retrieval_suite_tracks_missing_requirements(tmp_path) -> None:
+    path = tmp_path / "adaptive-retrieval-sample.json"
+    path.write_text(
+        json.dumps(
+            {
+                "paper-a": {
+                    "title": "Adaptive retrieval paper",
+                    "abstract": "A short abstract for the fixture.",
+                    "full_text": [
+                        {
+                            "section_name": "Discussion",
+                            "paragraphs": [
+                                "This passage provides a brief scientific description."
+                            ],
+                        }
+                    ],
+                    "qas": [
+                        {
+                            "question_id": "q-adaptive",
+                            "question": "How does the method improve accuracy on the dataset?",
+                            "answers": [
+                                {
+                                    "annotation_id": "a-adaptive",
+                                    "answer": {
+                                        "free_form_answer": "The question is not addressed."
+                                    },
+                                    "evidence": [
+                                        "This passage provides a brief scientific description."
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    dataset = load_qasper(path)
+    embedding = _FakeEmbedding()
+    config = RagConfig(
+        embedding=RagEmbeddingConfig(
+            model=embedding.model_name,
+            dimension=embedding.dimension,
+        )
+    )
+    result = run_qasper_adaptive_retrieval_ablation(
+        dataset,
+        root=tmp_path / "adaptive",
+        mode="full",
+        config=config,
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        answerer=_FakeAnswerer(),
+        query_planner=_FakeQueryPlanner(),
+        suite_id="test-adaptive-retrieval",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    rows = {row["variant_id"]: row for row in comparison["variants"]}
+    requirement_metrics = rows["requirement_aware"][
+        "evidence_requirement_evaluation"
+    ]
+
+    assert result.status == "complete"
+    assert result.variant_count == 4
+    assert manifest["completed_runs"][0]["index_cache_hit"] is False
+    assert all(run["index_cache_hit"] for run in manifest["completed_runs"][1:])
+    assert requirement_metrics["evaluated_questions"] == 1
+    assert requirement_metrics["requirement_count"] == 3
+    assert requirement_metrics["covered_requirement_count"] == 0
+    assert requirement_metrics["Re-retrieval Case Rate"] == 1.0
+    assert requirement_metrics["Mean Retrieval Rounds"] == 3.0
+
+    run_directory = Path(rows["requirement_aware"]["run_directory"])
+    trace = json.loads(
+        (run_directory / "retrieval_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    assert trace["adaptive_variant"] == "requirement_aware"
+    assert trace["second_round"] is True
+    assert len(trace["retrieval_rounds"]) == 3
+    assert {item["type"] for item in trace["evidence_requirements"]} == {
+        "method",
+        "result",
+        "data",
+    }
+    assert all(item["status"] == "missing" for item in trace["evidence_requirements"])
 
 
 def test_question_sampling_is_reproducible_and_keeps_only_used_papers(tmp_path) -> None:

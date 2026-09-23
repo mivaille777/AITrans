@@ -322,6 +322,12 @@ def evaluate_qasper_run(
     evidence_extractor_invocations = 0
     assessed_claims = 0
     unsupported_claims = 0
+    requirement_cases = 0
+    requirement_reretrieval_cases = 0
+    requirement_round_counts: list[float] = []
+    requirement_total = 0
+    requirement_covered = 0
+    requirement_counts_by_type: dict[str, dict[str, int]] = {}
 
     for question_id, qrel in qrel_by_id.items():
         prediction = prediction_by_id.get(question_id, {})
@@ -388,6 +394,38 @@ def evaluate_qasper_run(
             "relevant_chunk_count": len(relevant_union),
             "gold_paragraph_count_by_annotator": [len(item) for item in paragraph_sets],
         }
+        requirement_records = trace.get("evidence_requirements", [])
+        if (
+            trace.get("adaptive_variant") == "requirement_aware"
+            and isinstance(requirement_records, list)
+        ):
+            valid_requirements = [
+                item for item in requirement_records if isinstance(item, dict)
+            ]
+            requirement_cases += 1
+            requirement_reretrieval_cases += int(
+                bool(trace.get("second_round"))
+            )
+            requirement_round_counts.append(float(len(retrieval_rounds) or 1))
+            requirement_total += len(valid_requirements)
+            requirement_covered += sum(
+                item.get("status") == "covered" for item in valid_requirements
+            )
+            for requirement in valid_requirements:
+                requirement_type = str(requirement.get("type", "unknown"))
+                totals = requirement_counts_by_type.setdefault(
+                    requirement_type,
+                    {"total": 0, "covered": 0},
+                )
+                totals["total"] += 1
+                totals["covered"] += int(requirement.get("status") == "covered")
+            case_metrics["evidence_requirements"] = valid_requirements
+            case_metrics["requirement_coverage"] = (
+                sum(item.get("status") == "covered" for item in valid_requirements)
+                / len(valid_requirements)
+                if valid_requirements
+                else 0.0
+            )
         raptor_category = str(trace.get("raptor_category", "") or "")
         if raptor_category:
             case_metrics["raptor_category"] = raptor_category
@@ -749,6 +787,35 @@ def evaluate_qasper_run(
                 gate_sufficiency_predictions,
                 gate_sufficiency_labels,
             ),
+        },
+        "evidence_requirement_evaluation": {
+            "evaluated_questions": requirement_cases,
+            "requirement_count": requirement_total,
+            "covered_requirement_count": requirement_covered,
+            "missing_requirement_count": requirement_total - requirement_covered,
+            "Requirement Coverage": (
+                requirement_covered / requirement_total if requirement_total else None
+            ),
+            "Re-retrieval Case Rate": (
+                requirement_reretrieval_cases / requirement_cases
+                if requirement_cases
+                else None
+            ),
+            "Mean Retrieval Rounds": _mean(requirement_round_counts)
+            if requirement_round_counts
+            else None,
+            "by_type": {
+                name: {
+                    **counts,
+                    "coverage": (
+                        counts["covered"] / counts["total"]
+                        if counts["total"]
+                        else None
+                    ),
+                }
+                for name, counts in sorted(requirement_counts_by_type.items())
+            },
+            "definition": "requirement coverage is a runtime lexical evidence heuristic, separate from QASPER gold evidence recall",
         },
         "adaptive_metrics": {
             "routing_cases": routing_cases,
