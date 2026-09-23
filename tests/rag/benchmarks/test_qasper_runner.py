@@ -263,8 +263,16 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     assert unanswerable_trace["final_candidates"]
     assert all(qrel["expected_retrieval"] for qrel in qrels)
     assert all(qrel["gold_evidence_paragraph_ids"] for qrel in qrels[:2])
+    assert all("gold_evidence_section_indices" in qrel for qrel in qrels)
     assert qrels[2]["gold_evidence_paragraph_ids"] == []
     assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["answer_count"] == 3
+
+    for trace, latency in zip(traces, (1.0, 2.0, 100.0), strict=True):
+        trace["latency_ms"] = latency
+    result.retrieval_trace_path.write_text(
+        "".join(json.dumps(trace, separators=(",", ":")) + "\n" for trace in traces),
+        encoding="utf-8",
+    )
 
     metrics = evaluate_qasper_run(result.run_directory, root=tmp_path / "benchmark")
     assert metrics["question_count"] == 3
@@ -275,9 +283,25 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     assert 0 <= metrics["official_qasper"]["text_evidence_only"]["Evidence F1"] <= 1
     assert metrics["paragraph_evidence"]["evaluated_cases"] == 2
     assert metrics["paragraph_evidence"]["Gold Evidence Recall@20"] > 0
-    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["metric_version"] == 3
+    assert json.loads(result.metrics_path.read_text(encoding="utf-8"))["metric_version"] == 4
     assert metrics["evidence_gate_evaluation"]["evaluated_decisions"] == 0
     assert metrics["evidence_gate_evaluation"]["excluded_no_gold_evidence_cases"] == 0
+    assert all("official_answer_f1" in item for item in metrics["per_question"])
+    assert all("official_evidence_f1" in item for item in metrics["per_question"])
+    assert all(isinstance(item["error_types"], list) for item in metrics["per_question"])
+    unanswerable_metrics = next(item for item in metrics["per_question"] if item["question_id"] == "q-c")
+    assert "latency_outlier" in unanswerable_metrics["error_types"]
+    assert set(metrics["error_taxonomy"]["counts"]) == {
+        "retrieval_miss",
+        "rerank_drop",
+        "wrong_section",
+        "evidence_incomplete",
+        "premature_stop",
+        "unnecessary_retrieval",
+        "answer_unsupported",
+        "unanswerable_failure",
+        "latency_outlier",
+    }
 
 
 def test_gate_sufficiency_metrics_compare_predictions_with_qasper_gold() -> None:
@@ -295,6 +319,75 @@ def test_gate_sufficiency_metrics_compare_predictions_with_qasper_gold() -> None
     assert metrics["Sufficiency Precision"] == 0.5
     assert metrics["Sufficiency Recall"] == 0.5
     assert metrics["Sufficiency F1"] == 0.5
+
+
+def test_qasper_error_taxonomy_identifies_retrieval_and_answer_failures() -> None:
+    from backend.rag.benchmarks.qasper.evaluator import _classify_error_types
+
+    qrel = {
+        "no_answer": False,
+        "answers": [{"evidence_paragraph_ids": ["gold-p1"]}],
+        "gold_evidence_section_indices": [2],
+    }
+    prediction = {
+        "answer": "unsupported answer",
+        "answer_generation": {"metadata": {"unsupported_claim_count": 1}},
+    }
+    trace = {
+        "pre_rerank_candidates": [{"source_paragraph_ids": ["gold-p1"]}],
+        "final_candidates": [
+            {"source_paragraph_ids": ["wrong-p1"], "source_section_indices": [5]}
+        ],
+        "retrieval_rounds": [
+            {
+                "candidate_chunk_ids": ["chunk-1"],
+                "new_chunk_count": 1,
+                "context_evidence_paragraph_ids": [],
+                "gate": {"action": "stop"},
+            },
+            {
+                "candidate_chunk_ids": ["chunk-1"],
+                "new_chunk_count": 0,
+                "context_evidence_paragraph_ids": [],
+            },
+        ],
+    }
+
+    errors = _classify_error_types(
+        qrel,
+        prediction,
+        trace,
+        {"gold_evidence_recall_at_10": 0.0, "evidence_f1_at_10": 0.0},
+    )
+
+    assert errors == [
+        "retrieval_miss",
+        "rerank_drop",
+        "wrong_section",
+        "premature_stop",
+        "unnecessary_retrieval",
+        "answer_unsupported",
+    ]
+
+    partial = _classify_error_types(
+        {
+            "no_answer": False,
+            "answers": [{"evidence_paragraph_ids": ["p1", "p2"]}],
+            "gold_evidence_section_indices": [2],
+        },
+        {},
+        {"final_candidates": [{"source_paragraph_ids": ["p1"], "source_section_indices": [2]}]},
+        {"gold_evidence_recall_at_10": 0.5, "evidence_f1_at_10": 0.5},
+    )
+    assert partial == ["evidence_incomplete"]
+
+    unanswerable = _classify_error_types(
+        {"no_answer": True, "answers": []},
+        {"answer": "Yes", "answer_generation": {"provider": "test"}},
+        {},
+        {},
+    )
+    assert unanswerable == ["unanswerable_failure"]
 
 
 def test_official_qasper_text_evidence_metric_excludes_float_evidence() -> None:

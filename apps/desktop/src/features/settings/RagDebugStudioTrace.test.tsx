@@ -73,6 +73,7 @@ vi.mock("../../api/rag-debug", () => {
   return {
     activateRagDebugConfig: vi.fn(),
     cancelRagDebugRun: vi.fn(),
+    compareQasperDebugRuns: vi.fn().mockResolvedValue({ baseline_run_id: "baseline", candidate_run_id: "candidate", paired_question_count: 2, seed: 42, resamples: 5000, metrics: { "Answer F1": { paired_count: 2, baseline_mean: 0.2, candidate_mean: 0.5, delta: 0.3, ci_95: { lower: 0.1, upper: 0.5 } }, "Evidence F1": { paired_count: 2, baseline_mean: 0.2, candidate_mean: 0.4, delta: 0.2, ci_95: { lower: 0.1, upper: 0.3 } }, "Recall@10": { paired_count: 2, baseline_mean: 0.2, candidate_mean: 0.4, delta: 0.2, ci_95: { lower: 0.1, upper: 0.3 } }, MRR: { paired_count: 2, baseline_mean: 0.2, candidate_mean: 0.4, delta: 0.2, ci_95: { lower: 0.1, upper: 0.3 } } } }),
     compareRagDebugDataset: vi.fn().mockResolvedValue({ dataset_id: dataset.dataset_id, baseline_config_id: "default", candidate_config_id: "default", cases: [{ case_id: evaluationCase.case_id, query: evaluationCase.query, baseline_rank: 1, candidate_rank: 1, baseline_latency_ms: 1, candidate_latency_ms: 1, baseline_chunk_ids: ["chunk-a"], candidate_chunk_ids: ["chunk-a"] }], metrics: {} }),
     createRagDebugConfig: vi.fn(),
     createRagDebugDataset: vi.fn(),
@@ -141,7 +142,7 @@ vi.mock("../../desktop", () => ({
 
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
 import { addKnowledgeDocument, deleteKnowledgeDocument, reindexKnowledgeDocument } from "../../api/knowledge"
-import { getQasperDebugCase, listQasperDebugCases, listQasperDebugRuns, listRagDebugChunks, startQasperDebugRun, startRagDebugRun } from "../../api/rag-debug"
+import { compareQasperDebugRuns, getQasperDebugCase, listQasperDebugCases, listQasperDebugRuns, listRagDebugChunks, startQasperDebugRun, startRagDebugRun } from "../../api/rag-debug"
 import { desktop } from "../../desktop"
 
 afterEach(() => {
@@ -199,11 +200,15 @@ describe("RagDebugStudio", () => {
       qrel: {},
       prediction: { answer: "", predicted_evidence: ["reported evidence"], predicted_evidence_paragraph_ids: ["paragraph-1"] },
       trace: { question_id: "q1", latency_ms: 9, final_candidates: [], stages: {}, retrieval_rounds: [{ round: 1, query: "What result did the authors report?", gate: { action: "stop", reason_codes: ["evidence_sufficient"] } }] },
-      metrics: { gold_evidence_recall_at_10: 1, "Answer F1": 0, "Evidence F1": 1 },
+      error_types: ["retrieval_miss"],
+      metrics: { gold_evidence_recall_at_10: 1, "Answer F1": 0, "Evidence F1": 1, error_types: ["retrieval_miss"] },
     }
     vi.mocked(listQasperDebugRuns).mockResolvedValueOnce([run])
-    vi.mocked(listQasperDebugCases).mockResolvedValueOnce([{ question_id: "q1", paper_id: "paper-1", question: qasperCase.question, no_answer: false, gold_paragraph_ids: ["paragraph-1"] }])
-    vi.mocked(getQasperDebugCase).mockResolvedValueOnce(qasperCase)
+    vi.mocked(listQasperDebugCases).mockResolvedValueOnce([
+      { question_id: "q1", paper_id: "paper-1", question: qasperCase.question, no_answer: false, gold_paragraph_ids: ["paragraph-1"], error_types: ["retrieval_miss"] },
+      { question_id: "q2", paper_id: "paper-1", question: "A question without this error", no_answer: false, gold_paragraph_ids: [], error_types: [] },
+    ])
+    vi.mocked(getQasperDebugCase).mockResolvedValue(qasperCase)
     render(<RagDebugStudioTrace />)
 
     fireEvent.click(screen.getByRole("button", { name: "Datasets" }))
@@ -213,6 +218,31 @@ describe("RagDebugStudio", () => {
     expect(await screen.findByText("QASPER gold evidence trace")).toBeTruthy()
     expect(screen.getByText("Gold hit · 1/1")).toBeTruthy()
     expect(screen.getByText(/evidence_sufficient/)).toBeTruthy()
+    expect(screen.getAllByText("retrieval_miss").length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole("button", { name: "Datasets" }))
+    const errorFilter = screen.getByLabelText("Error category") as HTMLSelectElement
+    fireEvent.change(errorFilter, { target: { value: "retrieval_miss" } })
+    const questionSelect = screen.getByLabelText("Question Trace") as HTMLSelectElement
+    await waitFor(() => expect([...questionSelect.options].map((option) => option.value)).toEqual(["", "q1"]))
+    fireEvent.change(errorFilter, { target: { value: "all" } })
+    await waitFor(() => expect([...questionSelect.options].map((option) => option.value)).toEqual(["", "q1", "q2"]))
+  })
+
+  it("shows paired bootstrap confidence intervals for two QASPER runs", async () => {
+    const runs = [
+      { run_id: "baseline", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "CURRENT", question_count: 2, error: "", started_at: "", completed_at: "", metrics: {} },
+      { run_id: "candidate", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "B2", question_count: 2, error: "", started_at: "", completed_at: "", metrics: {} },
+    ]
+    vi.mocked(listQasperDebugRuns).mockResolvedValueOnce(runs)
+    render(<RagDebugStudioTrace />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Compare" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Run paired bootstrap" }))
+
+    await waitFor(() => expect(compareQasperDebugRuns).toHaveBeenCalledWith({ baseline_run_id: "baseline", candidate_run_id: "candidate", seed: 42, resamples: 5000 }))
+    expect(await screen.findByText(/Paired bootstrap · 2 matched questions/)).toBeTruthy()
+    expect(screen.getByText("[10.0%, 50.0%]")).toBeTruthy()
   })
 
   it("opens the retrieval trace tab before a run", () => {

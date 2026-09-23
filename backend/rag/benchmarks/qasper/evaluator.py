@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -136,6 +138,139 @@ def _gold_sufficient(
         bool(gold) and gold.issubset(context_paragraph_ids)
         for gold in references
     )
+
+
+def _is_unanswerable_answer(answer: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", answer).casefold().strip()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+    return normalized in {
+        "unanswerable",
+        "no answer",
+        "not answerable",
+        "cannot be answered",
+        "insufficient information",
+        "unknown",
+    }
+
+
+def _classify_error_types(
+    qrel: dict[str, Any],
+    prediction: dict[str, Any],
+    trace: dict[str, Any],
+    case_metrics: dict[str, Any],
+) -> list[str]:
+    error_types: list[str] = []
+    paragraph_sets = _gold_paragraph_sets(qrel)
+    gold_paragraph_ids = set().union(*paragraph_sets) if paragraph_sets else set()
+    final_candidates = trace.get("final_candidates", [])
+    if not isinstance(final_candidates, list):
+        final_candidates = []
+    top_candidates = [item for item in final_candidates[:10] if isinstance(item, dict)]
+    retrieved_paragraph_ids = _top_candidate_paragraphs(top_candidates, limit=10)
+
+    if paragraph_sets and not retrieved_paragraph_ids.intersection(gold_paragraph_ids):
+        error_types.append("retrieval_miss")
+
+    pre_candidates = trace.get("pre_rerank_candidates", [])
+    if isinstance(pre_candidates, list):
+        pre_rerank_paragraph_ids = {
+            str(paragraph_id)
+            for item in pre_candidates
+            if isinstance(item, dict)
+            for paragraph_id in item.get("source_paragraph_ids", [])
+            if str(paragraph_id)
+        }
+    else:
+        pre_rerank_paragraph_ids = set()
+    if (
+        paragraph_sets
+        and pre_rerank_paragraph_ids.intersection(gold_paragraph_ids)
+        and not retrieved_paragraph_ids.intersection(gold_paragraph_ids)
+    ):
+        error_types.append("rerank_drop")
+
+    gold_section_indices = {
+        int(value)
+        for value in qrel.get("gold_evidence_section_indices", [])
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+    retrieved_section_indices = {
+        int(value)
+        for candidate in top_candidates
+        for value in candidate.get("source_section_indices", [])
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+    if (
+        paragraph_sets
+        and gold_section_indices
+        and retrieved_section_indices
+        and not retrieved_paragraph_ids.intersection(gold_paragraph_ids)
+        and not retrieved_section_indices.intersection(gold_section_indices)
+    ):
+        error_types.append("wrong_section")
+
+    recall_at_10 = float(case_metrics.get("gold_evidence_recall_at_10", 0.0) or 0.0)
+    evidence_f1_at_10 = float(case_metrics.get("evidence_f1_at_10", 0.0) or 0.0)
+    if paragraph_sets and (
+        0 < recall_at_10 < 1 or 0 < evidence_f1_at_10 < 1
+    ):
+        error_types.append("evidence_incomplete")
+
+    rounds = trace.get("retrieval_rounds", [])
+    if not isinstance(rounds, list):
+        rounds = []
+    if paragraph_sets:
+        for round_record in rounds:
+            if not isinstance(round_record, dict):
+                continue
+            gate = round_record.get("gate", {})
+            context_ids = {
+                str(value)
+                for value in round_record.get("context_evidence_paragraph_ids", [])
+                if str(value)
+            }
+            if (
+                isinstance(gate, dict)
+                and gate.get("action") == "stop"
+                and not _gold_sufficient(context_ids, paragraph_sets)
+            ):
+                error_types.append("premature_stop")
+                break
+
+    if len(rounds) > 1:
+        seen_chunk_ids: set[str] = set()
+        no_novel_candidates: list[bool] = []
+        for round_record in rounds:
+            if not isinstance(round_record, dict):
+                continue
+            candidate_chunk_ids = {
+                str(value)
+                for value in round_record.get("candidate_chunk_ids", [])
+                if str(value)
+            }
+            declared_new_count = round_record.get("new_chunk_count")
+            if isinstance(declared_new_count, int) and not isinstance(declared_new_count, bool):
+                novel_count = declared_new_count
+            else:
+                novel_count = len(candidate_chunk_ids.difference(seen_chunk_ids))
+            no_novel_candidates.append(novel_count == 0)
+            seen_chunk_ids.update(candidate_chunk_ids)
+        if len(no_novel_candidates) > 1 and all(no_novel_candidates[1:]):
+            error_types.append("unnecessary_retrieval")
+
+    generation = prediction.get("answer_generation", {})
+    if isinstance(generation, dict):
+        metadata = generation.get("metadata", {})
+        if isinstance(metadata, dict) and int(metadata.get("unsupported_claim_count", 0) or 0) > 0:
+            error_types.append("answer_unsupported")
+    if (
+        qrel.get("no_answer")
+        and isinstance(generation, dict)
+        and generation
+        and not _is_unanswerable_answer(str(prediction.get("answer", "")))
+    ):
+        error_types.append("unanswerable_failure")
+    return list(dict.fromkeys(error_types))
 
 
 def _binary_sufficiency_metrics(
@@ -527,6 +662,17 @@ def evaluate_qasper_run(
             eligible_paragraph_cases += 1
         case_metrics["gold_evidence_mrr"] = evidence_mrr_value
         case_metrics["context_evidence_coverage"] = context_recall
+        case_prediction = prediction_by_id.get(
+            question_id,
+            {"question_id": question_id, "answer": "", "predicted_evidence": []},
+        )
+        official_case = _official_qasper_metrics(
+            [qrel],
+            [case_prediction],
+            text_evidence_only=False,
+        )
+        case_metrics["official_answer_f1"] = official_case["Answer F1"]
+        case_metrics["official_evidence_f1"] = official_case["Evidence F1"]
         per_question.append(case_metrics)
 
         latency = float(trace.get("latency_ms", 0.0) or 0.0)
@@ -672,7 +818,7 @@ def evaluate_qasper_run(
     )
     retrieval_count = len(qrel_by_id)
     metrics: dict[str, Any] = {
-        "metric_version": 3,
+        "metric_version": 4,
         "run_id": manifest.get("run_id", run_path.name),
         "dataset": manifest.get("dataset", "qasper"),
         "split": manifest.get("split", ""),
@@ -861,6 +1007,37 @@ def evaluate_qasper_run(
             "extractor_invocations": evidence_extractor_invocations,
         },
         "per_question": per_question,
+    }
+    error_counts = {
+        "retrieval_miss": 0,
+        "rerank_drop": 0,
+        "wrong_section": 0,
+        "evidence_incomplete": 0,
+        "premature_stop": 0,
+        "unnecessary_retrieval": 0,
+        "answer_unsupported": 0,
+        "unanswerable_failure": 0,
+        "latency_outlier": 0,
+    }
+    latency_p95 = float(metrics["performance_ms"]["total_rag_ms"]["p95"])
+    for case_metrics in per_question:
+        question_id = str(case_metrics["question_id"])
+        error_types = _classify_error_types(
+            qrel_by_id[question_id],
+            prediction_by_id.get(question_id, {}),
+            trace_by_id.get(question_id, {}),
+            case_metrics,
+        )
+        trace_latency = float(trace_by_id.get(question_id, {}).get("latency_ms", 0.0) or 0.0)
+        if component_latencies["total_rag_ms"] and trace_latency > latency_p95:
+            error_types.append("latency_outlier")
+        case_metrics["error_types"] = list(dict.fromkeys(error_types))
+        for error_type in case_metrics["error_types"]:
+            error_counts[error_type] += 1
+    metrics["error_taxonomy"] = {
+        "question_count": retrieval_count,
+        "counts": error_counts,
+        "multi_label": True,
     }
     tagged_raptor_questions = {
         str(item["question_id"]): str(item["raptor_category"])

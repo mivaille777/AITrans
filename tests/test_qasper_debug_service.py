@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.models.rag_debug import QasperDebugRunRequest
+from backend.models.rag_debug import QasperDebugCompareRequest, QasperDebugRunRequest
 from backend.rag.config import RagConfig
 from backend.services import qasper_debug_service as service
 
@@ -85,7 +85,7 @@ def test_qasper_debug_case_exposes_gold_mapping_and_official_scores(
         ],
     )
     (run_dir / "metrics.json").write_text(
-        json.dumps({"per_question": [{"question_id": "question-1", "gold_evidence_recall_at_10": 1.0}]}),
+        json.dumps({"per_question": [{"question_id": "question-1", "gold_evidence_recall_at_10": 1.0, "error_types": ["answer_unsupported"]}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(service, "benchmark_root", lambda path=None: benchmark)
@@ -97,8 +97,54 @@ def test_qasper_debug_case_exposes_gold_mapping_and_official_scores(
     assert case.gold_paragraph_ids == ["paragraph-1"]
     assert case.metrics["Answer F1"] == 1.0
     assert case.metrics["Evidence F1"] == 1.0
+    assert case.metrics["error_types"] == ["answer_unsupported"]
+    assert case.error_types == ["answer_unsupported"]
     assert runs[0].status == "completed"
     assert runs[0].question_count == 1
+    assert service.list_qasper_debug_cases(run_id)[0].error_types == ["answer_unsupported"]
+
+
+def test_qasper_debug_comparison_pairs_matching_questions_and_bootstraps_deltas(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = tmp_path / "qasper"
+    for run_id, answer_scores in (
+        ("debug-qasper-validation-baseline", [0.0, 0.5]),
+        ("debug-qasper-validation-candidate", [0.5, 1.0]),
+    ):
+        run_dir = benchmark / "results" / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "manifest.json").write_text(
+            json.dumps({"run_id": run_id, "status": "complete", "split": "validation", "question_count": 2}),
+            encoding="utf-8",
+        )
+        (run_dir / "metrics.json").write_text(
+            json.dumps(
+                {
+                    "per_question": [
+                        {"question_id": f"q{index}", "official_answer_f1": score, "official_evidence_f1": score, "gold_evidence_recall_at_10": score, "MRR": score}
+                        for index, score in enumerate(answer_scores, 1)
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(service, "benchmark_root", lambda path=None: benchmark)
+
+    result = service.compare_qasper_debug_runs(
+        QasperDebugCompareRequest(
+            baseline_run_id="debug-qasper-validation-baseline",
+            candidate_run_id="debug-qasper-validation-candidate",
+            seed=42,
+            resamples=200,
+        )
+    )
+
+    assert result.paired_question_count == 2
+    assert result.metrics["Answer F1"]["baseline_mean"] == pytest.approx(0.25)
+    assert result.metrics["Answer F1"]["candidate_mean"] == pytest.approx(0.75)
+    assert result.metrics["Answer F1"]["delta"] == pytest.approx(0.5)
 
 
 def test_qasper_debug_only_allows_one_queued_or_running_job(

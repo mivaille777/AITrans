@@ -307,12 +307,29 @@ class QasperDebugRunSummary(RagDebugModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
 
 
+class QasperDebugCompareRequest(RagDebugModel):
+    baseline_run_id: str = Field(min_length=1, max_length=128)
+    candidate_run_id: str = Field(min_length=1, max_length=128)
+    seed: int = Field(default=42, ge=0, le=2_147_483_647)
+    resamples: int = Field(default=5000, ge=100, le=50_000)
+
+
+class QasperDebugCompareResponse(RagDebugModel):
+    baseline_run_id: str
+    candidate_run_id: str
+    paired_question_count: int = Field(ge=0)
+    seed: int
+    resamples: int
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
 class QasperDebugCaseIndex(RagDebugModel):
     question_id: str
     paper_id: str
     question: str
     no_answer: bool = False
     gold_paragraph_ids: list[str] = Field(default_factory=list)
+    error_types: list[str] = Field(default_factory=list)
 
 
 class QasperDebugCase(QasperDebugCaseIndex):
@@ -344,6 +361,8 @@ __all__ = [
     "QasperDebugCaseIndex",
     "QasperDebugChunk",
     "QasperDebugChunkPage",
+    "QasperDebugCompareRequest",
+    "QasperDebugCompareResponse",
     "QasperDebugRunRequest",
     "QasperDebugRunSummary",
     "RagDebugCandidate",

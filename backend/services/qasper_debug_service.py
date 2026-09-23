@@ -13,6 +13,8 @@ from backend.models.rag_debug import (
     QasperDebugCaseIndex,
     QasperDebugChunk,
     QasperDebugChunkPage,
+    QasperDebugCompareRequest,
+    QasperDebugCompareResponse,
     QasperDebugRunRequest,
     QasperDebugRunSummary,
 )
@@ -254,7 +256,14 @@ def _run_artifacts(run_id: str) -> tuple[Path, dict[str, Any], dict[str, dict[st
 
 
 def list_qasper_debug_cases(run_id: str) -> list[QasperDebugCaseIndex]:
-    _, _, qrels, _, _ = _run_artifacts(run_id)
+    run_path, _, qrels, _, _ = _run_artifacts(run_id)
+    metrics_payload = read_json(run_path / "metrics.json") or {}
+    per_question = metrics_payload.get("per_question", [])
+    error_types_by_question = {
+        str(item.get("question_id")): [str(value) for value in item.get("error_types", [])]
+        for item in per_question
+        if isinstance(item, dict) and isinstance(item.get("error_types", []), list)
+    } if isinstance(per_question, list) else {}
     return [
         QasperDebugCaseIndex(
             question_id=question_id,
@@ -262,6 +271,7 @@ def list_qasper_debug_cases(run_id: str) -> list[QasperDebugCaseIndex]:
             question=str(qrel.get("question", "")),
             no_answer=bool(qrel.get("no_answer", False)),
             gold_paragraph_ids=[str(value) for value in qrel.get("gold_evidence_paragraph_ids", []) if value],
+            error_types=error_types_by_question.get(question_id, []),
         )
         for question_id, qrel in qrels.items()
     ]
@@ -301,10 +311,53 @@ def get_qasper_debug_case(run_id: str, question_id: str) -> QasperDebugCase | No
         question=str(qrel.get("question", "")),
         no_answer=bool(qrel.get("no_answer", False)),
         gold_paragraph_ids=[str(value) for value in qrel.get("gold_evidence_paragraph_ids", []) if value],
+        error_types=[str(value) for value in case_metrics.get("error_types", []) if value],
         qrel=qrel,
         prediction=prediction,
         trace=trace,
         metrics={**case_metrics, **official_case},
+    )
+
+
+def compare_qasper_debug_runs(
+    request: QasperDebugCompareRequest,
+) -> QasperDebugCompareResponse:
+    run_summaries = {
+        run_id: get_qasper_debug_run(run_id)
+        for run_id in (request.baseline_run_id, request.candidate_run_id)
+    }
+    if any(summary is None for summary in run_summaries.values()):
+        raise KeyError("QASPER debug run not found")
+    baseline_summary = run_summaries[request.baseline_run_id]
+    candidate_summary = run_summaries[request.candidate_run_id]
+    if baseline_summary is None or candidate_summary is None:
+        raise KeyError("QASPER debug run not found")
+    if baseline_summary.status != "completed" or candidate_summary.status != "completed":
+        raise ValueError("both QASPER runs must be completed before comparison")
+    if baseline_summary.split != candidate_summary.split:
+        raise ValueError("paired comparison requires runs from the same dataset split")
+
+    baseline_metrics = read_json(_safe_run_path(request.baseline_run_id) / "metrics.json") or {}
+    candidate_metrics = read_json(_safe_run_path(request.candidate_run_id) / "metrics.json") or {}
+    baseline_cases = baseline_metrics.get("per_question", [])
+    candidate_cases = candidate_metrics.get("per_question", [])
+    if not isinstance(baseline_cases, list) or not isinstance(candidate_cases, list):
+        raise TypeError("QASPER run metrics do not contain per-question results")
+    from backend.rag.benchmarks.qasper.statistics import paired_bootstrap
+
+    paired = paired_bootstrap(
+        baseline_cases,
+        candidate_cases,
+        seed=request.seed,
+        resamples=request.resamples,
+    )
+    return QasperDebugCompareResponse(
+        baseline_run_id=request.baseline_run_id,
+        candidate_run_id=request.candidate_run_id,
+        paired_question_count=int(paired["paired_question_count"]),
+        seed=request.seed,
+        resamples=request.resamples,
+        metrics=paired["metrics"],
     )
 
 
@@ -364,6 +417,7 @@ def list_qasper_debug_chunks(
 
 
 __all__ = [
+    "compare_qasper_debug_runs",
     "get_qasper_debug_case",
     "get_qasper_debug_run",
     "list_qasper_debug_cases",

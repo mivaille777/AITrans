@@ -1188,6 +1188,15 @@ def run_qasper_benchmark(
         _answer_fields(question, alignment.by_question[question.question_id])
         for question in selected.questions
     ]
+    for question, qrel in zip(selected.questions, qrels_records, strict=True):
+        gold_paragraph_ids = set(qrel["gold_evidence_paragraph_ids"])
+        qrel["gold_evidence_section_indices"] = sorted(
+            {
+                paragraph.section_index
+                for paragraph in selected.papers[question.paper_id].paragraphs
+                if paragraph.paragraph_id in gold_paragraph_ids
+            }
+        )
     atomic_write_jsonl(qrels_path, qrels_records)
     source_config = (config or RagConfig()).model_copy(deep=True)
     config_digest = _config_hash(source_config)
@@ -1329,6 +1338,10 @@ def run_qasper_benchmark(
                 answer_info: dict[str, Any] = {}
                 query_error = ""
                 document_id = f"qasper:{selected.split}:{question.paper_id}"
+                paragraph_section_indices = {
+                    paragraph.paragraph_id: paragraph.section_index
+                    for paragraph in selected.papers[question.paper_id].paragraphs
+                }
                 raptor_category = (
                     _raptor_question_category(
                         question=question,
@@ -1604,6 +1617,15 @@ def run_qasper_benchmark(
                                 "source_paragraph_ids": _source_paragraph_ids(
                                     index.runtime.sparse_retriever.get_chunk(chunk_id)
                                 ),
+                                "source_section_indices": sorted(
+                                    {
+                                        paragraph_section_indices[paragraph_id]
+                                        for paragraph_id in _source_paragraph_ids(
+                                            index.runtime.sparse_retriever.get_chunk(chunk_id)
+                                        )
+                                        if paragraph_id in paragraph_section_indices
+                                    }
+                                ),
                             }
                             for chunk_id in retrieval_result.metadata.get(
                                 "pre_rerank_chunk_ids", []
@@ -1646,11 +1668,23 @@ def run_qasper_benchmark(
                         and retrieval_result is not None
                         else {}
                     ),
-                    "final_candidates": (
-                        [_candidate_trace(item) for item in retrieval_result.candidates]
-                        if retrieval_result is not None
-                        else []
-                    ),
+                    "final_candidates": [
+                        {
+                            **candidate_trace,
+                            "source_section_indices": sorted(
+                                {
+                                    paragraph_section_indices[paragraph_id]
+                                    for paragraph_id in candidate_trace["source_paragraph_ids"]
+                                    if paragraph_id in paragraph_section_indices
+                                }
+                            ),
+                        }
+                        for candidate_trace in (
+                            [_candidate_trace(item) for item in retrieval_result.candidates]
+                            if retrieval_result is not None
+                            else []
+                        )
+                    ],
                     "answer": predicted_answer,
                     "answer_generation": answer_info,
                     "error": query_error,

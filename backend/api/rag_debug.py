@@ -24,6 +24,8 @@ from backend.models.rag_debug import (
     QasperDebugCase,
     QasperDebugCaseIndex,
     QasperDebugChunkPage,
+    QasperDebugCompareRequest,
+    QasperDebugCompareResponse,
     QasperDebugRunRequest,
     QasperDebugRunSummary,
     RagDebugCase,
@@ -46,6 +48,7 @@ from backend.models.rag_debug import (
     RagDebugTraceResponse,
 )
 from backend.services.qasper_debug_service import (
+    compare_qasper_debug_runs,
     get_qasper_debug_case,
     get_qasper_debug_run,
     list_qasper_debug_cases,
@@ -427,6 +430,16 @@ def compare_dataset(
 @router.get("/qasper/runs", response_model=list[QasperDebugRunSummary])
 def list_qasper_runs() -> list[QasperDebugRunSummary]:
     return list_qasper_debug_runs()
+
+
+@router.post("/qasper/compare", response_model=QasperDebugCompareResponse)
+def compare_qasper_runs(payload: QasperDebugCompareRequest) -> QasperDebugCompareResponse:
+    try:
+        return compare_qasper_debug_runs(payload)
+    except KeyError as exc:
+        raise _not_found("QASPER debug run not found.") from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
 @router.post(

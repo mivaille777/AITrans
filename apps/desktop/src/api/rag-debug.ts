@@ -240,12 +240,28 @@ export interface QasperDebugRunSummary {
   metrics: Record<string, unknown>
 }
 
+export interface QasperDebugCompareResponse {
+  baseline_run_id: string
+  candidate_run_id: string
+  paired_question_count: number
+  seed: number
+  resamples: number
+  metrics: Record<string, {
+    paired_count: number
+    baseline_mean: number | null
+    candidate_mean: number | null
+    delta: number | null
+    ci_95: { lower: number; upper: number } | null
+  }>
+}
+
 export interface QasperDebugCaseIndex {
   question_id: string
   paper_id: string
   question: string
   no_answer: boolean
   gold_paragraph_ids: string[]
+  error_types: string[]
 }
 
 export interface QasperDebugCase extends QasperDebugCaseIndex {
@@ -386,6 +402,10 @@ export function compareRagDebugDataset(payload: { dataset_id: string; baseline_c
 
 export function listQasperDebugRuns(): Promise<QasperDebugRunSummary[]> {
   return apiGet(`${ROOT}/qasper/runs`)
+}
+
+export function compareQasperDebugRuns(payload: { baseline_run_id: string; candidate_run_id: string; seed?: number; resamples?: number }): Promise<QasperDebugCompareResponse> {
+  return apiPost(`${ROOT}/qasper/compare`, payload)
 }
 
 export function startQasperDebugRun(payload: { split: "train" | "validation"; sample_size: "20" | "100" | "full"; seed: number; config_id: string; variant: string; include_answer: boolean }): Promise<QasperDebugRunSummary> {
