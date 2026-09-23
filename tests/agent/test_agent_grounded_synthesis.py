@@ -186,6 +186,30 @@ def test_evidence_enters_grounded_context_and_citations_are_preserved() -> None:
     assert "citation-1 => [1] => evidence:chunk-1" in chat.calls[0]["tool_context"]
 
 
+def test_grounded_synthesis_includes_non_citable_supplemental_context() -> None:
+    chat = CapturingChat()
+    evidence = [
+        AgentEvidenceItem.model_validate(item)
+        for item in _grounding_data()["evidence"]
+    ]
+    citations = build_evidence_citations(evidence)
+    grounded = GroundedSynthesisService(chat_service=chat)
+
+    grounded.send_verified(
+        evidence=evidence,
+        citations=citations,
+        context_overrides={
+            "evidence:chunk-1": "[Supplemental Section 3.4]\nAdjacent context."
+        },
+        session_id="session-grounded",
+        user_message="How does the GP help?",
+    )
+
+    assert "Supplemental Same-Section Context" in chat.calls[0]["tool_context"]
+    assert "Adjacent context." in chat.calls[0]["tool_context"]
+    assert "not independently citable" in chat.calls[0]["tool_context"]
+
+
 def test_rag_observability_reuses_agent_trace_and_sanitizes_tool_event() -> None:
     chat = CapturingChat()
     data = _grounding_data()

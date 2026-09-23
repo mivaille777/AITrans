@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import load_qasper
 from backend.rag.benchmarks.qasper.runner import (
     GroundedQasperAnswerer,
     QasperGeneratedAnswer,
+    run_qasper_ablation,
     run_qasper_benchmark,
 )
 from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
 from backend.rag.config import RagConfig, RagEmbeddingConfig
 from backend.rag.models import RetrievalResult
+from backend.rag.query_planner import RagQueryPlan
 
 
 class _FakeEmbedding:
@@ -49,6 +52,13 @@ class _FakeAnswerer:
         )
 
 
+class _FakeQueryPlanner:
+    def plan(self, query):
+        return RagQueryPlan(
+            original_query=query,
+            rewritten_query=query,
+            subqueries=[f"{query} supporting evidence"],
+        )
 class _UnusedTextService:
     provider_name = "fake"
     model = "must-not-be-called"
@@ -250,6 +260,53 @@ def test_official_qasper_text_evidence_metric_excludes_float_evidence() -> None:
 
     assert full["Evidence F1"] < text_only["Evidence F1"]
     assert text_only["Evidence F1"] == 1.0
+
+
+def test_ablation_suite_reuses_one_index_and_records_variant_metrics(tmp_path) -> None:
+    embedding = _FakeEmbedding()
+    config = RagConfig(
+        embedding=RagEmbeddingConfig(
+            model=embedding.model_name,
+            dimension=embedding.dimension,
+        )
+    )
+    variants = ("B0", "B1", "B5", "B7", "FULL")
+    result = run_qasper_ablation(
+        _dataset(tmp_path),
+        root=tmp_path / "ablation",
+        mode="full",
+        config=config,
+        variants=variants,
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        answerer=_FakeAnswerer(),
+        query_planner=_FakeQueryPlanner(),
+        suite_id="test-qasper-ablation",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    rows = {row["variant_id"]: row for row in comparison["variants"]}
+
+    assert result.status == "complete"
+    assert result.variant_count == len(variants)
+    assert [item["variant_id"] for item in manifest["completed_runs"]] == list(variants)
+    assert manifest["index_rebuild"] is False
+    assert manifest["completed_runs"][0]["index_cache_hit"] is False
+    assert all(item["index_cache_hit"] for item in manifest["completed_runs"][1:])
+    assert rows["B5"]["context_metrics"]["Context Tokens"] > 0
+    assert rows["B7"]["adaptive_retrieval"]["gate_observed_cases"] == 3
+
+    b0_trace = rows["B0"]["run_directory"]
+    b0_trace_path = tmp_path / "ablation" / "results"
+    b0_run_dir = tmp_path / "ablation" / "results" / Path(b0_trace).name
+    trace = json.loads(
+        (b0_run_dir / "retrieval_trace.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert trace["ablation_variant"]["variant_id"] == "B0"
+    assert trace["retrieval_metadata"]["dense_enabled"] is True
+    assert trace["retrieval_metadata"]["sparse_enabled"] is False
+    assert b0_trace_path.exists()
 
 
 def test_question_sampling_is_reproducible_and_keeps_only_used_papers(tmp_path) -> None:

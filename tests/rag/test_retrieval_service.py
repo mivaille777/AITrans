@@ -140,6 +140,58 @@ def test_filters_are_pushed_to_both_stores() -> None:
     assert sparse.filters is filters
 
 
+def test_retrieval_channels_can_be_disabled_for_ablation_profiles() -> None:
+    dense_retrieval, dense_vector, dense_sparse = service(
+        dense=[item("dense", dense=True)],
+        sparse=[item("sparse", sparse=True)],
+    )
+    dense_result = dense_retrieval.retrieve(
+        "query",
+        dense_enabled=True,
+        sparse_enabled=False,
+        reranker_enabled=False,
+        small_to_big_enabled=False,
+    )
+    assert dense_result.retrieval_strategy == "dense-only"
+    assert [candidate.chunk.chunk_id for candidate in dense_result.candidates] == ["dense"]
+    assert dense_vector.filters is not None
+    assert dense_sparse.filters is None
+
+    sparse_retrieval, sparse_vector, sparse_store = service(
+        dense=[item("dense", dense=True)],
+        sparse=[item("sparse", sparse=True)],
+    )
+    sparse_result = sparse_retrieval.retrieve(
+        "query",
+        dense_enabled=False,
+        sparse_enabled=True,
+        reranker_enabled=False,
+        small_to_big_enabled=False,
+    )
+    assert sparse_result.retrieval_strategy == "sparse-only"
+    assert [candidate.chunk.chunk_id for candidate in sparse_result.candidates] == ["sparse"]
+    assert sparse_vector.filters is None
+    assert sparse_store.filters is not None
+
+
+def test_structural_retrieval_can_be_disabled_even_when_hints_are_present() -> None:
+    retrieval, _vector, sparse_store = service(
+        dense=[item("dense", dense=True)],
+        sparse=[item("sparse", sparse=True)],
+        structural=[item("structure", sparse=True, section="References")],
+    )
+
+    result = retrieval.retrieve(
+        "references",
+        section_hints=("references",),
+        structural_enabled=False,
+    )
+
+    assert result.metadata["structural_enabled"] is False
+    assert result.metadata["structural_count"] == 0
+    assert sparse_store.section_calls == []
+
+
 def test_structural_section_recall_is_fused_and_promoted_before_body_chunks() -> None:
     references = item(
         "ref-1",

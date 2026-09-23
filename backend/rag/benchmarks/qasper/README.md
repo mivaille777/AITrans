@@ -41,6 +41,26 @@ The evaluator uses the run manifest's sample qrels and indexed chunk catalogue.
 It reports both all-evidence and text-evidence-only official scores; the latter
 excludes QASPER figure/table evidence marked `FLOAT SELECTED`.
 
+Run the Phase 5 query-time ablation suite with a shared QASPER index:
+
+```powershell
+python scripts/run_qasper_ablation.py --mode smoke
+python scripts/run_qasper_ablation.py --mode dev --seed 42
+```
+
+The default suite runs B0 through B7 and `FULL`. Select a subset with
+`--variants B0 B3 B5 FULL`. The runner records each variant's feature switches,
+cache-hit status, retrieval traces, official answer/evidence scores, paragraph
+coverage, adaptive retrieval coverage, latency, and estimated context tokens.
+All variants use the same corpus/chunking/embedding fingerprint, so they reuse
+the same index. B6, B7, and `FULL` use the configured query-planner provider;
+`--retrieval-only` disables answer generation while preserving query planning.
+
+`FULL` represents the current direct AITrans knowledge-search path: dense and
+BM25 retrieval, RRF, reranking, Small-to-Big context, and query planning. The
+incremental B4-B7 variants additionally enable structural retrieval before
+progressively adding Small-to-Big, query planning, and the evidence gate.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it

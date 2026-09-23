@@ -1,5 +1,9 @@
 """QASPER dataset support for the existing AITrans RAG pipeline."""
 
+from backend.rag.benchmarks.qasper.ablation import (
+    QASPER_ABLATION_VARIANTS,
+    QasperAblationVariant,
+)
 from backend.rag.benchmarks.qasper.adapter import (
     QasperAdaptedPaper,
     QasperParagraphSpan,
@@ -28,8 +32,10 @@ from backend.rag.benchmarks.qasper.schema import (
 )
 
 __all__ = [
+    "QASPER_ABLATION_VARIANTS",
     "AlignedAnswerEvidence",
     "AlignmentError",
+    "QasperAblationVariant",
     "QasperAdaptedPaper",
     "QasperAlignment",
     "QasperAnswer",

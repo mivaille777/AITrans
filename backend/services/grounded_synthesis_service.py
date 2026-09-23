@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -236,6 +237,7 @@ class GroundedSynthesisService:
         *,
         evidence: list[AgentEvidenceItem],
         citations: list[AgentCitationRef],
+        context_overrides: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> VerifiedGroundedSynthesisResult:
         if not evidence:
@@ -251,7 +253,11 @@ class GroundedSynthesisService:
                 )
             )
 
-        context = self._context_builder.build(evidence, citations)
+        context = self._context_builder.build(
+            evidence,
+            citations,
+            context_overrides=context_overrides,
+        )
         if not context.included_evidence_ids:
             return VerifiedGroundedSynthesisResult(
                 answer=self._policy_answer(
@@ -337,7 +343,7 @@ __all__ = [
     "GROUNDING_VERIFICATION_FALLBACK_PREFIX",
     "NO_KNOWLEDGE_EVIDENCE_MESSAGE",
     "PARTIAL_GROUNDING_NOTICE",
-    "evidence_only_grounding_fallback",
     "GroundedSynthesisService",
     "VerifiedGroundedSynthesisResult",
+    "evidence_only_grounding_fallback",
 ]

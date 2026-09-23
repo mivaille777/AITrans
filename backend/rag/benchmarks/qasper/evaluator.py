@@ -114,6 +114,20 @@ def _paragraph_precision_recall_f1(
     return max(precision_scores), max(recall_scores), max(f1_scores)
 
 
+def _best_paragraph_coverage(
+    predicted: set[str],
+    references: Sequence[set[str]],
+) -> float:
+    return max(
+        (
+            len(predicted.intersection(gold)) / len(gold)
+            for gold in references
+            if gold
+        ),
+        default=0.0,
+    )
+
+
 def _mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
@@ -226,14 +240,18 @@ def evaluate_qasper_run(
     eligible_paragraph_cases = 0
     component_latencies: dict[str, list[float]] = {
         "total_rag_ms": [],
+        "query_planning_ms": [],
         "embedding_ms": [],
         "dense_search_ms": [],
         "sparse_search_ms": [],
+        "structural_search_ms": [],
+        "fusion_ms": [],
         "rerank_ms": [],
         "small_to_big_ms": [],
         "answer_generation_ms": [],
     }
     answerer_counts: dict[str, int] = {}
+    context_token_counts: list[int] = []
     routing_cases = 0
     routing_counts: dict[str, int] = {}
     second_round_cases = 0
@@ -241,6 +259,14 @@ def evaluate_qasper_run(
     sufficiency_cases = 0
     sufficiency_observed_cases = 0
     sufficient_cases = 0
+    gate_observed_cases = 0
+    premature_stop_cases = 0
+    unnecessary_retrieval_cases = 0
+    initial_evidence_coverage: list[float] = []
+    final_evidence_coverage: list[float] = []
+    coverage_gain: list[float] = []
+    query_planner_invocations = 0
+    answerer_invocations = 0
 
     for question_id, qrel in qrel_by_id.items():
         prediction = prediction_by_id.get(question_id, {})
@@ -260,12 +286,60 @@ def evaluate_qasper_run(
         pre_ranked = [str(value) for value in pre_ranked]
         paragraph_sets = _gold_paragraph_sets(qrel)
         chunk_sets = _gold_chunk_sets(qrel, paragraph_to_chunks_tuple)
+        retrieval_rounds = trace.get("retrieval_rounds", [])
+        if not isinstance(retrieval_rounds, list):
+            retrieval_rounds = []
+        round_context_paragraphs = [
+            {
+                str(value)
+                for value in round_record.get("context_evidence_paragraph_ids", [])
+                if str(value)
+            }
+            for round_record in retrieval_rounds
+            if isinstance(round_record, dict)
+        ]
+        final_round_context = (
+            set().union(*round_context_paragraphs)
+            if round_context_paragraphs
+            else {
+                str(value)
+                for value in trace.get("context_evidence_paragraph_ids", [])
+                if str(value)
+            }
+        )
+        initial_round_context = (
+            round_context_paragraphs[0]
+            if round_context_paragraphs
+            else final_round_context
+        )
+
+        initial_coverage = _best_paragraph_coverage(
+            initial_round_context,
+            paragraph_sets,
+        )
+        final_coverage = _best_paragraph_coverage(final_round_context, paragraph_sets)
+        if paragraph_sets:
+            initial_evidence_coverage.append(initial_coverage)
+            final_evidence_coverage.append(final_coverage)
+            coverage_gain.append(final_coverage - initial_coverage)
         relevant_union = set().union(*chunk_sets) if chunk_sets else set()
         case_metrics: dict[str, Any] = {
             "question_id": question_id,
             "relevant_chunk_count": len(relevant_union),
             "gold_paragraph_count_by_annotator": [len(item) for item in paragraph_sets],
         }
+        context_token_count = sum(
+            int(
+                candidate.get("context_window", {}).get("token_count", 0)
+                if isinstance(candidate.get("context_window"), dict)
+                else candidate.get("token_count", 0)
+                or 0
+            )
+            for candidate in final_candidates
+            if isinstance(candidate, dict)
+        )
+        context_token_counts.append(context_token_count)
+        case_metrics["context_token_count"] = context_token_count
         for k in EVALUATION_KS:
             chunk_recall = max(
                 (recall_at_k(ranked_chunk_ids, items, k) for items in chunk_sets),
@@ -356,14 +430,22 @@ def evaluate_qasper_run(
         if isinstance(retrieval_metadata, dict):
             for key in (
                 "embedding_ms",
+                "query_planning_ms",
                 "dense_search_ms",
                 "sparse_search_ms",
                 "rerank_ms",
                 "small_to_big_ms",
             ):
                 component_latencies[key].append(float(retrieval_metadata.get(key, 0.0) or 0.0))
+        query_planner_invocations += int(bool(trace.get("query_planner_invoked")))
         answer_metadata = prediction.get("answer_generation", {})
         if isinstance(answer_metadata, dict) and answer_metadata:
+            answer_details = answer_metadata.get("metadata", {})
+            if not isinstance(answer_details, dict):
+                answer_details = {}
+            answerer_invocations += int(
+                not bool(answer_details.get("abstained"))
+            )
             component_latencies["answer_generation_ms"].append(
                 float(answer_metadata.get("latency_ms", 0.0) or 0.0)
             )
@@ -384,10 +466,24 @@ def evaluate_qasper_run(
         sufficiency = trace.get("sufficiency")
         if isinstance(sufficiency, dict):
             sufficiency_cases += 1
+            gate_observed_cases += 1
             sufficient = sufficiency.get("sufficient", sufficiency.get("is_sufficient"))
             if isinstance(sufficient, bool):
                 sufficiency_observed_cases += 1
                 sufficient_cases += int(sufficient)
+            gate_stopped = str(sufficiency.get("action", "")) == "stop"
+            gold_sufficient = any(
+                gold.issubset(final_round_context) for gold in paragraph_sets if gold
+            )
+            premature_stop_cases += int(gate_stopped and not gold_sufficient)
+            unnecessary_retrieval_cases += int(
+                bool(trace.get("second_round"))
+                and any(
+                    gold.issubset(initial_round_context)
+                    for gold in paragraph_sets
+                    if gold
+                )
+            )
 
     prediction_records = list(prediction_by_id.values())
     official_full = _official_qasper_metrics(
@@ -453,6 +549,36 @@ def evaluate_qasper_run(
             }
             for key, values in component_latencies.items()
         },
+        "context_metrics": {
+            "evaluated_cases": len(context_token_counts),
+            "Context Tokens": _mean(context_token_counts),
+            "total_context_tokens": sum(context_token_counts),
+            "p50_context_tokens": percentile(context_token_counts, 50),
+            "p95_context_tokens": percentile(context_token_counts, 95),
+        },
+        "adaptive_retrieval": {
+            "evaluated_cases": len(initial_evidence_coverage),
+            "Initial Evidence Coverage": _mean(initial_evidence_coverage),
+            "Final Evidence Coverage": _mean(final_evidence_coverage),
+            "Coverage Gain": _mean(coverage_gain),
+            "second_round_rate": (
+                second_round_cases / second_round_observed_cases
+                if second_round_observed_cases
+                else None
+            ),
+            "Premature Stop Rate": (
+                premature_stop_cases / gate_observed_cases if gate_observed_cases else None
+            ),
+            "Unnecessary Retrieval Rate": (
+                unnecessary_retrieval_cases / gate_observed_cases
+                if gate_observed_cases
+                else None
+            ),
+            "gate_observed_cases": gate_observed_cases,
+            "query_planner_invocations": query_planner_invocations,
+            "answerer_invocations": answerer_invocations,
+            "estimated_llm_invocations": query_planner_invocations + answerer_invocations,
+        },
         "adaptive_metrics": {
             "routing_cases": routing_cases,
             "routing_counts": dict(sorted(routing_counts.items())),
@@ -471,7 +597,14 @@ def evaluate_qasper_run(
             ),
             "status": (
                 "available"
-                if routing_cases or second_round_observed_cases or sufficiency_cases
+                if routing_cases
+                or second_round_observed_cases
+                or sufficiency_cases
+                or any(
+                    isinstance(trace.get("retrieval_rounds"), list)
+                    and trace.get("retrieval_rounds")
+                    for trace in trace_by_id.values()
+                )
                 else "not_recorded_by_this_run"
             ),
         },

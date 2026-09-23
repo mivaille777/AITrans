@@ -38,6 +38,11 @@ class RetrievalService:
         section_hints: tuple[str, ...] = (),
         final_top_k: int | None = None,
         include_references: bool = False,
+        dense_enabled: bool = True,
+        sparse_enabled: bool = True,
+        structural_enabled: bool = True,
+        reranker_enabled: bool = True,
+        small_to_big_enabled: bool | None = None,
     ) -> RetrievalResult:
         if not query or not query.strip():
             raise RagRetrievalError("retrieval query must not be empty")
@@ -55,39 +60,50 @@ class RetrievalService:
         dense: list[RetrievalCandidate] = []
         sparse: list[RetrievalCandidate] = []
         structural: list[RetrievalCandidate] = []
+        use_structural = structural_enabled and bool(section_hints)
+        use_small_to_big = (
+            self._config.small_to_big_enabled
+            if small_to_big_enabled is None
+            else small_to_big_enabled
+        )
+        if not dense_enabled and not sparse_enabled and not use_structural:
+            raise ValueError("at least one retrieval channel must be enabled")
         dense_error = ""
         sparse_error = ""
         structural_error = ""
         embedding_ms = 0.0
         dense_ms = 0.0
-        try:
-            embedding_started = perf_counter()
-            vector = self._embedding.embed_query(query)
-            embedding_ms = (perf_counter() - embedding_started) * 1000
-            dense_started = perf_counter()
-            dense = self._vector_store.search(
-                vector,
-                top_k=self._config.dense_top_k,
-                filters=effective_filters,
-            )
-            dense_ms = (perf_counter() - dense_started) * 1000
-        except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
-            dense_error = str(exc) or exc.__class__.__name__
+        sparse_ms = 0.0
+        if dense_enabled:
+            try:
+                embedding_started = perf_counter()
+                vector = self._embedding.embed_query(query)
+                embedding_ms = (perf_counter() - embedding_started) * 1000
+                dense_started = perf_counter()
+                dense = self._vector_store.search(
+                    vector,
+                    top_k=self._config.dense_top_k,
+                    filters=effective_filters,
+                )
+                dense_ms = (perf_counter() - dense_started) * 1000
+            except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
+                dense_error = str(exc) or exc.__class__.__name__
 
-        sparse_started = perf_counter()
-        try:
-            sparse = self._sparse.search(
-                query,
-                self._config.sparse_top_k,
-                effective_filters,
-            )
-        except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
-            sparse_error = str(exc) or exc.__class__.__name__
-        sparse_ms = (perf_counter() - sparse_started) * 1000
+        if sparse_enabled:
+            sparse_started = perf_counter()
+            try:
+                sparse = self._sparse.search(
+                    query,
+                    self._config.sparse_top_k,
+                    effective_filters,
+                )
+            except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
+                sparse_error = str(exc) or exc.__class__.__name__
+            sparse_ms = (perf_counter() - sparse_started) * 1000
 
         structural_ms = 0.0
         search_sections = getattr(self._sparse, "search_sections", None)
-        if section_hints and callable(search_sections):
+        if use_structural and callable(search_sections):
             structural_started = perf_counter()
             try:
                 structural = search_sections(
@@ -115,6 +131,8 @@ class RetrievalService:
             dense_error=dense_error,
             sparse_error=sparse_error,
             structural=structural,
+            dense_enabled=dense_enabled,
+            sparse_enabled=sparse_enabled,
         )
         fallback_reason = "; ".join(
             item for item in (dense_error, sparse_error, structural_error) if item
@@ -122,7 +140,7 @@ class RetrievalService:
         reranker_applied = False
         reranker_fallback_reason = ""
         rerank_ms = 0.0
-        if self._reranker is not None:
+        if reranker_enabled and self._reranker is not None:
             rerank_started = perf_counter()
             try:
                 rerank_limit = (
@@ -153,7 +171,7 @@ class RetrievalService:
             "small_to_big_neighbor_count": 0,
         }
         section_neighbors = getattr(self._sparse, "section_neighbors", None)
-        if self._config.small_to_big_enabled and callable(section_neighbors):
+        if use_small_to_big and callable(section_neighbors):
             expansion_started = perf_counter()
             try:
                 candidates, small_to_big_metadata = SmallToBigContextExpander(
@@ -173,6 +191,10 @@ class RetrievalService:
                 "dense_count": len(dense),
                 "sparse_count": len(sparse),
                 "structural_count": len(structural),
+                "dense_enabled": dense_enabled,
+                "sparse_enabled": sparse_enabled,
+                "structural_enabled": use_structural,
+                "reranker_enabled": reranker_enabled and self._reranker is not None,
                 "fusion_count": fusion_count,
                 "final_count": len(candidates),
                 "dense_chunk_ids": [item.chunk.chunk_id for item in dense],
@@ -190,7 +212,7 @@ class RetrievalService:
                 "reranker_applied": reranker_applied,
                 "reranker_fallback_reason": reranker_fallback_reason,
                 "structural_section_hints": list(section_hints),
-                "small_to_big_enabled": self._config.small_to_big_enabled,
+                "small_to_big_enabled": use_small_to_big,
                 "small_to_big_error": small_to_big_error,
                 **small_to_big_metadata,
             },
@@ -202,11 +224,19 @@ class RetrievalService:
         dense_error: str,
         sparse_error: str,
         structural: list[RetrievalCandidate],
+        dense_enabled: bool = True,
+        sparse_enabled: bool = True,
     ) -> str:
         if structural:
-            if dense_error and sparse_error:
+            if (not dense_enabled and not sparse_enabled) or (
+                dense_error and sparse_error
+            ):
                 return "structural-only"
             return "hybrid+structural"
+        if not dense_enabled:
+            return "sparse-only"
+        if not sparse_enabled:
+            return "dense-only"
         if dense_error:
             return "sparse-only"
         if sparse_error:
