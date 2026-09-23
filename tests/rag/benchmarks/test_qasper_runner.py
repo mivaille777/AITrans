@@ -381,6 +381,22 @@ def test_qasper_error_taxonomy_identifies_retrieval_and_answer_failures() -> Non
     )
     assert partial == ["evidence_incomplete"]
 
+    complete_with_extra_evidence = _classify_error_types(
+        {
+            "no_answer": False,
+            "answers": [{"evidence_paragraph_ids": ["p1"]}],
+            "gold_evidence_section_indices": [2],
+        },
+        {},
+        {
+            "final_candidates": [
+                {"source_paragraph_ids": ["p1", "extra-p1"], "source_section_indices": [2]}
+            ]
+        },
+        {"gold_evidence_recall_at_10": 1.0, "evidence_f1_at_10": 0.5},
+    )
+    assert complete_with_extra_evidence == []
+
     unanswerable = _classify_error_types(
         {"no_answer": True, "answers": []},
         {"answer": "Yes", "answer_generation": {"provider": "test"}},
@@ -497,6 +513,8 @@ def test_raptor_suite_caches_trees_and_groups_results_by_evidence_scope(tmp_path
     assert result.status == "complete"
     assert result.variant_count == 4
     assert result.tree_count == 3
+    assert rows["R0"]["run_status"] == "complete"
+    assert rows["R0"]["error_count"] == 0
     assert manifest["tree_cache_parameters"]["query_parameters_included"] is False
     assert all(not item["cache_hit"] for item in manifest["trees"].values())
     assert all(item["index_cache_hit"] for item in manifest["completed_runs"])
@@ -515,6 +533,40 @@ def test_raptor_suite_caches_trees_and_groups_results_by_evidence_scope(tmp_path
     assert trace["retrieval_metadata"]["raptor_variant"] == "R2"
     assert trace["retrieval_metadata"]["raptor_summary_hits"]
     assert trace["final_candidates"]
+
+
+def test_raptor_suite_reports_partial_when_a_variant_has_query_errors(
+    tmp_path, monkeypatch
+) -> None:
+    import backend.rag.benchmarks.qasper.runner as qasper_runner
+
+    def failing_retrieval(*_args, **_kwargs):
+        raise RuntimeError("simulated retrieval failure")
+
+    monkeypatch.setattr(qasper_runner, "_retrieve_raptor_question", failing_retrieval)
+    embedding = _FakeEmbedding()
+    result = run_qasper_raptor_ablation(
+        _dataset(tmp_path),
+        root=tmp_path / "raptor-partial",
+        mode="full",
+        config=RagConfig(
+            embedding=RagEmbeddingConfig(
+                model=embedding.model_name,
+                dimension=embedding.dimension,
+            )
+        ),
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        summary_provider=ExtractiveRaptorSummaryProvider(),
+        variants=("R0",),
+        suite_id="test-qasper-raptor-partial",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    assert result.status == manifest["status"] == "partial"
+    assert comparison["variants"][0]["run_status"] == "partial"
+    assert comparison["variants"][0]["error_count"] == 3
 
 
 def test_qasper_evidence_selection_suite(tmp_path) -> None:

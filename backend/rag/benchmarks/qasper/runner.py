@@ -442,7 +442,7 @@ def _retrieve_raptor_question(
         result = index.runtime.retrieval_service.retrieve(
             query,
             filters=filters,
-            section_hints=intent.section_aliases,
+            section_hints=intent.section_aliases if intent is not None else (),
             final_top_k=BENCHMARK_FINAL_TOP_K,
             dense_enabled=True,
             sparse_enabled=True,
@@ -1919,9 +1919,14 @@ def run_qasper_ablation(
             "variants": comparison_rows,
         }
         atomic_write_json(comparison_path, comparison)
+        suite_status = (
+            "complete"
+            if all(row["run_status"] == "complete" for row in comparison_rows)
+            else "partial"
+        )
         suite_manifest.update(
             {
-                "status": "complete",
+                "status": suite_status,
                 "completed_at": datetime.now(UTC).isoformat(),
                 "comparison_path": str(comparison_path),
             }
@@ -1944,7 +1949,7 @@ def run_qasper_ablation(
         manifest_path=manifest_path,
         comparison_path=comparison_path,
         variant_count=len(comparison_rows),
-        status="complete",
+        status=suite_manifest["status"],
     )
 
 
@@ -2549,9 +2554,14 @@ def run_qasper_raptor_ablation(
             "variants": comparison_rows,
         }
         atomic_write_json(comparison_path, comparison)
+        suite_status = (
+            "complete"
+            if all(row["run_status"] == "complete" for row in comparison_rows)
+            else "partial"
+        )
         suite_manifest.update(
             {
-                "status": "complete",
+                "status": suite_status,
                 "completed_at": datetime.now(UTC).isoformat(),
                 "comparison_path": str(comparison_path),
             }
@@ -2578,7 +2588,7 @@ def run_qasper_raptor_ablation(
         comparison_path=comparison_path,
         variant_count=len(selected_variants),
         tree_count=len(trees),
-        status="complete",
+        status=suite_manifest["status"],
     )
 
 

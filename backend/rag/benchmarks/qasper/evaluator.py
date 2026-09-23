@@ -210,10 +210,7 @@ def _classify_error_types(
         error_types.append("wrong_section")
 
     recall_at_10 = float(case_metrics.get("gold_evidence_recall_at_10", 0.0) or 0.0)
-    evidence_f1_at_10 = float(case_metrics.get("evidence_f1_at_10", 0.0) or 0.0)
-    if paragraph_sets and (
-        0 < recall_at_10 < 1 or 0 < evidence_f1_at_10 < 1
-    ):
+    if paragraph_sets and 0 < recall_at_10 < 1:
         error_types.append("evidence_incomplete")
 
     rounds = trace.get("retrieval_rounds", [])

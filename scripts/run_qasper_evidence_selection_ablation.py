@@ -107,7 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             indent=2,
         )
     )
-    return 0
+    return 0 if result.status == "complete" else 2
 
 
 if __name__ == "__main__":
