@@ -1,6 +1,6 @@
 # AITrans QASPER P1 质量迭代开发任务书
 
-> 状态：执行中（Q1-0、Q1-1 已完成，Q1-2 待执行）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
+> 状态：执行中（Q1-0、Q1-1 已完成；Q1-2 实现已提交但人工事实质量门未通过；下一步为 Q1-3）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
 > 范围：改进已实现的单论文 QASPER RAG 链路。P2 的 ScholarQABench、跨论文 KG/PPR 和引用图另立任务。
 
 ## 1. 目标与当前证据
@@ -170,6 +170,10 @@ Q1-2 是下一阶段；Q1-1 的 Evidence Selection v2 与 rerank Top5 是已验�
 
 - Smoke20 0 运行错误、0 无效引用、无 Gold 泄漏；boolean 输出可规范解析，弃答可规范解析。
 - Dev100 的官方 Answer F1 上升，官方 Evidence F1 不因 answer contract 变化而下降；布尔/不可回答题的人工事实判断不得退化。只提高 token F1 而引入事实错误不能晋级。
+
+### Q1-2 实际验收
+
+Q1-2 contract 实现已提交为 `b0cd1e4999be089ecd6d30ce4b6565c49bac275c` 并推送至 `WebReBuild`。真实 Smoke28/Dev100、严格 paired bootstrap、v2 提示实验与 25 道布尔/不可回答题人工复核见 [`qasper-p1-q1-2-answer-contract-report.md`](qasper-p1-q1-2-answer-contract-report.md)。Dev100 Answer F1 提升且 Evidence F1 不变；但候选出现 16/93 错误弃答、布尔正确率仅 7/18，并将若干旧回答中的有效 No 改为 Unanswerable。因此本阶段实现可用于后续诊断，但**人工事实质量门未通过，不晋级为默认策略**。Q1-3 必须继续改进依据核验与弃答策略；P2 仍受 Q1-5 晋级门槛约束。
 
 ## 7. Q1-3：依据核验与有条件二次检索
 
