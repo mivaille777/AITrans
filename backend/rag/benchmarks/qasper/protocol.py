@@ -43,6 +43,21 @@ def _unique_by_id(records: list[dict[str, Any]], label: str) -> dict[str, dict[s
     return result
 
 
+def _mapped_gold_evidence(case: dict[str, Any], label: str) -> bool:
+    mapped = case.get("mapped_gold_evidence")
+    if isinstance(mapped, bool):
+        return mapped
+    relevant_chunk_count = case.get("relevant_chunk_count")
+    if (
+        isinstance(relevant_chunk_count, (int, float))
+        and not isinstance(relevant_chunk_count, bool)
+        and math.isfinite(float(relevant_chunk_count))
+        and relevant_chunk_count >= 0
+    ):
+        return relevant_chunk_count > 0
+    raise TypeError(f"{label} mapped_gold_evidence is missing or invalid")
+
+
 def _resolve_qrels_path(manifest: dict[str, Any], run_directory: Path) -> Path:
     raw_path = Path(str(manifest.get("qrels_path", ""))).expanduser()
     if not str(raw_path):
@@ -146,6 +161,8 @@ def audit_qasper_run(
             issues.append("selected question ID SHA256 does not match manifest IDs")
 
     provider_counts: Counter[str] = Counter()
+    verification_fallback_count = 0
+    policy_abstention_count = 0
     dense_record_count = 0
     sparse_record_count = 0
     reranker_record_count = 0
@@ -175,7 +192,26 @@ def audit_qasper_run(
         if manifest.get("answer_generation"):
             answer_generation = prediction.get("answer_generation", {})
             provider = str(answer_generation.get("provider", "")).strip().casefold()
-            if provider:
+            answer_metadata = answer_generation.get("metadata", {})
+            if not isinstance(answer_metadata, dict):
+                answer_metadata = {}
+            if answer_metadata.get("fallback_applied") is True:
+                verification_fallback_count += 1
+                configured_answer_model = manifest.get("answer_model", {})
+                actual_provider = (
+                    str(configured_answer_model.get("provider", "")).strip().casefold()
+                    if isinstance(configured_answer_model, dict)
+                    else ""
+                )
+                if actual_provider:
+                    provider_counts[actual_provider] += 1
+                else:
+                    missing_answers.append(question_id)
+            elif answer_metadata.get("abstained") is True and str(
+                answer_metadata.get("reason", "")
+            ).strip():
+                policy_abstention_count += 1
+            elif provider and provider != "policy":
                 provider_counts[provider] += 1
             else:
                 missing_answers.append(question_id)
@@ -208,6 +244,8 @@ def audit_qasper_run(
         "scoped_candidate_count": scoped_candidate_count,
         "answer_generation": bool(manifest.get("answer_generation")),
         "answer_provider_counts": dict(sorted(provider_counts.items())),
+        "verification_fallback_count": verification_fallback_count,
+        "policy_abstention_count": policy_abstention_count,
         "unsupported_claim_rate": groundedness.get("Unsupported Claim Rate"),
         "performance_ms": performance,
         "context_metrics": metrics.get("context_metrics", {}),
@@ -270,10 +308,20 @@ def compare_qasper_runs(
     )
     for label, cases in (("baseline", baseline_by_id), ("candidate", candidate_by_id)):
         for question_id, case in cases.items():
+            _mapped_gold_evidence(case, f"{label} {question_id}")
             for field in metric_fields:
                 value = case.get(field)
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
                     raise ValueError(f"{label} metric {field} is missing or invalid for {question_id}")
+    for question_id in expected_ids:
+        if _mapped_gold_evidence(
+            baseline_by_id[question_id], f"baseline {question_id}"
+        ) != _mapped_gold_evidence(
+            candidate_by_id[question_id], f"candidate {question_id}"
+        ):
+            raise ValueError(
+                f"runs disagree on mapped_gold_evidence for {question_id}"
+            )
     bootstrap = paired_bootstrap(
         baseline_cases,
         candidate_cases,

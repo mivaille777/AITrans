@@ -68,6 +68,7 @@ def _write_run(
                 "per_question": [
                     {
                         "question_id": question_id,
+                        "mapped_gold_evidence": True,
                         "official_answer_f1": answer_f1,
                         "official_evidence_f1": 0.25,
                         "gold_evidence_recall_at_10": 1.0,
@@ -95,6 +96,7 @@ def _write_run(
                 "source_path": str(source_path),
                 "source_sha256": source_sha256,
                 "sample_hash": "sample-sha",
+                "answer_model": {"provider": "deepseek", "model": "test"},
                 "question_count": 1,
                 "paper_count": 1,
                 "selected_question_ids": [question_id],
@@ -128,6 +130,47 @@ def test_audit_accepts_complete_real_provider_run_and_rejects_wrong_paper(tmp_pa
     report = audit_qasper_run(invalid)
     assert report["ok"] is False
     assert any("out-of-scope" in issue for issue in report["issues"])
+
+
+def test_audit_counts_provider_call_before_verification_fallback(tmp_path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    run = _write_run(tmp_path / "fallback", source_path=source)
+    prediction_path = run / "predictions.jsonl"
+    prediction = json.loads(prediction_path.read_text(encoding="utf-8"))
+    prediction["answer_generation"] = {
+        "provider": "policy",
+        "model": "grounding-verification-fallback",
+        "metadata": {"fallback_applied": True, "verification_passed": False},
+    }
+    prediction_path.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
+
+    report = audit_qasper_run(run)
+
+    assert report["ok"] is True
+    assert report["answer_provider_counts"] == {"deepseek": 1}
+    assert report["verification_fallback_count"] == 1
+
+
+def test_audit_accepts_explicit_policy_abstention_without_provider_call(tmp_path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    run = _write_run(tmp_path / "abstention", source_path=source)
+    prediction_path = run / "predictions.jsonl"
+    prediction = json.loads(prediction_path.read_text(encoding="utf-8"))
+    prediction["answer"] = "Unanswerable"
+    prediction["answer_generation"] = {
+        "provider": "policy",
+        "model": "insufficient-evidence",
+        "metadata": {"abstained": True, "reason": "no_retrieved_evidence"},
+    }
+    prediction_path.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
+
+    report = audit_qasper_run(run)
+
+    assert report["ok"] is True
+    assert report["answer_provider_counts"] == {}
+    assert report["policy_abstention_count"] == 1
 
 
 def test_strict_comparison_is_zero_on_self_and_rejects_different_samples(tmp_path) -> None:

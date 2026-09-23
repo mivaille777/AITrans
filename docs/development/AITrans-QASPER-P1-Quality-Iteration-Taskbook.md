@@ -1,6 +1,6 @@
 # AITrans QASPER P1 质量迭代开发任务书
 
-> 状态：待实施；基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
+> 状态：执行中（Q1-0 已完成，Q1-1 待执行）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
 > 范围：改进已实现的单论文 QASPER RAG 链路。P2 的 ScholarQABench、跨论文 KG/PPR 和引用图另立任务。
 
 ## 1. 目标与当前证据
@@ -56,7 +56,7 @@
 
 ## 3. 全阶段冒烟规范
 
-在项目根目录使用安装了 PyTorch、sentence-transformers、Qdrant client 的 `aitrans` Python 环境运行。每个阶段先做单元/fixture 集成检查，再做**真实数据端到端冒烟**。GPU/LLM 测试保持 opt-in，不放进普通 CI。
+在项目根目录使用安装了 PyTorch、sentence-transformers、Qdrant client 的 `aitrans` Python 环境运行，并先执行 `python -c "import torch, sentence_transformers; print(torch.__version__)"` 环境预检。未能导入 PyTorch 的 Python 不能用于基准运行；Q1-0 曾发现这种情况下链路可能静默退化为 BM25。每个阶段先做单元/fixture 集成检查，再做**真实数据端到端冒烟**。GPU/LLM 测试保持 opt-in，不放进普通 CI。
 
 每次真实冒烟至少核对：
 
@@ -82,7 +82,7 @@
 
 ```powershell
 python scripts/prepare_qasper.py prepare --split validation
-python scripts/run_qasper_benchmark.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --run-id p1q0-smoke-current
+python scripts/run_qasper_benchmark.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --run-id p1q0-smoke-aitrans
 python scripts/run_qasper_benchmark.py --mode dev --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-dev100-seed42.txt --run-id p1q0-dev-current
 python scripts/evaluate_qasper.py --run-directory data/benchmarks/qasper/results/p1q0-dev-current
 ```
@@ -99,6 +99,10 @@ python scripts/compare_qasper_runs.py --baseline data/benchmarks/qasper/results/
 - 两档真实运行均 0 error、known-paper 越界 0、manifest 与题目清单一致；Dev100 有 100 条预测、trace 与 qrels。
 - 比较入口对错样本、错 source SHA、缺题、重复题一律失败；同题自比较所有 delta 为 0。
 - 输出按答案类型、有/无可映射 Gold、Local/Cross-section/Global 分组的基线，以及至少 20 题人工故障清单。未完成这一步不得挑选后续“优胜”策略。
+
+### Q1-0 实际验收
+
+Q1-0 于 2026-09-24 完成。真实 Smoke20 / Dev100 指标、分层、逐题人工审阅、错误 Python 环境排除过程、统计口径和复跑命令见 [`qasper-p1-q1-0-baseline-report.md`](qasper-p1-q1-0-baseline-report.md)。Smoke20 的 20/20 和 Dev100 的 100/100 题均实际执行 Dense、BM25、reranker 与真实 DeepSeek 回答；审计均通过、0 错误、0 跨论文候选。比较器已按有映射 Gold 的同题子集计算 Gold Evidence Recall@10/MRR，官方 Answer/Evidence F1 仍使用全部题目。
 
 ## 5. Q1-1：证据收窄与精确映射
 

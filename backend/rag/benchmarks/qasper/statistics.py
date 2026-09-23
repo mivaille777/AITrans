@@ -6,10 +6,10 @@ from math import isfinite
 from typing import Any
 
 _METRIC_FIELDS = {
-    "Answer F1": "official_answer_f1",
-    "Evidence F1": "official_evidence_f1",
-    "Recall@10": "gold_evidence_recall_at_10",
-    "MRR": "MRR",
+    "Answer F1": ("official_answer_f1", False),
+    "Evidence F1": ("official_evidence_f1", False),
+    "Gold Evidence Recall@10": ("gold_evidence_recall_at_10", True),
+    "MRR": ("MRR", True),
 }
 
 
@@ -23,6 +23,21 @@ def _indexed_cases(cases: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str,
             raise ValueError(f"duplicate per-question metric row: {question_id}")
         indexed[question_id] = case
     return indexed
+
+
+def _is_mapped_gold_evidence(case: Mapping[str, Any]) -> bool | None:
+    mapped = case.get("mapped_gold_evidence")
+    if isinstance(mapped, bool):
+        return mapped
+    relevant_chunk_count = case.get("relevant_chunk_count")
+    if (
+        isinstance(relevant_chunk_count, (int, float))
+        and not isinstance(relevant_chunk_count, bool)
+        and isfinite(float(relevant_chunk_count))
+        and relevant_chunk_count >= 0
+    ):
+        return relevant_chunk_count > 0
+    return None
 
 
 def _quantile(values: Sequence[float], probability: float) -> float:
@@ -62,9 +77,16 @@ def paired_bootstrap(
         "confidence_level": 0.95,
         "metrics": {},
     }
-    for metric_index, (metric_name, field) in enumerate(_METRIC_FIELDS.items()):
+    for metric_index, (metric_name, (field, requires_mapped_gold)) in enumerate(
+        _METRIC_FIELDS.items()
+    ):
         pairs: list[tuple[float, float]] = []
         for question_id in question_ids:
+            if requires_mapped_gold and (
+                _is_mapped_gold_evidence(baseline[question_id]) is False
+                or _is_mapped_gold_evidence(candidate[question_id]) is False
+            ):
+                continue
             left = baseline[question_id].get(field)
             right = candidate[question_id].get(field)
             if isinstance(left, bool) or isinstance(right, bool):

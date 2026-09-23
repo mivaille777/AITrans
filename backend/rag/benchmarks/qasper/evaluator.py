@@ -489,6 +489,8 @@ def evaluate_qasper_run(
         "answer_generation_ms": [],
     }
     answerer_counts: dict[str, int] = {}
+    verification_fallback_count = 0
+    policy_abstention_count = 0
     context_token_counts: list[int] = []
     routing_cases = 0
     routing_counts: dict[str, int] = {}
@@ -792,7 +794,21 @@ def evaluate_qasper_run(
                 float(answer_metadata.get("latency_ms", 0.0) or 0.0)
             )
             provider = str(answer_metadata.get("provider", "") or "")
-            if provider:
+            if answer_details.get("fallback_applied") is True:
+                verification_fallback_count += 1
+                configured_model = manifest.get("answer_model", {})
+                actual_provider = (
+                    str(configured_model.get("provider", "")).strip()
+                    if isinstance(configured_model, dict)
+                    else ""
+                )
+                if actual_provider:
+                    answerer_counts[actual_provider] = (
+                        answerer_counts.get(actual_provider, 0) + 1
+                    )
+            elif answer_details.get("abstained") is True:
+                policy_abstention_count += 1
+            elif provider and provider.casefold() != "policy":
                 answerer_counts[provider] = answerer_counts.get(provider, 0) + 1
         routing = trace.get("routing")
         if isinstance(routing, dict):
@@ -1067,6 +1083,8 @@ def evaluate_qasper_run(
             ),
         },
         "answer_provider_counts": dict(sorted(answerer_counts.items())),
+        "verification_fallback_count": verification_fallback_count,
+        "policy_abstention_count": policy_abstention_count,
         "groundedness_metrics": {
             "assessed_claims": assessed_claims,
             "unsupported_claims": unsupported_claims,
