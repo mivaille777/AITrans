@@ -1,0 +1,22 @@
+{
+  "profile_id": "p1q1-evidence-selection-v1",
+  "profile_version": 1,
+  "retrieval_variant": "CURRENT",
+  "candidate_pool_size": 20,
+  "default_variants": [
+    "current_top20",
+    "rerank_top5",
+    "rerank_top8",
+    "rerank_top10",
+    "evidence_selection"
+  ],
+  "selected_top_k_by_variant": {
+    "current_top20": 20,
+    "rerank_top5": 5,
+    "rerank_top8": 8,
+    "rerank_top10": 10,
+    "evidence_selection": 5
+  },
+  "maximum_excerpt_tokens": 180,
+  "excerpt_extractor": "extractive-sentence-spans-v1"
+}

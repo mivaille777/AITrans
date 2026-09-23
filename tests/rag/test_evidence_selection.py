@@ -18,6 +18,16 @@ class _QueryMatchEmbedding:
         ]
 
 
+class _RankPriorityEmbedding(_QueryMatchEmbedding):
+    model_name = "rank-priority-test-embedding"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [
+            [1.0, 0.0] if "strong semantic match" in text.casefold() else [0.0, 1.0]
+            for text in texts
+        ]
+
+
 def test_evidence_selection_returns_verbatim_spans_and_original_chunk_provenance() -> None:
     source_text = (
         "The treatment improved the measured outcomes. "
@@ -64,3 +74,45 @@ def test_evidence_selection_returns_verbatim_spans_and_original_chunk_provenance
         chunk.chunk_id
     )
     assert selected.score > 0.25
+
+
+def test_candidate_rank_selection_preserves_retrieval_order_and_source_diversity() -> None:
+    candidates = [
+        RetrievalCandidate(
+            chunk=DocumentChunk(
+                chunk_id=f"chunk-{rank}",
+                document_id="qasper:validation:paper-1",
+                text=text,
+                title="Evidence paper",
+                section_heading="Results",
+                chunk_index=rank,
+                start_char=0,
+                end_char=len(text),
+                token_count=8,
+                metadata={"benchmark": {"source_paragraph_ids": [f"p{rank}"]}},
+            ),
+            rank=rank,
+        )
+        for rank, text in (
+            (1, "Treatment improves a modest outcome."),
+            (2, "The strong semantic match reports treatment benefit."),
+        )
+    ]
+    selector = EvidenceSelectionService(
+        embedding_provider=_RankPriorityEmbedding(),
+    )
+
+    result = selector.select(
+        "Does treatment help?",
+        candidates,
+        top_n=2,
+        top_k=2,
+        selection_order="candidate_rank",
+        max_spans_per_source_chunk=1,
+    )
+
+    assert [item.candidate.chunk.chunk_id for item in result.selected] == [
+        "chunk-1",
+        "chunk-2",
+    ]
+    assert len({item.candidate.chunk.chunk_id for item in result.selected}) == 2

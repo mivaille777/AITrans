@@ -173,6 +173,119 @@ def test_audit_accepts_explicit_policy_abstention_without_provider_call(tmp_path
     assert report["policy_abstention_count"] == 1
 
 
+def test_audit_rejects_selected_excerpt_with_invalid_source_offset(tmp_path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    run = _write_run(tmp_path / "invalid-offset", source_path=source)
+    trace_path = run / "retrieval_trace.jsonl"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["retrieval_candidate_pool"] = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "qasper:validation:p1",
+            "text": "source text",
+        }
+    ]
+    trace["final_candidates"][0].update(
+        {
+            "text": "wrong span",
+            "metadata": {
+                "evidence_selection": {
+                    "source_chunk_id": "chunk-1",
+                    "start_offset": 0,
+                    "end_offset": 6,
+                }
+            },
+        }
+    )
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+
+    report = audit_qasper_run(run)
+
+    assert report["ok"] is False
+    assert report["invalid_selected_evidence_offset_count"] == 1
+    assert any("exact source spans" in issue for issue in report["issues"])
+
+
+def test_audit_accepts_distinct_selected_spans_from_one_source_chunk(tmp_path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    run = _write_run(tmp_path / "multiple-spans", source_path=source)
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "evidence_selection_variant": "evidence_selection",
+            "quality_profile": {
+                "candidate_pool_size": 20,
+                "selected_top_k_by_variant": {"evidence_selection": 5},
+                "maximum_excerpt_tokens": 180,
+            },
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    prediction_path = run / "predictions.jsonl"
+    prediction = json.loads(prediction_path.read_text(encoding="utf-8"))
+    prediction.update(
+        {
+            "retrieved_chunk_ids": ["chunk-1"],
+            "selected_evidence_chunk_ids": ["chunk-1", "chunk-1"],
+            "predicted_evidence_paragraph_ids": ["paragraph-1"],
+        }
+    )
+    prediction_path.write_text(json.dumps(prediction) + "\n", encoding="utf-8")
+
+    trace_path = run / "retrieval_trace.jsonl"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace["retrieval_candidate_pool"] = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "qasper:validation:p1",
+            "text": "first second",
+        }
+    ]
+    trace["retrieval_metadata"]["evidence_selection"] = {
+        "no_valid_excerpt": False,
+    }
+    trace["final_candidates"] = [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "qasper:validation:p1",
+            "text": "first",
+            "token_count": 1,
+            "source_paragraph_ids": ["paragraph-1"],
+            "metadata": {
+                "evidence_selection": {
+                    "source_chunk_id": "chunk-1",
+                    "start_offset": 0,
+                    "end_offset": 5,
+                }
+            },
+        },
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "qasper:validation:p1",
+            "text": "second",
+            "token_count": 1,
+            "source_paragraph_ids": ["paragraph-1"],
+            "metadata": {
+                "evidence_selection": {
+                    "source_chunk_id": "chunk-1",
+                    "start_offset": 6,
+                    "end_offset": 12,
+                }
+            },
+        },
+    ]
+    trace_path.write_text(json.dumps(trace) + "\n", encoding="utf-8")
+
+    report = audit_qasper_run(run)
+
+    assert report["ok"] is True
+    assert report["invalid_selected_evidence_offset_count"] == 0
+
+
 def test_strict_comparison_is_zero_on_self_and_rejects_different_samples(tmp_path) -> None:
     source = tmp_path / "source.json"
     source.write_text("{}", encoding="utf-8")

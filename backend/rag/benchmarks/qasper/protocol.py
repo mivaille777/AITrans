@@ -167,7 +167,12 @@ def audit_qasper_run(
     sparse_record_count = 0
     reranker_record_count = 0
     scoped_candidate_count = 0
+    retrieval_candidate_count = 0
+    selected_evidence_count = 0
+    invalid_selected_evidence_offset_count = 0
     out_of_scope_candidates: list[str] = []
+    out_of_scope_retrieval_candidates: list[str] = []
+    invalid_selected_evidence_offsets: list[str] = []
     missing_answers: list[str] = []
     for question_id in sorted(expected_ids):
         qrel = qrels.get(question_id, {})
@@ -183,12 +188,201 @@ def audit_qasper_run(
             dense_record_count += int(retrieval_metadata.get("dense_count", 0) or 0) > 0
             sparse_record_count += int(retrieval_metadata.get("sparse_count", 0) or 0) > 0
             reranker_record_count += bool(retrieval_metadata.get("reranker_applied"))
-        for candidate in trace.get("final_candidates", []):
+        final_candidates = trace.get("final_candidates", [])
+        if not isinstance(final_candidates, list):
+            final_candidates = []
+        candidate_pool = trace.get("retrieval_candidate_pool", final_candidates)
+        if not isinstance(candidate_pool, list):
+            candidate_pool = final_candidates
+        candidate_pool_by_id: dict[str, dict[str, Any]] = {}
+        for candidate in candidate_pool:
+            if not isinstance(candidate, dict):
+                continue
+            retrieval_candidate_count += 1
+            candidate_id = str(candidate.get("chunk_id", ""))
+            if candidate_id:
+                candidate_pool_by_id[candidate_id] = candidate
+            if str(candidate.get("document_id", "")) != expected_document_id:
+                out_of_scope_retrieval_candidates.append(question_id)
+        pool_chunk_ids = [
+            str(candidate.get("chunk_id", ""))
+            for candidate in candidate_pool
+            if isinstance(candidate, dict) and candidate.get("chunk_id")
+        ]
+        final_chunk_ids = [
+            str(candidate.get("chunk_id", ""))
+            for candidate in final_candidates
+            if isinstance(candidate, dict) and candidate.get("chunk_id")
+        ]
+        if "retrieval_candidate_pool" in trace:
+            if len(pool_chunk_ids) != len(set(pool_chunk_ids)):
+                issues.append(f"{question_id}: retrieval candidate pool contains duplicate chunk IDs")
+            selected_span_keys: list[tuple[str, int, int] | tuple[str]] = []
+            for candidate in final_candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_id = str(candidate.get("chunk_id", ""))
+                candidate_metadata = candidate.get("metadata", {})
+                selection = (
+                    candidate_metadata.get("evidence_selection", {})
+                    if isinstance(candidate_metadata, dict)
+                    else {}
+                )
+                start_offset = selection.get("start_offset") if isinstance(selection, dict) else None
+                end_offset = selection.get("end_offset") if isinstance(selection, dict) else None
+                source_chunk_id = str(
+                    selection.get("source_chunk_id", candidate_id)
+                    if isinstance(selection, dict)
+                    else candidate_id
+                )
+                if (
+                    isinstance(start_offset, int)
+                    and not isinstance(start_offset, bool)
+                    and isinstance(end_offset, int)
+                    and not isinstance(end_offset, bool)
+                ):
+                    selected_span_keys.append((source_chunk_id, start_offset, end_offset))
+                else:
+                    selected_span_keys.append((candidate_id,))
+            if len(selected_span_keys) != len(set(selected_span_keys)):
+                issues.append(f"{question_id}: selected evidence contains duplicate spans")
+            if set(final_chunk_ids).difference(pool_chunk_ids):
+                issues.append(f"{question_id}: selected evidence is absent from the retrieval pool")
+            predicted_pool_ids = prediction.get("retrieved_chunk_ids")
+            if predicted_pool_ids != pool_chunk_ids:
+                issues.append(f"{question_id}: prediction retrieval IDs do not match the trace pool")
+            predicted_selected_ids = prediction.get("selected_evidence_chunk_ids")
+            if predicted_selected_ids != final_chunk_ids:
+                issues.append(f"{question_id}: prediction selected evidence does not match final candidates")
+            predicted_paragraph_ids = prediction.get("predicted_evidence_paragraph_ids")
+            selected_paragraph_ids = list(
+                dict.fromkeys(
+                    str(paragraph_id)
+                    for candidate in final_candidates
+                    if isinstance(candidate, dict)
+                    for paragraph_id in candidate.get("source_paragraph_ids", [])
+                    if str(paragraph_id)
+                )
+            )
+            if predicted_paragraph_ids != selected_paragraph_ids:
+                issues.append(f"{question_id}: predicted evidence paragraphs do not match selected candidates")
+            profile = manifest.get("quality_profile")
+            if isinstance(profile, dict):
+                pool_limit = profile.get("candidate_pool_size")
+                if isinstance(pool_limit, int) and len(pool_chunk_ids) > pool_limit:
+                    issues.append(f"{question_id}: retrieval candidate pool exceeds its profile limit")
+                variant_id = str(manifest.get("evidence_selection_variant", ""))
+                top_k_by_variant = profile.get("selected_top_k_by_variant", {})
+                if isinstance(top_k_by_variant, dict):
+                    selected_limit = top_k_by_variant.get(variant_id)
+                    if isinstance(selected_limit, int) and len(final_chunk_ids) > selected_limit:
+                        issues.append(f"{question_id}: selected evidence exceeds its profile Top-K")
+                if variant_id == "evidence_selection":
+                    maximum_excerpt_tokens = profile.get("maximum_excerpt_tokens")
+                    selection_metadata = (
+                        retrieval_metadata.get("evidence_selection", {})
+                        if isinstance(retrieval_metadata, dict)
+                        else {}
+                    )
+                    if isinstance(selection_metadata, dict):
+                        no_valid_excerpt = selection_metadata.get("no_valid_excerpt")
+                        if not isinstance(no_valid_excerpt, bool):
+                            issues.append(f"{question_id}: evidence selection is missing no_valid_excerpt status")
+                        fallback_count = selection_metadata.get("fallback_count", 0)
+                        no_valid_excerpt_count = selection_metadata.get(
+                            "no_valid_excerpt_count", 0
+                        )
+                        if (
+                            isinstance(fallback_count, bool)
+                            or not isinstance(fallback_count, int)
+                            or fallback_count < 0
+                            or isinstance(no_valid_excerpt_count, bool)
+                            or not isinstance(no_valid_excerpt_count, int)
+                            or no_valid_excerpt_count < 0
+                        ):
+                            issues.append(f"{question_id}: evidence selection fallback counts are invalid")
+                        elif no_valid_excerpt and final_candidates:
+                            fallback_enabled = bool(
+                                profile.get(
+                                    "fallback_to_source_chunk_for_multi_paragraph_coverage",
+                                    False,
+                                )
+                            )
+                            if (
+                                not fallback_enabled
+                                or fallback_count < no_valid_excerpt_count
+                                or no_valid_excerpt_count == 0
+                            ):
+                                issues.append(f"{question_id}: invalid excerpts entered selected evidence without controlled fallback")
+                    for candidate in final_candidates:
+                        if not isinstance(candidate, dict):
+                            continue
+                        candidate_metadata = candidate.get("metadata", {})
+                        evidence_selection = (
+                            candidate_metadata.get("evidence_selection", {})
+                            if isinstance(candidate_metadata, dict)
+                            else {}
+                        )
+                        is_fallback = (
+                            isinstance(evidence_selection, dict)
+                            and evidence_selection.get("fallback_applied") is True
+                        )
+                        has_source_offsets = (
+                            isinstance(evidence_selection, dict)
+                            and isinstance(evidence_selection.get("start_offset"), int)
+                            and isinstance(evidence_selection.get("end_offset"), int)
+                        )
+                        if (
+                            has_source_offsets
+                            and not is_fallback
+                            and isinstance(maximum_excerpt_tokens, int)
+                            and int(candidate.get("token_count", 0) or 0)
+                            > maximum_excerpt_tokens
+                        ):
+                            issues.append(f"{question_id}: selected excerpt exceeds its token limit")
+        selected_evidence = trace.get("selected_evidence")
+        if isinstance(selected_evidence, list):
+            selected_evidence_count += len(selected_evidence)
+        else:
+            selected_evidence_count += len(final_candidates)
+        for candidate in final_candidates:
             if not isinstance(candidate, dict):
                 continue
             scoped_candidate_count += 1
             if str(candidate.get("document_id", "")) != expected_document_id:
                 out_of_scope_candidates.append(question_id)
+            candidate_metadata = candidate.get("metadata", {})
+            selection = (
+                candidate_metadata.get("evidence_selection", {})
+                if isinstance(candidate_metadata, dict)
+                else {}
+            )
+            if (
+                isinstance(selection, dict)
+                and selection.get("source_chunk_id")
+                and selection.get("fallback_applied") is not True
+            ):
+                source_id = str(selection.get("source_chunk_id", ""))
+                source_candidate = candidate_pool_by_id.get(source_id)
+                source_text = (
+                    str(source_candidate.get("text", ""))
+                    if source_candidate is not None
+                    else ""
+                )
+                start_offset = selection.get("start_offset")
+                end_offset = selection.get("end_offset")
+                selected_text = str(candidate.get("text", ""))
+                offset_valid = (
+                    isinstance(start_offset, int)
+                    and not isinstance(start_offset, bool)
+                    and isinstance(end_offset, int)
+                    and not isinstance(end_offset, bool)
+                    and 0 <= start_offset < end_offset <= len(source_text)
+                    and source_candidate is not None
+                    and source_text[start_offset:end_offset] == selected_text
+                )
+                if not offset_valid:
+                    invalid_selected_evidence_offsets.append(question_id)
         if manifest.get("answer_generation"):
             answer_generation = prediction.get("answer_generation", {})
             provider = str(answer_generation.get("provider", "")).strip().casefold()
@@ -217,6 +411,17 @@ def audit_qasper_run(
                 missing_answers.append(question_id)
     if out_of_scope_candidates:
         issues.append(f"out-of-scope final candidates: {sorted(set(out_of_scope_candidates))[:10]}")
+    if out_of_scope_retrieval_candidates:
+        issues.append(
+            "out-of-scope retrieval candidates: "
+            + str(sorted(set(out_of_scope_retrieval_candidates))[:10])
+        )
+    invalid_selected_evidence_offset_count = len(invalid_selected_evidence_offsets)
+    if invalid_selected_evidence_offsets:
+        issues.append(
+            "selected excerpts are not exact source spans for questions: "
+            + str(sorted(set(invalid_selected_evidence_offsets))[:10])
+        )
     if expected_count and (not dense_record_count or not sparse_record_count or not reranker_record_count):
         issues.append("dense, BM25, and reranker retrieval stages must be recorded")
     if require_answer_generation and not manifest.get("answer_generation"):
@@ -242,6 +447,9 @@ def audit_qasper_run(
         "bm25_question_count": int(sparse_record_count),
         "reranked_question_count": int(reranker_record_count),
         "scoped_candidate_count": scoped_candidate_count,
+        "retrieval_candidate_count": retrieval_candidate_count,
+        "selected_evidence_count": selected_evidence_count,
+        "invalid_selected_evidence_offset_count": invalid_selected_evidence_offset_count,
         "answer_generation": bool(manifest.get("answer_generation")),
         "answer_provider_counts": dict(sorted(provider_counts.items())),
         "verification_fallback_count": verification_fallback_count,
@@ -300,12 +508,7 @@ def compare_qasper_runs(
     expected_ids = set(baseline_audit["question_ids"])
     if set(baseline_by_id) != expected_ids or set(candidate_by_id) != expected_ids:
         raise ValueError("per_question metric IDs must exactly match the audited qrels IDs")
-    metric_fields = (
-        "official_answer_f1",
-        "official_evidence_f1",
-        "gold_evidence_recall_at_10",
-        "MRR",
-    )
+    metric_fields = ("official_answer_f1", "official_evidence_f1", "MRR")
     for label, cases in (("baseline", baseline_by_id), ("candidate", candidate_by_id)):
         for question_id, case in cases.items():
             _mapped_gold_evidence(case, f"{label} {question_id}")
@@ -313,6 +516,17 @@ def compare_qasper_runs(
                 value = case.get(field)
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
                     raise ValueError(f"{label} metric {field} is missing or invalid for {question_id}")
+            recall_value = case.get("candidate_gold_evidence_recall_at_10")
+            if recall_value is None:
+                recall_value = case.get("gold_evidence_recall_at_10")
+            if (
+                isinstance(recall_value, bool)
+                or not isinstance(recall_value, (int, float))
+                or not math.isfinite(float(recall_value))
+            ):
+                raise ValueError(
+                    f"{label} candidate Gold Evidence Recall@10 is missing or invalid for {question_id}"
+                )
     for question_id in expected_ids:
         if _mapped_gold_evidence(
             baseline_by_id[question_id], f"baseline {question_id}"

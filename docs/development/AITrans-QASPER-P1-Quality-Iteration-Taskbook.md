@@ -1,6 +1,6 @@
 # AITrans QASPER P1 质量迭代开发任务书
 
-> 状态：执行中（Q1-0 已完成，Q1-1 待执行）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
+> 状态：执行中（Q1-0、Q1-1 已完成，Q1-2 待执行）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
 > 范围：改进已实现的单论文 QASPER RAG 链路。P2 的 ScholarQABench、跨论文 KG/PPR 和引用图另立任务。
 
 ## 1. 目标与当前证据
@@ -109,6 +109,7 @@ Q1-0 于 2026-09-24 完成，阶段审计修正与验收报告提交为 `5c83994
 ### 实施
 
 - 在现有 `backend/rag/benchmarks/qasper/runner.py` 路径中把候选召回上限与最终 evidence 上限解耦。保留 Top20 候选用于检索分析，分别比较 `rerank_top5`、`rerank_top8`、`rerank_top10`、现有 query-conditioned excerpt selection；原样保留 current20 控制组。CLI 增加可复现的 `--quality-profile` 或等价的版本化配置文件，明确记录参数。
+- 每题 trace 分别保存完整 `retrieval_candidate_pool`、送入回答器的 `final_candidates`/`selected_evidence`、context paragraph IDs 和最终预测 paragraph IDs。Recall/MRR 使用完整 Top20 池计算，Evidence Precision/F1 使用实际选中证据计算；不得把选中集误当检索排名。
 - 最终 `predicted_evidence` 必须来自送给回答器的**选中证据**；对 excerpt 使用原文精确 offset 找到覆盖的 paragraph，去重并验证文本逐字来自源 chunk。若找不到有效摘录，显式记录 `no_valid_excerpt` 并采取受控回退或弃答，不悄悄输出全部候选。
 - 把多段落完整覆盖、Evidence Precision/F1、平均上下文 token 和 answer grounding 一起看。真实 5 题初测显示当前 extractor 可能损失 recall，因此先和简单 rerank Top-K 公平比较，再决定是否改 extractor 评分。
 
@@ -118,17 +119,38 @@ Q1-0 于 2026-09-24 完成，阶段审计修正与验收报告提交为 `5c83994
 - 现有 CLI 可先跑真实 retrieval-only 三路对照：
 
 ```powershell
-python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --seed 42 --retrieval-only --suite-id p1q1-smoke-retrieval
-python scripts/run_qasper_evidence_selection_ablation.py --mode dev --seed 42 --retrieval-only --suite-id p1q1-dev-retrieval
+$profile = "backend/rag/benchmarks/qasper/profiles/p1q1-evidence-selection-v2.json"
+python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --quality-profile $profile --variants current_top20 rerank_top5 rerank_top8 rerank_top10 --retrieval-only --suite-id p1q1-smoke-retrieval-v2
+python scripts/run_qasper_evidence_selection_ablation.py --mode dev --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-dev100-seed42.txt --quality-profile $profile --variants current_top20 rerank_top5 rerank_top8 rerank_top10 --retrieval-only --suite-id p1q1-dev-retrieval-v2
+python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --quality-profile $profile --variants evidence_selection --retrieval-only --suite-id p1q1-smoke-evidence-v2
+python scripts/run_qasper_evidence_selection_ablation.py --mode dev --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-dev100-seed42.txt --quality-profile $profile --variants evidence_selection --retrieval-only --suite-id p1q1-dev-evidence-v2
 ```
 
+Smoke20/Dev100 命令必须使用任务书冻结的 question ID 文件，并在 suite 与 run manifest 记录 profile 原始文件 SHA256。Retrieval-only 运行只用于比较候选池 Recall、选中证据 P/R/F1、上下文 token 与检索时延；不得用其 Answer/Evidence F1 宣称真实回答质量。
+
 - 实施新 profile 后，对 current20 与入围的至少两个策略分别跑相同 Smoke20 的**真实回答**，再跑 Dev100。运行审计必须核实 selected evidence 真正进入 `GroundedContextBuilder`，不能只改 evaluator 输出。
+
+真实回答命令固定 current20、Top5 与 v2 evidence selection，生成结果随后分别执行 run audit 和同题比较：
+
+```powershell
+python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --quality-profile $profile --variants current_top20 rerank_top5 evidence_selection --suite-id p1q1-smoke-answer-v2
+python scripts/run_qasper_evidence_selection_ablation.py --mode dev --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-dev100-seed42.txt --quality-profile $profile --variants current_top20 rerank_top5 evidence_selection --suite-id p1q1-dev-answer-v2
+python scripts/compare_qasper_runs.py --baseline data/benchmarks/qasper/results/p1q1-dev-answer-v2-es-current-top20 --candidate data/benchmarks/qasper/results/p1q1-dev-answer-v2-es-evidence-selection --resamples 5000 --seed 42
+```
 
 ### 验收
 
 - 真实 Smoke20 全部 complete、0 跨论文/offset/引用错误；selected evidence 数量与 token 上限符合 profile，检索 Top20 trace 完整。
+- 每题 selected chunk 都属于该题 Top20 候选池；预测 paragraph IDs 与实际送入回答器的证据一致。若无可映射摘录，trace 明确记为 `no_valid_excerpt` 且不会让无效摘录进入回答上下文。
+- 当短摘录不能覆盖 source chunk 映射的全部 paragraph IDs 时，profile v2 记录受控的原始 source chunk fallback；offset 精确校验只应用于实际 excerpt，full-chunk fallback 单独计数并计入上下文 token。
 - 在 Dev100 上入围策略的官方 Evidence F1 与 Evidence Precision 优于同题 current20；同时 Gold Evidence Recall@5 的绝对下降不超过 0.03。若 trade-off 超限，保留对照结果并修复选证策略，不晋级。
 - 记录 Answer F1、Unsupported Claim Rate、p95 与每题 LLM 调用次数；LLM extractor 若无明确质量收益或调用成本过高，不作为默认策略。
+
+### Q1-1 实际验收
+
+Q1-1 于 2026-09-24 完成。真实数据消融、版本化 profile、错误策略的门槛判定、人工抽查、真实 DeepSeek Smoke20/Dev100、严格 paired bootstrap、审计结果与复跑命令记录在 [`qasper-p1-q1-1-evidence-selection-report.md`](qasper-p1-q1-1-evidence-selection-report.md)。Profile v1 因 Dev100 Recall@5 下降 0.25 未晋级；profile v2 在 Recall@5 无下降的前提下提升 selected Evidence Precision/F1、官方 Evidence F1，并将 Dev100 平均上下文降至 999.5 tokens。Dev100 Answer F1 的 paired delta 为 -0.00113，95% CI [-0.00960, 0.00769]；Unsupported Claim Rate 未改善，因此 Q1-2/Q1-3 仍是必做阶段。
+
+Q1-2 是下一阶段；Q1-1 的 Evidence Selection v2 与 rerank Top5 是已验证候选，不因本阶段结果直接修改产品级默认 answer/retrieval policy。
 
 ## 6. Q1-2：直接答案、布尔题与弃答协议
 

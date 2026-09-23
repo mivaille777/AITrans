@@ -634,19 +634,29 @@ def test_qasper_evidence_selection_suite(tmp_path) -> None:
     rows = {row["variant_id"]: row for row in comparison["variants"]}
 
     assert result.status == "complete"
-    assert result.variant_count == 3
+    assert result.variant_count == 5
     assert manifest["index_rebuild"] is False
     assert manifest["completed_runs"][0]["index_cache_hit"] is False
     assert all(run["index_cache_hit"] for run in manifest["completed_runs"][1:])
-    raw_tokens = rows["raw_top_k"]["context_metrics"]["Context Tokens"]
+    assert manifest["quality_profile"]["profile_id"] == "p1q1-evidence-selection-v2"
+    assert rows["rerank_top5"]["run_status"] == "complete"
+    current_tokens = rows["current_top20"]["context_metrics"]["Context Tokens"]
     selected_tokens = rows["evidence_selection"]["context_metrics"]["Context Tokens"]
-    assert selected_tokens < raw_tokens
+    assert selected_tokens < current_tokens
     assert rows["evidence_selection"]["groundedness_metrics"][
         "Unsupported Claim Rate"
     ] == 0.25
     assert rows["evidence_selection"]["paragraph_evidence"][
         "Evidence F1@5"
     ] > 0
+    assert "Evidence F1@8" in rows["rerank_top8"]["paragraph_evidence"]
+    assert rows["current_top20"]["candidate_pool_evidence"][
+        "Gold Evidence Recall@5"
+    ] >= rows["evidence_selection"]["paragraph_evidence"][
+        "Gold Evidence Recall@5"
+    ]
+    assert rows["evidence_selection"]["answerer_invocations"] == 1
+    assert rows["evidence_selection"]["estimated_llm_invocations"] == 1
     assert rows["evidence_selection"]["official_qasper"]["all_evidence"][
         "Answer F1"
     ] >= 0
@@ -662,13 +672,50 @@ def test_qasper_evidence_selection_suite(tmp_path) -> None:
     assert 1 <= selected_trace["candidate_pool_count"] <= 20
     assert selected_trace["selected_span_count"] == 1
     assert trace["retrieval_metadata"]["evidence_extraction_ms"] >= 0
+    assert trace["retrieval_candidate_pool"]
+    assert len(trace["selected_evidence"]) == selected_trace[
+        "final_selected_evidence_count"
+    ]
+    assert len(trace["selected_evidence"]) <= 5
     paragraph_candidates = [
         candidate
         for candidate in trace["final_candidates"]
         if candidate["source_paragraph_ids"]
     ]
     assert paragraph_candidates
-    assert all(candidate["text"] in paragraph for candidate in paragraph_candidates)
+    excerpt_candidates = []
+    for candidate in paragraph_candidates:
+        selection = candidate["metadata"]["evidence_selection"]
+        pool_candidate = next(
+            item
+            for item in trace["retrieval_candidate_pool"]
+            if item["chunk_id"] == selection["source_chunk_id"]
+        )
+        if selection.get("fallback_applied"):
+            assert candidate["text"] == pool_candidate["text"]
+        else:
+            assert candidate["text"] in paragraph
+            excerpt_candidates.append(candidate)
+    assert excerpt_candidates
+    selected_candidate = excerpt_candidates[0]
+    selection = selected_candidate["metadata"]["evidence_selection"]
+    pool_candidate = next(
+        candidate
+        for candidate in trace["retrieval_candidate_pool"]
+        if candidate["chunk_id"] == selection["source_chunk_id"]
+    )
+    assert pool_candidate["text"][selection["start_offset"] : selection["end_offset"]] == (
+        selected_candidate["text"]
+    )
+    prediction = json.loads(
+        (run_directory / "predictions.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert prediction["predicted_evidence_paragraph_ids"] == trace[
+        "selected_evidence_paragraph_ids"
+    ]
+    assert prediction["retrieved_chunk_ids"] == [
+        candidate["chunk_id"] for candidate in trace["retrieval_candidate_pool"]
+    ]
 
 
 def test_qasper_adaptive_retrieval_suite_tracks_missing_requirements(tmp_path) -> None:

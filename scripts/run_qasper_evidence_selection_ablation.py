@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Sequence
@@ -38,10 +39,31 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--question-ids-file", type=Path)
     parser.add_argument("--suite-id")
     parser.add_argument(
+        "--quality-profile",
+        type=Path,
+        default=(
+            REPO_ROOT
+            / "backend"
+            / "rag"
+            / "benchmarks"
+            / "qasper"
+            / "profiles"
+            / "p1q1-evidence-selection-v2.json"
+        ),
+    )
+    parser.add_argument(
         "--variants",
         nargs="+",
-        choices=("raw_top_k", "rerank_top_k", "evidence_selection"),
-        default=("raw_top_k", "rerank_top_k", "evidence_selection"),
+        choices=(
+            "current_top20",
+            "rerank_top5",
+            "rerank_top8",
+            "rerank_top10",
+            "evidence_selection",
+            "raw_top_k",
+            "rerank_top_k",
+        ),
+        default=None,
     )
     parser.add_argument(
         "--extractor",
@@ -71,6 +93,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.config_json
         else RagConfig()
     )
+    profile_path = args.quality_profile.expanduser().resolve()
+    profile_bytes = profile_path.read_bytes()
+    quality_profile = json.loads(profile_bytes.decode("utf-8"))
+    if not isinstance(quality_profile, dict):
+        raise TypeError("quality profile JSON must contain an object")
+    profile_sha256 = hashlib.sha256(profile_bytes).hexdigest()
     answerer = None if args.retrieval_only else GroundedQasperAnswerer()
     excerpt_provider = (
         LLMQueryEvidenceExcerptProvider() if args.extractor == "llm" else None
@@ -88,6 +116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             answerer=answerer,
             excerpt_provider=excerpt_provider,
             suite_id=args.suite_id,
+            quality_profile=quality_profile,
+            quality_profile_sha256=profile_sha256,
         )
     finally:
         if answerer is not None:
@@ -104,6 +134,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "suite_directory": str(result.suite_directory),
                 "manifest": str(result.manifest_path),
                 "comparison": str(result.comparison_path),
+                "quality_profile": str(profile_path),
+                "quality_profile_sha256": profile_sha256,
             },
             ensure_ascii=False,
             indent=2,

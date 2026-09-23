@@ -88,23 +88,28 @@ derived from the number of QASPER sections in a complete annotator evidence
 set, with questions lacking mapped evidence counted separately as unanswerable
 or unclassified depending on the source annotation.
 
-Run the Phase 8 evidence-selection comparison:
+Run the Q1-1 evidence-selection comparison with frozen samples and profile:
 
 ```powershell
-python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --retrieval-only
-python scripts/run_qasper_evidence_selection_ablation.py --mode dev --extractor llm
+$profile = "backend/rag/benchmarks/qasper/profiles/p1q1-evidence-selection-v2.json"
+python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-smoke20-seed42.txt --quality-profile $profile --retrieval-only
+python scripts/run_qasper_evidence_selection_ablation.py --mode dev --seed 42 --question-ids-file backend/rag/benchmarks/qasper/sample_ids/validation-dev100-seed42.txt --quality-profile $profile --retrieval-only
 ```
 
-The suite compares hybrid Raw Top-K, hybrid Rerank Top-K, and Evidence
-Selection on one shared index. Evidence Selection reranks a pool of up to 20
-chunks, extracts query-conditioned verbatim spans, scores them with lexical
-coverage and the configured embedding model, then sends up to five selected
-spans through the existing grounded synthesis path. The default extractor is
-deterministic and offline; `--extractor llm` asks the configured synthesis
-model for exact source spans and rejects text that cannot be found verbatim in
-the source chunk. Run results retain source chunk IDs, offsets, paragraph IDs,
-extraction/scoring latency, context token counts, official QASPER Answer and
-Evidence F1, and unsupported claim rate when answer generation is enabled.
+The suite compares current Top20, reranked Top5/8/10, and query-conditioned
+evidence selection against the same Top20 retrieval pool and index. Recall/MRR
+are computed from the complete pool; Evidence Precision/F1 are computed from
+the exact candidates sent to the answerer. Profile v2 selects at most one
+query-relevant span per source chunk in reranker order. If a short span cannot
+represent every paragraph mapped to its source chunk, the trace records a
+controlled fallback to that source chunk; offsets are validated for actual
+spans, and full-chunk fallbacks count toward context tokens. The default
+extractor is deterministic and offline; `--extractor llm` uses the configured
+synthesis model and rejects text that cannot be found verbatim in the source
+chunk. Run results retain the Top20 pool, selected evidence, paragraph
+mapping, offsets, fallback counts, extraction/scoring latency, context token
+counts, official QASPER metrics, provider calls, and unsupported claim rate
+when answer generation is enabled.
 
 Run the Phase 9 adaptive-retrieval comparison:
 

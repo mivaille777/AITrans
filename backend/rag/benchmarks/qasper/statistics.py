@@ -6,10 +6,14 @@ from math import isfinite
 from typing import Any
 
 _METRIC_FIELDS = {
-    "Answer F1": ("official_answer_f1", False),
-    "Evidence F1": ("official_evidence_f1", False),
-    "Gold Evidence Recall@10": ("gold_evidence_recall_at_10", True),
-    "MRR": ("MRR", True),
+    "Answer F1": ("official_answer_f1", None, False),
+    "Evidence F1": ("official_evidence_f1", None, False),
+    "Gold Evidence Recall@10": (
+        "candidate_gold_evidence_recall_at_10",
+        "gold_evidence_recall_at_10",
+        True,
+    ),
+    "MRR": ("MRR", None, True),
 }
 
 
@@ -77,7 +81,7 @@ def paired_bootstrap(
         "confidence_level": 0.95,
         "metrics": {},
     }
-    for metric_index, (metric_name, (field, requires_mapped_gold)) in enumerate(
+    for metric_index, (metric_name, (field, fallback_field, requires_mapped_gold)) in enumerate(
         _METRIC_FIELDS.items()
     ):
         pairs: list[tuple[float, float]] = []
@@ -89,6 +93,11 @@ def paired_bootstrap(
                 continue
             left = baseline[question_id].get(field)
             right = candidate[question_id].get(field)
+            if fallback_field is not None:
+                if left is None:
+                    left = baseline[question_id].get(fallback_field)
+                if right is None:
+                    right = candidate[question_id].get(fallback_field)
             if isinstance(left, bool) or isinstance(right, bool):
                 continue
             if not isinstance(left, (int, float)) or not isinstance(

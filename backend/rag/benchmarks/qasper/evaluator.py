@@ -12,7 +12,7 @@ from backend.rag.evaluation import ndcg_at_k, percentile, recall_at_k, reciproca
 from backend.rag.sparse.store import BM25SparseRetriever
 from third_party.qasper import official_evaluator
 
-EVALUATION_KS = (5, 10, 20)
+EVALUATION_KS = (5, 8, 10, 20)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -533,9 +533,15 @@ def evaluate_qasper_run(
         final_candidates = trace.get("final_candidates", [])
         if not isinstance(final_candidates, list):
             final_candidates = []
+        retrieval_candidate_pool = trace.get(
+            "retrieval_candidate_pool",
+            final_candidates,
+        )
+        if not isinstance(retrieval_candidate_pool, list):
+            retrieval_candidate_pool = final_candidates
         ranked_chunk_ids = [
             str(candidate.get("chunk_id", ""))
-            for candidate in final_candidates
+            for candidate in retrieval_candidate_pool
             if isinstance(candidate, dict) and candidate.get("chunk_id")
         ]
         stages = trace.get("stages", {})
@@ -600,6 +606,8 @@ def evaluate_qasper_run(
             ),
             "mapped_gold_evidence": bool(relevant_union),
             "question_category": _qasper_question_category(qrel),
+            "retrieval_candidate_count": len(retrieval_candidate_pool),
+            "selected_evidence_count": len(final_candidates),
         }
         requirement_records = trace.get("evidence_requirements", [])
         if (
@@ -653,6 +661,20 @@ def evaluate_qasper_run(
                 (recall_at_k(ranked_chunk_ids, items, k) for items in chunk_sets),
                 default=0.0,
             )
+            candidate_predicted_paragraphs = _top_candidate_paragraphs(
+                [
+                    item
+                    for item in retrieval_candidate_pool
+                    if isinstance(item, dict)
+                ],
+                limit=k,
+            )
+            _candidate_precision, candidate_paragraph_recall, _candidate_f1 = (
+                _paragraph_precision_recall_f1(
+                    candidate_predicted_paragraphs,
+                    paragraph_sets,
+                )
+            )
             if chunk_sets:
                 ai_recall[k].append(chunk_recall)
             predicted_paragraphs = _top_candidate_paragraphs(
@@ -668,6 +690,9 @@ def evaluate_qasper_run(
                 paragraph_metrics[f"Evidence Precision@{k}"].append(precision)
                 paragraph_metrics[f"Evidence F1@{k}"].append(f1)
             case_metrics[f"recall_at_{k}"] = chunk_recall
+            case_metrics[f"candidate_gold_evidence_recall_at_{k}"] = (
+                candidate_paragraph_recall
+            )
             case_metrics[f"gold_evidence_recall_at_{k}"] = paragraph_recall
             case_metrics[f"evidence_precision_at_{k}"] = precision
             case_metrics[f"evidence_f1_at_{k}"] = f1
@@ -903,6 +928,22 @@ def evaluate_qasper_run(
         prediction_records,
         text_evidence_only=True,
     )
+    mapped_gold_cases = [
+        case for case in per_question if case.get("mapped_gold_evidence")
+    ]
+    candidate_pool_evidence = {
+        "evaluated_cases": len(mapped_gold_cases),
+        **{
+            f"Gold Evidence Recall@{k}": _mean(
+                [
+                    float(case[f"candidate_gold_evidence_recall_at_{k}"])
+                    for case in mapped_gold_cases
+                ]
+            )
+            for k in EVALUATION_KS
+        },
+        "definition": "best annotator paragraph recall from the complete retrieval candidate pool, before evidence selection",
+    }
     retrieval_count = len(qrel_by_id)
     metrics: dict[str, Any] = {
         "metric_version": 4,
@@ -928,6 +969,7 @@ def evaluate_qasper_run(
             "post_rerank_nDCG@10": _mean(ai_ndcg),
             "nDCG@10_delta": _mean(ai_ndcg) - _mean(pre_ndcg),
         },
+        "candidate_pool_evidence": candidate_pool_evidence,
         "paragraph_evidence": {
             "evaluated_cases": eligible_paragraph_cases,
             **{

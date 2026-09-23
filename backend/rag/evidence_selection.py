@@ -250,11 +250,22 @@ class EvidenceSelectionService:
         *,
         top_n: int,
         top_k: int,
+        selection_order: str = "relevance",
+        max_spans_per_source_chunk: int | None = None,
     ) -> EvidenceSelectionResult:
         if not query or not query.strip():
             raise ValueError("evidence selection query must not be empty")
         if top_n <= 0 or top_k <= 0:
             raise ValueError("top_n and top_k must be positive")
+        normalized_selection_order = selection_order.strip().casefold()
+        if normalized_selection_order not in {"relevance", "candidate_rank"}:
+            raise ValueError("selection_order must be 'relevance' or 'candidate_rank'")
+        if max_spans_per_source_chunk is not None and (
+            isinstance(max_spans_per_source_chunk, bool)
+            or not isinstance(max_spans_per_source_chunk, int)
+            or max_spans_per_source_chunk <= 0
+        ):
+            raise ValueError("max_spans_per_source_chunk must be positive when set")
         pool = list(candidates[:top_n])
         extracted: list[tuple[RetrievalCandidate, EvidenceExcerpt, int]] = []
         extraction_started = perf_counter()
@@ -320,23 +331,44 @@ class EvidenceSelectionService:
             if score > 0.0:
                 scored.append((selected, pool_rank))
         scoring_ms = (perf_counter() - scoring_started) * 1000
-        scored.sort(
-            key=lambda item: (
-                -item[0].score,
-                item[1],
-                item[0].start_offset,
-                item[0].candidate.chunk.chunk_id,
+        if normalized_selection_order == "candidate_rank":
+            scored.sort(
+                key=lambda item: (
+                    item[1],
+                    -item[0].score,
+                    item[0].start_offset,
+                    item[0].candidate.chunk.chunk_id,
+                )
             )
-        )
+        else:
+            scored.sort(
+                key=lambda item: (
+                    -item[0].score,
+                    item[1],
+                    item[0].start_offset,
+                    item[0].candidate.chunk.chunk_id,
+                )
+            )
 
         selected_spans: list[SelectedEvidenceSpan] = []
         selected_texts: set[str] = set()
+        selected_by_source_chunk: dict[str, int] = {}
         for item, _pool_rank in scored:
             normalized = " ".join(item.text.casefold().split())
             if normalized in selected_texts:
                 continue
+            source_chunk_id = item.candidate.chunk.chunk_id
+            if (
+                max_spans_per_source_chunk is not None
+                and selected_by_source_chunk.get(source_chunk_id, 0)
+                >= max_spans_per_source_chunk
+            ):
+                continue
             selected_texts.add(normalized)
             selected_spans.append(item)
+            selected_by_source_chunk[source_chunk_id] = (
+                selected_by_source_chunk.get(source_chunk_id, 0) + 1
+            )
             if len(selected_spans) >= top_k:
                 break
 
