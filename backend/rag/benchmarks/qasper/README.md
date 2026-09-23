@@ -88,6 +88,24 @@ derived from the number of QASPER sections in a complete annotator evidence
 set, with questions lacking mapped evidence counted separately as unanswerable
 or unclassified depending on the source annotation.
 
+Run the Phase 8 evidence-selection comparison:
+
+```powershell
+python scripts/run_qasper_evidence_selection_ablation.py --mode smoke --retrieval-only
+python scripts/run_qasper_evidence_selection_ablation.py --mode dev --extractor llm
+```
+
+The suite compares hybrid Raw Top-K, hybrid Rerank Top-K, and Evidence
+Selection on one shared index. Evidence Selection reranks a pool of up to 20
+chunks, extracts query-conditioned verbatim spans, scores them with lexical
+coverage and the configured embedding model, then sends up to five selected
+spans through the existing grounded synthesis path. The default extractor is
+deterministic and offline; `--extractor llm` asks the configured synthesis
+model for exact source spans and rejects text that cannot be found verbatim in
+the source chunk. Run results retain source chunk IDs, offsets, paragraph IDs,
+extraction/scoring latency, context token counts, official QASPER Answer and
+Evidence F1, and unsupported claim rate when answer generation is enabled.
+
 Paragraph IDs have the form
 `qasper:{split}:{paper_id}:p{global_paragraph_index}`. The adapter constructs
 `NormalizedDocument` values directly from QASPER sections and paragraphs; it

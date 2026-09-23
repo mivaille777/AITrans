@@ -36,6 +36,10 @@ from backend.rag.config import RagConfig
 from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
 from backend.rag.evaluation import percentile
 from backend.rag.evidence_builder import build_agent_evidence
+from backend.rag.evidence_selection import (
+    EvidenceExcerptProvider,
+    EvidenceSelectionService,
+)
 from backend.rag.fusion import rrf_fuse
 from backend.rag.model_manager import ModelManager
 from backend.rag.models import RetrievalCandidate, RetrievalResult
@@ -116,6 +120,16 @@ class QasperRaptorAblationSuiteResult:
     status: str
 
 
+@dataclass(frozen=True, slots=True)
+class QasperEvidenceSelectionSuiteResult:
+    suite_id: str
+    suite_directory: Path
+    manifest_path: Path
+    comparison_path: Path
+    variant_count: int
+    status: str
+
+
 class _GroundedChatAdapter:
     def __init__(self, chat_service: AIChatService) -> None:
         self._chat_service = chat_service
@@ -185,6 +199,23 @@ class GroundedQasperAnswerer:
                 "verification_passed": (
                     bool(result.verification.passed)
                     if result.verification is not None
+                    else None
+                ),
+                "claim_count": (
+                    int(result.verification.claim_count)
+                    if result.verification is not None
+                    else 0
+                ),
+                "unsupported_claim_count": (
+                    int(result.verification.unsupported_claim_count)
+                    if result.verification is not None
+                    else 0
+                ),
+                "unsupported_claim_rate": (
+                    result.verification.unsupported_claim_count
+                    / result.verification.claim_count
+                    if result.verification is not None
+                    and result.verification.claim_count > 0
                     else None
                 ),
             },
@@ -741,6 +772,116 @@ def _retrieve_variant_question(
     )
 
 
+def _evidence_selection_ablation_variant(
+    variant_id: str,
+) -> QasperAblationVariant:
+    reranker_enabled = variant_id != "raw_top_k"
+    names = {
+        "raw_top_k": "Raw Top-K",
+        "rerank_top_k": "Rerank Top-K",
+        "evidence_selection": "Evidence Selection",
+    }
+    return QasperAblationVariant(
+        variant_id=f"ES_{variant_id.upper()}",
+        name=names[variant_id],
+        dense=True,
+        sparse=True,
+        reranker=reranker_enabled,
+        structural=False,
+        small_to_big=False,
+        multi_query=False,
+        evidence_gate=False,
+    )
+
+
+def _normalize_evidence_text(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _map_selected_excerpt_to_paragraphs(
+    candidate: RetrievalCandidate,
+    *,
+    paper: Any,
+) -> tuple[list[str], list[str]]:
+    benchmark_metadata = candidate.chunk.metadata.get("benchmark", {})
+    source_ids = (
+        benchmark_metadata.get("source_paragraph_ids", [])
+        if isinstance(benchmark_metadata, dict)
+        else []
+    )
+    source_ids = [value for value in source_ids if isinstance(value, str)]
+    excerpt = _normalize_evidence_text(candidate.chunk.text)
+    matched_ids = [
+        paragraph.paragraph_id
+        for paragraph in paper.paragraphs
+        if paragraph.paragraph_id in source_ids
+        and excerpt
+        and excerpt in _normalize_evidence_text(paragraph.text)
+    ]
+    return list(dict.fromkeys(source_ids)), list(dict.fromkeys(matched_ids))
+
+
+def _retain_only_excerpt_paragraphs(
+    candidates: Sequence[RetrievalCandidate],
+    *,
+    paper: Any,
+) -> list[RetrievalCandidate]:
+    mapped: list[RetrievalCandidate] = []
+    for candidate in candidates:
+        original_ids, matched_ids = _map_selected_excerpt_to_paragraphs(
+            candidate,
+            paper=paper,
+        )
+        chunk_metadata = dict(candidate.chunk.metadata)
+        benchmark_metadata = dict(chunk_metadata.get("benchmark", {}))
+        benchmark_metadata["source_paragraph_ids"] = matched_ids
+        chunk_metadata["benchmark"] = benchmark_metadata
+        candidate_metadata = dict(candidate.metadata)
+        selection_metadata = dict(candidate_metadata.get("evidence_selection", {}))
+        selection_metadata["source_paragraph_ids"] = original_ids
+        selection_metadata["matched_paragraph_ids"] = matched_ids
+        candidate_metadata["evidence_selection"] = selection_metadata
+        mapped.append(
+            candidate.model_copy(
+                update={
+                    "chunk": candidate.chunk.model_copy(
+                        update={"metadata": chunk_metadata}
+                    ),
+                    "metadata": candidate_metadata,
+                }
+            )
+        )
+    return mapped
+
+
+def _evidence_selection_round(
+    *,
+    query: str,
+    retrieval: RetrievalResult,
+    latency_ms: float,
+) -> dict[str, Any]:
+    candidates = retrieval.candidates
+    paragraph_ids = list(
+        dict.fromkeys(
+            paragraph_id
+            for candidate in candidates
+            for paragraph_id in _source_paragraph_ids(candidate.chunk)
+        )
+    )
+    selection = retrieval.metadata.get("evidence_selection", {})
+    return {
+        "round": 1,
+        "query": query,
+        "latency_ms": latency_ms,
+        "candidate_chunk_ids": [item.chunk.chunk_id for item in candidates],
+        "source_paragraph_ids": paragraph_ids,
+        "context_evidence_paragraph_ids": paragraph_ids,
+        "context_token_count": sum(item.chunk.token_count for item in candidates),
+        "new_chunk_count": len(candidates),
+        "evidence_selection": selection,
+    }
+
+
 def _new_run_id(split: str, mode: str) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     return f"qasper-{split}-{mode}-{stamp}-{uuid.uuid4().hex[:8]}"
@@ -761,6 +902,8 @@ def run_qasper_benchmark(
     variant: QasperAblationVariant | str | None = None,
     raptor_variant: str | None = None,
     raptor_trees: Mapping[str, RaptorTree] | None = None,
+    evidence_selection_variant: str | None = None,
+    evidence_selector: EvidenceSelectionService | None = None,
     run_id: str | None = None,
     rebuild_index: bool = False,
 ) -> QasperBenchmarkRunResult:
@@ -774,7 +917,24 @@ def run_qasper_benchmark(
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
     selected = sample_qasper_dataset(dataset, limit=limit, seed=seed)
-    selected_variant = get_qasper_ablation_variant(variant)
+    normalized_evidence_selection_variant = (
+        str(evidence_selection_variant).strip().casefold()
+        if evidence_selection_variant is not None
+        else None
+    )
+    if normalized_evidence_selection_variant is not None and normalized_evidence_selection_variant not in {
+        "raw_top_k",
+        "rerank_top_k",
+        "evidence_selection",
+    }:
+        raise ValueError(
+            "evidence_selection_variant must be raw_top_k, rerank_top_k, or evidence_selection"
+        )
+    selected_variant = (
+        _evidence_selection_ablation_variant(normalized_evidence_selection_variant)
+        if normalized_evidence_selection_variant is not None
+        else get_qasper_ablation_variant(variant)
+    )
     normalized_raptor_variant = (
         str(raptor_variant).strip().upper() if raptor_variant is not None else None
     )
@@ -833,6 +993,26 @@ def run_qasper_benchmark(
         "rag_config": source_config.model_dump(mode="json"),
         "answer_generation": answerer is not None,
         "ablation_variant": selected_variant.as_dict(),
+        "evidence_selection_variant": normalized_evidence_selection_variant,
+        "evidence_selection_parameters": (
+            {
+                "candidate_pool_size": 20,
+                "selected_top_k": 5,
+                "maximum_excerpt_tokens": 180,
+                "extractor_model": (
+                    evidence_selector.extractor_model
+                    if evidence_selector is not None
+                    else "extractive-sentence-spans-v1"
+                ),
+                "prompt_version": (
+                    evidence_selector.prompt_version
+                    if evidence_selector is not None
+                    else "extractive-sentence-spans-v1"
+                ),
+            }
+            if normalized_evidence_selection_variant == "evidence_selection"
+            else None
+        ),
         "raptor_variant": normalized_raptor_variant,
         "raptor_tree_fingerprints": (
             {
@@ -858,6 +1038,7 @@ def run_qasper_benchmark(
     succeeded_retrievals = 0
     answer_count = 0
     index = None
+    active_evidence_selector = evidence_selector
     try:
         index = build_qasper_index(
             selected,
@@ -867,6 +1048,13 @@ def run_qasper_benchmark(
             reranker=reranker,
             rebuild=rebuild_index,
         )
+        if (
+            normalized_evidence_selection_variant == "evidence_selection"
+            and active_evidence_selector is None
+        ):
+            active_evidence_selector = EvidenceSelectionService(
+                embedding_provider=index.runtime.embedding_provider
+            )
         manifest["index"] = {
             "fingerprint": index.result.fingerprint,
             "fingerprint_inputs": index.result.fingerprint_inputs,
@@ -926,21 +1114,93 @@ def run_qasper_benchmark(
                         sufficiency = None
                         query_planning_ms = 0.0
                     else:
-                        (
-                            retrieval_result,
-                            query_plan,
-                            retrieval_rounds,
-                            sufficiency,
-                            query_planning_ms,
-                        ) = _retrieve_variant_question(
-                            question,
-                            index=index,
-                            document_id=document_id,
-                            variant=selected_variant,
-                            query_planner=query_planner,
-                        )
+                        if normalized_evidence_selection_variant is not None:
+                            selection_enabled = (
+                                normalized_evidence_selection_variant
+                                == "evidence_selection"
+                            )
+                            retrieval_result = index.runtime.retrieval_service.retrieve(
+                                question.question,
+                                filters=VectorSearchFilter(document_ids=[document_id]),
+                                final_top_k=20 if selection_enabled else 5,
+                                dense_enabled=True,
+                                sparse_enabled=True,
+                                structural_enabled=False,
+                                reranker_enabled=selected_variant.reranker,
+                                small_to_big_enabled=False,
+                            )
+                            retrieval_pool_chunk_ids = [
+                                item.chunk.chunk_id
+                                for item in retrieval_result.candidates
+                            ]
+                            query_plan = _identity_query_plan(question.question)
+                            query_planning_ms = 0.0
+                            sufficiency = None
+                            retrieval_rounds = []
+                            if selection_enabled:
+                                if active_evidence_selector is None:
+                                    raise RuntimeError(
+                                        "evidence selector was not initialized"
+                                    )
+                                selection_result = active_evidence_selector.select(
+                                    question.question,
+                                    retrieval_result.candidates,
+                                    top_n=20,
+                                    top_k=5,
+                                )
+                                selected_candidates = _retain_only_excerpt_paragraphs(
+                                    [item.candidate for item in selection_result.selected],
+                                    paper=selected.papers[question.paper_id],
+                                )
+                                selection_trace = selection_result.as_dict()
+                                for trace_item, candidate in zip(
+                                    selection_trace["selected"],
+                                    selected_candidates,
+                                    strict=True,
+                                ):
+                                    trace_item["matched_paragraph_ids"] = (
+                                        _source_paragraph_ids(candidate.chunk)
+                                    )
+                                retrieval_result.candidates = selected_candidates
+                                retrieval_result.metadata.update(
+                                    {
+                                        "evidence_selection": selection_trace,
+                                        "evidence_extraction_ms": selection_result.extraction_ms,
+                                        "evidence_scoring_ms": selection_result.scoring_ms,
+                                        "evidence_extractor_invocations": (
+                                            selection_result.candidate_pool_count
+                                            if selection_result.extractor_model
+                                            != "extractive-sentence-spans-v1"
+                                            else 0
+                                        ),
+                                        "evidence_selection_pool_chunk_ids": retrieval_pool_chunk_ids,
+                                    }
+                                )
+                            retrieval_rounds = [
+                                _evidence_selection_round(
+                                    query=question.question,
+                                    retrieval=retrieval_result,
+                                    latency_ms=retrieval_result.elapsed_ms,
+                                )
+                            ]
+                        else:
+                            (
+                                retrieval_result,
+                                query_plan,
+                                retrieval_rounds,
+                                sufficiency,
+                                query_planning_ms,
+                            ) = _retrieve_variant_question(
+                                question,
+                                index=index,
+                                document_id=document_id,
+                                variant=selected_variant,
+                                query_planner=query_planner,
+                            )
                     retrieval_result.metadata["query_planning_ms"] = query_planning_ms
                     retrieval_ms = (perf_counter() - retrieval_started) * 1000
+                    if normalized_evidence_selection_variant is not None:
+                        retrieval_rounds[0]["latency_ms"] = retrieval_ms
                     retrieval_latencies.append(retrieval_ms)
                     strategy_counts[retrieval_result.retrieval_strategy] = (
                         strategy_counts.get(retrieval_result.retrieval_strategy, 0) + 1
@@ -1013,6 +1273,7 @@ def run_qasper_benchmark(
                     "paper_id": question.paper_id,
                     "question": question.question,
                     "ablation_variant": selected_variant.variant_id,
+                    "evidence_selection_variant": normalized_evidence_selection_variant,
                     "raptor_variant": normalized_raptor_variant,
                     "query_plan": (
                         query_plan.model_dump(mode="json")
@@ -1097,6 +1358,7 @@ def run_qasper_benchmark(
                     ),
                     "context_evidence_paragraph_ids": evidence_paragraph_ids,
                     "ablation_variant": selected_variant.as_dict(),
+                    "evidence_selection_variant": normalized_evidence_selection_variant,
                     "raptor_variant": normalized_raptor_variant,
                     "raptor_category": raptor_category or None,
                     "query_plan": (
@@ -1384,6 +1646,200 @@ def run_qasper_ablation(
     )
 
 
+def run_qasper_evidence_selection_ablation(
+    dataset: QasperDataset,
+    *,
+    root: str | Path | None = None,
+    mode: str = "smoke",
+    limit: int | None = None,
+    seed: int = 42,
+    config: RagConfig | None = None,
+    variants: Sequence[str] = (
+        "raw_top_k",
+        "rerank_top_k",
+        "evidence_selection",
+    ),
+    embedding_provider: EmbeddingProvider | None = None,
+    reranker: Any | None = None,
+    answerer: QasperAnswerer | None = None,
+    excerpt_provider: EvidenceExcerptProvider | None = None,
+    evidence_selector: EvidenceSelectionService | None = None,
+    suite_id: str | None = None,
+) -> QasperEvidenceSelectionSuiteResult:
+    """Compare raw, reranked, and query-selected QASPER evidence on one index."""
+
+    normalized_mode = mode.strip().casefold()
+    if normalized_mode not in RUN_LIMITS:
+        raise ValueError(f"mode must be one of: {', '.join(RUN_LIMITS)}")
+    selected_limit = RUN_LIMITS[normalized_mode] if limit is None else limit
+    if selected_limit is not None and selected_limit <= 0:
+        raise ValueError("limit must be positive")
+    selected_variants = [str(value).strip().casefold() for value in variants]
+    allowed_variants = {"raw_top_k", "rerank_top_k", "evidence_selection"}
+    if not selected_variants:
+        raise ValueError("at least one evidence-selection variant is required")
+    if any(value not in allowed_variants for value in selected_variants):
+        raise ValueError(
+            "evidence-selection variants must be raw_top_k, rerank_top_k, or evidence_selection"
+        )
+    if len(set(selected_variants)) != len(selected_variants):
+        raise ValueError("evidence-selection variants must be unique")
+
+    benchmark_directory = benchmark_root(root)
+    source_config = (config or RagConfig()).model_copy(deep=True)
+    model_manager: ModelManager | None = None
+    if embedding_provider is None or reranker is None:
+        model_manager = ModelManager()
+    shared_embedding = embedding_provider or create_embedding_provider(
+        source_config.embedding,
+        model_manager=model_manager,
+    )
+    shared_reranker = reranker or Qwen3RerankerProvider(
+        source_config.reranker,
+        model_manager=model_manager,
+    )
+    shared_selector = evidence_selector or EvidenceSelectionService(
+        extractor=excerpt_provider,
+        embedding_provider=shared_embedding,
+    )
+
+    selected_suite_id = suite_id or _new_run_id(
+        dataset.split,
+        f"evidence-selection-{normalized_mode}",
+    )
+    if not _RUN_ID.fullmatch(selected_suite_id):
+        raise ValueError("suite_id may contain only letters, digits, dots, underscores, and hyphens")
+    suite_directory = benchmark_directory / "evidence_selection" / selected_suite_id
+    suite_directory.mkdir(parents=True, exist_ok=False)
+    manifest_path = suite_directory / "manifest.json"
+    comparison_path = suite_directory / "comparison.json"
+    suite_manifest: dict[str, Any] = {
+        "manifest_version": 1,
+        "suite_id": selected_suite_id,
+        "dataset": "qasper",
+        "dataset_version": dataset.dataset_version,
+        "split": dataset.split,
+        "mode": normalized_mode,
+        "limit": selected_limit,
+        "seed": seed,
+        "index_rebuild": False,
+        "status": "running",
+        "variants": selected_variants,
+        "candidate_pool_size": 20,
+        "selected_top_k": 5,
+        "extractor_model": shared_selector.extractor_model,
+        "prompt_version": shared_selector.prompt_version,
+        "answer_generation": answerer is not None,
+        "completed_runs": [],
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    atomic_write_json(manifest_path, suite_manifest)
+
+    comparison_rows: list[dict[str, Any]] = []
+    try:
+        for variant_id in selected_variants:
+            run_suffix = variant_id.replace("_", "-")
+            run_id = f"{selected_suite_id[:100]}-es-{run_suffix}"
+            result = run_qasper_benchmark(
+                dataset,
+                root=benchmark_directory,
+                mode=normalized_mode,
+                limit=selected_limit,
+                seed=seed,
+                config=source_config,
+                embedding_provider=shared_embedding,
+                reranker=shared_reranker,
+                answerer=answerer,
+                evidence_selection_variant=variant_id,
+                evidence_selector=shared_selector,
+                run_id=run_id,
+                rebuild_index=False,
+            )
+            from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
+
+            metrics = evaluate_qasper_run(result.run_directory, root=benchmark_directory)
+            run_manifest = read_json(result.manifest_path) or {}
+            row = {
+                "variant_id": variant_id,
+                "name": _evidence_selection_ablation_variant(variant_id).name,
+                "run_id": result.run_id,
+                "run_directory": str(result.run_directory),
+                "run_status": result.run_status,
+                "error_count": result.error_count,
+                "index_cache_hit": bool(run_manifest.get("index", {}).get("cache_hit")),
+                "paragraph_evidence": metrics["paragraph_evidence"],
+                "official_qasper": metrics["official_qasper"],
+                "context_metrics": metrics.get("context_metrics", {}),
+                "groundedness_metrics": metrics.get("groundedness_metrics", {}),
+                "evidence_selection": metrics.get("evidence_selection", {}),
+                "performance_ms": metrics.get("performance_ms", {}),
+            }
+            comparison_rows.append(row)
+            suite_manifest["completed_runs"].append(
+                {
+                    "variant_id": variant_id,
+                    "run_id": result.run_id,
+                    "run_status": result.run_status,
+                    "index_cache_hit": row["index_cache_hit"],
+                }
+            )
+            atomic_write_json(manifest_path, suite_manifest)
+
+        comparison = {
+            "metric_version": 1,
+            "suite_id": selected_suite_id,
+            "variant_count": len(comparison_rows),
+            "definition": {
+                "index_rebuild": False,
+                "shared_index_fingerprint": "all variants use identical corpus, chunking, and embedding configuration",
+                "raw_top_k": "hybrid Dense + BM25 + RRF candidates, without reranking, final top 5",
+                "rerank_top_k": "hybrid Dense + BM25 + RRF candidates, reranked, final top 5",
+                "evidence_selection": "reranked top 20 chunks, exact query-conditioned evidence spans, then top 5 spans passed as grounded evidence",
+                "metrics": [
+                    "paragraph evidence precision, recall, and F1",
+                    "official QASPER Answer F1 and Evidence F1",
+                    "Context Tokens",
+                    "Unsupported Claim Rate",
+                    "evidence extraction and scoring latency",
+                ],
+            },
+            "variants": comparison_rows,
+        }
+        atomic_write_json(comparison_path, comparison)
+        suite_status = (
+            "complete"
+            if all(row["run_status"] == "complete" for row in comparison_rows)
+            else "partial"
+        )
+        suite_manifest.update(
+            {
+                "status": suite_status,
+                "completed_at": datetime.now(UTC).isoformat(),
+                "comparison_path": str(comparison_path),
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+    except BaseException as exc:
+        suite_manifest.update(
+            {
+                "status": "failed",
+                "completed_at": datetime.now(UTC).isoformat(),
+                "error": str(exc) or exc.__class__.__name__,
+            }
+        )
+        atomic_write_json(manifest_path, suite_manifest)
+        raise
+
+    return QasperEvidenceSelectionSuiteResult(
+        suite_id=selected_suite_id,
+        suite_directory=suite_directory,
+        manifest_path=manifest_path,
+        comparison_path=comparison_path,
+        variant_count=len(comparison_rows),
+        status=suite_manifest["status"],
+    )
+
+
 def run_qasper_raptor_ablation(
     dataset: QasperDataset,
     *,
@@ -1636,9 +2092,11 @@ __all__ = [
     "QasperAblationSuiteResult",
     "QasperAnswerer",
     "QasperBenchmarkRunResult",
+    "QasperEvidenceSelectionSuiteResult",
     "QasperGeneratedAnswer",
     "QasperRaptorAblationSuiteResult",
     "run_qasper_ablation",
     "run_qasper_benchmark",
+    "run_qasper_evidence_selection_ablation",
     "run_qasper_raptor_ablation",
 ]

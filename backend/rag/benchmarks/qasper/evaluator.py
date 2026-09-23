@@ -289,6 +289,8 @@ def evaluate_qasper_run(
         "rerank_ms": [],
         "small_to_big_ms": [],
         "raptor_summary_search_ms": [],
+        "evidence_extraction_ms": [],
+        "evidence_scoring_ms": [],
         "answer_generation_ms": [],
     }
     answerer_counts: dict[str, int] = {}
@@ -317,6 +319,9 @@ def evaluate_qasper_run(
     coverage_gain: list[float] = []
     query_planner_invocations = 0
     answerer_invocations = 0
+    evidence_extractor_invocations = 0
+    assessed_claims = 0
+    unsupported_claims = 0
 
     for question_id, qrel in qrel_by_id.items():
         prediction = prediction_by_id.get(question_id, {})
@@ -498,8 +503,13 @@ def evaluate_qasper_run(
                 "rerank_ms",
                 "small_to_big_ms",
                 "raptor_summary_search_ms",
+                "evidence_extraction_ms",
+                "evidence_scoring_ms",
             ):
                 component_latencies[key].append(float(retrieval_metadata.get(key, 0.0) or 0.0))
+            evidence_extractor_invocations += int(
+                retrieval_metadata.get("evidence_extractor_invocations", 0) or 0
+            )
         query_planner_invocations += int(bool(trace.get("query_planner_invoked")))
         answer_metadata = prediction.get("answer_generation", {})
         if isinstance(answer_metadata, dict) and answer_metadata:
@@ -509,6 +519,18 @@ def evaluate_qasper_run(
             answerer_invocations += int(
                 not bool(answer_details.get("abstained"))
             )
+            claim_count = answer_details.get("claim_count")
+            unsupported_claim_count = answer_details.get("unsupported_claim_count")
+            if (
+                isinstance(claim_count, int)
+                and claim_count > 0
+                and isinstance(unsupported_claim_count, int)
+            ):
+                assessed_claims += claim_count
+                unsupported_claims += max(
+                    0,
+                    min(claim_count, unsupported_claim_count),
+                )
             component_latencies["answer_generation_ms"].append(
                 float(answer_metadata.get("latency_ms", 0.0) or 0.0)
             )
@@ -707,7 +729,12 @@ def evaluate_qasper_run(
             "unnecessary_retrieval_rounds": unnecessary_retrieval_rounds,
             "query_planner_invocations": query_planner_invocations,
             "answerer_invocations": answerer_invocations,
-            "estimated_llm_invocations": query_planner_invocations + answerer_invocations,
+            "evidence_extractor_invocations": evidence_extractor_invocations,
+            "estimated_llm_invocations": (
+                query_planner_invocations
+                + answerer_invocations
+                + evidence_extractor_invocations
+            ),
         },
         "evidence_gate_evaluation": {
             "evaluated_decisions": len(gate_sufficiency_labels),
@@ -753,6 +780,16 @@ def evaluate_qasper_run(
             ),
         },
         "answer_provider_counts": dict(sorted(answerer_counts.items())),
+        "groundedness_metrics": {
+            "assessed_claims": assessed_claims,
+            "unsupported_claims": unsupported_claims,
+            "Unsupported Claim Rate": (
+                unsupported_claims / assessed_claims if assessed_claims else None
+            ),
+        },
+        "evidence_selection": {
+            "extractor_invocations": evidence_extractor_invocations,
+        },
         "per_question": per_question,
     }
     tagged_raptor_questions = {

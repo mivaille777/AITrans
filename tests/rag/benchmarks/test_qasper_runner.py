@@ -10,6 +10,7 @@ from backend.rag.benchmarks.qasper.runner import (
     QasperGeneratedAnswer,
     run_qasper_ablation,
     run_qasper_benchmark,
+    run_qasper_evidence_selection_ablation,
     run_qasper_raptor_ablation,
 )
 from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
@@ -28,6 +29,18 @@ class _FakeEmbedding:
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [[1.0, 0.0] for _ in texts]
+
+
+class _QasperEvidenceEmbedding(_FakeEmbedding):
+    model_name = "test-qasper-evidence-selection-embedding"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [
+            [1.0, 0.0]
+            if any(term in text.casefold() for term in ("treatment", "outcome"))
+            else [0.0, 1.0]
+            for text in texts
+        ]
 
 
 class _FakeReranker:
@@ -51,6 +64,22 @@ class _FakeAnswerer:
             model=self.model,
             latency_ms=2.5,
             metadata={"verification_passed": True},
+        )
+
+
+class _EvidenceMetricsAnswerer(_FakeAnswerer):
+    def __call__(self, question, retrieval):
+        super().__call__(question, retrieval)
+        return QasperGeneratedAnswer(
+            answer=f"Grounded answer for {question.question_id}.",
+            provider=self.provider,
+            model=self.model,
+            latency_ms=2.5,
+            metadata={
+                "verification_passed": True,
+                "claim_count": 4,
+                "unsupported_claim_count": 1,
+            },
         )
 
 
@@ -378,6 +407,108 @@ def test_raptor_suite_caches_trees_and_groups_results_by_evidence_scope(tmp_path
     assert trace["retrieval_metadata"]["raptor_variant"] == "R2"
     assert trace["retrieval_metadata"]["raptor_summary_hits"]
     assert trace["final_candidates"]
+
+
+def test_qasper_evidence_selection_suite(tmp_path) -> None:
+    paragraph = (
+        "Evidence for question A supports the treatment outcome. "
+        "Separate historical context describes earlier work. "
+        "Methods include a laboratory preparation detail. "
+        "Another background detail appears in the introduction. "
+        "A fifth unrelated sentence names a general condition. "
+        "A sixth statement covers a different topic. "
+        "A seventh unrelated result is summarized. "
+        "An eighth sentence adds extra discussion."
+    )
+    path = tmp_path / "evidence-selection-sample.json"
+    path.write_text(
+        json.dumps(
+            {
+                "paper-a": {
+                    "title": "Evidence selection paper",
+                    "abstract": "A small fixture for this article.",
+                    "full_text": [
+                        {"section_name": "Results", "paragraphs": [paragraph]}
+                    ],
+                    "qas": [
+                        {
+                            "question_id": "q-a",
+                            "question": "What evidence supports the treatment outcome?",
+                            "answers": [
+                                {
+                                    "annotation_id": "a-a",
+                                    "answer": {
+                                        "free_form_answer": "The treatment outcome."
+                                    },
+                                    "evidence": [paragraph],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    dataset = load_qasper(path)
+    embedding = _QasperEvidenceEmbedding()
+    config = RagConfig(
+        embedding=RagEmbeddingConfig(
+            model=embedding.model_name,
+            dimension=embedding.dimension,
+        )
+    )
+    result = run_qasper_evidence_selection_ablation(
+        dataset,
+        root=tmp_path / "es",
+        mode="full",
+        config=config,
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        answerer=_EvidenceMetricsAnswerer(),
+        suite_id="test-evidence-selection",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    rows = {row["variant_id"]: row for row in comparison["variants"]}
+
+    assert result.status == "complete"
+    assert result.variant_count == 3
+    assert manifest["index_rebuild"] is False
+    assert manifest["completed_runs"][0]["index_cache_hit"] is False
+    assert all(run["index_cache_hit"] for run in manifest["completed_runs"][1:])
+    raw_tokens = rows["raw_top_k"]["context_metrics"]["Context Tokens"]
+    selected_tokens = rows["evidence_selection"]["context_metrics"]["Context Tokens"]
+    assert selected_tokens < raw_tokens
+    assert rows["evidence_selection"]["groundedness_metrics"][
+        "Unsupported Claim Rate"
+    ] == 0.25
+    assert rows["evidence_selection"]["paragraph_evidence"][
+        "Evidence F1@5"
+    ] > 0
+    assert rows["evidence_selection"]["official_qasper"]["all_evidence"][
+        "Answer F1"
+    ] >= 0
+
+    run_directory = Path(rows["evidence_selection"]["run_directory"])
+    trace = json.loads(
+        (run_directory / "retrieval_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    selected_trace = trace["retrieval_metadata"]["evidence_selection"]
+    assert trace["evidence_selection_variant"] == "evidence_selection"
+    assert 1 <= selected_trace["candidate_pool_count"] <= 20
+    assert selected_trace["selected_span_count"] == 1
+    assert trace["retrieval_metadata"]["evidence_extraction_ms"] >= 0
+    paragraph_candidates = [
+        candidate
+        for candidate in trace["final_candidates"]
+        if candidate["source_paragraph_ids"]
+    ]
+    assert paragraph_candidates
+    assert all(candidate["text"] in paragraph for candidate in paragraph_candidates)
 
 
 def test_question_sampling_is_reproducible_and_keeps_only_used_papers(tmp_path) -> None:

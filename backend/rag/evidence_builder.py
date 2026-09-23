@@ -72,6 +72,14 @@ def build_evidence_item(
     element_metadata = chunk.metadata.get("element_metadata")
     if not isinstance(element_metadata, Mapping):
         element_metadata = {}
+    evidence_selection = candidate.metadata.get("evidence_selection")
+    if not isinstance(evidence_selection, Mapping):
+        evidence_selection = {}
+    evidence_id = f"evidence:{chunk.chunk_id}"
+    start_offset = evidence_selection.get("start_offset")
+    end_offset = evidence_selection.get("end_offset")
+    if isinstance(start_offset, int) and isinstance(end_offset, int):
+        evidence_id = f"{evidence_id}:span:{start_offset}-{end_offset}"
     metadata = _json_safe(
         {
             "retrieval_strategy": retrieval_strategy,
@@ -110,7 +118,7 @@ def build_evidence_item(
         }
     )
     return AgentEvidenceItem(
-        evidence_id=f"evidence:{chunk.chunk_id}",
+        evidence_id=evidence_id,
         source_type="knowledge",
         source_id=chunk.document_id,
         title=chunk.title,
