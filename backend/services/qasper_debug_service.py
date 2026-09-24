@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -24,6 +25,15 @@ from backend.rag.config import RagConfig
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _STATE_LOCK = threading.RLock()
 _RUN_STATES: dict[str, dict[str, Any]] = {}
+_METRICS_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
+_METRIC_SUMMARY_KEYS = (
+    "ai_trans_retrieval",
+    "adaptive_retrieval",
+    "context_metrics",
+    "official_qasper",
+    "paragraph_evidence",
+    "performance_ms",
+)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -38,8 +48,33 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _count_jsonl_rows(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    with path.open(encoding="utf-8-sig") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def _compact_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    return {key: metrics[key] for key in _METRIC_SUMMARY_KEYS if key in metrics}
+
+
+def _read_metrics_summary(path: Path) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    cached = _METRICS_CACHE.get(str(path))
+    if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+        return cached[2]
+    metrics = read_json(path) or {}
+    summary = _compact_metrics(metrics)
+    _METRICS_CACHE[str(path)] = (stat.st_mtime_ns, stat.st_size, summary)
+    return summary
+
+
 def _safe_run_path(run_id: str) -> Path:
-    if not _RUN_ID.fullmatch(run_id) or not run_id.startswith("debug-qasper-"):
+    if not _RUN_ID.fullmatch(run_id):
         raise ValueError("Invalid QASPER debug run id.")
     root = benchmark_root() / "results"
     run_path = (root / run_id).resolve()
@@ -52,32 +87,60 @@ def _summary_from_manifest(run_id: str, manifest: dict[str, Any]) -> QasperDebug
     raw_status = str(manifest.get("status", "queued"))
     status = {
         "complete": "completed",
-        "partial": "completed",
+        "partial": "partial",
         "retrieval_complete": "completed",
         "baseline_complete": "completed",
     }.get(raw_status, raw_status)
-    if status not in {"queued", "running", "completed", "failed", "cancelled"}:
+    if status not in {"queued", "running", "completed", "partial", "failed", "cancelled"}:
         status = "failed"
-    metrics_path = _safe_run_path(run_id) / "metrics.json"
-    metrics = read_json(metrics_path) or {}
+    run_path = _safe_run_path(run_id)
+    metrics_path = run_path / "metrics.json"
     debug = manifest.get("debug", {})
     if not isinstance(debug, dict):
         debug = {}
+    metrics = debug.get("metrics_summary")
+    if not isinstance(metrics, dict):
+        metrics = _read_metrics_summary(metrics_path) if status != "running" else {}
     variant_info = manifest.get("ablation_variant", {})
-    variant = str(debug.get("variant") or (variant_info.get("variant_id") if isinstance(variant_info, dict) else "CURRENT") or "CURRENT")
+    variant = str(
+        debug.get("variant")
+        or manifest.get("raptor_variant")
+        or (variant_info.get("variant_id") if isinstance(variant_info, dict) else "")
+        or manifest.get("variant")
+        or "CURRENT"
+    )
     if manifest.get("adaptive_variant"):
         variant = f"adaptive:{manifest['adaptive_variant']}"
     elif manifest.get("evidence_selection_variant"):
         variant = f"evidence:{manifest['evidence_selection_variant']}"
+    limit = manifest.get("limit")
+    sample_size = str(debug.get("sample_size", limit or "full"))
+    question_count = int(manifest.get("question_count", 0) or 0)
+    completed_question_count = (
+        question_count
+        if status == "completed"
+        else _count_jsonl_rows(run_path / "predictions.jsonl")
+    )
     return QasperDebugRunSummary(
         run_id=run_id,
         status=status,
         split=str(manifest.get("split", debug.get("split", "validation"))),
-        sample_size=str(debug.get("sample_size", manifest.get("limit") or "full")),
+        sample_size=sample_size,
         seed=int(manifest.get("seed", debug.get("seed", 42)) or 0),
         config_id=str(debug.get("config_id", "default")),
         variant=variant,
-        question_count=int(manifest.get("question_count", 0) or 0),
+        question_count=question_count,
+        completed_question_count=completed_question_count,
+        error_count=int(manifest.get("error_count", 0) or 0),
+        profile_id=str(
+            debug.get("profile_id")
+            or (
+                manifest.get("quality_profile", {}).get("profile_id")
+                if isinstance(manifest.get("quality_profile"), dict)
+                else ""
+            )
+            or "runtime-default"
+        ),
         error=str(manifest.get("error", "") or ""),
         started_at=str(manifest.get("started_at", "") or ""),
         completed_at=str(manifest.get("completed_at", "") or ""),
@@ -95,10 +158,13 @@ def _summary_from_state(run_id: str, state: dict[str, Any]) -> QasperDebugRunSum
         config_id=str(state.get("config_id", "default")),
         variant=str(state.get("variant", "CURRENT")),
         question_count=int(state.get("question_count", 0)),
+        completed_question_count=int(state.get("completed_question_count", 0)),
+        error_count=int(state.get("error_count", 0)),
+        profile_id=str(state.get("profile_id", "runtime-default")),
         error=str(state.get("error", "")),
         started_at=str(state.get("started_at", "")),
         completed_at=str(state.get("completed_at", "")),
-        metrics=state.get("metrics", {}),
+        metrics=_compact_metrics(state.get("metrics", {})),
     )
 
 
@@ -106,11 +172,14 @@ def list_qasper_debug_runs() -> list[QasperDebugRunSummary]:
     results_root = benchmark_root() / "results"
     summaries: dict[str, QasperDebugRunSummary] = {}
     if results_root.is_dir():
-        for manifest_path in results_root.glob("debug-qasper-*/manifest.json"):
+        for manifest_path in results_root.glob("*/manifest.json"):
             run_id = manifest_path.parent.name
             try:
                 manifest = read_json(manifest_path)
-                if manifest:
+                if manifest and (
+                    manifest.get("dataset") == "qasper"
+                    or run_id.startswith("debug-qasper-")
+                ):
                     summaries[run_id] = _summary_from_manifest(run_id, manifest)
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
@@ -122,10 +191,13 @@ def list_qasper_debug_runs() -> list[QasperDebugRunSummary]:
 
 def get_qasper_debug_run(run_id: str) -> QasperDebugRunSummary | None:
     try:
-        manifest = read_json(_safe_run_path(run_id) / "manifest.json")
+        run_path = _safe_run_path(run_id)
+        manifest = read_json(run_path / "manifest.json")
     except ValueError:
         return None
-    if manifest:
+    if manifest and (
+        manifest.get("dataset") == "qasper" or run_id.startswith("debug-qasper-")
+    ):
         return _summary_from_manifest(run_id, manifest)
     with _STATE_LOCK:
         state = _RUN_STATES.get(run_id)
@@ -144,6 +216,7 @@ def start_qasper_debug_run(
         "seed": request.seed,
         "config_id": request.config_id,
         "variant": request.variant,
+        "profile_id": request.profile_id,
         "started_at": datetime.now(UTC).isoformat(),
     }
     with _STATE_LOCK:
@@ -189,13 +262,52 @@ def _execute_qasper_debug_run(run_id: str, request_data: dict[str, Any], config_
         mode = {"20": "smoke", "100": "dev", "full": "full"}[sample_size]
         selected_variant = request.variant
         runner_options: dict[str, Any] = {}
+        profile_root = (
+            Path(__file__).resolve().parents[1]
+            / "rag"
+            / "benchmarks"
+            / "qasper"
+            / "profiles"
+        )
+        answer_contract: dict[str, Any] | None = None
+        answer_contract_sha256: str | None = None
+        if request.profile_id == "p1-quality":
+            profile_bytes = (profile_root / "p1q1-evidence-selection-v2.json").read_bytes()
+            profile = json.loads(profile_bytes.decode("utf-8"))
+            runner_options["quality_profile"] = profile
+            runner_options["quality_profile_sha256"] = hashlib.sha256(profile_bytes).hexdigest()
+            if selected_variant in {"CURRENT", "P1_CURRENT"}:
+                runner_options["evidence_selection_variant"] = "evidence_selection"
+                selected_variant = "CURRENT"
+            contract_bytes = (profile_root / "p1q2-direct-answer-v1.json").read_bytes()
+            answer_contract = json.loads(contract_bytes.decode("utf-8"))
+            answer_contract_sha256 = hashlib.sha256(contract_bytes).hexdigest()
+        elif selected_variant == "P1_CURRENT":
+            selected_variant = "CURRENT"
+        if (
+            request.split == "validation"
+            and request.seed == 42
+            and sample_size in {"20", "100"}
+        ):
+            sample_filename = {
+                "20": "validation-smoke20-seed42.txt",
+                "100": "validation-dev100-seed42.txt",
+            }[sample_size]
+            runner_options["question_ids_file"] = profile_root.parent / "sample_ids" / sample_filename
         if selected_variant.startswith("adaptive:"):
             runner_options["adaptive_variant"] = selected_variant.partition(":")[2]
         elif selected_variant.startswith("evidence:"):
             runner_options["evidence_selection_variant"] = selected_variant.partition(":")[2]
         elif selected_variant.casefold() != "current":
             runner_options["variant"] = selected_variant
-        answerer = GroundedQasperAnswerer() if request.include_answer else None
+        answerer = (
+            GroundedQasperAnswerer(
+                answer_contract=answer_contract,
+                answer_contract_sha256=answer_contract_sha256,
+            )
+            if request.include_answer
+            else None
+        )
         try:
             result = run_qasper_benchmark(
                 dataset,
@@ -216,6 +328,8 @@ def _execute_qasper_debug_run(run_id: str, request_data: dict[str, Any], config_
                 "sample_size": request.sample_size,
                 "variant": request.variant,
                 "include_answer": request.include_answer,
+                "profile_id": request.profile_id,
+                "metrics_summary": _compact_metrics(metrics),
             }
             atomic_write_json(manifest_path, manifest)
             with _STATE_LOCK:
@@ -223,6 +337,8 @@ def _execute_qasper_debug_run(run_id: str, request_data: dict[str, Any], config_
                     {
                         "status": "completed",
                         "question_count": result.question_count,
+                        "completed_question_count": result.question_count,
+                        "error_count": result.error_count,
                         "completed_at": datetime.now(UTC).isoformat(),
                         "metrics": metrics,
                     }

@@ -99,7 +99,7 @@ vi.mock("../../api/rag-debug", () => {
     listQasperDebugRuns: vi.fn().mockResolvedValue([]),
     saveRagDebugCase: vi.fn(),
     startRagDebugRun: vi.fn().mockResolvedValue({ run_id: "run-1", trace_id: "trace-1", status: "completed" }),
-    startQasperDebugRun: vi.fn().mockResolvedValue({ run_id: "debug-qasper-validation-test", status: "queued", split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "CURRENT", question_count: 0, error: "", started_at: "", completed_at: "", metrics: {} }),
+    startQasperDebugRun: vi.fn().mockResolvedValue({ run_id: "debug-qasper-validation-test", status: "queued", split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "P1_CURRENT", question_count: 20, completed_question_count: 0, error_count: 0, profile_id: "p1-quality", error: "", started_at: "", completed_at: "", metrics: {} }),
     updateRagDebugCase: vi.fn(),
     updateRagDebugConfig: vi.fn(),
   }
@@ -183,14 +183,15 @@ describe("RagDebugStudio", () => {
       sample_size: "20",
       seed: 42,
       config_id: "default",
-      variant: "CURRENT",
-      include_answer: false,
+      variant: "P1_CURRENT",
+      include_answer: true,
+      profile_id: "p1-quality",
     }))
     expect(screen.getByText(/Gold Chunk IDs are not entered by hand/)).toBeTruthy()
   })
 
   it("loads a QASPER question into the Trace tab with gold and gate details", async () => {
-    const run = { run_id: "debug-qasper-validation-1", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "adaptive:evidence_gated", question_count: 1, error: "", started_at: "", completed_at: "", metrics: {} }
+    const run = { run_id: "debug-qasper-validation-1", status: "partial" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "adaptive:evidence_gated", question_count: 2, completed_question_count: 1, error_count: 1, profile_id: "p1-quality", error: "provider timeout after partial result", started_at: "", completed_at: "", metrics: {} }
     const qasperCase = {
       question_id: "q1",
       paper_id: "paper-1",
@@ -212,6 +213,7 @@ describe("RagDebugStudio", () => {
     render(<RagDebugStudioTrace />)
 
     fireEvent.click(screen.getByRole("button", { name: "Datasets" }))
+    expect(await screen.findByText(/finished with 1 error after 1\/2 questions/i)).toBeTruthy()
     await waitFor(() => expect(getQasperDebugCase).toHaveBeenCalledWith(run.run_id, "q1"))
     fireEvent.click(screen.getByRole("button", { name: "Trace" }))
 
@@ -231,8 +233,8 @@ describe("RagDebugStudio", () => {
 
   it("shows paired bootstrap confidence intervals for two QASPER runs", async () => {
     const runs = [
-      { run_id: "baseline", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "CURRENT", question_count: 2, error: "", started_at: "", completed_at: "", metrics: {} },
-      { run_id: "candidate", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "B2", question_count: 2, error: "", started_at: "", completed_at: "", metrics: {} },
+      { run_id: "baseline", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "CURRENT", question_count: 2, completed_question_count: 2, error_count: 0, profile_id: "p1-quality", error: "", started_at: "", completed_at: "", metrics: {} },
+      { run_id: "candidate", status: "completed" as const, split: "validation", sample_size: "20", seed: 42, config_id: "default", variant: "B2", question_count: 2, completed_question_count: 2, error_count: 0, profile_id: "p1-quality", error: "", started_at: "", completed_at: "", metrics: {} },
     ]
     vi.mocked(listQasperDebugRuns).mockResolvedValueOnce(runs)
     render(<RagDebugStudioTrace />)

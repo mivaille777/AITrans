@@ -168,6 +168,49 @@ def test_qasper_debug_only_allows_one_queued_or_running_job(
         service.start_qasper_debug_run(request, RagConfig())
 
 
+def test_qasper_run_history_includes_existing_benchmark_runs_and_partial_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = tmp_path / "qasper"
+    run_id = "p1q4-real-dev100-r0"
+    run_dir = benchmark / "results" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "dataset": "qasper",
+                "status": "partial",
+                "split": "validation",
+                "mode": "dev",
+                "limit": 100,
+                "seed": 42,
+                "question_count": 100,
+                "started_at": "2026-09-24T00:00:00+00:00",
+                "error_count": 1,
+                "error": "provider timeout",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        run_dir / "predictions.jsonl",
+        [{"question_id": "q1"}, {"question_id": "q2"}],
+    )
+    (run_dir / "metrics.json").write_text(json.dumps({"official_qasper": {}}), encoding="utf-8")
+    monkeypatch.setattr(service, "benchmark_root", lambda path=None: benchmark)
+
+    summaries = service.list_qasper_debug_runs()
+
+    assert len(summaries) == 1
+    assert summaries[0].run_id == run_id
+    assert summaries[0].status == "partial"
+    assert summaries[0].completed_question_count == 2
+    assert summaries[0].question_count == 100
+    assert service.get_qasper_debug_run(run_id) == summaries[0]
+
+
 def test_qasper_debug_chunk_catalog_pages_and_counts_gold_hit_questions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

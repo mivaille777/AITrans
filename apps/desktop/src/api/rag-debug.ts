@@ -1,6 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiWebSocketUrl } from "./client"
 
-export type RagDebugRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled"
+export type RagDebugRunStatus = "queued" | "running" | "completed" | "partial" | "failed" | "cancelled"
 export type RagDebugStageStatus = "pending" | "active" | "complete" | "warning" | "failed" | "skipped"
 export type RagDebugTab = "trace" | "retrieval" | "chunks" | "evaluation" | "compare" | "datasets"
 
@@ -234,6 +234,9 @@ export interface QasperDebugRunSummary {
   config_id: string
   variant: string
   question_count: number
+  completed_question_count: number
+  error_count: number
+  profile_id: string
   error: string
   started_at: string
   completed_at: string
@@ -408,7 +411,7 @@ export function compareQasperDebugRuns(payload: { baseline_run_id: string; candi
   return apiPost(`${ROOT}/qasper/compare`, payload)
 }
 
-export function startQasperDebugRun(payload: { split: "train" | "validation"; sample_size: "20" | "100" | "full"; seed: number; config_id: string; variant: string; include_answer: boolean }): Promise<QasperDebugRunSummary> {
+export function startQasperDebugRun(payload: { split: "train" | "validation"; sample_size: "20" | "100" | "full"; seed: number; config_id: string; variant: string; include_answer: boolean; profile_id: "p1-quality" | "runtime-default" }): Promise<QasperDebugRunSummary> {
   return apiPost(`${ROOT}/qasper/runs`, payload)
 }
 

@@ -251,7 +251,7 @@ class RagDebugService:
                     source_uri=record.source_uri,
                     status=str(status or ""),
                     chunk_count=len(record.chunk_ids),
-                    updated_at=record.indexed_at,
+                    updated_at=record.indexed_at.isoformat() if record.indexed_at else "",
                 )
             )
         return documents

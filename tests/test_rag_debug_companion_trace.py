@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.models.rag_debug import RagDebugCase, RagDebugRunRequest
 from backend.rag.config import RagConfig
+from backend.rag.index_manifest import IndexManifestRecord, IndexStatus
 from backend.services.rag_debug_service import RagDebugService
 from backend.services.rag_debug_store_service import RagDebugStoreService
+
+
+def test_debug_document_listing_serializes_index_timestamp(tmp_path: Path) -> None:
+    service = RagDebugService(
+        store=RagDebugStoreService(storage_path=tmp_path / "rag-debug.sqlite3")
+    )
+    indexed_at = datetime(2026, 9, 24, 10, 0, tzinfo=UTC)
+    runtime = SimpleNamespace(
+        manifest=SimpleNamespace(
+            list_records=lambda: [
+                IndexManifestRecord(
+                    document_id="doc-1",
+                    title="Paper",
+                    source_uri="file:///paper.pdf",
+                    chunk_ids=["chunk-1"],
+                    status=IndexStatus.READY,
+                    indexed_at=indexed_at,
+                )
+            ]
+        )
+    )
+
+    try:
+        documents = service.list_documents(runtime)
+
+        assert len(documents) == 1
+        assert documents[0].updated_at == indexed_at.isoformat()
+    finally:
+        service.close()
 
 
 def test_companion_trace_records_route_retrieval_evidence_and_verification(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.rag.config import RagConfig
 
-RagDebugRunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+RagDebugRunStatus = Literal["queued", "running", "completed", "partial", "failed", "cancelled"]
 RagDebugStageStatus = Literal[
     "pending", "active", "complete", "warning", "failed", "skipped"
 ]
@@ -290,6 +290,7 @@ class QasperDebugRunRequest(RagDebugModel):
     config_id: str = Field(default="default", min_length=1, max_length=128)
     variant: str = Field(default="CURRENT", min_length=1, max_length=64)
     include_answer: bool = False
+    profile_id: Literal["p1-quality", "runtime-default"] = "p1-quality"
 
 
 class QasperDebugRunSummary(RagDebugModel):
@@ -301,6 +302,9 @@ class QasperDebugRunSummary(RagDebugModel):
     config_id: str = "default"
     variant: str = "CURRENT"
     question_count: int = Field(default=0, ge=0)
+    completed_question_count: int = Field(default=0, ge=0)
+    error_count: int = Field(default=0, ge=0)
+    profile_id: str = "runtime-default"
     error: str = ""
     started_at: str = ""
     completed_at: str = ""

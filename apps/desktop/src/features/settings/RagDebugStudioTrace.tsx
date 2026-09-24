@@ -1419,8 +1419,9 @@ function QasperBenchmarkPanel({ configs, runs, onRunSelected, onCaseSelected }: 
   const [sampleSize, setSampleSize] = useState<"20" | "100" | "full">("20")
   const [seed, setSeed] = useState("42")
   const [configId, setConfigId] = useState("default")
-  const [variant, setVariant] = useState("CURRENT")
-  const [includeAnswer, setIncludeAnswer] = useState(false)
+  const [variant, setVariant] = useState("P1_CURRENT")
+  const [profileId, setProfileId] = useState<"p1-quality" | "runtime-default">("p1-quality")
+  const [includeAnswer, setIncludeAnswer] = useState(true)
   const [selectedRunId, setSelectedRunId] = useState("")
   const [selectedQuestionId, setSelectedQuestionId] = useState("")
   const [errorTypeFilter, setErrorTypeFilter] = useState("all")
@@ -1445,7 +1446,7 @@ function QasperBenchmarkPanel({ configs, runs, onRunSelected, onCaseSelected }: 
   const activeTask = runs.some((run) => run.status === "queued" || run.status === "running")
   useEffect(() => {
     let disposed = false
-    if (!activeRunId || activeRunStatus !== "completed") return () => { disposed = true }
+    if (!activeRunId || !["completed", "partial"].includes(activeRunStatus)) return () => { disposed = true }
     void listQasperDebugCases(activeRunId).then((items) => {
       if (disposed) return
       setCaseIndex({ runId: activeRunId, questions: items })
@@ -1455,8 +1456,8 @@ function QasperBenchmarkPanel({ configs, runs, onRunSelected, onCaseSelected }: 
   }, [activeRunId, activeRunStatus])
   useEffect(() => {
     let disposed = false
-    if (activeRunStatus !== "completed" || !activeRunId || !effectiveQuestionId) {
-      if (activeRunStatus === "completed" && activeRunId && !effectiveQuestionId) {
+    if (!["completed", "partial"].includes(activeRunStatus) || !activeRunId || !effectiveQuestionId) {
+      if (["completed", "partial"].includes(activeRunStatus) && activeRunId && !effectiveQuestionId) {
         setSelectedCase(null)
         onCaseSelected(null)
       }
@@ -1475,7 +1476,7 @@ function QasperBenchmarkPanel({ configs, runs, onRunSelected, onCaseSelected }: 
     setLaunching(true)
     setError("")
     try {
-      const run = await startQasperDebugRun({ split, sample_size: sampleSize, seed: parsedSeed, config_id: selectedConfigId, variant, include_answer: includeAnswer })
+      const run = await startQasperDebugRun({ split, sample_size: sampleSize, seed: parsedSeed, config_id: selectedConfigId, variant, include_answer: includeAnswer, profile_id: profileId })
       setAccepted(run)
       setSelectedRunId(run.run_id)
       setSelectedQuestionId("")
@@ -1487,25 +1488,29 @@ function QasperBenchmarkPanel({ configs, runs, onRunSelected, onCaseSelected }: 
     <section className="rounded-[10px] border border-cyan-200 bg-cyan-50/25 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="text-[13px] font-semibold">QASPER benchmark preset</h2><p className="mt-1 text-[10px] text-slate-500">Run an isolated validation or train benchmark. Gold evidence is mapped from source paragraphs automatically.</p></div>
-        {activeRun && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-medium text-slate-700">{activeRun.status} · {activeRun.question_count || activeRun.sample_size} questions</span>}
+        {activeRun && <span role="status" aria-live="polite" className="rounded-full bg-white px-2.5 py-1 text-[10px] font-medium text-slate-700">{activeRun.status} · {activeRun.completed_question_count}/{activeRun.question_count || activeRun.sample_size} · {activeRun.profile_id}</span>}
       </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-7">
         <Field label="Split"><select value={split} onChange={(event) => setSplit(event.target.value as "train" | "validation")} className={selectClass}><option value="validation">Validation</option><option value="train">Train</option></select></Field>
         <Field label="Sample"><select value={sampleSize} onChange={(event) => setSampleSize(event.target.value as "20" | "100" | "full")} className={selectClass}><option value="20">20 · smoke</option><option value="100">100 · dev</option><option value="full">Full split</option></select></Field>
         <Field label="Seed"><input type="number" min={0} max={2147483647} value={seed} onChange={(event) => setSeed(event.target.value)} className={inputClass("h-10 w-full")} /></Field>
         <Field label="RAG Config"><select value={selectedConfigId} onChange={(event) => setConfigId(event.target.value)} className={selectClass}>{configs.length ? configs.map((item) => <option key={item.config_id} value={item.config_id}>{item.name}</option>) : <option value="default">Default</option>}</select></Field>
-        <Field label="Variant"><select value={variant} onChange={(event) => setVariant(event.target.value)} className={selectClass}><optgroup label="RAG ablation">{["CURRENT", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "FULL"].map((item) => <option key={item} value={item}>{item}</option>)}</optgroup><optgroup label="Adaptive retrieval">{["one_shot", "multi_query", "evidence_gated", "requirement_aware"].map((item) => <option key={item} value={`adaptive:${item}`}>{item}</option>)}</optgroup><optgroup label="Evidence selection">{["raw_top_k", "rerank_top_k", "evidence_selection"].map((item) => <option key={item} value={`evidence:${item}`}>{item}</option>)}</optgroup></select></Field>
+        <Field label="Test profile"><select value={profileId} onChange={(event) => setProfileId(event.target.value as "p1-quality" | "runtime-default")} className={selectClass}><option value="p1-quality">P1 audited evidence + answer contract</option><option value="runtime-default">Runtime defaults</option></select></Field>
+        <Field label="Variant"><select value={variant} onChange={(event) => setVariant(event.target.value)} className={selectClass}><optgroup label="RAG ablation"><option value="P1_CURRENT">P1 current · fixed evidence v2</option>{["CURRENT", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "FULL"].map((item) => <option key={item} value={item}>{item}</option>)}</optgroup><optgroup label="Adaptive retrieval">{["one_shot", "multi_query", "evidence_gated", "requirement_aware"].map((item) => <option key={item} value={`adaptive:${item}`}>{item}</option>)}</optgroup><optgroup label="Evidence selection">{["raw_top_k", "rerank_top_k", "evidence_selection"].map((item) => <option key={item} value={`evidence:${item}`}>{item}</option>)}</optgroup></select></Field>
         <div className="flex items-end"><SecondaryButton onClick={launch} disabled={launching || activeTask || !/^\d+$/.test(seed)}><Play size={13} />{launching ? "Starting…" : "Run QASPER"}</SecondaryButton></div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
         <label className="inline-flex items-center gap-2"><input type="checkbox" checked={includeAnswer} onChange={(event) => setIncludeAnswer(event.target.checked)} className="accent-slate-950" />Generate grounded answers (uses configured provider)</label>
+        {profileId === "p1-quality" && split === "validation" && seed === "42" && sampleSize !== "full" && <span>Uses the frozen Validation {sampleSize} sample.</span>}
         <span>No QASPER paper is imported into your personal library, and Gold Chunk IDs are not entered by hand.</span>
       </div>
+      {activeRun?.status === "failed" && <p role="alert" className="mt-3 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] text-rose-700">Run failed: {activeRun.error || "The benchmark stopped before completion."}</p>}
+      {activeRun?.status === "partial" && <p role="status" className="mt-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">Run finished with {activeRun.error_count} {activeRun.error_count === 1 ? "error" : "errors"} after {activeRun.completed_question_count}/{activeRun.question_count} questions. Completed traces are available below.</p>}
       {error && <p role="alert" className="mt-3 text-[10px] text-rose-700">{error}</p>}
       <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(220px,.8fr)_minmax(0,2fr)]">
-        <Field label="Benchmark run"><select value={effectiveRunId} onChange={(event) => { const runId = event.target.value; setSelectedRunId(runId); setSelectedQuestionId(""); setSelectedCase(null); setError(""); const run = runs.find((item) => item.run_id === runId) ?? (accepted?.run_id === runId ? accepted : undefined); if (run) onRunSelected(run) }} className={selectClass}><option value="">Select a QASPER run</option>{runs.map((run) => <option key={run.run_id} value={run.run_id}>{run.run_id} · {run.status} · {run.sample_size}</option>)}{accepted && !runs.some((run) => run.run_id === accepted.run_id) && <option value={accepted.run_id}>{accepted.run_id} · {accepted.status}</option>}</select></Field>
+        <Field label="Benchmark run"><select value={effectiveRunId} onChange={(event) => { const runId = event.target.value; setSelectedRunId(runId); setSelectedQuestionId(""); setSelectedCase(null); setError(""); const run = runs.find((item) => item.run_id === runId) ?? (accepted?.run_id === runId ? accepted : undefined); if (run) onRunSelected(run) }} className={selectClass}><option value="">Select a QASPER run</option>{runs.map((run) => <option key={run.run_id} value={run.run_id}>{run.run_id} · {run.status} · {run.completed_question_count}/{run.question_count || run.sample_size}</option>)}{accepted && !runs.some((run) => run.run_id === accepted.run_id) && <option value={accepted.run_id}>{accepted.run_id} · {accepted.status}</option>}</select></Field>
         <Field label="Error category"><select value={errorTypeFilter} onChange={(event) => setErrorTypeFilter(event.target.value)} disabled={!questions.length} className={selectClass}><option value="all">All categories</option>{QASPER_ERROR_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
-        <Field label="Question Trace"><select value={effectiveQuestionId} onChange={(event) => setSelectedQuestionId(event.target.value)} disabled={!filteredQuestions.length} className={selectClass}><option value="">{activeRun?.status === "completed" ? "No matching questions" : "Run must complete first"}</option>{filteredQuestions.map((item) => <option key={item.question_id} value={item.question_id}>{item.question_id} · {item.question}{item.error_types.length ? ` · ${item.error_types.join(", ")}` : ""}</option>)}</select></Field>
+        <Field label="Question Trace"><select value={effectiveQuestionId} onChange={(event) => setSelectedQuestionId(event.target.value)} disabled={!filteredQuestions.length} className={selectClass}><option value="">{["completed", "partial"].includes(activeRun?.status ?? "") ? "No matching questions" : "Run must finish first"}</option>{filteredQuestions.map((item) => <option key={item.question_id} value={item.question_id}>{item.question_id} · {item.question}{item.error_types.length ? ` · ${item.error_types.join(", ")}` : ""}</option>)}</select></Field>
       </div>
       {selectedCase && selectedCase.question_id === effectiveQuestionId && <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-600"><span>Gold paragraph IDs: {selectedCase.gold_paragraph_ids.join(", ") || "none annotated"} · {selectedCase.no_answer ? "unanswerable" : "answerable"}</span>{selectedCase.error_types.map((errorType) => <span key={errorType} className="rounded-full bg-rose-100 px-2 py-1 text-[9px] font-medium text-rose-800">{errorType}</span>)}</div>}
     </section>
