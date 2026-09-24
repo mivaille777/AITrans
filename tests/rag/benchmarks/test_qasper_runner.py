@@ -10,6 +10,7 @@ from backend.rag.benchmarks.qasper.runner import (
     GroundedQasperAnswerer,
     QasperAnswerInput,
     QasperGeneratedAnswer,
+    _requirement_query_expansion,
     _retrieve_requirement_aware_question,
     run_qasper_ablation,
     run_qasper_adaptive_retrieval_ablation,
@@ -869,6 +870,10 @@ def test_qasper_adaptive_retrieval_suite_tracks_missing_requirements(tmp_path) -
     assert trace["retrieval_rounds"][1]["gate"]["reason_codes"] == [
         "no_novel_evidence"
     ]
+    assert trace["retrieval_rounds"][1]["gate"]["sufficient"] is False
+    assert trace["retrieval_rounds"][1]["evidence_requirements"][0]["status"] == (
+        "missing"
+    )
     assert {item["type"] for item in trace["evidence_requirements"]} == {
         "method",
         "result",
@@ -922,6 +927,19 @@ def test_requirement_aware_second_round_adds_novel_evidence_and_stops_when_cover
     assert rounds[1]["query_planner_invoked"] is True
     assert planning_ms >= 0
     assert planner_calls == 1
+
+
+def test_requirement_query_expansion_uses_question_specific_terms():
+    assert "morphology" in _requirement_query_expansion(
+        "What type of inflections are considered?",
+        "answer",
+    )
+    detection_expansion = _requirement_query_expansion(
+        "Do they build a model to automatically detect dimensions?",
+        "answer",
+    )
+    assert "classification" in detection_expansion
+    assert "demographic" in detection_expansion
 
 
 def test_requirement_aware_retrieval_never_exceeds_three_rounds():

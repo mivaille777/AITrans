@@ -134,6 +134,7 @@ class RagQueryPlanner:
         self._prompt_registry = prompt_registry or PromptRegistry(
             (RAG_QUERY_PLANNER_PROMPT,)
         )
+        self.last_plan_metadata: dict[str, Any] = {"status": "not_run"}
 
     @property
     def prompt_id(self) -> str:
@@ -196,7 +197,17 @@ class RagQueryPlanner:
                 temperature=spec.temperature,
                 max_tokens=spec.max_tokens,
             )
-            return self._parse(raw, fallback.original_query)
+            plan = self._parse(raw, fallback.original_query)
+            changed_query = any(
+                item.casefold() != query.casefold()
+                for item in plan.retrieval_queries
+            )
+            self.last_plan_metadata = {
+                "status": "planned" if changed_query else "identity",
+                "fallback": False,
+                "retrieval_query_count": len(plan.retrieval_queries),
+            }
+            return plan
         except (
             AIError,
             OSError,
@@ -204,7 +215,13 @@ class RagQueryPlanner:
             TypeError,
             ValueError,
             ValidationError,
-        ):
+        ) as exc:
+            self.last_plan_metadata = {
+                "status": "fallback",
+                "fallback": True,
+                "reason_code": f"planner_{exc.__class__.__name__.casefold()}",
+                "retrieval_query_count": 1,
+            }
             return fallback
 
 

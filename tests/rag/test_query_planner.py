@@ -109,11 +109,17 @@ def test_simple_query_is_rewritten_before_retrieval() -> None:
         )
     )
 
-    plan = _planner(client).plan("What is M10?")
+    planner = _planner(client)
+    plan = planner.plan("What is M10?")
 
     assert plan.original_query == "What is M10?"
     assert plan.rewritten_query == "M10 definition and role"
     assert plan.retrieval_queries == ("M10 definition and role",)
+    assert planner.last_plan_metadata == {
+        "status": "planned",
+        "fallback": False,
+        "retrieval_query_count": 1,
+    }
     assert len(client.calls) == 1
     prompt = json.loads(client.calls[0]["user_prompt"])
     assert prompt["current_query"] == "What is M10?"
@@ -159,7 +165,8 @@ def test_follow_up_query_uses_bounded_history_to_resolve_document_reference() ->
 def test_planner_failure_and_malformed_output_fall_back_to_original_query() -> None:
     query = "Compare M10 versus C8"
 
-    failed = _planner(Client(failure=OSError("planner unavailable"))).plan(query)
+    failed_planner = _planner(Client(failure=OSError("planner unavailable")))
+    failed = failed_planner.plan(query)
     malformed = _planner(Client(response="not-json")).plan(query)
 
     for plan in (failed, malformed):
@@ -167,6 +174,13 @@ def test_planner_failure_and_malformed_output_fall_back_to_original_query() -> N
         assert plan.rewritten_query == query
         assert plan.subqueries == []
         assert plan.retrieval_queries == (query,)
+
+    assert failed_planner.last_plan_metadata == {
+        "status": "fallback",
+        "fallback": True,
+        "reason_code": "planner_oserror",
+        "retrieval_query_count": 1,
+    }
 
 
 def test_multi_query_merge_dedupes_chunks_and_applies_result_limit() -> None:

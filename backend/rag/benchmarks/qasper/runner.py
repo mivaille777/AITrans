@@ -1390,6 +1390,29 @@ def _adaptive_ablation_variant(variant_id: str) -> QasperAblationVariant:
     )
 
 
+def _requirement_query_expansion(question: str, requirement_type: str) -> str:
+    normalized_question = question.casefold()
+    if requirement_type == "answer":
+        if re.search(r"\binflection(?:s|al)?\b", normalized_question):
+            return "morphology inflectional forms tense number gender case conjugation"
+        if re.search(
+            r"\b(?:detect|recognize|recognise|identify|classify|infer|automatic)\b",
+            normalized_question,
+        ):
+            return (
+                "automatic detection recognition classification demographic linguistic "
+                "psychological traits dimensions"
+            )
+        return "answer evidence finding study experiment evaluation result method data"
+    return {
+        "method": "method approach methodology procedure algorithm technique",
+        "result": "result finding outcome effect performance accuracy evaluation",
+        "data": "dataset data sample participant corpus",
+        "rationale": "reason rationale explanation cause",
+        "limitation": "limitation weakness challenge failure constraint",
+    }.get(requirement_type, "evidence answer finding result")
+
+
 def _retrieve_requirement_aware_question(
     question: QasperQuestion,
     *,
@@ -1474,25 +1497,34 @@ def _retrieve_requirement_aware_question(
             ),
             None,
         )
+        uncovered_requirements = [
+            item for item in requirements if item.status == "missing"
+        ]
         query_plan_ms = 0.0
         query_plan_invoked = 0
+        query_planner_metadata: dict[str, Any] | None = None
+        query_planner_output_queries: list[str] = []
         next_query = ""
         next_query_source = ""
         next_requirement_id = ""
         next_query_plan: dict[str, Any] | None = None
         reason_codes: list[str] = []
-        if missing is None:
+        if not uncovered_requirements:
             action = "stop"
             stop_reason = "evidence_requirements_covered"
             reason_codes.append("evidence_requirements_covered")
-        elif round_number >= maximum_rounds:
-            action = "stop"
-            stop_reason = "retrieval_budget_exhausted"
-            reason_codes.append("retrieval_budget_exhausted")
         elif round_number > 1 and not novel_chunk_ids:
             action = "stop"
             stop_reason = "no_novel_evidence"
             reason_codes.append("no_novel_evidence")
+        elif round_number >= maximum_rounds:
+            action = "stop"
+            stop_reason = "retrieval_budget_exhausted"
+            reason_codes.append("retrieval_budget_exhausted")
+        elif missing is None:
+            action = "stop"
+            stop_reason = "requirement_queries_exhausted"
+            reason_codes.append("requirement_queries_exhausted")
         else:
             attempted_requirement_ids.add(missing.id)
             query_plan_started = perf_counter()
@@ -1511,10 +1543,18 @@ def _retrieve_requirement_aware_question(
                     plan = query_planner.plan(planning_request)
                 except (OSError, TimeoutError, TypeError, ValueError):
                     plan = None
+                planner_metadata = getattr(query_planner, "last_plan_metadata", None)
+                if isinstance(planner_metadata, dict):
+                    query_planner_metadata = dict(planner_metadata)
                 if plan is not None:
                     planned_queries = getattr(plan, "retrieval_queries", ())
                     if not isinstance(planned_queries, (list, tuple)):
                         planned_queries = ()
+                    query_planner_output_queries = [
+                        str(item or "").strip()
+                        for item in planned_queries
+                        if str(item or "").strip()
+                    ]
                     for planned_query in planned_queries:
                         candidate_query = str(planned_query or "").strip()
                         if (
@@ -1535,14 +1575,10 @@ def _retrieve_requirement_aware_question(
             query_plan_ms = (perf_counter() - query_plan_started) * 1000
             query_planning_ms += query_plan_ms
             if not next_query:
-                expansion = {
-                    "answer": "answer evidence finding study experiment evaluation result method data",
-                    "method": "method approach methodology procedure algorithm technique",
-                    "result": "result finding outcome effect performance accuracy evaluation",
-                    "data": "dataset data sample participant corpus",
-                    "rationale": "reason rationale explanation cause",
-                    "limitation": "limitation weakness challenge failure constraint",
-                }.get(missing.type, "evidence answer finding result")
+                expansion = _requirement_query_expansion(
+                    question.question,
+                    missing.type,
+                )
                 fallback_queries = (
                     missing.query,
                     f"{question.question} {expansion}",
@@ -1577,6 +1613,8 @@ def _retrieve_requirement_aware_question(
             "query_for_requirement_id": pending_requirement_id or None,
             "query_plan": pending_query_plan,
             "query_planner_invoked": pending_query_source == "query_planner",
+            "query_planner_status": query_planner_metadata,
+            "query_planner_output_queries": query_planner_output_queries,
             "query_planning_ms": query_plan_ms,
             "query_plan_invocation_count": query_plan_invoked,
             "next_query": next_query or None,
