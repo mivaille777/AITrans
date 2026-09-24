@@ -78,7 +78,8 @@ python scripts/run_qasper_adaptive_retrieval_ablation.py --mode dev --seed 42 --
 ## 后续探测与 gate 根因诊断（2026-09-24）
 
 - 在 `aitrans` 环境中对 Smoke28 已知 false-abstention 题 `1f085b9b` 做单题 one-shot canary，真实 Dense、BM25、reranker 和 Q1-1 选证均完成；Gold Evidence Recall@5 为 1.0。回答阶段再次收到 `DeepSeek API request failed with HTTP status 402`，run `p1q3-provider-canary-aitrans-20260924-ar-one-shot` 为 partial，完整审计 exit code 2。默认 Anaconda 环境的另一次预检在加载 embedding 时因无 PyTorch 提前失败，不是有效 RAG run；它被记录为 failed，不与真实 canary 混合统计。
+- 随后在正确环境再次重测 `p1q3-provider-canary-recheck2-20260924-ar-one-shot`：1/1 检索成功、0/1 答案成功，错误仍为 HTTP 402，审计 exit code 2。当前 Windows Credential Manager 只返回 `deepseek` 为已配置 provider；本地 Hugging Face cache 只有 embedding、reranker 和 Docling 权重，没有生成模型，且无 Ollama/LM Studio 进程。
 - 检查 Dev100 的 Gate false positives，确认词面判定把通用词命中当成充分证据。例如 `682e2626` 的要求是 dataset differences，Top5 context Gold Recall@5 为 0，但单一 `data` requirement 仍被标为 covered；`0ec56e15` 的问题是 word subspace meaning，recall@5 同为 0，answer requirement 仍 covered。根因是“任意通用类别词出现”与“可回答问题所需事实齐全”并不等价。
 - 作为诊断，按 paper ID 分组做 5-fold 离线检查：只用首轮 Top5 的 reranker score margin，在训练折选阈值预测 Gold context 是否不充分，测试折 macro precision/recall/F1 为 0.335/0.683/0.423，precision 仅 0.25–0.40，折间波动明显。该分数不够可靠，未加入运行时 Gate。现有证据支持改用经校准的段落充分性评估器，而不是再加一个未经真实验证的固定 score threshold。
 
-这次探测未改变 Q1-3 结论：Q1-0 Smoke20 和 Dev100 现存基线 run 已在 `aitrans` 环境重新审计通过；DeepSeek 402 已由单题 canary 复现，完整 Smoke28/Dev100 回答与至少 20 条人工审阅仍待服务恢复。
+这次探测未改变 Q1-3 结论：Q1-0 Smoke20 和 Dev100 现存基线 run 已在 `aitrans` 环境重新审计通过；两次单题 canary 均复现 DeepSeek 402，完整 Smoke28/Dev100 回答与至少 20 条人工审阅仍待 provider 额度恢复或配置替代 provider。
