@@ -202,7 +202,7 @@ python scripts/run_qasper_adaptive_retrieval_ablation.py --mode dev --seed 42 --
 
 ### Q1-3 阶段审计（未完成）
 
-当前实现检查点为 `ece05455`。真实 Smoke28/Dev100 检索消融和运行审计已经完成；Requirement-aware 的触发门误停偏高，二次检索没有带来新 chunk，检索指标没有收益。Smoke28 回答只完成 16/28，剩余调用因 DeepSeek HTTP 402 失败；已有输出还出现 9/24 可回答题被弃答。Dev100 回答和至少 20 条变更/弃答人工复核尚未完成，故 Q1-3 不通过，不能据此晋级。详细结果和额度恢复后的复跑命令见 [`qasper-p1-q1-3-adaptive-grounding-report.md`](qasper-p1-q1-3-adaptive-grounding-report.md)。
+当前实现检查点为 `ece05455`。真实 Smoke28/Dev100 检索消融和运行审计已经完成；Requirement-aware 的触发门误停偏高，二次检索没有带来新 chunk，检索指标没有收益。Smoke28 回答只完成 16/28，剩余调用因 DeepSeek HTTP 402 失败；在正确 `aitrans` 环境进行的单题重测再次复现 402，已有输出还出现 9/24 可回答题被弃答。Dev100 回答和至少 20 条变更/弃答人工复核尚未完成，故 Q1-3 不通过，不能据此晋级。详细结果、误停根因和复跑命令见 [`qasper-p1-q1-3-adaptive-grounding-report.md`](qasper-p1-q1-3-adaptive-grounding-report.md)。
 
 ## 8. Q1-4：RAPTOR 树检索的质量消融
 
