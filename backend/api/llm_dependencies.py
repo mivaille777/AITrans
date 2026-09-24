@@ -38,6 +38,10 @@ def get_planner_text_service() -> RoutedAITextService:
     global _planner_text_service
     if _planner_text_service is not None:
         return _planner_text_service
+    with _planner_text_service_lock:
+        if _planner_text_service is None:
+            _planner_text_service = get_llm_gateway().create_text_service("planner")
+        return _planner_text_service
 
 
 def reset_llm_dependencies() -> None:
@@ -47,14 +51,10 @@ def reset_llm_dependencies() -> None:
     with _planner_text_service_lock:
         planner_service = _planner_text_service
         _planner_text_service = None
+        with _gateway_lock:
+            _gateway = None
     if planner_service is not None:
         planner_service.close()
-    with _gateway_lock:
-        _gateway = None
-    with _planner_text_service_lock:
-        if _planner_text_service is None:
-            _planner_text_service = get_llm_gateway().create_text_service("planner")
-        return _planner_text_service
 
 
 def build_rag_query_planner() -> RagQueryPlanner:
