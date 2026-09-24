@@ -443,6 +443,11 @@ class GroundedQasperAnswerer:
                 if result.repair_verification is not None
                 else None
             ),
+            "repair_claim_count": (
+                int(result.repair_verification.claim_count)
+                if result.repair_verification is not None
+                else None
+            ),
             "raw_model_output": str(
                 self._repair_trace.get("initial_model_output")
                 or self._chat_adapter.last_raw_model_output
@@ -1420,6 +1425,8 @@ def _retrieve_requirement_aware_question(
     document_id: str,
     query_planner: Any | None = None,
     maximum_rounds: int = 3,
+    candidate_pool_size: int = BENCHMARK_FINAL_TOP_K,
+    gate_top_k: int | None = None,
 ) -> tuple[
     RetrievalResult,
     list[dict[str, Any]],
@@ -1441,6 +1448,10 @@ def _retrieve_requirement_aware_question(
     pending_query_plan: dict[str, Any] | None = None
     stop_reason = "retrieval_budget_exhausted"
     maximum_rounds = max(1, min(3, int(maximum_rounds)))
+    candidate_pool_size = max(1, int(candidate_pool_size))
+    gate_top_k = (
+        candidate_pool_size if gate_top_k is None else max(1, int(gate_top_k))
+    )
 
     for round_number in range(1, maximum_rounds + 1):
         retrieval_query = pending_query
@@ -1452,7 +1463,7 @@ def _retrieve_requirement_aware_question(
         result = index.runtime.retrieval_service.retrieve(
             retrieval_query,
             filters=VectorSearchFilter(document_ids=[document_id]),
-            final_top_k=BENCHMARK_FINAL_TOP_K,
+            final_top_k=candidate_pool_size,
             dense_enabled=True,
             sparse_enabled=True,
             structural_enabled=False,
@@ -1477,14 +1488,15 @@ def _retrieve_requirement_aware_question(
         )
         retrievals.append(result)
         cumulative = _aggregate_retrievals(question.question, retrievals)
+        gate_candidates = cumulative.candidates[:gate_top_k]
         requirements = assess_evidence_requirements(
             requirements,
-            cumulative.candidates,
+            gate_candidates,
         )
         context_paragraph_ids = list(
             dict.fromkeys(
                 paragraph_id
-                for candidate in cumulative.candidates
+                for candidate in gate_candidates
                 for paragraph_id in _source_paragraph_ids(candidate.chunk)
             )
         )
@@ -1598,12 +1610,15 @@ def _retrieve_requirement_aware_question(
                 action = "stop"
                 stop_reason = "no_distinct_requirement_query"
                 reason_codes.append("no_distinct_requirement_query")
-
         gate_trace = {
             "action": action,
             "sufficient": action == "stop" and stop_reason == "evidence_requirements_covered",
             "reason_codes": reason_codes,
             "requirement_coverage": evidence_requirement_coverage(requirements),
+            "gate_top_k": gate_top_k,
+            "gate_candidate_chunk_ids": [
+                item.chunk.chunk_id for item in gate_candidates
+            ],
             "remaining_searches": max(0, maximum_rounds - round_number),
         }
         round_trace: dict[str, Any] = {
@@ -1634,12 +1649,23 @@ def _retrieve_requirement_aware_question(
                 )
             ),
             "context_evidence_paragraph_ids": context_paragraph_ids,
+            "context_is_cumulative": True,
             "context_token_count": sum(
+                item.context_window.token_count
+                if item.context_window is not None
+                else item.chunk.token_count
+                for item in gate_candidates
+            ),
+            "candidate_pool_context_token_count": sum(
                 item.context_window.token_count
                 if item.context_window is not None
                 else item.chunk.token_count
                 for item in cumulative.candidates
             ),
+            "gate_top_k": gate_top_k,
+            "gate_candidate_chunk_ids": [
+                item.chunk.chunk_id for item in gate_candidates
+            ],
             "new_chunk_count": len(novel_chunk_ids),
             "evidence_requirements": [item.as_dict() for item in requirements],
             "requirement_coverage": evidence_requirement_coverage(requirements),
@@ -1793,6 +1819,21 @@ def run_qasper_benchmark(
         if normalized_evidence_selection_variant is not None
         else None
     )
+    resolved_quality_profile_sha256 = (
+        quality_profile_sha256
+        or (
+            hashlib.sha256(
+                json.dumps(
+                    resolved_quality_profile,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if resolved_quality_profile is not None
+            else None
+        )
+    )
     if normalized_evidence_selection_variant is not None and (
         normalized_evidence_selection_variant
         not in resolved_quality_profile["selected_top_k_by_variant"]
@@ -1817,9 +1858,11 @@ def run_qasper_benchmark(
         )
     if (
         normalized_evidence_selection_variant is not None
-        and normalized_adaptive_variant is not None
+        and normalized_adaptive_variant not in {None, "one_shot", "requirement_aware"}
     ):
-        raise ValueError("evidence-selection and adaptive variants cannot be combined")
+        raise ValueError(
+            "evidence-selection can only be combined with one_shot or requirement_aware retrieval"
+        )
     selected_variant = (
         _evidence_selection_ablation_variant(
             normalized_evidence_selection_variant,
@@ -1948,21 +1991,7 @@ def run_qasper_benchmark(
         "ablation_variant": selected_variant.as_dict(),
         "evidence_selection_variant": normalized_evidence_selection_variant,
         "quality_profile": resolved_quality_profile,
-        "quality_profile_sha256": (
-            quality_profile_sha256
-            or (
-                hashlib.sha256(
-                    json.dumps(
-                        resolved_quality_profile,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
-                if resolved_quality_profile is not None
-                else None
-            )
-        ),
+        "quality_profile_sha256": resolved_quality_profile_sha256,
         "adaptive_variant": normalized_adaptive_variant,
         "evidence_selection_parameters": (
             {
@@ -2124,26 +2153,41 @@ def run_qasper_benchmark(
                                 normalized_evidence_selection_variant
                                 == "evidence_selection"
                             )
-                            retrieval_result = index.runtime.retrieval_service.retrieve(
-                                question.question,
-                                filters=VectorSearchFilter(document_ids=[document_id]),
-                                final_top_k=candidate_pool_size,
-                                dense_enabled=selected_variant.dense,
-                                sparse_enabled=selected_variant.sparse,
-                                structural_enabled=selected_variant.structural,
-                                reranker_enabled=selected_variant.reranker,
-                                small_to_big_enabled=selected_variant.small_to_big,
-                            )
-                            retrieval_candidate_pool = list(
-                                retrieval_result.candidates
-                            )
+                            if normalized_adaptive_variant == "requirement_aware":
+                                (
+                                    retrieval_result,
+                                    retrieval_rounds,
+                                    _evidence_requirements,
+                                    query_planning_ms,
+                                    _query_planner_invocations,
+                                    _requirement_stop_reason,
+                                ) = _retrieve_requirement_aware_question(
+                                    question,
+                                    index=index,
+                                    document_id=document_id,
+                                    query_planner=query_planner,
+                                    candidate_pool_size=candidate_pool_size,
+                                    gate_top_k=selected_top_k,
+                                )
+                            else:
+                                retrieval_result = index.runtime.retrieval_service.retrieve(
+                                    question.question,
+                                    filters=VectorSearchFilter(document_ids=[document_id]),
+                                    final_top_k=candidate_pool_size,
+                                    dense_enabled=selected_variant.dense,
+                                    sparse_enabled=selected_variant.sparse,
+                                    structural_enabled=selected_variant.structural,
+                                    reranker_enabled=selected_variant.reranker,
+                                    small_to_big_enabled=selected_variant.small_to_big,
+                                )
+                                retrieval_rounds = []
+                                query_planning_ms = 0.0
+                            retrieval_candidate_pool = list(retrieval_result.candidates)
                             retrieval_pool_chunk_ids = [
                                 item.chunk.chunk_id for item in retrieval_candidate_pool
                             ]
                             query_plan = _identity_query_plan(question.question)
-                            query_planning_ms = 0.0
                             sufficiency = None
-                            retrieval_rounds = []
                             if selection_enabled:
                                 if active_evidence_selector is None:
                                     raise RuntimeError(
@@ -2397,14 +2441,28 @@ def run_qasper_benchmark(
                                         "selected_top_k": selected_top_k,
                                     }
                                 )
-                            retrieval_rounds = [
-                                _evidence_selection_round(
-                                    query=question.question,
-                                    retrieval=retrieval_result,
-                                    candidate_pool=retrieval_candidate_pool,
-                                    latency_ms=retrieval_result.elapsed_ms,
-                                )
-                            ]
+                            if normalized_adaptive_variant == "requirement_aware":
+                                if retrieval_rounds:
+                                    retrieval_rounds[-1]["final_evidence_selection"] = (
+                                        retrieval_result.metadata.get(
+                                            "evidence_selection", {}
+                                        )
+                                    )
+                                    retrieval_rounds[-1][
+                                        "final_selected_evidence_chunk_ids"
+                                    ] = [
+                                        item.chunk.chunk_id
+                                        for item in retrieval_result.candidates
+                                    ]
+                            else:
+                                retrieval_rounds = [
+                                    _evidence_selection_round(
+                                        query=question.question,
+                                        retrieval=retrieval_result,
+                                        candidate_pool=retrieval_candidate_pool,
+                                        latency_ms=retrieval_result.elapsed_ms,
+                                    )
+                                ]
                         elif normalized_adaptive_variant == "requirement_aware":
                             (
                                 retrieval_result,
@@ -2439,7 +2497,10 @@ def run_qasper_benchmark(
                         retrieval_candidate_pool = list(retrieval_result.candidates)
                     retrieval_result.metadata["query_planning_ms"] = query_planning_ms
                     retrieval_ms = (perf_counter() - retrieval_started) * 1000
-                    if normalized_evidence_selection_variant is not None:
+                    if (
+                        normalized_evidence_selection_variant is not None
+                        and normalized_adaptive_variant != "requirement_aware"
+                    ):
                         retrieval_rounds[0]["latency_ms"] = retrieval_ms
                     retrieval_latencies.append(retrieval_ms)
                     strategy_counts[retrieval_result.retrieval_strategy] = (
@@ -3280,6 +3341,9 @@ def run_qasper_adaptive_retrieval_ablation(
     query_planner: Any | None = None,
     suite_id: str | None = None,
     question_ids_file: str | Path | None = None,
+    evidence_selection_variant: str | None = None,
+    quality_profile: Mapping[str, Any] | None = None,
+    quality_profile_sha256: str | None = None,
 ) -> QasperAdaptiveRetrievalSuiteResult:
     """Compare one-shot, multi-query, gate, and requirement-aware retrieval."""
 
@@ -3304,6 +3368,44 @@ def run_qasper_adaptive_retrieval_ablation(
         )
     if len(set(selected_variants)) != len(selected_variants):
         raise ValueError("adaptive-retrieval variants must be unique")
+    normalized_evidence_selection_variant = (
+        str(evidence_selection_variant).strip().casefold()
+        if evidence_selection_variant is not None
+        else None
+    )
+    resolved_quality_profile = (
+        _validated_evidence_selection_profile(quality_profile)
+        if normalized_evidence_selection_variant is not None
+        else None
+    )
+    resolved_quality_profile_sha256 = (
+        quality_profile_sha256
+        or (
+            hashlib.sha256(
+                json.dumps(
+                    resolved_quality_profile,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if resolved_quality_profile is not None
+            else None
+        )
+    )
+    if normalized_evidence_selection_variant is not None:
+        if normalized_evidence_selection_variant not in {
+            *resolved_quality_profile["selected_top_k_by_variant"],
+            "raw_top_k",
+            "rerank_top_k",
+        }:
+            raise ValueError(
+                "evidence_selection_variant must be defined by the active quality profile"
+            )
+        if set(selected_variants).difference({"one_shot", "requirement_aware"}):
+            raise ValueError(
+                "evidence-selection ablations support one_shot and requirement_aware variants only"
+            )
     if query_planner is None and set(selected_variants).intersection(
         {"multi_query", "evidence_gated", "requirement_aware"}
     ):
@@ -3347,6 +3449,14 @@ def run_qasper_adaptive_retrieval_ablation(
         "status": "running",
         "variants": selected_variants,
         "query_planner": type(query_planner).__name__ if query_planner else None,
+        "evidence_selection_variant": normalized_evidence_selection_variant,
+        "quality_profile": resolved_quality_profile,
+        "quality_profile_sha256": resolved_quality_profile_sha256,
+        "answer_contract": (
+            getattr(answerer, "answer_contract_manifest", None)
+            if answerer is not None
+            else None
+        ),
         "requirement_max_retrieval_rounds": 3,
         "completed_runs": [],
         "started_at": datetime.now(UTC).isoformat(),
@@ -3368,6 +3478,9 @@ def run_qasper_adaptive_retrieval_ablation(
                 reranker=shared_reranker,
                 answerer=answerer,
                 query_planner=query_planner,
+                evidence_selection_variant=normalized_evidence_selection_variant,
+                quality_profile=resolved_quality_profile,
+                quality_profile_sha256=resolved_quality_profile_sha256,
                 adaptive_variant=variant_id,
                 run_id=run_id,
                 question_ids_file=question_ids_file,
@@ -3394,6 +3507,9 @@ def run_qasper_adaptive_retrieval_ablation(
                 "evidence_requirement_evaluation": metrics.get(
                     "evidence_requirement_evaluation", {}
                 ),
+                "evidence_selection": metrics.get("evidence_selection", {}),
+                "groundedness_metrics": metrics.get("groundedness_metrics", {}),
+                "answer_provider_counts": metrics.get("answer_provider_counts", {}),
             }
             comparison_rows.append(row)
             suite_manifest["completed_runs"].append(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Sequence
@@ -41,7 +42,30 @@ def _parser() -> argparse.ArgumentParser:
         "--variants",
         nargs="+",
         choices=("one_shot", "multi_query", "evidence_gated", "requirement_aware"),
-        default=("one_shot", "multi_query", "evidence_gated", "requirement_aware"),
+        default=None,
+    )
+    parser.add_argument(
+        "--quality-profile",
+        type=Path,
+        help="Versioned evidence-selection profile to apply to each adaptive variant.",
+    )
+    parser.add_argument(
+        "--evidence-selection-variant",
+        choices=(
+            "current_top20",
+            "rerank_top5",
+            "rerank_top8",
+            "rerank_top10",
+            "evidence_selection",
+            "raw_top_k",
+            "rerank_top_k",
+        ),
+        help="Selected-evidence policy; supports one_shot and requirement_aware ablations.",
+    )
+    parser.add_argument(
+        "--answer-contract",
+        type=Path,
+        help="Versioned JSON answer contract; omitted uses the legacy answer prompt.",
     )
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--retrieval-only", action="store_true")
@@ -66,10 +90,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.config_json
         else RagConfig()
     )
-    answerer = None if args.retrieval_only else GroundedQasperAnswerer()
+    selected_variants = args.variants or (
+        ("one_shot", "requirement_aware")
+        if args.evidence_selection_variant
+        else ("one_shot", "multi_query", "evidence_gated", "requirement_aware")
+    )
+    quality_profile = None
+    quality_profile_sha256 = None
+    if args.evidence_selection_variant:
+        if args.quality_profile is None:
+            raise ValueError("--quality-profile is required with --evidence-selection-variant")
+        profile_bytes = args.quality_profile.expanduser().resolve().read_bytes()
+        quality_profile = json.loads(profile_bytes.decode("utf-8"))
+        if not isinstance(quality_profile, dict):
+            raise TypeError("quality profile JSON must contain an object")
+        quality_profile_sha256 = hashlib.sha256(profile_bytes).hexdigest()
+    answer_contract = None
+    answer_contract_sha256 = None
+    if args.answer_contract is not None:
+        contract_bytes = args.answer_contract.expanduser().resolve().read_bytes()
+        answer_contract = json.loads(contract_bytes.decode("utf-8"))
+        if not isinstance(answer_contract, dict):
+            raise TypeError("answer contract JSON must contain an object")
+        answer_contract_sha256 = hashlib.sha256(contract_bytes).hexdigest()
+    answerer = (
+        None
+        if args.retrieval_only
+        else GroundedQasperAnswerer(
+            answer_contract=answer_contract,
+            answer_contract_sha256=answer_contract_sha256,
+        )
+    )
     query_planner = (
         build_rag_query_planner()
-        if set(args.variants).intersection(
+        if set(selected_variants).intersection(
             {"multi_query", "evidence_gated", "requirement_aware"}
         )
         else None
@@ -83,10 +137,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=args.seed,
             question_ids_file=args.question_ids_file,
             config=config,
-            variants=args.variants,
+            variants=selected_variants,
             answerer=answerer,
             query_planner=query_planner,
             suite_id=args.suite_id,
+            evidence_selection_variant=args.evidence_selection_variant,
+            quality_profile=quality_profile,
+            quality_profile_sha256=quality_profile_sha256,
         )
     finally:
         if answerer is not None:
@@ -105,6 +162,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "suite_directory": str(result.suite_directory),
                 "manifest": str(result.manifest_path),
                 "comparison": str(result.comparison_path),
+                "evidence_selection_variant": args.evidence_selection_variant,
+                "quality_profile": (
+                    str(args.quality_profile.expanduser().resolve())
+                    if args.quality_profile
+                    else None
+                ),
+                "quality_profile_sha256": quality_profile_sha256,
+                "answer_contract": (
+                    str(args.answer_contract.expanduser().resolve())
+                    if args.answer_contract
+                    else None
+                ),
+                "answer_contract_sha256": answer_contract_sha256,
             },
             ensure_ascii=False,
             indent=2,

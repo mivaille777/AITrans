@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import load_qasper
 from backend.rag.benchmarks.qasper.runner import (
+    DEFAULT_EVIDENCE_SELECTION_PROFILE,
     GroundedQasperAnswerer,
     QasperAnswerInput,
     QasperGeneratedAnswer,
@@ -85,6 +86,12 @@ class _EvidenceMetricsAnswerer(_FakeAnswerer):
                 "verification_passed": True,
                 "claim_count": 4,
                 "unsupported_claim_count": 1,
+                "initial_claim_count": 6,
+                "initial_unsupported_claim_count": 3,
+                "repair_claim_count": 3,
+                "repair_unsupported_claim_count": 1,
+                "claim_repair_attempted": True,
+                "claim_repair_succeeded": True,
             },
         )
 
@@ -707,6 +714,18 @@ def test_qasper_evidence_selection_suite(tmp_path) -> None:
     assert rows["evidence_selection"]["groundedness_metrics"][
         "Unsupported Claim Rate"
     ] == 0.25
+    assert rows["evidence_selection"]["groundedness_metrics"][
+        "Initial Unsupported Claim Rate"
+    ] == 0.5
+    assert rows["evidence_selection"]["groundedness_metrics"][
+        "Repair Unsupported Claim Rate"
+    ] == (1 / 3)
+    assert rows["evidence_selection"]["groundedness_metrics"][
+        "claim_repair_attempts"
+    ] == 1
+    assert rows["evidence_selection"]["groundedness_metrics"][
+        "claim_repair_successes"
+    ] == 1
     assert rows["evidence_selection"]["paragraph_evidence"][
         "Evidence F1@5"
     ] > 0
@@ -892,7 +911,7 @@ def test_requirement_aware_second_round_adds_novel_evidence_and_stops_when_cover
             ),
             _retrieval_result(
                 "chunk-data",
-                "The dataset contains samples from participants in a corpus.",
+                "The dataset contains participant samples; results report accuracy.",
                 paragraph_id="p-data",
             ),
         ]
@@ -927,6 +946,96 @@ def test_requirement_aware_second_round_adds_novel_evidence_and_stops_when_cover
     assert rounds[1]["query_planner_invoked"] is True
     assert planning_ms >= 0
     assert planner_calls == 1
+
+
+def test_requirement_gate_uses_selected_top_k_not_the_full_candidate_pool():
+    method_result = _retrieval_result(
+        "chunk-method-result",
+        "The method uses a technique and improves accuracy results.",
+    ).candidates[0]
+    data = _retrieval_result(
+        "chunk-data",
+        "The dataset contains samples from participants in a corpus.",
+    ).candidates[0]
+    retrieval_service = _SequentialRetrievalService(
+        [
+            RetrievalResult(
+                query="fixture query",
+                candidates=[method_result, data],
+                retrieval_strategy="fixture",
+            )
+        ]
+    )
+    index = SimpleNamespace(
+        runtime=SimpleNamespace(retrieval_service=retrieval_service)
+    )
+    question = SimpleNamespace(
+        question="How does the method improve accuracy on the dataset?"
+    )
+
+    _result, rounds, requirements, _planning_ms, _planner_calls, _stop_reason = (
+        _retrieve_requirement_aware_question(
+            question,
+            index=index,
+            document_id="paper-doc",
+            maximum_rounds=1,
+            candidate_pool_size=20,
+            gate_top_k=1,
+        )
+    )
+
+    assert rounds[0]["gate_top_k"] == 1
+    assert rounds[0]["gate_candidate_chunk_ids"] == ["chunk-method-result"]
+    assert "chunk-data" not in rounds[0]["gate_candidate_chunk_ids"]
+    assert any(item.type == "data" and item.status == "missing" for item in requirements)
+
+
+def test_adaptive_retrieval_applies_q1q1_selection_and_keeps_round_traces(tmp_path):
+    dataset = _dataset(tmp_path)
+    embedding = _FakeEmbedding()
+    config = RagConfig(
+        embedding=RagEmbeddingConfig(
+            model=embedding.model_name,
+            dimension=embedding.dimension,
+        )
+    )
+    result = run_qasper_adaptive_retrieval_ablation(
+        dataset,
+        root=tmp_path / "adaptive-selected",
+        mode="full",
+        config=config,
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        answerer=_FakeAnswerer(),
+        query_planner=_FakeQueryPlanner(),
+        variants=("one_shot", "requirement_aware"),
+        suite_id="test-adaptive-selected-evidence",
+        evidence_selection_variant="evidence_selection",
+        quality_profile=DEFAULT_EVIDENCE_SELECTION_PROFILE,
+    )
+
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    rows = {row["variant_id"]: row for row in comparison["variants"]}
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    requirement_run = Path(rows["requirement_aware"]["run_directory"])
+    trace = json.loads(
+        (requirement_run / "retrieval_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+
+    assert result.status == "complete"
+    assert manifest["evidence_selection_variant"] == "evidence_selection"
+    assert manifest["quality_profile_sha256"]
+    assert trace["adaptive_variant"] == "requirement_aware"
+    assert trace["evidence_selection_variant"] == "evidence_selection"
+    assert trace["retrieval_rounds"]
+    assert trace["retrieval_candidate_pool"]
+    assert 1 <= len(trace["final_candidates"]) <= 5
+    assert trace["retrieval_rounds"][-1]["final_evidence_selection"]
+    assert trace["retrieval_rounds"][-1]["final_selected_evidence_chunk_ids"] == [
+        candidate["chunk_id"] for candidate in trace["final_candidates"]
+    ]
 
 
 def test_requirement_query_expansion_uses_question_specific_terms():
@@ -1044,6 +1153,7 @@ def test_qasper_answerer_repairs_unsupported_claim_and_records_serializable_trac
     assert generated.answer == f"{evidence_text} [1]"
     assert generated.metadata["claim_repair_attempted"] is True
     assert generated.metadata["claim_repair_succeeded"] is True
+    assert generated.metadata["repair_claim_count"] > 0
     assert generated.metadata["answer_llm_invocation_count"] == 2
     assert generated.metadata["initial_unsupported_claim_count"] > 0
     assert generated.metadata["repair_unsupported_claim_count"] == 0
@@ -1082,4 +1192,5 @@ def test_qasper_answerer_abstains_when_claim_repair_still_fails():
     assert generated.metadata["abstention_reason"] == (
         "claim_repair_verification_failed"
     )
+    assert generated.metadata["repair_claim_count"] > 0
     assert generated.metadata["repair_model_output"].endswith("[9].")

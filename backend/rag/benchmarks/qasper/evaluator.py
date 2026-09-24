@@ -645,6 +645,12 @@ def evaluate_qasper_run(
     evidence_extractor_invocations = 0
     assessed_claims = 0
     unsupported_claims = 0
+    initial_assessed_claims = 0
+    initial_unsupported_claims = 0
+    repair_assessed_claims = 0
+    repair_unsupported_claims = 0
+    claim_repair_attempts = 0
+    claim_repair_successes = 0
     requirement_cases = 0
     requirement_reretrieval_cases = 0
     requirement_round_counts: list[float] = []
@@ -686,13 +692,21 @@ def evaluate_qasper_run(
                 for value in round_record.get("context_evidence_paragraph_ids", [])
                 if str(value)
             }
-            for round_record in retrieval_rounds
             if isinstance(round_record, dict)
+            else set()
+            for round_record in retrieval_rounds
         ]
         cumulative_round_contexts: list[set[str]] = []
         cumulative_context: set[str] = set()
-        for round_context in round_context_paragraphs:
-            cumulative_context.update(round_context)
+        for round_index, round_context in enumerate(round_context_paragraphs):
+            round_record = retrieval_rounds[round_index]
+            if (
+                isinstance(round_record, dict)
+                and round_record.get("context_is_cumulative") is True
+            ):
+                cumulative_context = set(round_context)
+            else:
+                cumulative_context.update(round_context)
             cumulative_round_contexts.append(set(cumulative_context))
         final_round_context = (
             cumulative_round_contexts[-1]
@@ -953,14 +967,54 @@ def evaluate_qasper_run(
             unsupported_claim_count = answer_details.get("unsupported_claim_count")
             if (
                 isinstance(claim_count, int)
+                and not isinstance(claim_count, bool)
                 and claim_count > 0
                 and isinstance(unsupported_claim_count, int)
+                and not isinstance(unsupported_claim_count, bool)
             ):
                 assessed_claims += claim_count
                 unsupported_claims += max(
                     0,
                     min(claim_count, unsupported_claim_count),
                 )
+            initial_claim_count = answer_details.get("initial_claim_count")
+            initial_unsupported_claim_count = answer_details.get(
+                "initial_unsupported_claim_count"
+            )
+            if (
+                isinstance(initial_claim_count, int)
+                and not isinstance(initial_claim_count, bool)
+                and initial_claim_count > 0
+                and isinstance(initial_unsupported_claim_count, int)
+                and not isinstance(initial_unsupported_claim_count, bool)
+            ):
+                initial_assessed_claims += initial_claim_count
+                initial_unsupported_claims += max(
+                    0,
+                    min(initial_claim_count, initial_unsupported_claim_count),
+                )
+            repair_claim_count = answer_details.get("repair_claim_count")
+            repair_unsupported_claim_count = answer_details.get(
+                "repair_unsupported_claim_count"
+            )
+            if (
+                isinstance(repair_claim_count, int)
+                and not isinstance(repair_claim_count, bool)
+                and repair_claim_count > 0
+                and isinstance(repair_unsupported_claim_count, int)
+                and not isinstance(repair_unsupported_claim_count, bool)
+            ):
+                repair_assessed_claims += repair_claim_count
+                repair_unsupported_claims += max(
+                    0,
+                    min(repair_claim_count, repair_unsupported_claim_count),
+                )
+            claim_repair_attempts += int(
+                answer_details.get("claim_repair_attempted") is True
+            )
+            claim_repair_successes += int(
+                answer_details.get("claim_repair_succeeded") is True
+            )
             component_latencies["answer_generation_ms"].append(
                 float(answer_metadata.get("latency_ms", 0.0) or 0.0)
             )
@@ -1279,6 +1333,22 @@ def evaluate_qasper_run(
             "Unsupported Claim Rate": (
                 unsupported_claims / assessed_claims if assessed_claims else None
             ),
+            "initial_assessed_claims": initial_assessed_claims,
+            "initial_unsupported_claims": initial_unsupported_claims,
+            "Initial Unsupported Claim Rate": (
+                initial_unsupported_claims / initial_assessed_claims
+                if initial_assessed_claims
+                else None
+            ),
+            "repair_assessed_claims": repair_assessed_claims,
+            "repair_unsupported_claims": repair_unsupported_claims,
+            "Repair Unsupported Claim Rate": (
+                repair_unsupported_claims / repair_assessed_claims
+                if repair_assessed_claims
+                else None
+            ),
+            "claim_repair_attempts": claim_repair_attempts,
+            "claim_repair_successes": claim_repair_successes,
         },
         "evidence_selection": {
             "extractor_invocations": evidence_extractor_invocations,
