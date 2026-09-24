@@ -14,6 +14,7 @@ from backend.rag.benchmarks.qasper.runner import (
     QasperAnswerInput,
     QasperGeneratedAnswer,
     _requirement_query_expansion,
+    _retrieve_raptor_question,
     _retrieve_requirement_aware_question,
     _verify_direct_contract_answer,
     run_qasper_ablation,
@@ -26,7 +27,7 @@ from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
 from backend.rag.config import RagConfig, RagEmbeddingConfig
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.query_planner import RagQueryPlan
-from backend.rag.raptor import ExtractiveRaptorSummaryProvider
+from backend.rag.raptor import ExtractiveRaptorSummaryProvider, RaptorTree
 from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 
 
@@ -605,6 +606,107 @@ def test_raptor_suite_caches_trees_and_groups_results_by_evidence_scope(tmp_path
     assert trace["retrieval_metadata"]["raptor_variant"] == "R2"
     assert trace["retrieval_metadata"]["raptor_summary_hits"]
     assert trace["final_candidates"]
+
+
+def test_raptor_suite_applies_fixed_evidence_selection_profile(tmp_path) -> None:
+    embedding = _FakeEmbedding()
+    result = run_qasper_raptor_ablation(
+        _dataset(tmp_path),
+        root=tmp_path / "raptor-selected",
+        mode="full",
+        config=RagConfig(
+            embedding=RagEmbeddingConfig(
+                model=embedding.model_name,
+                dimension=embedding.dimension,
+            )
+        ),
+        embedding_provider=embedding,
+        reranker=_FakeReranker(),
+        summary_provider=ExtractiveRaptorSummaryProvider(),
+        answerer=_FakeAnswerer(),
+        variants=("R0", "R3"),
+        suite_id="test-qasper-raptor-selected",
+        evidence_selection_variant="evidence_selection",
+        quality_profile=DEFAULT_EVIDENCE_SELECTION_PROFILE,
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    comparison = json.loads(result.comparison_path.read_text(encoding="utf-8"))
+    assert result.status == "complete"
+    assert manifest["evidence_selection_variant"] == "evidence_selection"
+    assert manifest["quality_profile_sha256"]
+    for row in comparison["variants"]:
+        trace = json.loads(
+            (Path(row["run_directory"]) / "retrieval_trace.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
+        assert trace["evidence_selection_variant"] == "evidence_selection"
+        assert trace["raptor_variant"] in {"R0", "R3"}
+        assert trace["selected_evidence"]
+        assert trace["retrieval_metadata"]["evidence_selection"]
+
+
+def test_raptor_empty_summary_candidates_fall_back_to_scoped_flat_retrieval(
+    tmp_path,
+) -> None:
+    chunk = DocumentChunk(
+        chunk_id="paper-leaf",
+        document_id="paper-1",
+        text="A directly relevant result.",
+        title="Paper",
+        section_heading="Results",
+        chunk_index=0,
+        token_count=5,
+    )
+    calls: list[object] = []
+
+    def retrieve(_query, *, filters, **_kwargs):
+        calls.append(filters.document_ids)
+        return RetrievalResult(
+            query="question",
+            candidates=[RetrievalCandidate(chunk=chunk, rank=1)],
+            retrieval_strategy="hybrid",
+            elapsed_ms=1.0,
+            metadata={
+                "dense_count": 1,
+                "sparse_count": 1,
+                "reranker_applied": True,
+            },
+        )
+
+    index = SimpleNamespace(
+        runtime=SimpleNamespace(
+            embedding_provider=_FakeEmbedding(),
+            sparse_retriever=SimpleNamespace(get_chunk=lambda _id: chunk),
+            retrieval_service=SimpleNamespace(retrieve=retrieve),
+        )
+    )
+    tree = RaptorTree(
+        document_id="paper-1",
+        fingerprint="empty-tree",
+        leaf_fingerprint="leaf",
+        root_node_ids=(),
+        nodes=(),
+        cache_path=tmp_path / "empty.json",
+        cache_hit=False,
+        summary_calls=0,
+        created_at="",
+    )
+
+    result, trace = _retrieve_raptor_question(
+        "question",
+        index=index,
+        document_id="paper-1",
+        tree=tree,
+        variant="R2",
+    )
+
+    assert [item.chunk.chunk_id for item in result.candidates] == ["paper-leaf"]
+    assert calls == [["paper-1"]]
+    assert result.metadata["raptor_variant"] == "R2"
+    assert result.metadata["raptor_fallback_reason"] == "empty_summary_candidates"
+    assert trace["raptor_fallback_reason"] == "empty_summary_candidates"
 
 
 def test_raptor_suite_reports_partial_when_a_variant_has_query_errors(

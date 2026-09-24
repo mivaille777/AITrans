@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections.abc import Sequence
@@ -47,6 +48,32 @@ def _parser() -> argparse.ArgumentParser:
         default="extractive",
     )
     parser.add_argument("--config-json", type=Path)
+    parser.add_argument(
+        "--quality-profile",
+        type=Path,
+        default=(
+            REPO_ROOT
+            / "backend"
+            / "rag"
+            / "benchmarks"
+            / "qasper"
+            / "profiles"
+            / "p1q1-evidence-selection-v2.json"
+        ),
+    )
+    parser.add_argument(
+        "--answer-contract",
+        type=Path,
+        default=(
+            REPO_ROOT
+            / "backend"
+            / "rag"
+            / "benchmarks"
+            / "qasper"
+            / "profiles"
+            / "p1q2-direct-answer-v1.json"
+        ),
+    )
     parser.add_argument("--retrieval-only", action="store_true")
     return parser
 
@@ -65,7 +92,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.config_json
         else RagConfig()
     )
-    answerer = None if args.retrieval_only else GroundedQasperAnswerer()
+    profile_bytes = args.quality_profile.expanduser().resolve().read_bytes()
+    quality_profile = json.loads(profile_bytes.decode("utf-8"))
+    if not isinstance(quality_profile, dict):
+        raise TypeError("quality profile JSON must contain an object")
+    profile_sha256 = hashlib.sha256(profile_bytes).hexdigest()
+    contract_bytes = args.answer_contract.expanduser().resolve().read_bytes()
+    answer_contract = json.loads(contract_bytes.decode("utf-8"))
+    if not isinstance(answer_contract, dict):
+        raise TypeError("answer contract JSON must contain an object")
+    answerer = (
+        None
+        if args.retrieval_only
+        else GroundedQasperAnswerer(
+            answer_contract=answer_contract,
+            answer_contract_sha256=hashlib.sha256(contract_bytes).hexdigest(),
+        )
+    )
     summary_provider = (
         LLMRaptorSummaryProvider()
         if args.summary_provider == "llm"
@@ -84,6 +127,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             answerer=answerer,
             variants=args.variants or ("R0", "R1", "R2", "R3"),
             suite_id=args.suite_id,
+            evidence_selection_variant="evidence_selection",
+            quality_profile=quality_profile,
+            quality_profile_sha256=profile_sha256,
         )
     finally:
         if answerer is not None:

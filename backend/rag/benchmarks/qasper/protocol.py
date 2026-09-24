@@ -166,6 +166,8 @@ def audit_qasper_run(
     dense_record_count = 0
     sparse_record_count = 0
     reranker_record_count = 0
+    summary_hit_record_count = 0
+    raptor_fallback_record_count = 0
     scoped_candidate_count = 0
     retrieval_candidate_count = 0
     selected_evidence_count = 0
@@ -191,6 +193,10 @@ def audit_qasper_run(
             dense_record_count += int(retrieval_metadata.get("dense_count", 0) or 0) > 0
             sparse_record_count += int(retrieval_metadata.get("sparse_count", 0) or 0) > 0
             reranker_record_count += bool(retrieval_metadata.get("reranker_applied"))
+            summary_hit_record_count += bool(retrieval_metadata.get("raptor_summary_hits"))
+            raptor_fallback_record_count += bool(
+                retrieval_metadata.get("raptor_fallback_reason")
+            )
         final_candidates = trace.get("final_candidates", [])
         if not isinstance(final_candidates, list):
             final_candidates = []
@@ -462,8 +468,20 @@ def audit_qasper_run(
             "selected excerpts are not exact source spans for questions: "
             + str(sorted(set(invalid_selected_evidence_offsets))[:10])
         )
-    if expected_count and (not dense_record_count or not sparse_record_count or not reranker_record_count):
-        issues.append("dense, BM25, and reranker retrieval stages must be recorded")
+    raptor_variant = str(manifest.get("raptor_variant") or "").upper()
+    if expected_count:
+        if (
+            raptor_variant in {"R1", "R2", "R3"}
+            and not summary_hit_record_count
+            and not raptor_fallback_record_count
+        ):
+            issues.append("RAPTOR summary hits must be recorded")
+        if raptor_variant == "R1" and not dense_record_count:
+            issues.append("R1 dense leaf retrieval stage must be recorded")
+        if raptor_variant not in {"R1", "R2"} and (
+            not dense_record_count or not sparse_record_count or not reranker_record_count
+        ):
+            issues.append("dense, BM25, and reranker retrieval stages must be recorded")
     if require_answer_generation and not manifest.get("answer_generation"):
         issues.append("run used retrieval-only mode; answer generation is required")
     if missing_answers:

@@ -240,6 +240,13 @@ class RaptorTreeBuilder:
             fingerprint=fingerprint,
             fingerprint_inputs=fingerprint_inputs,
             embedding_dimension=self._embedding.dimension,
+            document_id=document_id,
+            leaf_chunk_ids={chunk.chunk_id for chunk in ordered_chunks},
+            leaf_paragraph_ids={
+                paragraph_id
+                for chunk in ordered_chunks
+                for paragraph_id in _source_paragraph_ids(chunk)
+            },
         )
         if cached is not None:
             nodes, root_node_ids, created_at, summary_calls = cached
@@ -504,6 +511,9 @@ def _read_tree_cache(
     fingerprint: str,
     fingerprint_inputs: dict[str, Any],
     embedding_dimension: int,
+    document_id: str,
+    leaf_chunk_ids: set[str],
+    leaf_paragraph_ids: set[str],
 ) -> tuple[tuple[RaptorSummaryNode, ...], tuple[str, ...], str, int] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -527,12 +537,27 @@ def _read_tree_cache(
             or node.embedding_model != fingerprint_inputs["embedding_model"]
             or node.model != fingerprint_inputs["summary_model"]
             or node.prompt_version != fingerprint_inputs["prompt_version"]
+            or node.document_id != document_id
+            or not node.descendant_chunk_ids
+            or set(node.descendant_chunk_ids).difference(leaf_chunk_ids)
+            or set(node.descendant_paragraph_ids).difference(leaf_paragraph_ids)
             for node in nodes
+        ):
+            return None
+        node_ids = {node.node_id for node in nodes}
+        root_node_ids = tuple(str(value) for value in payload.get("root_node_ids", []))
+        if (
+            not root_node_ids
+            or set(root_node_ids).difference(node_ids)
+            or any(
+                set(node.child_ids).difference(node_ids | leaf_chunk_ids)
+                for node in nodes
+            )
         ):
             return None
         return (
             nodes,
-            tuple(str(value) for value in payload.get("root_node_ids", [])),
+            root_node_ids,
             str(payload.get("created_at", "")),
             int(payload.get("summary_calls", len(nodes))),
         )

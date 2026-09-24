@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from backend.rag.models import DocumentChunk
 from backend.rag.raptor import RaptorTreeBuilder
 
@@ -113,3 +115,24 @@ def test_raptor_tree_rejects_mixed_document_leaves(tmp_path) -> None:
         assert "one document" in str(exc)
     else:
         raise AssertionError("mixed-document RAPTOR leaves should be rejected")
+
+
+def test_raptor_tree_rebuilds_cache_with_invalid_leaf_reference(tmp_path) -> None:
+    builder = RaptorTreeBuilder(
+        embedding_provider=_FakeEmbedding(),
+        summary_provider=_FakeSummaryProvider(),
+        cache_directory=tmp_path,
+        branching_factor=2,
+    )
+    first = builder.build(_chunks(5))
+    payload = json.loads(first.cache_path.read_text(encoding="utf-8"))
+    payload["nodes"][0]["descendant_chunk_ids"] = ["another-paper-chunk"]
+    first.cache_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    rebuilt = builder.build(_chunks(5))
+
+    assert rebuilt.cache_hit is False
+    assert all(
+        set(node.descendant_chunk_ids) <= {chunk.chunk_id for chunk in _chunks(5)}
+        for node in rebuilt.nodes
+    )

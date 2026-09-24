@@ -936,7 +936,7 @@ def _raptor_summary_candidates(
             if chunk_id in seen_chunk_ids:
                 continue
             chunk = index.runtime.sparse_retriever.get_chunk(chunk_id)
-            if chunk is None:
+            if chunk is None or chunk.document_id != hit.node.document_id:
                 continue
             seen_chunk_ids.add(chunk_id)
             candidates.append(
@@ -967,6 +967,132 @@ def _raptor_hit_trace(hits: Sequence[RaptorSearchHit]) -> list[dict[str, Any]]:
     ]
 
 
+def _select_raptor_evidence(
+    query: str,
+    *,
+    paper: Any,
+    retrieval: RetrievalResult,
+    selector: EvidenceSelectionService,
+    profile: Mapping[str, Any],
+) -> list[RetrievalCandidate]:
+    """Apply the same source-owned excerpt/fallback policy to RAPTOR leaves."""
+    pool = list(retrieval.candidates)
+    top_k = _evidence_selection_variant_top_k("evidence_selection", profile)
+    fallback_enabled = bool(
+        profile.get("fallback_to_source_chunk_for_multi_paragraph_coverage", False)
+    )
+    if not fallback_enabled:
+        raise ValueError("RAPTOR selection requires source-chunk coverage fallback")
+    selection_input = pool[:top_k] if fallback_enabled else pool
+    selection = selector.select(
+        query,
+        selection_input,
+        top_n=len(selection_input),
+        top_k=top_k,
+        selection_order=str(profile.get("selection_order", "relevance")),
+        max_spans_per_source_chunk=profile.get("max_spans_per_source_chunk"),
+    )
+    mapped = _retain_only_excerpt_paragraphs(
+        [item.candidate for item in selection.selected], paper=paper
+    )
+    selected_by_source = {
+        str(item.metadata.get("evidence_selection", {}).get("source_chunk_id")): item
+        for item in mapped
+    }
+    selection_trace = selection.as_dict()
+    selection_trace.update(
+        {
+            "selection_order": profile.get("selection_order", "relevance"),
+            "max_spans_per_source_chunk": profile.get("max_spans_per_source_chunk"),
+            "retrieval_candidate_pool_count": len(pool),
+            "selection_input_candidate_count": len(selection_input),
+        }
+    )
+    final: list[RetrievalCandidate] = []
+    fallback_traces: list[dict[str, Any]] = []
+    no_valid_excerpt_count = 0
+    for source in selection_input:
+        source_id = source.chunk.chunk_id
+        excerpt = selected_by_source.get(source_id)
+        original_ids = _source_paragraph_ids(source.chunk)
+        matched_ids = _source_paragraph_ids(excerpt.chunk) if excerpt else []
+        no_valid_excerpt = not bool(excerpt and matched_ids)
+        covers_source = bool(original_ids) and set(original_ids).issubset(matched_ids)
+        fallback = no_valid_excerpt or (fallback_enabled and not covers_source)
+        if fallback:
+            no_valid_excerpt_count += int(no_valid_excerpt)
+            reason = (
+                "no_scored_excerpt"
+                if excerpt is None
+                else (
+                    "excerpt_has_no_source_paragraph_mapping"
+                    if no_valid_excerpt
+                    else "excerpt_does_not_cover_all_source_paragraphs"
+                )
+            )
+            metadata = dict(source.metadata)
+            metadata["evidence_selection"] = {
+                "source_chunk_id": source_id,
+                "fallback_applied": True,
+                "fallback_reason": reason,
+                "no_valid_excerpt": no_valid_excerpt,
+                "source_paragraph_ids": original_ids,
+                "matched_paragraph_ids": matched_ids,
+            }
+            chosen = source.model_copy(
+                update={"context_window": None, "metadata": metadata}
+            )
+            fallback_traces.append(
+                {
+                    "source_chunk_id": source_id,
+                    "final_action": "source_chunk_fallback",
+                    "fallback_applied": True,
+                    "fallback_reason": reason,
+                    "no_valid_excerpt": no_valid_excerpt,
+                    "source_paragraph_ids": original_ids,
+                    "matched_paragraph_ids": matched_ids,
+                }
+            )
+        else:
+            chosen = excerpt.model_copy(
+                update={"context_window": None, "rank": source.rank}
+            )
+        final.append(chosen)
+    selection_trace.update(
+        {
+            "mapped_selected_span_count": sum(
+                bool(_source_paragraph_ids(item.chunk)) for item in mapped
+            ),
+            "unmapped_selected_span_count": len(selection.selected)
+            - sum(bool(_source_paragraph_ids(item.chunk)) for item in mapped),
+            "fallback_count": len(fallback_traces),
+            "fallbacks": fallback_traces,
+            "no_valid_excerpt_count": no_valid_excerpt_count,
+            "no_valid_excerpt": bool(no_valid_excerpt_count),
+            "final_selected_evidence_count": len(final),
+        }
+    )
+    retrieval.candidates = final
+    retrieval.metadata.update(
+        {
+            "evidence_selection": selection_trace,
+            "evidence_extraction_ms": selection.extraction_ms,
+            "evidence_scoring_ms": selection.scoring_ms,
+            "evidence_extractor_invocations": (
+                0
+                if selection.extractor_model
+                in {"extractive-sentence-spans-v1", "extractive-contextual-spans-v1"}
+                else selection.candidate_pool_count
+            ),
+            "evidence_selection_pool_chunk_ids": [item.chunk.chunk_id for item in pool],
+            "candidate_pool_size": int(profile["candidate_pool_size"]),
+            "selected_top_k": top_k,
+            "no_valid_excerpt": bool(no_valid_excerpt_count),
+        }
+    )
+    return pool
+
+
 def _retrieve_raptor_question(
     query: str,
     *,
@@ -982,6 +1108,7 @@ def _retrieve_raptor_question(
     summary_hits: list[RaptorSearchHit] = []
     summary_search_ms = 0.0
     fallback_reason = ""
+    stage_metadata: dict[str, Any] = {}
 
     if variant == "R0":
         intent = detect_structural_intent(query)
@@ -1004,6 +1131,24 @@ def _retrieve_raptor_question(
         summary_hits = rank_summary_nodes(query_vector, tree, top_k=8)
         summary_search_ms = (perf_counter() - summary_started) * 1000
         summary_candidates = _raptor_summary_candidates(summary_hits, index=index)
+        if not summary_candidates:
+            fallback_result, fallback_round = _retrieve_raptor_question(
+                query,
+                index=index,
+                document_id=document_id,
+                tree=tree,
+                variant="R0",
+            )
+            fallback_result.metadata.update(
+                {
+                    "raptor_variant": variant,
+                    "raptor_fallback_reason": "empty_summary_candidates",
+                    "raptor_summary_hits": _raptor_hit_trace(summary_hits),
+                    "raptor_summary_search_ms": summary_search_ms,
+                }
+            )
+            fallback_round["raptor_fallback_reason"] = "empty_summary_candidates"
+            return fallback_result, fallback_round
 
         if variant == "R1":
             leaf_candidates = index.runtime.vector_store.search(
@@ -1015,12 +1160,23 @@ def _retrieve_raptor_question(
                 [leaf_candidates, summary_candidates],
                 limit=BENCHMARK_FINAL_TOP_K,
             )
+            stage_metadata = {
+                "dense_count": len(leaf_candidates),
+                "dense_chunk_ids": [item.chunk.chunk_id for item in leaf_candidates],
+                "sparse_count": 0,
+                "reranker_applied": False,
+            }
             strategy = "raptor-mixed-leaf-summary"
         elif variant == "R2":
             candidates = rrf_fuse(
                 [summary_candidates],
                 limit=BENCHMARK_FINAL_TOP_K,
             )
+            stage_metadata = {
+                "dense_count": 0,
+                "sparse_count": 0,
+                "reranker_applied": False,
+            }
             strategy = "raptor-collapsed-summary"
         else:
             base_result = index.runtime.retrieval_service.retrieve(
@@ -1033,6 +1189,7 @@ def _retrieve_raptor_question(
                 reranker_enabled=False,
                 small_to_big_enabled=False,
             )
+            stage_metadata = dict(base_result.metadata)
             candidates = rrf_fuse(
                 [base_result.candidates, summary_candidates],
                 limit=max(BENCHMARK_FINAL_TOP_K, index.runtime.config.retrieval.fusion_top_k),
@@ -1043,8 +1200,10 @@ def _retrieve_raptor_question(
                     candidates,
                     top_k=min(BENCHMARK_FINAL_TOP_K, len(candidates)),
                 )
+                stage_metadata["reranker_applied"] = True
             except Exception as exc:  # noqa: BLE001 - retain fused RAPTOR candidates
                 fallback_reason = str(exc) or exc.__class__.__name__
+                stage_metadata["reranker_applied"] = False
             strategy = "raptor-hybrid-rerank"
 
         if variant != "R2" and not candidates:
@@ -1055,7 +1214,7 @@ def _retrieve_raptor_question(
             candidates=candidates,
             retrieval_strategy=strategy,
             elapsed_ms=(perf_counter() - started) * 1000,
-            metadata={},
+            metadata=stage_metadata,
         )
 
     total_ms = (perf_counter() - started) * 1000
@@ -2346,6 +2505,22 @@ def run_qasper_benchmark(
                             tree=tree,
                             variant=normalized_raptor_variant,
                         )
+                        if normalized_evidence_selection_variant == "evidence_selection":
+                            if active_evidence_selector is None:
+                                raise RuntimeError("evidence selector was not initialized")
+                            retrieval_candidate_pool = _select_raptor_evidence(
+                                question.question,
+                                paper=selected.papers[question.paper_id],
+                                retrieval=retrieval_result,
+                                selector=active_evidence_selector,
+                                profile=resolved_quality_profile,
+                            )
+                            raptor_round["final_evidence_selection"] = (
+                                retrieval_result.metadata["evidence_selection"]
+                            )
+                            raptor_round["final_selected_evidence_chunk_ids"] = [
+                                item.chunk.chunk_id for item in retrieval_result.candidates
+                            ]
                         query_plan = _identity_query_plan(question.question)
                         retrieval_rounds = [raptor_round]
                         sufficiency = None
@@ -3800,6 +3975,9 @@ def run_qasper_raptor_ablation(
     variants: Sequence[str] = ("R0", "R1", "R2", "R3"),
     suite_id: str | None = None,
     question_ids_file: str | Path | None = None,
+    evidence_selection_variant: str | None = None,
+    quality_profile: Mapping[str, Any] | None = None,
+    quality_profile_sha256: str | None = None,
 ) -> QasperRaptorAblationSuiteResult:
     """Compare flat, mixed, collapsed, and hybrid RAPTOR retrieval variants."""
 
@@ -3825,6 +4003,28 @@ def run_qasper_raptor_ablation(
         raise ValueError("RAPTOR variants must be selected from R0, R1, R2, and R3")
     if len(set(selected_variants)) != len(selected_variants):
         raise ValueError("RAPTOR variants must be unique")
+    resolved_quality_profile = (
+        _validated_evidence_selection_profile(quality_profile)
+        if evidence_selection_variant is not None
+        else None
+    )
+    if evidence_selection_variant not in {None, "evidence_selection"}:
+        raise ValueError("RAPTOR suite supports the fixed evidence_selection variant")
+    resolved_profile_sha256 = (
+        quality_profile_sha256
+        or (
+            hashlib.sha256(
+                json.dumps(
+                    resolved_quality_profile,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if resolved_quality_profile is not None
+            else None
+        )
+    )
 
     benchmark_directory = benchmark_root(root)
     source_config = (config or RagConfig()).model_copy(deep=True)
@@ -3865,6 +4065,10 @@ def run_qasper_raptor_ablation(
         "variants": selected_variants,
         "summary_model": shared_summarizer.model_name,
         "prompt_version": shared_summarizer.prompt_version,
+        "evidence_selection_variant": evidence_selection_variant,
+        "quality_profile": resolved_quality_profile,
+        "quality_profile_sha256": resolved_profile_sha256,
+        "answer_contract": getattr(answerer, "answer_contract_manifest", None),
         "tree_cache_parameters": {
             "branching_factor": 4,
             "clustering_version": "greedy-cosine-medoid-v1",
@@ -3902,11 +4106,15 @@ def run_qasper_raptor_ablation(
         )
         trees: dict[str, RaptorTree] = {}
         tree_manifest: dict[str, Any] = {}
+        tree_build_total_ms = 0.0
         for document_id in sorted(expected_document_ids):
             chunks = chunks_by_document.get(document_id, [])
             if not chunks:
                 raise ValueError(f"no leaf chunks found for RAPTOR document {document_id!r}")
+            tree_started = perf_counter()
             tree = tree_builder.build(chunks)
+            tree_build_ms = (perf_counter() - tree_started) * 1000
+            tree_build_total_ms += tree_build_ms
             trees[document_id] = tree
             tree_manifest[document_id] = {
                 "fingerprint": tree.fingerprint,
@@ -3915,6 +4123,7 @@ def run_qasper_raptor_ablation(
                 "cache_hit": tree.cache_hit,
                 "summary_node_count": len(tree.nodes),
                 "summary_calls": tree.summary_calls if not tree.cache_hit else 0,
+                "tree_build_ms": round(tree_build_ms, 3),
                 "root_node_ids": list(tree.root_node_ids),
             }
         suite_manifest.update(
@@ -3928,6 +4137,7 @@ def run_qasper_raptor_ablation(
                 },
                 "trees": tree_manifest,
                 "tree_count": len(trees),
+                "tree_build_total_ms": round(tree_build_total_ms, 3),
             }
         )
         atomic_write_json(manifest_path, suite_manifest)
@@ -3950,6 +4160,9 @@ def run_qasper_raptor_ablation(
                 variant=None,
                 raptor_variant=variant,
                 raptor_trees=trees,
+                evidence_selection_variant=evidence_selection_variant,
+                quality_profile=resolved_quality_profile,
+                quality_profile_sha256=resolved_profile_sha256,
                 run_id=run_id,
                 question_ids_file=question_ids_file,
                 rebuild_index=False,
@@ -3971,6 +4184,12 @@ def run_qasper_raptor_ablation(
                 "official_qasper": metrics["official_qasper"],
                 "performance_ms": metrics["performance_ms"],
                 "context_metrics": metrics.get("context_metrics", {}),
+                "groundedness_metrics": metrics.get("groundedness_metrics", {}),
+                "answer_behavior": metrics.get("answer_behavior", {}),
+                "answer_provider_counts": metrics.get("answer_provider_counts", {}),
+                "estimated_llm_invocations": metrics.get(
+                    "adaptive_retrieval", {}
+                ).get("estimated_llm_invocations", 0),
             }
             comparison_rows.append(row)
             suite_manifest["completed_runs"].append(

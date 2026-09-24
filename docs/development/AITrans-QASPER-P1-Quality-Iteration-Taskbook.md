@@ -1,6 +1,6 @@
 # AITrans QASPER P1 质量迭代开发任务书
 
-> 状态：执行中（Q1-0、Q1-1 已完成；Q1-2 实现已提交但人工事实质量门未通过；Q1-3 真实回答复测和人工审查已完成、质量门未通过；暂不启动 Q1-4/Q1-5）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
+> 状态：执行中（Q1-0、Q1-1 已完成；Q1-2 人工事实质量门未通过；用户要求暂时跳过 Q1-3；Q1-4 消融已完成，R0 保留为默认，详见阶段报告；Q1-5 待候选资格判定）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
 > 范围：改进已实现的单论文 QASPER RAG 链路。P2 的 ScholarQABench、跨论文 KG/PPR 和引用图另立任务。
 
 ## 1. 目标与当前证据
@@ -230,6 +230,8 @@ python scripts/run_qasper_raptor_ablation.py --mode dev --seed 42 --retrieval-on
 
 - Smoke20 四路 complete、0 跨论文/失效叶子引用；R1–R3 的树摘要命中与展开 trace 完整，第二次同配置运行命中树缓存。
 - Dev100 只有在官方 Answer F1 或 Evidence F1 有同题收益、另一项无明确退化，且 Global/Cross-section 的提升足以覆盖成本时，才允许 RAPTOR 变体进入 Q1-5 候选。否则保留 R0 为默认，并保存负面消融结果；实现存在不等于应默认启用。
+
+**执行结果（2026-09-24）：**用户要求跳过 Q1-3 后，Q1-4 的固定 Smoke20/Dev100 四路检索消融和 R0/R3 真实 DeepSeek 回答对照已完成，全部运行审计通过。R1/R2 证据召回下降；R3 的 Dev100 Answer F1 差 `-0.00384`、Evidence F1 差 `+0.00057`，Global/Cross-section 无收益且调用次数增加。故保留 R0，不晋级 RAPTOR 变体。数据、CI、成本与复现入口见 [`qasper-p1-q1-4-raptor-ablation-report.md`](qasper-p1-q1-4-raptor-ablation-report.md)。Q1-2/Q1-3 的质量门状态未因本次消融改变。
 
 ## 9. Q1-5：同题统计验证、完整规模复跑与晋级决定
 
