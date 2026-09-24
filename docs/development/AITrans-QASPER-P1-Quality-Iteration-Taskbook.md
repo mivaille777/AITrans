@@ -1,6 +1,6 @@
 # AITrans QASPER P1 质量迭代开发任务书
 
-> 状态：执行中（Q1-0、Q1-1 已完成；Q1-2 实现已提交但人工事实质量门未通过；下一步为 Q1-3）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
+> 状态：执行中（Q1-0、Q1-1 已完成；Q1-2 与 Q1-3 的实现检查点已提交，但人工事实质量门未通过；Q1-3 的完整真实回答复测受 DeepSeek HTTP 402 阻断；暂不启动 Q1-4/Q1-5）；原始质量基线提交 `e2ac8838658133a4f83086b3cf486f488840bbf8`；制定日期：2026-09-24。
 > 范围：改进已实现的单论文 QASPER RAG 链路。P2 的 ScholarQABench、跨论文 KG/PPR 和引用图另立任务。
 
 ## 1. 目标与当前证据
@@ -199,6 +199,10 @@ python scripts/run_qasper_adaptive_retrieval_ablation.py --mode dev --seed 42 --
 
 - 真实二次检索、正确停止、回退与弃答路径均有成功 trace；0 跨论文、0 无效引用、0 超出轮次上限。
 - Dev100 的 Unsupported Claim Rate 相比 Q1-0 基线下降，目标 ≤0.25；人工复核不得发现因核验而新增的错误事实或明显错误弃答。报告 Gold sufficiency、Premature Stop Rate、Unnecessary Retrieval Rate 与 p95/调用成本，不以低支持率换取一律弃答。
+
+### Q1-3 阶段审计（未完成）
+
+当前实现检查点为 `ece05455`。真实 Smoke28/Dev100 检索消融和运行审计已经完成；Requirement-aware 的触发门误停偏高，二次检索没有带来新 chunk，检索指标没有收益。Smoke28 回答只完成 16/28，剩余调用因 DeepSeek HTTP 402 失败；已有输出还出现 9/24 可回答题被弃答。Dev100 回答和至少 20 条变更/弃答人工复核尚未完成，故 Q1-3 不通过，不能据此晋级。详细结果和额度恢复后的复跑命令见 [`qasper-p1-q1-3-adaptive-grounding-report.md`](qasper-p1-q1-3-adaptive-grounding-report.md)。
 
 ## 8. Q1-4：RAPTOR 树检索的质量消融
 
