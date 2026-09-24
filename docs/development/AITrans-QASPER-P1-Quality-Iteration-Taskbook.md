@@ -202,7 +202,9 @@ python scripts/run_qasper_adaptive_retrieval_ablation.py --mode dev --seed 42 --
 
 ### Q1-3 阶段审计（已完成评估，质量门未通过）
 
-DeepSeek HTTP 402 后续恢复；固定 Smoke28/Dev100 的完整真实问答均已结束并审计通过（28/28、100/100；各 0 错误、0 无效 offset）。Dev100 direct-answer recovery one-shot 初稿 UCR 为 19/325=0.0585，低于 Q1-0 的 346/789=0.4385；但 repair UCR 为 13/40=0.325，且 16/93 个可回答题被弃答。其 Answer F1 为 0.39962，相对 Q1-2 baseline 的同题 paired delta 为 -0.02940（95% CI [-0.06626,-0.00025]），Evidence F1 持平。人工审查 20 例发现至少 2 个明确错误弃答。答案充分性提示 Dev100 Answer F1 为 0.40872、false abstention 24/93，未修复过度弃答。Requirement-aware 触发的二次检索没有新增 chunk；Dev100 gate 有 18 个 false positive premature stop。Q1-3 **不晋级**，Q1-4 和 P2 暂不启动；应先解决明确证据仍弃答及答案未填满所问细节的问题，再重跑固定 Smoke28/Dev100。完整配置哈希、运行指标、人工审查和结论见 [`qasper-p1-q1-3-adaptive-grounding-report.md`](qasper-p1-q1-3-adaptive-grounding-report.md)。
+DeepSeek HTTP 402 后续恢复；固定 Smoke28/Dev100 的完整真实问答均已结束并审计通过（28/28、100/100；各 0 错误、0 无效 offset）。Dev100 direct-answer recovery one-shot 初稿 UCR 为 19/325=0.0585，低于 Q1-0 的 346/789=0.4385；但 repair UCR 为 13/40=0.325，且 16/93 个可回答题被弃答。其 Answer F1 为 0.39962，相对 Q1-2 baseline 的同题 paired delta 为 -0.02940（95% CI [-0.06626,-0.00025]），Evidence F1 持平。人工审查 20 例中，至少两题的检索原文有答案但实际回答上下文的单句摘录丢失关键词；此前误把官方预测证据映射的整段当作实际上下文，勘误见 Q1-3 报告。答案充分性提示 Dev100 Answer F1 为 0.40872、false abstention 24/93，未修复过度弃答。Requirement-aware 触发的二次检索没有新增 chunk；Dev100 gate 有 18 个 false positive premature stop。Q1-3 **不晋级**，Q1-4 和 P2 暂不启动；应先修正摘录覆盖，再检查剩余错误弃答及答案未填满所问细节的问题，并重跑固定 Smoke28/Dev100。完整配置哈希、运行指标、人工审查和结论见 [`qasper-p1-q1-3-adaptive-grounding-report.md`](qasper-p1-q1-3-adaptive-grounding-report.md)。
+
+后续候选修复采用 v3 相邻句摘录与枚举回答合约，真实 Dev100 检索-only 和 Smoke28 回答已完成，Smoke28 Answer F1 有同题收益；但新的完整 Dev100 回答因 DeepSeek HTTP 402 中断，不能晋级。具体运行 ID、审计、指标和恢复后验收事项见 [`qasper-p1-q1-3-contextual-remediation-report.md`](qasper-p1-q1-3-contextual-remediation-report.md)。
 
 ## 8. Q1-4：RAPTOR 树检索的质量消融
 

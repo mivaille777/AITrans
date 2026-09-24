@@ -91,14 +91,16 @@ Requirement-aware Dev100 有 3/100 题触发真实二次检索，Smoke28 有 2/2
 
 ### 20 个案例人工审查
 
-审查集由 Dev100 one-shot 的 16 个 Gold 可回答但模型弃答、2 个 Gold 不可回答但模型作答，以及 2 个 direct-answer recovery 输出组成。检查模型答案、Gold 注释和实际传入回答器的 selected evidence；Gold 仅用于离线复核，没有进入 prompt。
+审查集由 Dev100 one-shot 的 16 个 Gold 可回答但模型弃答、2 个 Gold 不可回答但模型作答，以及 2 个 direct-answer recovery 输出组成。检查模型答案、Gold 注释和预测证据段落；Gold 仅用于离线复核，没有进入 prompt。下述两题的证据判断经复查 `retrieval_trace.jsonl.final_candidates[].text` 后更正，见本节末的勘误。
 
-- **明确错误弃答：** `4c18081a` 的 selected evidence 明确列出 cosine-similarity noun clustering、CLUTO 与 Carrot2 Lingo，但回答为 Unanswerable；`22ccee45` 的 selected evidence 明确说 English datasets 被翻译为 Spanish，问题询问源语言，回答仍为 Unanswerable。`682e2626` 的摘要说明先前数据集只覆盖若干特定攻击类型，而 OLID 扩展到多个攻击类型及目标；回答弃答，至少应给出有证据支持的差异。
+- **候选答案证据与弃答：** `4c18081a` 和 `22ccee45` 的检索原文含有直接答案，但单句摘录未保留关键词；两题的官方 Gold 可回答而输出 Unanswerable，首先是摘录丢失证据。`682e2626` 的实际回答上下文包含 OLID 标注攻击类型和目标的信息；回答弃答，至少应给出有证据支持的差异。
 - **Gold/证据缺失或标注歧义：** `1f085b9b`、`a99fdd34`、`133eb4aa`、`58ef2442`、`3c3807f2` 的 Gold `No` 主要依赖论文没有报告该项，选中证据也无明确否定事实；保守弃答比编造 No 更安全。`09a1173e`、`f8c1b17d`、`4a4ce942`、`5bc1dc6e` 需要表格/图中的精确数值或列表，但当前文本证据没有这些值。`b1cf5739`、`c7b6e6cb`、`1dc2da50`、`9c44df75` 存在不同 annotator 的答案或 answerability 分歧。
 - **不充分的正答：** `b1a068c1` 只说语料覆盖多种口音，没有列出题目所问口音；`7d483077` 只复述购买模式可能随季节变化，没有说明“如何变化”。二者 Gold 为 Unanswerable，应要求输出明确响应所问槽位。
 - **正确恢复：** `53f74250` 恢复了由引用段落支持的 11 层 DNN acoustic model；`71a0c4f1` 恢复了由社区标注的 Wikipedia 质量标签。direct-answer recovery 有实际收益，但不足以抵消总体 F1 下降与错误弃答。
 
-这 20 例中发现至少 2 个明确错误弃答，故不满足“人工复核不得发现因核验而新增的明显错误弃答”的验收要求。QASPER 的负答案 Gold 有时由沉默推导，报告中将其与有明示证据却弃答的情况分开计数。
+这 20 例中，`682e2626` 至少有一例模型在实际可用证据下弃答，另有 `4c18081a` 与 `22ccee45` 两例摘录导致的证据缺失。Q1-3 仍不满足人工质量门。QASPER 的负答案 Gold 有时由沉默推导，报告中将其与有明示证据却弃答的情况分开计数。
+
+**勘误（实际上下文复核）：** 先前将 `predictions.jsonl.predicted_evidence` 映射回的完整 Gold 段落误当作回答器实际看到的摘录。`retrieval_trace.jsonl.final_candidates[].text` 才是回答器接收的候选文本。`4c18081a` 的首条实际摘录仅称表格列出了“两种算法”，没有 CLUTO、Carrot2 Lingo 或 cosine similarity；`22ccee45` 的首条摘录仅称将数据集翻译到其他语言，截掉了下一句“English datasets were translated into Spanish”。因此不能把这两题诊断为“模型看见明确答案仍弃答”；需要先修正摘录覆盖，再复测答案。上述 F1、false abstention 的官方离线计数不变。
 
 ### 答案充分性提示的隔离实验
 
@@ -106,6 +108,6 @@ Requirement-aware Dev100 有 3/100 题触发真实二次检索，Smoke28 有 2/2
 
 ### Q1-3 阶段决定
 
-Q1-3 检索门、实际第二轮与正确停止路径都已有可审计 trace；运行完整性和初稿 UCR 达标。整体质量门仍未通过：direct-answer recovery Dev100 的 Answer F1 显著低于 Q1-2 baseline，repair UCR 高于目标 0.25，人工复核确认有明确错误弃答；answer-adequacy 提示同样未改善 Dev100 F1 并增加 false abstention。Requirement-aware 没有新增检索证据且误停偏高。Q1-3 结论为**不晋级**，Q1-4 和 P2 暂不启动；下一次质量迭代应先修正“模型已拿到明确答案证据仍弃答”与“正答没有回答所问细节”这两类问题，再重跑固定 Smoke28 和 Dev100。
+Q1-3 检索门、实际第二轮与正确停止路径都已有可审计 trace；运行完整性和初稿 UCR 达标。整体质量门仍未通过：direct-answer recovery Dev100 的 Answer F1 显著低于 Q1-2 baseline，repair UCR 高于目标 0.25；人工复核确认存在摘录丢失答案事实与实际可用证据下的弃答。answer-adequacy 提示同样未改善 Dev100 F1 并增加 false abstention。Requirement-aware 没有新增检索证据且误停偏高。Q1-3 结论为**不晋级**，Q1-4 和 P2 暂不启动；下一次质量迭代应先修正摘录覆盖、再检查剩余错误弃答与正答细节，并重跑固定 Smoke28 和 Dev100。
 
 报告中记录的 provider 调用次数为估算的 LLM invocation count（Dev100 one-shot 116 次）；`ChatResult` 未返回实际 token 用量，因此无法可靠报告美元成本。运行与对照 JSON 保存在各自 `data/benchmarks/qasper/results/<run-id>/` 目录内。

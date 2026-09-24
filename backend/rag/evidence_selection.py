@@ -101,6 +101,52 @@ class ExtractiveEvidenceExcerptProvider:
         return excerpts
 
 
+class ContextualEvidenceExcerptProvider:
+    """Return bounded verbatim sentence windows with antecedent context."""
+
+    model_name = "extractive-contextual-spans-v1"
+    prompt_version = "extractive-contextual-spans-v1"
+
+    def __init__(self, *, maximum_excerpt_tokens: int = 180) -> None:
+        if maximum_excerpt_tokens < 1:
+            raise ValueError("maximum_excerpt_tokens must be positive")
+        self._maximum_excerpt_tokens = maximum_excerpt_tokens
+        self._token_counter = HeuristicTokenCounter()
+        self._sentences = ExtractiveEvidenceExcerptProvider()
+
+    def extract(
+        self,
+        query: str,
+        candidate: RetrievalCandidate,
+    ) -> Sequence[EvidenceExcerpt]:
+        source = candidate.chunk.text
+        sentences = self._sentences.extract(query, candidate)
+        if self._token_counter.count(source) <= self._maximum_excerpt_tokens:
+            return (EvidenceExcerpt(source, 0, len(source)),) if source.strip() else ()
+        windows: list[EvidenceExcerpt] = []
+        seen: set[tuple[int, int]] = set()
+        for anchor in range(len(sentences)):
+            start = sentences[anchor].start_offset
+            end = sentences[anchor].end_offset
+            if self._token_counter.count(source[start:end]) > self._maximum_excerpt_tokens:
+                continue
+            # The answer often precedes a referential sentence such as "both
+            # algorithms"; retain up to four antecedents before one successor.
+            for preceding in range(anchor - 1, max(-1, anchor - 5), -1):
+                proposed = sentences[preceding].start_offset
+                if self._token_counter.count(source[proposed:end]) > self._maximum_excerpt_tokens:
+                    break
+                start = proposed
+            if anchor + 1 < len(sentences):
+                proposed = sentences[anchor + 1].end_offset
+                if self._token_counter.count(source[start:proposed]) <= self._maximum_excerpt_tokens:
+                    end = proposed
+            if (start, end) not in seen:
+                seen.add((start, end))
+                windows.append(EvidenceExcerpt(source[start:end], start, end))
+        return windows
+
+
 class LLMQueryEvidenceExcerptProvider:
     """Ask the configured synthesis model for exact, source-owned excerpts."""
 
@@ -272,13 +318,18 @@ class EvidenceSelectionService:
         for pool_rank, candidate in enumerate(pool, start=1):
             source_text = candidate.chunk.text
             for raw_excerpt in self._extractor.extract(query, candidate):
-                excerpt_text = str(raw_excerpt.text or "").strip()
+                excerpt_text = str(raw_excerpt.text or "")
                 if not excerpt_text:
                     continue
-                start = source_text.find(excerpt_text)
-                if start < 0:
+                start = raw_excerpt.start_offset
+                end = raw_excerpt.end_offset
+                if (
+                    start < 0
+                    or end > len(source_text)
+                    or end <= start
+                    or source_text[start:end] != excerpt_text
+                ):
                     continue
-                end = start + len(excerpt_text)
                 if self._token_counter.count(excerpt_text) > self._maximum_excerpt_tokens:
                     continue
                 extracted.append(
@@ -444,6 +495,7 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 
 __all__ = [
     "EVIDENCE_EXTRACTION_PROMPT_VERSION",
+    "ContextualEvidenceExcerptProvider",
     "EvidenceExcerpt",
     "EvidenceExcerptProvider",
     "EvidenceSelectionResult",

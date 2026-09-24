@@ -58,8 +58,10 @@ from backend.rag.evidence_requirements import (
     infer_evidence_requirements,
 )
 from backend.rag.evidence_selection import (
+    ContextualEvidenceExcerptProvider,
     EvidenceExcerptProvider,
     EvidenceSelectionService,
+    ExtractiveEvidenceExcerptProvider,
 )
 from backend.rag.fusion import rrf_fuse
 from backend.rag.model_manager import ModelManager
@@ -1350,7 +1352,7 @@ def _validated_evidence_selection_profile(
         not profile_id
         or isinstance(version, bool)
         or not isinstance(version, int)
-        or version not in {1, 2}
+        or version not in {1, 2, 3}
     ):
         raise ValueError("quality profile must have a profile_id and supported profile_version")
     retrieval_variant = selected.get("retrieval_variant")
@@ -1407,6 +1409,15 @@ def _validated_evidence_selection_profile(
     excerpt_extractor = selected.get("excerpt_extractor")
     if not isinstance(excerpt_extractor, str) or not excerpt_extractor.strip():
         raise ValueError("quality profile excerpt_extractor must be a non-empty string")
+    expected_extractor = (
+        "extractive-contextual-spans-v1"
+        if version == 3
+        else "extractive-sentence-spans-v1"
+    )
+    if excerpt_extractor != expected_extractor:
+        raise ValueError(
+            f"quality profile version {version} requires {expected_extractor}"
+        )
     selection_order = selected.get("selection_order", "relevance")
     if selection_order not in {"relevance", "candidate_rank"}:
         raise ValueError("quality profile selection_order must be relevance or candidate_rank")
@@ -1425,6 +1436,14 @@ def _validated_evidence_selection_profile(
             "quality profile fallback_to_source_chunk_for_multi_paragraph_coverage must be boolean"
         )
     return selected
+
+
+def _profile_excerpt_provider(profile: Mapping[str, Any]) -> EvidenceExcerptProvider:
+    if profile["excerpt_extractor"] == "extractive-contextual-spans-v1":
+        return ContextualEvidenceExcerptProvider(
+            maximum_excerpt_tokens=profile["maximum_excerpt_tokens"]
+        )
+    return ExtractiveEvidenceExcerptProvider()
 
 
 def _evidence_selection_variant_top_k(
@@ -2208,7 +2227,7 @@ def run_qasper_benchmark(
                 "prompt_version": (
                     evidence_selector.prompt_version
                     if evidence_selector is not None
-                    else "extractive-sentence-spans-v1"
+                    else resolved_quality_profile["excerpt_extractor"]
                 ),
             }
             if normalized_evidence_selection_variant is not None
@@ -2254,6 +2273,7 @@ def run_qasper_benchmark(
             and active_evidence_selector is None
         ):
             active_evidence_selector = EvidenceSelectionService(
+                extractor=_profile_excerpt_provider(resolved_quality_profile),
                 embedding_provider=index.runtime.embedding_provider,
                 maximum_excerpt_tokens=(
                     resolved_quality_profile["maximum_excerpt_tokens"]
@@ -2609,7 +2629,10 @@ def run_qasper_benchmark(
                                         "evidence_extractor_invocations": (
                                             selection_result.candidate_pool_count
                                             if selection_result.extractor_model
-                                            != "extractive-sentence-spans-v1"
+                                            not in {
+                                                "extractive-sentence-spans-v1",
+                                                "extractive-contextual-spans-v1",
+                                            }
                                             else 0
                                         ),
                                         "evidence_selection_pool_chunk_ids": retrieval_pool_chunk_ids,
@@ -3333,7 +3356,7 @@ def run_qasper_evidence_selection_ablation(
         model_manager=model_manager,
     )
     shared_selector = evidence_selector or EvidenceSelectionService(
-        extractor=excerpt_provider,
+        extractor=excerpt_provider or _profile_excerpt_provider(resolved_quality_profile),
         embedding_provider=shared_embedding,
         maximum_excerpt_tokens=resolved_quality_profile["maximum_excerpt_tokens"],
     )
