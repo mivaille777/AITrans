@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import load_qasper
 from backend.rag.benchmarks.qasper.runner import (
     GroundedQasperAnswerer,
+    QasperAnswerInput,
     QasperGeneratedAnswer,
+    _retrieve_requirement_aware_question,
     run_qasper_ablation,
     run_qasper_adaptive_retrieval_ablation,
     run_qasper_benchmark,
@@ -16,7 +19,7 @@ from backend.rag.benchmarks.qasper.runner import (
 )
 from backend.rag.benchmarks.qasper.sampling import sample_qasper_dataset
 from backend.rag.config import RagConfig, RagEmbeddingConfig
-from backend.rag.models import RetrievalResult
+from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.query_planner import RagQueryPlan
 from backend.rag.raptor import ExtractiveRaptorSummaryProvider
 
@@ -92,9 +95,65 @@ class _FakeQueryPlanner:
             rewritten_query=query,
             subqueries=[f"{query} supporting evidence"],
         )
+
+
+class _RelevantRequirementQueryPlanner:
+    def plan(self, query):
+        return RagQueryPlan(
+            original_query=query,
+            rewritten_query="dataset sample participants evidence",
+            subqueries=[],
+        )
+
+
+class _SequentialRetrievalService:
+    def __init__(self, results):
+        self.results = list(results)
+        self.queries = []
+
+    def retrieve(self, query, **_kwargs):
+        self.queries.append(query)
+        return self.results.pop(0)
+
+
+def _retrieval_result(chunk_id, text, *, document_id="paper-doc", paragraph_id=None):
+    chunk = DocumentChunk(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        text=text,
+        chunk_index=0,
+        metadata=(
+            {"source_paragraph_ids": [paragraph_id]}
+            if paragraph_id is not None
+            else {}
+        ),
+    )
+    return RetrievalResult(
+        query="fixture query",
+        candidates=[RetrievalCandidate(chunk=chunk, rank=1)],
+        retrieval_strategy="fixture",
+    )
 class _UnusedTextService:
     provider_name = "fake"
     model = "must-not-be-called"
+
+
+class _FakeCompletionClient:
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+        self.calls = []
+
+    def complete(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return self.outputs.pop(0)
+
+
+class _FakeTextService:
+    provider_name = "fixture"
+    model = "fixture-answer-model"
+
+    def __init__(self, outputs):
+        self.provider = SimpleNamespace(client=_FakeCompletionClient(outputs))
 
 
 def _dataset(tmp_path):
@@ -792,7 +851,7 @@ def test_qasper_adaptive_retrieval_suite_tracks_missing_requirements(tmp_path) -
     assert requirement_metrics["requirement_count"] == 3
     assert requirement_metrics["covered_requirement_count"] == 0
     assert requirement_metrics["Re-retrieval Case Rate"] == 1.0
-    assert requirement_metrics["Mean Retrieval Rounds"] == 3.0
+    assert requirement_metrics["Mean Retrieval Rounds"] == 2.0
 
     run_directory = Path(rows["requirement_aware"]["run_directory"])
     trace = json.loads(
@@ -802,13 +861,114 @@ def test_qasper_adaptive_retrieval_suite_tracks_missing_requirements(tmp_path) -
     )
     assert trace["adaptive_variant"] == "requirement_aware"
     assert trace["second_round"] is True
-    assert len(trace["retrieval_rounds"]) == 3
+    assert len(trace["retrieval_rounds"]) == 2
+    assert trace["retrieval_stop_reason"] == "no_novel_evidence"
+    assert trace["retrieval_rounds"][0]["gate"]["action"] == "retrieve"
+    assert trace["retrieval_rounds"][0]["next_query"]
+    assert trace["retrieval_rounds"][1]["gate"]["action"] == "stop"
+    assert trace["retrieval_rounds"][1]["gate"]["reason_codes"] == [
+        "no_novel_evidence"
+    ]
     assert {item["type"] for item in trace["evidence_requirements"]} == {
         "method",
         "result",
         "data",
     }
     assert all(item["status"] == "missing" for item in trace["evidence_requirements"])
+
+
+def test_requirement_aware_second_round_adds_novel_evidence_and_stops_when_covered():
+    retrieval_service = _SequentialRetrievalService(
+        [
+            _retrieval_result(
+                "chunk-method-result",
+                "The method uses a technique and improves accuracy results.",
+                paragraph_id="p-method",
+            ),
+            _retrieval_result(
+                "chunk-data",
+                "The dataset contains samples from participants in a corpus.",
+                paragraph_id="p-data",
+            ),
+        ]
+    )
+    index = SimpleNamespace(
+        runtime=SimpleNamespace(retrieval_service=retrieval_service)
+    )
+    question = SimpleNamespace(
+        question="How does the method improve accuracy on the dataset?"
+    )
+
+    result, rounds, requirements, planning_ms, planner_calls, stop_reason = (
+        _retrieve_requirement_aware_question(
+            question,
+            index=index,
+            document_id="paper-doc",
+            query_planner=_RelevantRequirementQueryPlanner(),
+        )
+    )
+
+    assert len(retrieval_service.queries) == 2
+    assert retrieval_service.queries[0] != retrieval_service.queries[1]
+    assert len(rounds) == 2
+    assert rounds[1]["novel_chunk_ids"] == ["chunk-data"]
+    assert rounds[1]["gate"]["action"] == "stop"
+    assert rounds[1]["gate"]["sufficient"] is True
+    assert stop_reason == "evidence_requirements_covered"
+    assert all(item.status == "covered" for item in requirements)
+    assert result.metadata["requirement_round_count"] == 2
+    assert result.metadata["query_planner_invocation_count"] == 1
+    assert rounds[0]["query_plan_invocation_count"] == 1
+    assert rounds[1]["query_planner_invoked"] is True
+    assert planning_ms >= 0
+    assert planner_calls == 1
+
+
+def test_requirement_aware_retrieval_never_exceeds_three_rounds():
+    retrieval_service = _SequentialRetrievalService(
+        [
+            _retrieval_result(f"chunk-{index}", f"generic passage number {index}")
+            for index in range(3)
+        ]
+    )
+
+    class _DistinctQueryPlanner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan(self, query):
+            self.calls += 1
+            return RagQueryPlan(
+                original_query=query,
+                rewritten_query=f"distinct evidence query {self.calls}",
+                subqueries=[],
+            )
+
+    planner = _DistinctQueryPlanner()
+    index = SimpleNamespace(
+        runtime=SimpleNamespace(retrieval_service=retrieval_service)
+    )
+    question = SimpleNamespace(
+        question="How does the method improve accuracy on the dataset?"
+    )
+
+    result, rounds, _requirements, _planning_ms, planner_calls, stop_reason = (
+        _retrieve_requirement_aware_question(
+            question,
+            index=index,
+            document_id="paper-doc",
+            query_planner=planner,
+            maximum_rounds=9,
+        )
+    )
+
+    assert len(retrieval_service.queries) == 3
+    assert len(set(retrieval_service.queries)) == 3
+    assert len(rounds) == 3
+    assert rounds[-1]["gate"]["reason_codes"] == ["retrieval_budget_exhausted"]
+    assert stop_reason == "retrieval_budget_exhausted"
+    assert result.metadata["requirement_round_count"] == 3
+    assert planner.calls == planner_calls == 2
 
 
 def test_question_sampling_is_reproducible_and_keeps_only_used_papers(tmp_path) -> None:
@@ -835,4 +995,73 @@ def test_answerer_uses_qasper_abstention_when_retrieval_returns_no_evidence(
     answer = answerer(question, RetrievalResult(query=question.question))
 
     assert answer.answer == "Unanswerable"
-    assert answer.metadata == {"abstained": True, "reason": "no_retrieved_evidence"}
+    assert answer.metadata == {
+        "abstained": True,
+        "reason": "no_retrieved_evidence",
+        "answer_llm_invocation_count": 0,
+    }
+
+
+def test_qasper_answerer_repairs_unsupported_claim_and_records_serializable_trace():
+    evidence_text = (
+        "The method improves sample efficiency by using a surrogate model."
+    )
+    text_service = _FakeTextService(
+        [
+            "The method doubles success on every dataset [1].",
+            f"{evidence_text} [1]",
+        ]
+    )
+    answerer = GroundedQasperAnswerer(text_service=text_service)
+
+    generated = answerer(
+        QasperAnswerInput(
+            question_id="question-a",
+            paper_id="paper-a",
+            question="How does the method improve sample efficiency?",
+        ),
+        _retrieval_result("chunk-evidence", evidence_text),
+    )
+
+    assert generated.answer == f"{evidence_text} [1]"
+    assert generated.metadata["claim_repair_attempted"] is True
+    assert generated.metadata["claim_repair_succeeded"] is True
+    assert generated.metadata["answer_llm_invocation_count"] == 2
+    assert generated.metadata["initial_unsupported_claim_count"] > 0
+    assert generated.metadata["repair_unsupported_claim_count"] == 0
+    assert generated.metadata["raw_model_output"] == (
+        "The method doubles success on every dataset [1]."
+    )
+    assert generated.metadata["repair_model_output"] == f"{evidence_text} [1]"
+    json.dumps(generated.metadata, ensure_ascii=False)
+
+
+def test_qasper_answerer_abstains_when_claim_repair_still_fails():
+    evidence_text = (
+        "The method improves sample efficiency by using a surrogate model."
+    )
+    answerer = GroundedQasperAnswerer(
+        text_service=_FakeTextService(
+            [
+                "The method doubles success on every dataset [1].",
+                "The method doubles success on every dataset [9].",
+            ]
+        )
+    )
+
+    generated = answerer(
+        QasperAnswerInput(
+            question_id="question-b",
+            paper_id="paper-b",
+            question="How does the method improve sample efficiency?",
+        ),
+        _retrieval_result("chunk-evidence", evidence_text),
+    )
+
+    assert generated.answer == "Unanswerable"
+    assert generated.user_visible_answer == "Unanswerable"
+    assert generated.metadata["abstained"] is True
+    assert generated.metadata["abstention_reason"] == (
+        "claim_repair_verification_failed"
+    )
+    assert generated.metadata["repair_model_output"].endswith("[9].")

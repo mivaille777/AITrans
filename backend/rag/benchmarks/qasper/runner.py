@@ -269,8 +269,11 @@ class GroundedQasperAnswerer:
             self._chat_service,
             answer_contract=answer_contract,
         )
+        self._repair_trace: dict[str, Any] = {}
+        self._repair_initial_contract_answer: QasperContractAnswer | None = None
         self._grounded = GroundedSynthesisService(
-            chat_service=self._chat_adapter
+            chat_service=self._chat_adapter,
+            repairer=self._repair_unsupported_answer,
         )
 
     @property
@@ -289,16 +292,72 @@ class GroundedQasperAnswerer:
             else None
         )
 
+    def _repair_unsupported_answer(
+        self,
+        *,
+        output_text: str,
+        verification: Any,
+        request: dict[str, Any],
+        **_kwargs: Any,
+    ) -> Any:
+        self._repair_initial_contract_answer = self._chat_adapter.last_contract_answer
+        self._repair_trace = {
+            "initial_model_output": self._chat_adapter.last_raw_model_output,
+            "initial_verification_input": output_text,
+            "initial_normalized_output": self._chat_adapter.last_normalized_output,
+            "initial_contract_error": self._chat_adapter.last_contract_error,
+            "repair_prompt": "claim_evidence_repair_v1",
+            "initial_claim_count": int(verification.claim_count),
+            "initial_unsupported_claim_count": int(
+                verification.unsupported_claim_count
+            ),
+            "initial_invalid_citation_count": int(
+                verification.invalid_citation_count
+            ),
+            "initial_reason_codes": list(verification.reason_codes),
+        }
+        allowed_labels = request.get("answer_contract_citation_labels", ())
+        label_text = ", ".join(str(item) for item in allowed_labels) or "none"
+        repair_request = dict(request)
+        repair_request["user_message"] = (
+            f"Original question: {request.get('user_message', '')}\n\n"
+            "The previous draft failed evidence and citation verification. Rewrite it "
+            "using only the supplied paper evidence. Remove every unsupported claim, "
+            "keep the direct answer concise, and cite only these available labels: "
+            f"{label_text}. If the paper evidence cannot support an answer, use exactly "
+            "Unanswerable (or the contract's designated unanswerable form). Do not add "
+            "outside knowledge.\n\n"
+            f"Previous draft:\n{output_text}\n\n"
+            "Verification findings: "
+            f"{', '.join(verification.reason_codes) or 'unsupported_claim'}."
+        )
+        repaired_answer = self._chat_adapter.send(**repair_request)
+        self._repair_trace.update(
+            {
+                "repair_model_output": self._chat_adapter.last_raw_model_output,
+                "repair_verification_input": self._chat_adapter.last_normalized_output,
+                "repair_contract_error": self._chat_adapter.last_contract_error,
+            }
+        )
+        return repaired_answer
+
     def __call__(
         self,
         question: QasperAnswerInput | QasperQuestion,
         retrieval: RetrievalResult,
     ) -> QasperGeneratedAnswer:
+        self._repair_trace = {}
+        self._repair_initial_contract_answer = None
+        self._chat_adapter.last_raw_model_output = ""
+        self._chat_adapter.last_normalized_output = ""
+        self._chat_adapter.last_contract_answer = None
+        self._chat_adapter.last_contract_error = ""
         evidence = build_agent_evidence(retrieval)
         if not evidence:
             metadata: dict[str, Any] = {
                 "abstained": True,
                 "reason": "no_retrieved_evidence",
+                "answer_llm_invocation_count": 0,
             }
             if self._answer_contract is not None:
                 metadata["answer_contract_status"] = "not_invoked"
@@ -320,6 +379,16 @@ class GroundedQasperAnswerer:
             user_message=question.question,
             answer_contract_citation_labels=[item.label for item in citations],
         )
+        if result.repair_attempted and not result.repair_succeeded:
+            self._chat_adapter.last_contract_answer = (
+                self._repair_initial_contract_answer
+            )
+            self._chat_adapter.last_contract_error = str(
+                self._repair_trace.get("initial_contract_error", "") or ""
+            )
+            self._chat_adapter.last_normalized_output = str(
+                self._repair_trace.get("initial_normalized_output", "") or ""
+            )
         metadata = {
             "fallback_applied": result.fallback_applied,
             "partial_grounding": result.partial_grounding,
@@ -345,9 +414,61 @@ class GroundedQasperAnswerer:
                 and result.verification.claim_count > 0
                 else None
             ),
+            "claim_repair_attempted": result.repair_attempted,
+            "claim_repair_succeeded": result.repair_succeeded,
+            "claim_repair_error": result.repair_error,
+            "extra_llm_invocation_count": int(result.repair_attempted),
+            "answer_llm_invocation_count": (
+                int(
+                    bool(
+                        self._repair_trace.get("initial_model_output")
+                        or self._chat_adapter.last_raw_model_output
+                    )
+                )
+                + int(result.repair_attempted)
+            ),
+            "claim_repair_trace": self._repair_trace,
+            "initial_claim_count": (
+                int(result.initial_verification.claim_count)
+                if result.initial_verification is not None
+                else 0
+            ),
+            "initial_unsupported_claim_count": (
+                int(result.initial_verification.unsupported_claim_count)
+                if result.initial_verification is not None
+                else 0
+            ),
+            "repair_unsupported_claim_count": (
+                int(result.repair_verification.unsupported_claim_count)
+                if result.repair_verification is not None
+                else None
+            ),
+            "raw_model_output": str(
+                self._repair_trace.get("initial_model_output")
+                or self._chat_adapter.last_raw_model_output
+            ),
+            "repair_model_output": self._repair_trace.get("repair_model_output"),
+            "grounded_verification_input": self._chat_adapter.last_normalized_output,
+            "verified_final_output": result.answer.output_text,
         }
         answer_text = result.answer.output_text
         user_visible_answer = answer_text
+        normalized_answer = answer_text.strip().casefold().rstrip(".!。！")
+        metadata.update(
+            {
+                "abstained": normalized_answer in {"unanswerable", "no answer"},
+                "abstention_reason": (
+                    "model_unanswerable_after_claim_repair"
+                    if result.repair_succeeded
+                    and normalized_answer in {"unanswerable", "no answer"}
+                    else (
+                        "model_unanswerable"
+                        if normalized_answer in {"unanswerable", "no answer"}
+                        else ""
+                    )
+                ),
+            }
+        )
         if self._answer_contract is not None:
             parsed = self._chat_adapter.last_contract_answer
             contract_status = "valid" if parsed is not None else "invalid_format_fallback"
@@ -399,11 +520,17 @@ class GroundedQasperAnswerer:
                     "answer_contract_model_abstained": (
                         parsed.is_unanswerable if parsed is not None else False
                     ),
+                    "abstained": bool(
+                        parsed is None
+                        or verification_fallback
+                        or parsed.is_unanswerable
+                    ),
                     "direct_answer": answer_text,
                     "supporting_explanation": (
                         parsed.supporting_explanation if parsed is not None else ""
                     ),
-                    "raw_model_output": self._chat_adapter.last_raw_model_output,
+                    "raw_model_output": metadata["raw_model_output"],
+                    "repair_model_output": metadata["repair_model_output"],
                     "grounded_verification_input": self._chat_adapter.last_normalized_output,
                     "verified_final_output": result.answer.output_text,
                     "user_visible_final_output": user_visible_answer,
@@ -413,13 +540,48 @@ class GroundedQasperAnswerer:
                         "invalid_answer_contract"
                         if parsed is None
                         else (
-                            "grounding_verification_fallback"
+                    "grounding_verification_fallback"
                             if verification_fallback
                             else ("model_unanswerable" if parsed.is_unanswerable else "")
                         )
                     ),
                 }
             )
+        verifier_abstention = bool(result.fallback_applied) or bool(
+            result.repair_attempted
+            and not result.repair_succeeded
+            and result.verification is not None
+            and (
+                result.verification.unsupported_claim_count > 0
+                or result.verification.invalid_citation_count > 0
+            )
+        )
+        if verifier_abstention:
+            answer_text = "Unanswerable"
+            user_visible_answer = "Unanswerable"
+            metadata.update(
+                {
+                    "abstained": True,
+                    "abstention_reason": (
+                        "grounding_verification_fallback"
+                        if result.fallback_applied
+                        else "claim_repair_verification_failed"
+                    ),
+                    "direct_answer": "Unanswerable",
+                    "claim_count": 0,
+                    "unsupported_claim_count": 0,
+                    "unsupported_claim_rate": None,
+                    "user_visible_final_output": "Unanswerable",
+                    "verified_final_output": "Unanswerable",
+                }
+            )
+            if self._answer_contract is not None:
+                metadata["answer_contract_final_answer_type"] = "unanswerable"
+                metadata["answer_token_estimate"] = (len(answer_text) + 3) // 4
+                metadata["user_visible_token_estimate"] = (
+                    len(user_visible_answer) + 3
+                ) // 4
+        metadata["user_visible_final_output"] = user_visible_answer
         return QasperGeneratedAnswer(
             answer=answer_text,
             provider=result.answer.provider or self.provider,
@@ -1233,29 +1395,36 @@ def _retrieve_requirement_aware_question(
     *,
     index: Any,
     document_id: str,
+    query_planner: Any | None = None,
     maximum_rounds: int = 3,
-) -> tuple[RetrievalResult, list[dict[str, Any]], tuple[EvidenceRequirement, ...]]:
+) -> tuple[
+    RetrievalResult,
+    list[dict[str, Any]],
+    tuple[EvidenceRequirement, ...],
+    float,
+    int,
+    str,
+]:
     requirements = infer_evidence_requirements(question.question)
     retrievals: list[RetrievalResult] = []
     round_traces: list[dict[str, Any]] = []
     attempted_requirement_ids: set[str] = set()
+    query_history: set[str] = set()
+    query_planning_ms = 0.0
+    query_planner_invocations = 0
+    pending_query = question.question.strip()
+    pending_query_source = "original_question"
+    pending_requirement_id = ""
+    pending_query_plan: dict[str, Any] | None = None
+    stop_reason = "retrieval_budget_exhausted"
+    maximum_rounds = max(1, min(3, int(maximum_rounds)))
+
     for round_number in range(1, maximum_rounds + 1):
-        if not retrievals:
-            retrieval_query = question.question
-        else:
-            missing = next(
-                (
-                    item
-                    for item in requirements
-                    if item.status == "missing"
-                    and item.id not in attempted_requirement_ids
-                ),
-                None,
-            )
-            if missing is None:
-                break
-            attempted_requirement_ids.add(missing.id)
-            retrieval_query = missing.query
+        retrieval_query = pending_query
+        if not retrieval_query or retrieval_query.casefold() in query_history:
+            stop_reason = "no_distinct_requirement_query"
+            break
+        query_history.add(retrieval_query.casefold())
         started = perf_counter()
         result = index.runtime.retrieval_service.retrieve(
             retrieval_query,
@@ -1271,6 +1440,18 @@ def _retrieve_requirement_aware_question(
         returned_document_ids = {item.chunk.document_id for item in result.candidates}
         if returned_document_ids.difference({document_id}):
             raise RuntimeError("known-paper retrieval returned a chunk from another paper")
+        prior_chunk_ids = {
+            candidate.chunk.chunk_id
+            for retrieval in retrievals
+            for candidate in retrieval.candidates
+        }
+        novel_chunk_ids = list(
+            dict.fromkeys(
+                candidate.chunk.chunk_id
+                for candidate in result.candidates
+                if candidate.chunk.chunk_id not in prior_chunk_ids
+            )
+        )
         retrievals.append(result)
         cumulative = _aggregate_retrievals(question.question, retrievals)
         requirements = assess_evidence_requirements(
@@ -1284,38 +1465,159 @@ def _retrieve_requirement_aware_question(
                 for paragraph_id in _source_paragraph_ids(candidate.chunk)
             )
         )
-        round_traces.append(
-            {
-                "round": round_number,
-                "query": retrieval_query,
-                "latency_ms": round_latency_ms,
-                "candidate_chunk_ids": [
-                    item.chunk.chunk_id for item in result.candidates
-                ],
-                "source_paragraph_ids": list(
-                    dict.fromkeys(
-                        paragraph_id
-                        for candidate in result.candidates
-                        for paragraph_id in _source_paragraph_ids(candidate.chunk)
-                    )
-                ),
-                "context_evidence_paragraph_ids": context_paragraph_ids,
-                "context_token_count": sum(
-                    item.context_window.token_count
-                    if item.context_window is not None
-                    else item.chunk.token_count
-                    for item in cumulative.candidates
-                ),
-                "new_chunk_count": len(result.candidates),
-                "evidence_requirements": [item.as_dict() for item in requirements],
-                "requirement_coverage": evidence_requirement_coverage(requirements),
-                "missing_requirement_ids": [
-                    item.id for item in requirements if item.status == "missing"
-                ],
-            }
+        missing = next(
+            (
+                item
+                for item in requirements
+                if item.status == "missing"
+                and item.id not in attempted_requirement_ids
+            ),
+            None,
         )
-        if not any(item.status == "missing" for item in requirements):
+        query_plan_ms = 0.0
+        query_plan_invoked = 0
+        next_query = ""
+        next_query_source = ""
+        next_requirement_id = ""
+        next_query_plan: dict[str, Any] | None = None
+        reason_codes: list[str] = []
+        if missing is None:
+            action = "stop"
+            stop_reason = "evidence_requirements_covered"
+            reason_codes.append("evidence_requirements_covered")
+        elif round_number >= maximum_rounds:
+            action = "stop"
+            stop_reason = "retrieval_budget_exhausted"
+            reason_codes.append("retrieval_budget_exhausted")
+        elif round_number > 1 and not novel_chunk_ids:
+            action = "stop"
+            stop_reason = "no_novel_evidence"
+            reason_codes.append("no_novel_evidence")
+        else:
+            attempted_requirement_ids.add(missing.id)
+            query_plan_started = perf_counter()
+            if query_planner is not None:
+                query_planner_invocations += 1
+                query_plan_invoked = 1
+                planning_request = (
+                    "Find a distinct passage in the supplied paper that can satisfy a missing "
+                    "evidence requirement. Return a standalone retrieval query only; do not "
+                    "answer the research question.\n"
+                    f"Question: {question.question}\n"
+                    f"Missing requirement ({missing.type}): {missing.query}\n"
+                    f"Queries already run: {' | '.join(sorted(query_history))}"
+                )
+                try:
+                    plan = query_planner.plan(planning_request)
+                except (OSError, TimeoutError, TypeError, ValueError):
+                    plan = None
+                if plan is not None:
+                    planned_queries = getattr(plan, "retrieval_queries", ())
+                    if not isinstance(planned_queries, (list, tuple)):
+                        planned_queries = ()
+                    for planned_query in planned_queries:
+                        candidate_query = str(planned_query or "").strip()
+                        if (
+                            candidate_query
+                            and candidate_query.casefold() != planning_request.casefold()
+                            and candidate_query.casefold() not in query_history
+                        ):
+                            next_query = candidate_query
+                            next_query_source = "query_planner"
+                            dump_plan = getattr(plan, "model_dump", None)
+                            if callable(dump_plan):
+                                next_query_plan = dump_plan(mode="json")
+                            else:
+                                next_query_plan = {
+                                    "retrieval_queries": list(planned_queries)
+                                }
+                            break
+            query_plan_ms = (perf_counter() - query_plan_started) * 1000
+            query_planning_ms += query_plan_ms
+            if not next_query:
+                expansion = {
+                    "answer": "answer evidence finding study experiment evaluation result method data",
+                    "method": "method approach methodology procedure algorithm technique",
+                    "result": "result finding outcome effect performance accuracy evaluation",
+                    "data": "dataset data sample participant corpus",
+                    "rationale": "reason rationale explanation cause",
+                    "limitation": "limitation weakness challenge failure constraint",
+                }.get(missing.type, "evidence answer finding result")
+                fallback_queries = (
+                    missing.query,
+                    f"{question.question} {expansion}",
+                )
+                for candidate_query in fallback_queries:
+                    candidate_query = candidate_query.strip()
+                    if candidate_query and candidate_query.casefold() not in query_history:
+                        next_query = candidate_query
+                        next_query_source = "requirement_expansion"
+                        break
+            if next_query:
+                action = "retrieve"
+                stop_reason = "retrieval_requested_for_missing_requirement"
+                next_requirement_id = missing.id
+                reason_codes.append("missing_evidence_requirement")
+            else:
+                action = "stop"
+                stop_reason = "no_distinct_requirement_query"
+                reason_codes.append("no_distinct_requirement_query")
+
+        gate_trace = {
+            "action": action,
+            "sufficient": action == "stop" and stop_reason == "evidence_requirements_covered",
+            "reason_codes": reason_codes,
+            "requirement_coverage": evidence_requirement_coverage(requirements),
+            "remaining_searches": max(0, maximum_rounds - round_number),
+        }
+        round_trace: dict[str, Any] = {
+            "round": round_number,
+            "query": retrieval_query,
+            "query_source": pending_query_source,
+            "query_for_requirement_id": pending_requirement_id or None,
+            "query_plan": pending_query_plan,
+            "query_planner_invoked": pending_query_source == "query_planner",
+            "query_planning_ms": query_plan_ms,
+            "query_plan_invocation_count": query_plan_invoked,
+            "next_query": next_query or None,
+            "next_query_source": next_query_source or None,
+            "next_query_for_requirement_id": next_requirement_id or None,
+            "next_query_plan": next_query_plan,
+            "latency_ms": round_latency_ms,
+            "candidate_chunk_ids": [
+                item.chunk.chunk_id for item in result.candidates
+            ],
+            "novel_chunk_ids": novel_chunk_ids,
+            "source_paragraph_ids": list(
+                dict.fromkeys(
+                    paragraph_id
+                    for candidate in result.candidates
+                    for paragraph_id in _source_paragraph_ids(candidate.chunk)
+                )
+            ),
+            "context_evidence_paragraph_ids": context_paragraph_ids,
+            "context_token_count": sum(
+                item.context_window.token_count
+                if item.context_window is not None
+                else item.chunk.token_count
+                for item in cumulative.candidates
+            ),
+            "new_chunk_count": len(novel_chunk_ids),
+            "evidence_requirements": [item.as_dict() for item in requirements],
+            "requirement_coverage": evidence_requirement_coverage(requirements),
+            "missing_requirement_ids": [
+                item.id for item in requirements if item.status == "missing"
+            ],
+            "stop_reason": stop_reason if action == "stop" else None,
+            "gate": gate_trace,
+        }
+        round_traces.append(round_trace)
+        if action == "stop":
             break
+        pending_query = next_query
+        pending_query_source = next_query_source
+        pending_requirement_id = next_requirement_id
+        pending_query_plan = next_query_plan
 
     merged = _aggregate_retrievals(question.question, retrievals)
     merged.metadata.update(
@@ -1325,9 +1627,19 @@ def _retrieve_requirement_aware_question(
             "requirement_coverage": evidence_requirement_coverage(requirements),
             "requirement_round_count": len(retrievals),
             "requirement_retrieval_queries": [item.query for item in retrievals],
+            "requirement_stop_reason": stop_reason,
+            "query_planner_invocation_count": query_planner_invocations,
+            "query_planning_ms": query_planning_ms,
         }
     )
-    return merged, round_traces, requirements
+    return (
+        merged,
+        round_traces,
+        requirements,
+        query_planning_ms,
+        query_planner_invocations,
+        stop_reason,
+    )
 
 
 def _new_run_id(split: str, mode: str) -> str:
@@ -2060,14 +2372,17 @@ def run_qasper_benchmark(
                                 retrieval_result,
                                 retrieval_rounds,
                                 _evidence_requirements,
+                                query_planning_ms,
+                                _query_planner_invocations,
+                                _requirement_stop_reason,
                             ) = _retrieve_requirement_aware_question(
                                 question,
                                 index=index,
                                 document_id=document_id,
+                                query_planner=query_planner,
                             )
                             query_plan = _identity_query_plan(question.question)
                             sufficiency = None
-                            query_planning_ms = 0.0
                         else:
                             (
                                 retrieval_result,
@@ -2203,7 +2518,14 @@ def run_qasper_benchmark(
                         else None
                     ),
                     "query_planner_invoked": bool(
-                        selected_variant.multi_query and query_planner is not None
+                        (selected_variant.multi_query and query_planner is not None)
+                        or (
+                            normalized_adaptive_variant == "requirement_aware"
+                            and retrieval_result is not None
+                            and retrieval_result.metadata.get(
+                                "query_planner_invocation_count", 0
+                            )
+                        )
                     ),
                     "answer": predicted_answer,
                     "user_visible_answer": (
@@ -2298,7 +2620,14 @@ def run_qasper_benchmark(
                         else None
                     ),
                     "query_planner_invoked": bool(
-                        selected_variant.multi_query and query_planner is not None
+                        (selected_variant.multi_query and query_planner is not None)
+                        or (
+                            normalized_adaptive_variant == "requirement_aware"
+                            and retrieval_result is not None
+                            and retrieval_result.metadata.get(
+                                "query_planner_invocation_count", 0
+                            )
+                        )
                     ),
                     "retrieval_rounds": (
                         retrieval_rounds if retrieval_result is not None else []
@@ -2307,6 +2636,12 @@ def run_qasper_benchmark(
                         retrieval_result.metadata.get("evidence_requirements", [])
                         if retrieval_result is not None
                         else []
+                    ),
+                    "retrieval_stop_reason": (
+                        retrieval_result.metadata.get("requirement_stop_reason")
+                        if retrieval_result is not None
+                        and normalized_adaptive_variant == "requirement_aware"
+                        else None
                     ),
                     "sufficiency": sufficiency if retrieval_result is not None else None,
                     **(
@@ -2932,10 +3267,10 @@ def run_qasper_adaptive_retrieval_ablation(
     if len(set(selected_variants)) != len(selected_variants):
         raise ValueError("adaptive-retrieval variants must be unique")
     if query_planner is None and set(selected_variants).intersection(
-        {"multi_query", "evidence_gated"}
+        {"multi_query", "evidence_gated", "requirement_aware"}
     ):
         raise ValueError(
-            "a query_planner is required for multi_query and evidence_gated variants"
+            "a query_planner is required for multi_query, evidence_gated, and requirement_aware variants"
         )
 
     benchmark_directory = benchmark_root(root)
@@ -3043,7 +3378,7 @@ def run_qasper_adaptive_retrieval_ablation(
                 "one_shot": "one hybrid Dense + BM25 + RRF retrieval followed by reranking",
                 "multi_query": "bounded Query Planner rewrite and subqueries, fused through the existing retrieval merge",
                 "evidence_gated": "multi-query retrieval with the existing evidence gate controlling bounded re-retrieval",
-                "requirement_aware": "infer lightweight evidence requirements, assess lexical coverage, and re-retrieve only the first uncovered requirement for up to three total rounds",
+                "requirement_aware": "infer lightweight evidence requirements, plan distinct gap-driven retrieval queries, track novel chunks and lexical coverage, and stop on coverage, no new evidence, or a three-round budget",
                 "requirement_coverage": "heuristic runtime coverage is reported separately from QASPER gold evidence recall",
             },
             "variants": comparison_rows,

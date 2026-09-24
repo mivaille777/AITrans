@@ -919,15 +919,36 @@ def evaluate_qasper_run(
             evidence_extractor_invocations += int(
                 retrieval_metadata.get("evidence_extractor_invocations", 0) or 0
             )
-        query_planner_invocations += int(bool(trace.get("query_planner_invoked")))
+        planner_invocation_count = (
+            retrieval_metadata.get("query_planner_invocation_count")
+            if isinstance(retrieval_metadata, dict)
+            else None
+        )
+        query_planner_invocations += (
+            int(planner_invocation_count)
+            if isinstance(planner_invocation_count, int)
+            and not isinstance(planner_invocation_count, bool)
+            and planner_invocation_count >= 0
+            else int(bool(trace.get("query_planner_invoked")))
+        )
         answer_metadata = prediction.get("answer_generation", {})
         if isinstance(answer_metadata, dict) and answer_metadata:
             answer_details = answer_metadata.get("metadata", {})
             if not isinstance(answer_details, dict):
                 answer_details = {}
-            answerer_invocations += int(
-                not bool(answer_details.get("abstained"))
-            )
+            reported_answer_calls = answer_details.get("answer_llm_invocation_count")
+            if (
+                isinstance(reported_answer_calls, int)
+                and not isinstance(reported_answer_calls, bool)
+            ):
+                answerer_invocations += max(0, reported_answer_calls)
+            else:
+                answerer_invocations += int(
+                    not bool(answer_details.get("abstained"))
+                ) + max(
+                    0,
+                    int(answer_details.get("extra_llm_invocation_count", 0) or 0),
+                )
             claim_count = answer_details.get("claim_count")
             unsupported_claim_count = answer_details.get("unsupported_claim_count")
             if (

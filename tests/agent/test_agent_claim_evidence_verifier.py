@@ -44,6 +44,22 @@ def test_supported_claim_with_allowed_citation_passes() -> None:
     assert result.support_rate == 1.0
 
 
+def test_post_sentence_citation_remains_attached_to_its_claim() -> None:
+    evidence = [_evidence("e1", "The GP constrains the broad search region.")]
+
+    result = AgentClaimEvidenceVerifier().verify(
+        output_text="The GP constrains the broad search region. [1]",
+        evidence=evidence,
+        citations=[_citation("[1]", "e1")],
+    )
+
+    assert result.strict_passed is True
+    assert result.claim_count == 1
+    assert result.cited_claim_count == 1
+    assert result.supported_claim_count == 1
+    assert result.invalid_citation_count == 0
+
+
 def test_factual_claim_without_citation_fails() -> None:
     evidence = [_evidence("e1", "The GP constrains the broad search region.")]
 

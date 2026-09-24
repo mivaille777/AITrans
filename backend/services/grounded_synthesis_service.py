@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,6 +68,11 @@ class VerifiedGroundedSynthesisResult:
     verification: ClaimEvidenceVerification | None = None
     fallback_applied: bool = False
     partial_grounding: bool = False
+    initial_verification: ClaimEvidenceVerification | None = None
+    repair_verification: ClaimEvidenceVerification | None = None
+    repair_attempted: bool = False
+    repair_succeeded: bool = False
+    repair_error: str = ""
 
 
 class GroundedSynthesisService:
@@ -86,11 +91,13 @@ class GroundedSynthesisService:
         chat_service: Any,
         context_builder: GroundedContextBuilder | None = None,
         verifier: AgentClaimEvidenceVerifier | Any | None = None,
+        repairer: Callable[..., CompanionChatResult | None] | None = None,
         allow_general_without_evidence: bool = False,
     ) -> None:
         self._chat_service = chat_service
         self._context_builder = context_builder or GroundedContextBuilder()
         self._verifier = verifier or AgentClaimEvidenceVerifier()
+        self._repairer = repairer
         self._allow_general_without_evidence = allow_general_without_evidence
 
     @property
@@ -283,10 +290,55 @@ class GroundedSynthesisService:
         strict_passed = bool(
             getattr(verification, "strict_passed", verification.passed)
         )
+        repair_attempted = False
+        repair_succeeded = False
+        repair_error = ""
+        repair_verification: ClaimEvidenceVerification | None = None
+        if not strict_passed and self._repairer is not None:
+            repair_attempted = True
+            try:
+                repaired_answer = self._repairer(
+                    output_text=answer.output_text,
+                    verification=verification,
+                    evidence=included_evidence,
+                    citations=included_citations,
+                    request=dict(payload),
+                )
+                if repaired_answer is None or not str(
+                    getattr(repaired_answer, "output_text", "") or ""
+                ).strip():
+                    repair_error = "empty_repair_output"
+                else:
+                    repair_verification = self._verifier.verify(
+                        output_text=repaired_answer.output_text,
+                        evidence=included_evidence,
+                        citations=included_citations,
+                    )
+                    repair_succeeded = bool(
+                        getattr(
+                            repair_verification,
+                            "strict_passed",
+                            repair_verification.passed,
+                        )
+                    )
+                    if repair_succeeded:
+                        return VerifiedGroundedSynthesisResult(
+                            answer=repaired_answer,
+                            verification=repair_verification,
+                            initial_verification=verification,
+                            repair_verification=repair_verification,
+                            repair_attempted=True,
+                            repair_succeeded=True,
+                        )
+                    repair_error = "repair_verification_failed"
+            except Exception as exc:  # noqa: BLE001 - retain the original safe policy
+                repair_error = str(exc).strip() or exc.__class__.__name__
+
         if strict_passed:
             return VerifiedGroundedSynthesisResult(
                 answer=answer,
                 verification=verification,
+                initial_verification=verification,
             )
 
         release_safe_partial = bool(verification.passed) or bool(
@@ -303,6 +355,11 @@ class GroundedSynthesisService:
                 answer=partial_answer,
                 verification=verification,
                 partial_grounding=True,
+                initial_verification=verification,
+                repair_verification=repair_verification,
+                repair_attempted=repair_attempted,
+                repair_succeeded=repair_succeeded,
+                repair_error=repair_error,
             )
 
         fallback = self._copy_answer(
@@ -318,6 +375,11 @@ class GroundedSynthesisService:
             answer=fallback,
             verification=verification,
             fallback_applied=True,
+            initial_verification=verification,
+            repair_verification=repair_verification,
+            repair_attempted=repair_attempted,
+            repair_succeeded=repair_succeeded,
+            repair_error=repair_error,
         )
 
     def send(

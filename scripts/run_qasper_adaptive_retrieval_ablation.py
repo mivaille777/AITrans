@@ -69,7 +69,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     answerer = None if args.retrieval_only else GroundedQasperAnswerer()
     query_planner = (
         build_rag_query_planner()
-        if set(args.variants).intersection({"multi_query", "evidence_gated"})
+        if set(args.variants).intersection(
+            {"multi_query", "evidence_gated", "requirement_aware"}
+        )
         else None
     )
     try:

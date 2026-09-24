@@ -27,6 +27,27 @@ class _FakeChatService:
         )
 
 
+class _SequenceChatService(_FakeChatService):
+    def __init__(self, output_texts: list[str]) -> None:
+        super().__init__(output_texts[0])
+        self.output_texts = list(output_texts)
+        self.calls: list[dict[str, object]] = []
+
+    def send(self, **kwargs):
+        self.last_payload = dict(kwargs)
+        self.calls.append(dict(kwargs))
+        output_text = self.output_texts.pop(0)
+        return CompanionChatResult(
+            session_id=str(kwargs.get("session_id", "session-1")),
+            user_message=str(kwargs.get("user_message", "question")),
+            output_text=output_text,
+            provider="test-provider",
+            model="test-model",
+            request_id=int(kwargs.get("request_id", 1)),
+            knowledge_enabled=True,
+        )
+
+
 def _evidence() -> list[AgentEvidenceItem]:
     return [
         AgentEvidenceItem(
@@ -193,6 +214,70 @@ def test_unknown_citation_still_triggers_evidence_only_fallback():
     assert result.answer.model == "grounding-verification-fallback"
     assert result.answer.output_text.startswith(GROUNDING_VERIFICATION_FALLBACK_PREFIX)
     assert original not in result.answer.output_text
+
+
+def test_unsupported_claim_is_rewritten_once_and_reverified():
+    original = "The method doubles success on every dataset [1]."
+    repaired = (
+        "Bayesian optimization improves sample efficiency under costly evaluations "
+        "by using a surrogate model [1]."
+    )
+    chat = _SequenceChatService([original, repaired])
+
+    def repairer(*, request, **_kwargs):
+        payload = dict(request)
+        payload["user_message"] = "Rewrite from the supplied evidence only."
+        return chat.send(**payload)
+
+    result = GroundedSynthesisService(
+        chat_service=chat,
+        repairer=repairer,
+    ).send_verified(
+        evidence=_evidence(),
+        citations=_citations(),
+        session_id="session-1",
+        user_message="How does Bayesian optimization help?",
+    )
+
+    assert len(chat.calls) == 2
+    assert result.repair_attempted is True
+    assert result.repair_succeeded is True
+    assert result.initial_verification is not None
+    assert result.initial_verification.unsupported_claim_count == 1
+    assert result.repair_verification is not None
+    assert result.repair_verification.strict_passed is True
+    assert result.fallback_applied is False
+    assert result.answer.output_text == repaired
+
+
+def test_unsupported_rewrite_with_invalid_citation_keeps_safe_fallback():
+    chat = _SequenceChatService(
+        [
+            "The method doubles success on every dataset [1].",
+            "Bayesian optimization improves sample efficiency [9].",
+        ]
+    )
+
+    def repairer(*, request, **_kwargs):
+        return chat.send(**request)
+
+    result = GroundedSynthesisService(
+        chat_service=chat,
+        repairer=repairer,
+    ).send_verified(
+        evidence=_evidence(),
+        citations=_citations(),
+        session_id="session-1",
+        user_message="How does Bayesian optimization help?",
+    )
+
+    assert result.repair_attempted is True
+    assert result.repair_succeeded is False
+    assert result.repair_verification is not None
+    assert result.repair_verification.invalid_citation_count == 1
+    assert result.fallback_applied is True
+    assert result.answer.provider == "policy"
+    assert "[9]" not in result.answer.output_text
 
 
 def test_markdown_structure_does_not_inflate_partial_grounding_denominator():

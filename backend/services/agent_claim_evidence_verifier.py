@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？；;])\s+|\n+")
+_SENTENCE_SPLIT_RE = re.compile(
+    r"(?<=[.!?。！？；;])(\s+(?:\[\d+\]\s*)*)|\n+"
+)
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n+")
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 _MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
@@ -126,11 +128,21 @@ class AgentClaimEvidenceVerifier:
         )
 
     def _claims(self, output_text: str) -> tuple[str, ...]:
-        return tuple(
-            candidate
-            for raw in _SENTENCE_SPLIT_RE.split(str(output_text or ""))
-            if (candidate := raw.strip()) and self._is_verifiable_unit(candidate)
-        )
+        parts = _SENTENCE_SPLIT_RE.split(str(output_text or ""))
+        claims: list[str] = []
+        for index in range(0, len(parts), 2):
+            raw = parts[index]
+            delimiter = parts[index + 1] if index + 1 < len(parts) else None
+            candidate = raw.strip()
+            if candidate and delimiter:
+                trailing_citations = " ".join(
+                    re.findall(r"\[\d+\]", delimiter)
+                )
+                if trailing_citations:
+                    candidate = f"{candidate} {trailing_citations}"
+            if candidate and self._is_verifiable_unit(candidate):
+                claims.append(candidate)
+        return tuple(claims)
 
     @staticmethod
     def _looks_like_markdown(output_text: str) -> bool:
@@ -246,9 +258,7 @@ class AgentClaimEvidenceVerifier:
 
     def _support_score(self, claim: str, item: AgentEvidenceItem) -> float:
         claim_tokens = self._tokens(self._strip_citations(claim))
-        evidence_tokens = self._tokens(
-            " ".join((item.title, item.location, item.excerpt))
-        )
+        evidence_tokens = self._tokens(f"{item.title} {item.location} {item.excerpt}")
         if not claim_tokens or not evidence_tokens:
             return 0.0
         return len(claim_tokens & evidence_tokens) / max(1, len(claim_tokens))
@@ -259,9 +269,7 @@ class AgentClaimEvidenceVerifier:
         item: AgentEvidenceItem,
     ) -> float:
         paragraph_tokens = self._tokens(self._strip_citations(paragraph))
-        evidence_tokens = self._tokens(
-            " ".join((item.title, item.location, item.excerpt))
-        )
+        evidence_tokens = self._tokens(f"{item.title} {item.location} {item.excerpt}")
         if not paragraph_tokens or not evidence_tokens:
             return 0.0
         overlap = len(paragraph_tokens & evidence_tokens)
