@@ -281,6 +281,50 @@ class AgentClaimEvidenceVerifier:
             dict.fromkeys(f"[{match}]" for match in _CITATION_RE.findall(text))
         )
 
+    def _paragraph_labels_for_claim(
+        self,
+        claim: str,
+        *,
+        output_text: str,
+    ) -> tuple[str, ...]:
+        """Inherit paragraph citations when a claim has no inline citation.
+
+        Citations at the end of a prose paragraph or Markdown list item apply to
+        claims in that same scope. Evidence support is still checked separately
+        for every claim, so citation inheritance does not make unrelated claims
+        pass verification.
+        """
+
+        normalized_claim = re.sub(
+            r"\W+",
+            " ",
+            self._strip_citations(claim),
+            flags=re.UNICODE,
+        ).strip().casefold()
+        if not normalized_claim:
+            return ()
+
+        scopes = [
+            scope
+            for scope in re.split(r"\n\s*\n+", str(output_text or ""))
+            if scope.strip()
+        ]
+        scopes.extend(
+            line for line in str(output_text or "").splitlines() if line.strip()
+        )
+        for scope in scopes:
+            normalized_scope = re.sub(
+                r"\W+",
+                " ",
+                self._strip_citations(scope),
+                flags=re.UNICODE,
+            ).strip().casefold()
+            if normalized_claim in normalized_scope:
+                labels = self._labels(scope)
+                if labels:
+                    return labels
+        return ()
+
     def _referenced_evidence(
         self,
         *,
@@ -377,6 +421,11 @@ class AgentClaimEvidenceVerifier:
         reasons: set[str] = set(paragraph_reasons)
         for claim in claims:
             labels = self._labels(claim)
+            if not labels:
+                labels = self._paragraph_labels_for_claim(
+                    claim,
+                    output_text=output_text,
+                )
             if not labels:
                 reasons.add("missing_claim_citation")
                 continue

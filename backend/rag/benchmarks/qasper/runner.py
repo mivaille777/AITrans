@@ -18,7 +18,7 @@ from app.ai.chat.models import ChatContext, ChatRequest
 from app.ai.chat.service import AIChatService
 from app.ai.gateway import LLMGateway
 from backend.models.agent_react import AgentRetrievalObservation
-from backend.models.agent_runtime import AgentEvidenceItem
+from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.rag.benchmarks.cache import qasper_sample_hash
 from backend.rag.benchmarks.common import (
     REPOSITORY_ROOT,
@@ -76,6 +76,7 @@ from backend.rag.raptor import (
 from backend.rag.rerankers import Qwen3RerankerProvider
 from backend.rag.stores.base import VectorSearchFilter
 from backend.rag.structure_retrieval import detect_structural_intent
+from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.agent_evidence_gate_service import AgentEvidenceGateService
 from backend.services.grounded_synthesis_service import GroundedSynthesisService
 
@@ -111,6 +112,110 @@ DEFAULT_EVIDENCE_SELECTION_PROFILE: dict[str, Any] = {
     "fallback_to_source_chunk_for_multi_paragraph_coverage": True,
 }
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_ANSWER_ONLY_RECOVERY_NOTICE = (
+    "未展示未通过依据核验的补充说明，仅保留已核验的直接答案。"
+)
+_DIRECT_ANSWER_GENERIC_TERMS = {
+    "a", "an", "and", "answer", "are", "as", "at", "based", "by", "data",
+    "dataset", "datasets", "described", "describes", "does", "evidence", "for",
+    "from", "has", "have", "in", "include", "includes", "included", "is", "it",
+    "method", "methods", "model", "models", "of", "on", "or", "paper", "result",
+    "results", "show", "shows", "study", "system", "the", "this", "to", "use",
+    "used", "uses", "using", "was", "were", "with", "work",
+}
+
+
+def _verify_direct_contract_answer(
+    answer: QasperContractAnswer,
+    *,
+    verifier: AgentClaimEvidenceVerifier,
+    evidence: Sequence[AgentEvidenceItem],
+    citations: Sequence[AgentCitationRef],
+) -> tuple[QasperContractAnswer, Any] | None:
+    """Keep a short answer only when its own cited claims pass strict grounding."""
+
+    if answer.answer_type != "short" or answer.is_unanswerable:
+        return None
+
+    available_labels = {item.label for item in citations}
+    labels = [label for label in answer.citations if label in available_labels]
+    if not labels:
+        return None
+
+    def verify_labels(
+        selected_labels: Sequence[str],
+    ) -> tuple[QasperContractAnswer, Any] | None:
+        if not selected_labels:
+            return None
+        candidate = replace(
+            answer,
+            citations=tuple(selected_labels),
+            supporting_explanation="",
+        )
+        citation_text = " ".join(candidate.citations)
+        output_text = f"Answer: {candidate.answer} {citation_text}".strip()
+        result = verifier.verify(
+            output_text=output_text,
+            evidence=evidence,
+            citations=citations,
+        )
+        if (
+            not result.strict_passed
+            or result.claim_count <= 0
+            or result.unsupported_claim_count > 0
+            or result.invalid_citation_count > 0
+        ):
+            return None
+        return candidate, result
+
+    verified = verify_labels(labels)
+    if verified is None:
+        return None
+
+    recovered_answer, _ = verified
+    evidence_by_id = {item.evidence_id: item for item in evidence}
+    cited_evidence = [
+        evidence_by_id[evidence_id]
+        for citation in citations
+        if citation.label in labels
+        for evidence_id in citation.evidence_ids
+        if evidence_id in evidence_by_id
+    ]
+    answer_claims = [
+        claim.strip()
+        for claim in re.split(r"(?<=[.!?。！？；;])\s+|\n+", recovered_answer.answer)
+        if claim.strip()
+    ]
+    for claim in answer_claims:
+        claim_terms = set(re.findall(r"[a-z0-9]+", claim.casefold()))
+        claim_terms.difference_update(_DIRECT_ANSWER_GENERIC_TERMS)
+        if len(claim_terms) < 2:
+            return None
+        if not any(
+            len(
+                claim_terms
+                & (
+                    set(re.findall(
+                        r"[a-z0-9]+",
+                        f"{item.title} {item.location} {item.excerpt}".casefold(),
+                    ))
+                    - _DIRECT_ANSWER_GENERIC_TERMS
+                )
+            )
+            >= 2
+            for item in cited_evidence
+        ):
+            return None
+
+    # Remove labels that do not need to support the direct answer. The labels
+    # still map to the exact evidence made available to the answer model.
+    for label in tuple(labels):
+        reduced = [item for item in labels if item != label]
+        reduced_verification = verify_labels(reduced)
+        if reduced_verification is not None:
+            labels = reduced
+            verified = reduced_verification
+    return verified
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,10 +374,12 @@ class GroundedQasperAnswerer:
             self._chat_service,
             answer_contract=answer_contract,
         )
+        self._claim_verifier = AgentClaimEvidenceVerifier()
         self._repair_trace: dict[str, Any] = {}
         self._repair_initial_contract_answer: QasperContractAnswer | None = None
         self._grounded = GroundedSynthesisService(
             chat_service=self._chat_adapter,
+            verifier=self._claim_verifier,
             repairer=self._repair_unsupported_answer,
         )
 
@@ -297,8 +404,9 @@ class GroundedQasperAnswerer:
         *,
         output_text: str,
         verification: Any,
+        evidence: Sequence[AgentEvidenceItem],
+        citations: Sequence[AgentCitationRef],
         request: dict[str, Any],
-        **_kwargs: Any,
     ) -> Any:
         self._repair_initial_contract_answer = self._chat_adapter.last_contract_answer
         self._repair_trace = {
@@ -332,13 +440,72 @@ class GroundedQasperAnswerer:
             f"{', '.join(verification.reason_codes) or 'unsupported_claim'}."
         )
         repaired_answer = self._chat_adapter.send(**repair_request)
+        repair_verification_input = self._chat_adapter.last_normalized_output
+        repair_full_verification = self._claim_verifier.verify(
+            output_text=repair_verification_input,
+            evidence=evidence,
+            citations=citations,
+        )
         self._repair_trace.update(
             {
                 "repair_model_output": self._chat_adapter.last_raw_model_output,
-                "repair_verification_input": self._chat_adapter.last_normalized_output,
+                "repair_verification_input": repair_verification_input,
                 "repair_contract_error": self._chat_adapter.last_contract_error,
+                "repair_full_claim_count": repair_full_verification.claim_count,
+                "repair_full_unsupported_claim_count": (
+                    repair_full_verification.unsupported_claim_count
+                ),
+                "repair_full_invalid_citation_count": (
+                    repair_full_verification.invalid_citation_count
+                ),
+                "repair_full_strict_passed": repair_full_verification.strict_passed,
+                "repair_full_reason_codes": list(
+                    repair_full_verification.reason_codes
+                ),
             }
         )
+
+        if self._answer_contract is not None:
+            recovery_candidates = [
+                ("repair", self._chat_adapter.last_contract_answer),
+                ("initial", self._repair_initial_contract_answer),
+            ]
+            for source, candidate in recovery_candidates:
+                if candidate is None:
+                    continue
+                recovered = _verify_direct_contract_answer(
+                    candidate,
+                    verifier=self._claim_verifier,
+                    evidence=evidence,
+                    citations=citations,
+                )
+                if recovered is None:
+                    continue
+                recovered_answer, direct_verification = recovered
+                self._chat_adapter.last_contract_answer = recovered_answer
+                self._chat_adapter.last_normalized_output = (
+                    render_contract_for_verification(recovered_answer)
+                )
+                self._repair_trace["answer_only_recovery"] = {
+                    "used": True,
+                    "source": source,
+                    "answer": recovered_answer.answer,
+                    "citations": list(recovered_answer.citations),
+                    "claim_count": direct_verification.claim_count,
+                    "unsupported_claim_count": (
+                        direct_verification.unsupported_claim_count
+                    ),
+                    "invalid_citation_count": (
+                        direct_verification.invalid_citation_count
+                    ),
+                    "reason_codes": list(direct_verification.reason_codes),
+                }
+                return replace(
+                    repaired_answer,
+                    output_text=self._chat_adapter.last_normalized_output,
+                )
+
+            self._repair_trace["answer_only_recovery"] = {"used": False}
         return repaired_answer
 
     def __call__(
@@ -439,14 +606,24 @@ class GroundedQasperAnswerer:
                 else 0
             ),
             "repair_unsupported_claim_count": (
-                int(result.repair_verification.unsupported_claim_count)
-                if result.repair_verification is not None
-                else None
+                self._repair_trace.get(
+                    "repair_full_unsupported_claim_count",
+                    (
+                        int(result.repair_verification.unsupported_claim_count)
+                        if result.repair_verification is not None
+                        else None
+                    ),
+                )
             ),
             "repair_claim_count": (
-                int(result.repair_verification.claim_count)
-                if result.repair_verification is not None
-                else None
+                self._repair_trace.get(
+                    "repair_full_claim_count",
+                    (
+                        int(result.repair_verification.claim_count)
+                        if result.repair_verification is not None
+                        else None
+                    ),
+                )
             ),
             "raw_model_output": str(
                 self._repair_trace.get("initial_model_output")
@@ -476,6 +653,13 @@ class GroundedQasperAnswerer:
         )
         if self._answer_contract is not None:
             parsed = self._chat_adapter.last_contract_answer
+            answer_only_recovery = self._repair_trace.get(
+                "answer_only_recovery", {}
+            )
+            answer_only_recovery_used = bool(
+                isinstance(answer_only_recovery, Mapping)
+                and answer_only_recovery.get("used")
+            )
             contract_status = "valid" if parsed is not None else "invalid_format_fallback"
             verification_fallback = bool(result.fallback_applied)
             if parsed is None or verification_fallback:
@@ -488,7 +672,11 @@ class GroundedQasperAnswerer:
                     include_partial_grounding_notice=(
                         "部分解释未能逐句通过引用一致性校验。"
                         if result.partial_grounding
-                        else ""
+                        else (
+                            _ANSWER_ONLY_RECOVERY_NOTICE
+                            if answer_only_recovery_used
+                            else ""
+                        )
                     ),
                 )
             metadata.update(
@@ -525,6 +713,8 @@ class GroundedQasperAnswerer:
                     "answer_contract_model_abstained": (
                         parsed.is_unanswerable if parsed is not None else False
                     ),
+                    "answer_only_recovery_used": answer_only_recovery_used,
+                    "answer_only_recovery": answer_only_recovery,
                     "abstained": bool(
                         parsed is None
                         or verification_fallback

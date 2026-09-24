@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+from backend.rag.benchmarks.qasper.answer_contract import QasperContractAnswer
 from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import load_qasper
 from backend.rag.benchmarks.qasper.runner import (
@@ -13,6 +15,7 @@ from backend.rag.benchmarks.qasper.runner import (
     QasperGeneratedAnswer,
     _requirement_query_expansion,
     _retrieve_requirement_aware_question,
+    _verify_direct_contract_answer,
     run_qasper_ablation,
     run_qasper_adaptive_retrieval_ablation,
     run_qasper_benchmark,
@@ -24,6 +27,7 @@ from backend.rag.config import RagConfig, RagEmbeddingConfig
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.query_planner import RagQueryPlan
 from backend.rag.raptor import ExtractiveRaptorSummaryProvider
+from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 
 
 class _FakeEmbedding:
@@ -1194,3 +1198,91 @@ def test_qasper_answerer_abstains_when_claim_repair_still_fails():
     )
     assert generated.metadata["repair_claim_count"] > 0
     assert generated.metadata["repair_model_output"].endswith("[9].")
+
+
+def test_contract_answer_only_recovery_keeps_only_strictly_supported_short_answer():
+    evidence = [
+        AgentEvidenceItem(
+            evidence_id="evidence-supported",
+            excerpt="The system uses a DNN-based acoustic model with 11 hidden layers.",
+        ),
+        AgentEvidenceItem(
+            evidence_id="evidence-unrelated",
+            excerpt="The dataset contains news articles about local sports.",
+        ),
+    ]
+    citations = [
+        AgentCitationRef(
+            citation_id="citation-1",
+            evidence_ids=["evidence-supported"],
+            label="[1]",
+        ),
+        AgentCitationRef(
+            citation_id="citation-2",
+            evidence_ids=["evidence-unrelated"],
+            label="[2]",
+        ),
+    ]
+    candidate = QasperContractAnswer(
+        answer="The system uses a DNN-based acoustic model with 11 hidden layers.",
+        answer_type="short",
+        citations=("[1]", "[2]"),
+        supporting_explanation="The method also improves every dataset.",
+    )
+
+    recovered = _verify_direct_contract_answer(
+        candidate,
+        verifier=AgentClaimEvidenceVerifier(),
+        evidence=evidence,
+        citations=citations,
+    )
+
+    assert recovered is not None
+    recovered_answer, verification = recovered
+    assert recovered_answer.citations == ("[1]",)
+    assert recovered_answer.supporting_explanation == ""
+    assert verification.strict_passed is True
+    assert verification.claim_count == 1
+
+
+def test_contract_answer_only_recovery_rejects_boolean_and_unsupported_answers():
+    evidence = [
+        AgentEvidenceItem(
+            evidence_id="evidence-1",
+            excerpt="The system uses a DNN-based acoustic model with 11 hidden layers.",
+        )
+    ]
+    citations = [
+        AgentCitationRef(
+            citation_id="citation-1",
+            evidence_ids=["evidence-1"],
+            label="[1]",
+        )
+    ]
+    verifier = AgentClaimEvidenceVerifier()
+
+    boolean = _verify_direct_contract_answer(
+        QasperContractAnswer(
+            answer="No",
+            answer_type="boolean",
+            citations=("[1]",),
+            supporting_explanation="The method uses a DNN acoustic model.",
+        ),
+        verifier=verifier,
+        evidence=evidence,
+        citations=citations,
+    )
+    unsupported = _verify_direct_contract_answer(
+        QasperContractAnswer(
+            answer="A transformer model uses attention over image patches.",
+            answer_type="short",
+            citations=("[1]",),
+            supporting_explanation="The method uses a DNN acoustic model.",
+        ),
+        verifier=verifier,
+        evidence=evidence,
+        citations=citations,
+    )
+
+    assert boolean is None
+    assert unsupported is None
