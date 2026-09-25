@@ -394,6 +394,15 @@ class GroundedQasperAnswerer:
         return str(getattr(self._text_service, "model", "") or "")
 
     @property
+    def prompt_id(self) -> str:
+        contract = self.answer_contract_manifest
+        if isinstance(contract, dict):
+            contract_id = str(contract.get("contract_id", "") or "").strip()
+            if contract_id:
+                return contract_id
+        return "qasper-grounded-synthesis-v1"
+
+    @property
     def answer_contract_manifest(self) -> dict[str, Any] | None:
         return (
             self._answer_contract.manifest()
@@ -2104,6 +2113,11 @@ def _config_hash(config: RagConfig) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _profile_sha256(path: str | Path) -> str:
+    profile_path = Path(path).expanduser().resolve()
+    return hashlib.sha256(profile_path.read_bytes()).hexdigest()
+
+
 def _run_variant_label(
     selected_variant: QasperAblationVariant,
     *,
@@ -2138,6 +2152,8 @@ def run_qasper_benchmark(
     limit: int | None = None,
     seed: int = 42,
     config: RagConfig | None = None,
+    config_profile_id: str | None = None,
+    config_profile_sha256: str | None = None,
     embedding_provider: Any | None = None,
     reranker: Any | None = None,
     answerer: QasperAnswerer | None = None,
@@ -2303,6 +2319,9 @@ def run_qasper_benchmark(
     atomic_write_jsonl(qrels_path, qrels_records)
     source_config = (config or RagConfig()).model_copy(deep=True)
     config_digest = _config_hash(source_config)
+    prompt_id = None
+    if answerer is not None:
+        prompt_id = str(getattr(answerer, "prompt_id", "") or "").strip() or None
     manifest: dict[str, Any] = {
         "manifest_version": 1,
         "run_id": selected_run_id,
@@ -2324,6 +2343,9 @@ def run_qasper_benchmark(
             raptor_variant=normalized_raptor_variant,
         ),
         "config_hash": config_digest,
+        "config_profile_id": config_profile_id,
+        "config_profile_sha256": config_profile_sha256,
+        "prompt_id": prompt_id,
         "index_fingerprint": None,
         "embedding_model": source_config.embedding.model,
         "reranker_model": source_config.reranker.model,

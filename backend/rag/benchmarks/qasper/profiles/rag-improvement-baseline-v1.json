@@ -1,0 +1,17 @@
+{
+  "embedding": {
+    "provider": "qwen3",
+    "model": "Qwen/Qwen3-Embedding-0.6B"
+  },
+  "retrieval": {
+    "dense_top_k": 30,
+    "sparse_top_k": 30,
+    "fusion_top_k": 20,
+    "final_top_k": 8,
+    "small_to_big_enabled": true
+  },
+  "reranker": {
+    "provider": "qwen3",
+    "model": "Qwen/Qwen3-Reranker-0.6B"
+  }
+}

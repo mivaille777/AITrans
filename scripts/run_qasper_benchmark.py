@@ -16,6 +16,7 @@ from backend.rag.benchmarks.qasper.loader import download_qasper_split, load_qas
 from backend.rag.benchmarks.qasper.runner import (
     RUN_LIMITS,
     GroundedQasperAnswerer,
+    _profile_sha256,
     run_qasper_benchmark,
 )
 from backend.rag.config import RagConfig
@@ -38,6 +39,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id")
     parser.add_argument("--question-ids-file", type=Path)
     parser.add_argument("--config-json", type=Path)
+    parser.add_argument(
+        "--config-profile-id",
+        help="Stable identifier recorded with --config-json; defaults to the profile file stem.",
+    )
     parser.add_argument("--retrieval-only", action="store_true")
     parser.add_argument("--rebuild-index", action="store_true")
     return parser
@@ -52,10 +57,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest_directory=root / "manifests",
     )
     dataset = load_qasper(raw_path, split=args.split)
+    config_path = args.config_json.expanduser().resolve() if args.config_json else None
     config = (
-        RagConfig.model_validate_json(args.config_json.read_text(encoding="utf-8"))
-        if args.config_json
+        RagConfig.model_validate_json(config_path.read_text(encoding="utf-8"))
+        if config_path is not None
         else RagConfig()
+    )
+    config_profile_id = (
+        str(args.config_profile_id).strip()
+        if args.config_profile_id
+        else (config_path.stem if config_path is not None else "rag-default")
+    )
+    config_profile_sha256 = (
+        _profile_sha256(config_path)
+        if config_path is not None
+        else None
     )
     answerer = None if args.retrieval_only else GroundedQasperAnswerer()
     try:
@@ -66,6 +82,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=args.limit,
             seed=args.seed,
             config=config,
+            config_profile_id=config_profile_id,
+            config_profile_sha256=config_profile_sha256,
             answerer=answerer,
             run_id=args.run_id,
             question_ids_file=args.question_ids_file,

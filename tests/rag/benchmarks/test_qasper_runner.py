@@ -13,6 +13,7 @@ from backend.rag.benchmarks.qasper.runner import (
     GroundedQasperAnswerer,
     QasperAnswerInput,
     QasperGeneratedAnswer,
+    _profile_sha256,
     _requirement_query_expansion,
     _retrieve_raptor_question,
     _retrieve_requirement_aware_question,
@@ -62,6 +63,7 @@ class _FakeReranker:
 class _FakeAnswerer:
     provider = "fake"
     model = "test-answerer"
+    prompt_id = "fake-answerer-v1"
 
     def __call__(self, question, retrieval):
         assert not hasattr(question, "answers")
@@ -258,6 +260,18 @@ def _dataset(tmp_path):
     return load_qasper(path)
 
 
+def test_profile_sha256_is_stable_and_content_sensitive(tmp_path) -> None:
+    profile = tmp_path / "profile.json"
+    profile.write_text('{"final_top_k": 8}\n', encoding="utf-8")
+    first = _profile_sha256(profile)
+    second = _profile_sha256(profile)
+    assert first == second
+    assert len(first) == 64
+
+    profile.write_text('{"final_top_k": 9}\n', encoding="utf-8")
+    assert _profile_sha256(profile) != first
+
+
 def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     embedding = _FakeEmbedding()
     config = RagConfig(
@@ -271,6 +285,8 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
         root=tmp_path / "benchmark",
         mode="full",
         config=config,
+        config_profile_id="test-profile-v1",
+        config_profile_sha256="a" * 64,
         embedding_provider=embedding,
         reranker=_FakeReranker(),
         answerer=_FakeAnswerer(),
@@ -288,6 +304,9 @@ def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:
     assert manifest["seed"] == 42
     assert manifest["variant"]
     assert len(manifest["config_hash"]) == 64
+    assert manifest["config_profile_id"] == "test-profile-v1"
+    assert manifest["config_profile_sha256"] == "a" * 64
+    assert manifest["prompt_id"] == "fake-answerer-v1"
     assert manifest["index_fingerprint"] == manifest["index"]["fingerprint"]
     assert manifest["embedding_model"] == manifest["embedding"]["model"]
     assert manifest["reranker_model"] == config.reranker.model
