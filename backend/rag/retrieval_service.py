@@ -125,8 +125,11 @@ class RetrievalService:
             limit=max(self._config.fusion_top_k, desired_top_k),
         )
         fusion_ms = (perf_counter() - fusion_started) * 1000
-        fusion_count = len(candidates)
-        pre_rerank_chunk_ids = [candidate.chunk.chunk_id for candidate in candidates]
+        fusion_candidates = list(candidates)
+        fusion_count = len(fusion_candidates)
+        pre_rerank_chunk_ids = [
+            candidate.chunk.chunk_id for candidate in fusion_candidates
+        ]
         strategy = self._strategy(
             dense_error=dense_error,
             sparse_error=sparse_error,
@@ -140,23 +143,39 @@ class RetrievalService:
         reranker_applied = False
         reranker_fallback_reason = ""
         rerank_ms = 0.0
-        if reranker_enabled and self._reranker is not None:
+        rerank_input_chunk_ids: list[str] = []
+        candidates = fusion_candidates
+        if reranker_enabled and self._reranker is not None and fusion_candidates:
+            if section_hints:
+                # Structural queries intentionally expose the whole fused pool so
+                # section-priority semantics are preserved after reranking.
+                rerank_candidates = fusion_candidates
+            else:
+                configured_rerank_k = max(
+                    desired_top_k,
+                    self._config.effective_rerank_candidate_k,
+                )
+                rerank_candidates = fusion_candidates[
+                    : min(configured_rerank_k, len(fusion_candidates))
+                ]
+            rerank_input_chunk_ids = [
+                candidate.chunk.chunk_id for candidate in rerank_candidates
+            ]
             rerank_started = perf_counter()
             try:
-                rerank_limit = (
-                    len(candidates)
-                    if section_hints
-                    else min(desired_top_k, len(candidates))
-                )
                 candidates = self._reranker.rerank(
                     query,
-                    candidates,
-                    top_k=max(1, rerank_limit),
+                    rerank_candidates,
+                    top_k=len(rerank_candidates),
                 )
                 reranker_applied = True
             except Exception as exc:  # noqa: BLE001 - RRF fallback is intentional
+                candidates = fusion_candidates
                 reranker_fallback_reason = str(exc) or exc.__class__.__name__
             rerank_ms = (perf_counter() - rerank_started) * 1000
+        post_rerank_chunk_ids = [
+            candidate.chunk.chunk_id for candidate in candidates
+        ]
 
         candidates = self._finalize_candidates(
             candidates,
@@ -197,10 +216,15 @@ class RetrievalService:
                 "reranker_enabled": reranker_enabled and self._reranker is not None,
                 "fusion_count": fusion_count,
                 "final_count": len(candidates),
+                "fusion_candidate_count": fusion_count,
+                "rerank_candidate_count": len(rerank_input_chunk_ids),
+                "final_candidate_count": len(candidates),
                 "dense_chunk_ids": [item.chunk.chunk_id for item in dense],
                 "sparse_chunk_ids": [item.chunk.chunk_id for item in sparse],
                 "structural_chunk_ids": [item.chunk.chunk_id for item in structural],
                 "pre_rerank_chunk_ids": pre_rerank_chunk_ids,
+                "rerank_input_chunk_ids": rerank_input_chunk_ids,
+                "post_rerank_chunk_ids": post_rerank_chunk_ids,
                 "embedding_ms": embedding_ms,
                 "dense_search_ms": dense_ms,
                 "sparse_search_ms": sparse_ms,

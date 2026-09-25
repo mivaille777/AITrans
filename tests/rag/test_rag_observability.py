@@ -40,6 +40,11 @@ def _retrieval(*, candidates=None, fallback_reason="") -> RetrievalResult:
             "sparse_count": 4,
             "fusion_count": 6,
             "final_count": 1,
+            "fusion_candidate_count": 6,
+            "rerank_candidate_count": 4,
+            "final_candidate_count": 1,
+            "rerank_input_chunk_ids": ["chunk-1", "chunk-2", "chunk-3", "chunk-4"],
+            "post_rerank_chunk_ids": ["chunk-4", "chunk-1", "chunk-2", "chunk-3"],
             "embedding_ms": 3.0,
             "dense_search_ms": 4.0,
             "sparse_search_ms": 5.0,
@@ -93,6 +98,24 @@ def test_success_trace_contains_one_event_per_retrieval_stage() -> None:
         "embedding_ms": 3.0,
         "dense_search_ms": 4.0,
     }
+    rerank = next(
+        event for event in events if event.event_type == "rag_rerank_completed"
+    )
+    assert rerank.payload["input_count"] == 4
+    assert rerank.payload["output_count"] == 4
+    assert rerank.payload["final_count"] == 1
+    assert rerank.payload["input_chunk_ids"] == [
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+        "chunk-4",
+    ]
+    assert rerank.payload["output_chunk_ids"] == [
+        "chunk-4",
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+    ]
     assert events[-1].payload["total_rag_ms"] == 24.5
 
 

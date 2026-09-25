@@ -41,6 +41,21 @@ def _count(results: Sequence[RetrievalResult], key: str) -> int:
     return sum(max(0, int(result.metadata.get(key, 0) or 0)) for result in results)
 
 
+def _chunk_ids(results: Sequence[RetrievalResult], key: str) -> list[str]:
+    chunk_ids: list[str] = []
+    seen: set[str] = set()
+    for result in results:
+        raw_ids = result.metadata.get(key, [])
+        if not isinstance(raw_ids, list):
+            continue
+        for raw_id in raw_ids:
+            chunk_id = str(raw_id).strip()
+            if chunk_id and chunk_id not in seen:
+                seen.add(chunk_id)
+                chunk_ids.append(chunk_id)
+    return chunk_ids
+
+
 def _fallback_reason(
     results: Sequence[RetrievalResult], merged: RetrievalResult
 ) -> str:
@@ -117,8 +132,25 @@ def build_rag_trace_events(
             event_type="rag_rerank_completed",
             payload={
                 **common,
+                "input_count": _count(retrievals, "rerank_candidate_count"),
+                "output_count": sum(
+                    len(result.metadata.get("post_rerank_chunk_ids", []))
+                    for result in retrievals
+                    if isinstance(
+                        result.metadata.get("post_rerank_chunk_ids", []),
+                        list,
+                    )
+                ),
                 "final_count": len(merged.candidates),
                 "rerank_ms": _metric(retrievals, "rerank_ms"),
+                "input_chunk_ids": _chunk_ids(
+                    retrievals,
+                    "rerank_input_chunk_ids",
+                ),
+                "output_chunk_ids": _chunk_ids(
+                    retrievals,
+                    "post_rerank_chunk_ids",
+                ),
             },
         ),
         RagTraceEventData(

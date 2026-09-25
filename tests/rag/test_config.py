@@ -39,6 +39,8 @@ def test_rag_config_defaults_match_v1_contract() -> None:
     assert config.vector_store.distance == "cosine"
     assert config.vector_store.storage_path == "config/rag/qdrant"
     assert config.retrieval.fusion == "rrf"
+    assert config.retrieval.rerank_candidate_k is None
+    assert config.retrieval.effective_rerank_candidate_k == 8
     assert config.retrieval.final_top_k == 8
     assert config.retrieval.small_to_big_enabled is True
     assert config.retrieval.small_to_big_top_k == 4
@@ -106,6 +108,24 @@ def test_semantic_thresholds_must_be_monotonic() -> None:
 def test_final_top_k_must_not_exceed_fusion_top_k() -> None:
     with pytest.raises(ValidationError):
         RagRetrievalConfig(fusion_top_k=4, final_top_k=8)
+
+
+def test_rerank_candidate_pool_must_cover_final_top_k() -> None:
+    with pytest.raises(ValidationError):
+        RagRetrievalConfig(
+            fusion_top_k=20,
+            rerank_candidate_k=8,
+            final_top_k=10,
+        )
+
+
+def test_rerank_candidate_pool_must_not_exceed_fusion_pool() -> None:
+    with pytest.raises(ValidationError):
+        RagRetrievalConfig(
+            fusion_top_k=20,
+            rerank_candidate_k=30,
+            final_top_k=8,
+        )
 
 
 def test_default_toml_rag_section_validates_against_contract() -> None:

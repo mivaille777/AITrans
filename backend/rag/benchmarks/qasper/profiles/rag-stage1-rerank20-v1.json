@@ -1,0 +1,10 @@
+{
+  "retrieval": {
+    "dense_top_k": 30,
+    "sparse_top_k": 30,
+    "fusion_top_k": 20,
+    "rerank_candidate_k": 20,
+    "final_top_k": 8,
+    "small_to_big_enabled": true
+  }
+}

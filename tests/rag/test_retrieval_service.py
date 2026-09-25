@@ -90,6 +90,8 @@ def service(
     structural=None,
     dense_fail=False,
     sparse_fail=False,
+    config=None,
+    reranker=None,
 ):
     vector_store = VectorStore(dense, dense_fail)
     sparse_store = Sparse(sparse, sparse_fail, structural)
@@ -98,12 +100,14 @@ def service(
             embedding_provider=Embedding(),
             vector_store=vector_store,
             sparse_retriever=sparse_store,
-            config=RagRetrievalConfig(
+            config=config
+            or RagRetrievalConfig(
                 dense_top_k=30,
                 sparse_top_k=30,
                 fusion_top_k=20,
                 final_top_k=8,
             ),
+            reranker=reranker,
         ),
         vector_store,
         sparse_store,
@@ -125,6 +129,9 @@ def test_hybrid_retrieval_fuses_and_deduplicates() -> None:
         "sparse",
     ]
     assert result.metadata["fusion_count"] == 3
+    assert result.metadata["fusion_candidate_count"] == 3
+    assert result.metadata["rerank_candidate_count"] == 0
+    assert result.metadata["final_candidate_count"] == 3
     assert result.metadata["pre_rerank_chunk_ids"] == ["shared", "dense", "sparse"]
     assert result.metadata["dense_chunk_ids"] == ["shared", "dense"]
     assert result.metadata["sparse_chunk_ids"] == ["shared", "sparse"]
@@ -300,6 +307,80 @@ def test_latency_and_count_metadata_are_present() -> None:
     assert result.metadata["embedding_ms"] >= 0
     assert result.metadata["rerank_ms"] >= 0
     assert result.metadata["final_count"] == 2
+    assert result.metadata["fusion_candidate_count"] == 2
+    assert result.metadata["final_candidate_count"] == 2
+
+
+def test_rerank_pool_can_rescue_candidate_below_final_top_k() -> None:
+    class RescueReranker:
+        def rerank(self, _query, candidates, *, top_k):
+            ordered = list(candidates)
+            gold = next(
+                candidate
+                for candidate in ordered
+                if candidate.chunk.chunk_id == "gold"
+            )
+            return [gold, *[item for item in ordered if item is not gold]][:top_k]
+
+    dense = [
+        item(
+            "gold" if rank == 12 else f"chunk-{rank:02d}",
+            dense=True,
+            rank=rank,
+        )
+        for rank in range(1, 21)
+    ]
+    retrieval, *_ = service(
+        dense=dense,
+        config=RagRetrievalConfig(
+            dense_top_k=30,
+            sparse_top_k=30,
+            fusion_top_k=20,
+            rerank_candidate_k=20,
+            final_top_k=8,
+        ),
+        reranker=RescueReranker(),
+    )
+
+    result = retrieval.retrieve("query", sparse_enabled=False)
+
+    assert result.candidates[0].chunk.chunk_id == "gold"
+    assert "gold" in result.metadata["rerank_input_chunk_ids"]
+    assert result.metadata["fusion_candidate_count"] == 20
+    assert result.metadata["rerank_candidate_count"] == 20
+    assert result.metadata["final_candidate_count"] == 8
+
+
+def test_rerank_candidate_pool_size_is_independent_of_final_top_k() -> None:
+    class RecordingReranker:
+        def __init__(self):
+            self.received = []
+
+        def rerank(self, _query, candidates, *, top_k):
+            self.received = list(candidates)
+            return list(candidates)[:top_k]
+
+    recorder = RecordingReranker()
+    dense = [
+        item(f"chunk-{rank:02d}", dense=True, rank=rank)
+        for rank in range(1, 21)
+    ]
+    retrieval, *_ = service(
+        dense=dense,
+        config=RagRetrievalConfig(
+            fusion_top_k=20,
+            rerank_candidate_k=12,
+            final_top_k=8,
+        ),
+        reranker=recorder,
+    )
+
+    result = retrieval.retrieve("query", sparse_enabled=False)
+
+    assert len(recorder.received) == 12
+    assert len(result.candidates) == 8
+    assert result.metadata["rerank_candidate_count"] == 12
+    assert len(result.metadata["post_rerank_chunk_ids"]) == 12
 
 
 def test_reranker_is_applied_and_failure_falls_back_to_rrf() -> None:
@@ -313,8 +394,7 @@ def test_reranker_is_applied_and_failure_falls_back_to_rrf() -> None:
             return list(reversed(candidates))[:top_k]
 
     dense = [item("first", dense=True), item("second", dense=True, rank=2)]
-    retrieval, *_ = service(dense=dense)
-    retrieval._reranker = Reranker()
+    retrieval, *_ = service(dense=dense, reranker=Reranker())
     applied = retrieval.retrieve("query")
     assert applied.metadata["reranker_applied"] is True
     assert applied.candidates[0].chunk.chunk_id == "second"
@@ -323,3 +403,80 @@ def test_reranker_is_applied_and_failure_falls_back_to_rrf() -> None:
     fallback = retrieval.retrieve("query")
     assert fallback.metadata["reranker_applied"] is False
     assert fallback.metadata["reranker_fallback_reason"] == "rerank failed"
+
+
+
+def test_reranker_failure_restores_full_rrf_order() -> None:
+    class FailingReranker:
+        def rerank(self, _query, candidates, *, top_k):
+            raise RuntimeError("reranker unavailable")
+
+    dense = [
+        item(f"chunk-{rank:02d}", dense=True, rank=rank)
+        for rank in range(1, 13)
+    ]
+    retrieval, *_ = service(
+        dense=dense,
+        config=RagRetrievalConfig(
+            fusion_top_k=12,
+            rerank_candidate_k=10,
+            final_top_k=8,
+        ),
+        reranker=FailingReranker(),
+    )
+
+    result = retrieval.retrieve("query", sparse_enabled=False)
+
+    assert [item.chunk.chunk_id for item in result.candidates] == [
+        f"chunk-{rank:02d}" for rank in range(1, 9)
+    ]
+    assert result.metadata["reranker_applied"] is False
+    assert result.metadata["reranker_fallback_reason"] == "reranker unavailable"
+    assert result.metadata["post_rerank_chunk_ids"] == [
+        f"chunk-{rank:02d}" for rank in range(1, 13)
+    ]
+
+
+def test_section_hints_rerank_full_fused_pool_without_duplicates() -> None:
+    class ReverseReranker:
+        def __init__(self):
+            self.received_ids = []
+
+        def rerank(self, _query, candidates, *, top_k):
+            self.received_ids = [item.chunk.chunk_id for item in candidates]
+            return list(reversed(candidates))[:top_k]
+
+    reranker = ReverseReranker()
+    body = [
+        item(f"body-{rank}", dense=True, rank=rank, section="Results")
+        for rank in range(1, 6)
+    ]
+    structural = [
+        item("ref-1", sparse=True, section="References", chunk_index=20),
+        item("ref-2", sparse=True, section="Bibliography", chunk_index=21),
+    ]
+    retrieval, *_ = service(
+        dense=body,
+        structural=structural,
+        config=RagRetrievalConfig(
+            fusion_top_k=20,
+            rerank_candidate_k=8,
+            final_top_k=8,
+        ),
+        reranker=reranker,
+    )
+
+    result = retrieval.retrieve(
+        "references",
+        section_hints=("references", "bibliography"),
+        sparse_enabled=False,
+    )
+
+    assert len(reranker.received_ids) == result.metadata["fusion_candidate_count"]
+    assert len(reranker.received_ids) == len(set(reranker.received_ids))
+    assert [item.rank for item in result.candidates] == list(
+        range(1, len(result.candidates) + 1)
+    )
+    assert len({item.chunk.chunk_id for item in result.candidates}) == len(
+        result.candidates
+    )

@@ -253,8 +253,13 @@ class RagRetrievalConfig(RagConfigModel):
     dense_top_k: int = Field(default=30, ge=1)
     sparse_top_k: int = Field(default=30, ge=1)
     fusion_top_k: int = Field(default=20, ge=1)
+    rerank_candidate_k: int | None = Field(default=None, ge=1)
     final_top_k: int = Field(default=8, ge=1)
     fusion: str = "rrf"
+
+    @property
+    def effective_rerank_candidate_k(self) -> int:
+        return self.rerank_candidate_k or self.final_top_k
     small_to_big_enabled: bool = True
     small_to_big_top_k: int = Field(default=4, ge=1)
     small_to_big_neighbor_radius: int = Field(default=1, ge=0, le=3)
@@ -264,6 +269,11 @@ class RagRetrievalConfig(RagConfigModel):
     def validate_retrieval_bounds(self) -> "RagRetrievalConfig":
         if self.final_top_k > self.fusion_top_k:
             raise ValueError("final_top_k must not exceed fusion_top_k")
+        if self.rerank_candidate_k is not None:
+            if self.final_top_k > self.rerank_candidate_k:
+                raise ValueError("final_top_k must not exceed rerank_candidate_k")
+            if self.rerank_candidate_k > self.fusion_top_k:
+                raise ValueError("rerank_candidate_k must not exceed fusion_top_k")
         return self
 
 
