@@ -33,6 +33,8 @@ export type SandboxRunStatus =
   | "output_limit_exceeded"
   | "oom_killed"
 
+type RawSandboxRunStatus = SandboxRunStatus | "succeeded" | string
+
 export interface SandboxRunSummary {
   sandbox_id: string
   run_id: string
@@ -127,6 +129,10 @@ export interface SandboxDebugFile {
   source: "workspace" | "generated" | "runtime"
 }
 
+type RawSandboxRunSummary = Omit<SandboxRunSummary, "status"> & {
+  status: RawSandboxRunStatus
+}
+
 export interface SandboxDebugTrace {
   run: SandboxRunSummary
   stages: SandboxDebugStage[]
@@ -138,6 +144,10 @@ export interface SandboxDebugTrace {
   input_files: SandboxDebugFile[]
   output_files: SandboxDebugFile[]
   error: string
+}
+
+type RawSandboxDebugTrace = Omit<SandboxDebugTrace, "run"> & {
+  run: RawSandboxRunSummary
 }
 
 export interface StartSandboxDebugRunRequest {
@@ -187,32 +197,65 @@ export function normalizeSandboxRuntimeHealth(
   }
 }
 
-export function listSandboxDebugRuns(): Promise<SandboxRunSummary[]> {
-  return apiGet<SandboxRunSummary[]>("/api/sandbox/debug/runs")
+export async function listSandboxDebugRuns(): Promise<SandboxRunSummary[]> {
+  const runs = await apiGet<RawSandboxRunSummary[]>("/api/sandbox/debug/runs")
+  return runs.map(normalizeSandboxRunSummary)
 }
 
-export function getSandboxDebugRun(sandboxId: string): Promise<SandboxDebugTrace> {
-  return apiGet<SandboxDebugTrace>(
+export async function getSandboxDebugRun(sandboxId: string): Promise<SandboxDebugTrace> {
+  const trace = await apiGet<RawSandboxDebugTrace>(
     `/api/sandbox/debug/runs/${encodeURIComponent(sandboxId)}`,
   )
+  return normalizeSandboxDebugTrace(trace)
 }
 
-export function startSandboxDebugRun(
+export async function startSandboxDebugRun(
   payload: StartSandboxDebugRunRequest,
 ): Promise<SandboxDebugRunAccepted> {
-  return apiPost<SandboxDebugRunAccepted, StartSandboxDebugRunRequest>(
+  const accepted = await apiPost<
+    Omit<SandboxDebugRunAccepted, "status"> & { status: RawSandboxRunStatus },
+    StartSandboxDebugRunRequest
+  >(
     "/api/sandbox/debug/runs",
     payload,
   )
+  return { ...accepted, status: normalizeSandboxRunStatus(accepted.status) }
 }
 
-export function cancelSandboxDebugRun(
+export async function cancelSandboxDebugRun(
   sandboxId: string,
 ): Promise<SandboxRunSummary> {
-  return apiPost<SandboxRunSummary, Record<string, never>>(
+  const run = await apiPost<RawSandboxRunSummary, Record<string, never>>(
     `/api/sandbox/debug/runs/${encodeURIComponent(sandboxId)}/cancel`,
     {},
   )
+  return normalizeSandboxRunSummary(run)
+}
+
+export function normalizeSandboxRunStatus(status: RawSandboxRunStatus): SandboxRunStatus {
+  if (status === "succeeded") return "completed"
+  if (
+    status === "pending"
+    || status === "preparing"
+    || status === "running"
+    || status === "completed"
+    || status === "failed"
+    || status === "cancelled"
+    || status === "timed_out"
+    || status === "output_limit_exceeded"
+    || status === "oom_killed"
+  ) {
+    return status
+  }
+  return "failed"
+}
+
+function normalizeSandboxRunSummary(run: RawSandboxRunSummary): SandboxRunSummary {
+  return { ...run, status: normalizeSandboxRunStatus(run.status) }
+}
+
+function normalizeSandboxDebugTrace(trace: RawSandboxDebugTrace): SandboxDebugTrace {
+  return { ...trace, run: normalizeSandboxRunSummary(trace.run) }
 }
 
 function parseSandboxDebugStreamEvent(raw: string): SandboxDebugStreamEvent {
@@ -233,7 +276,14 @@ function parseSandboxDebugStreamEvent(raw: string): SandboxDebugStreamEvent {
     throw new Error("Unsupported Sandbox debug stream event.")
   }
 
-  return parsed as SandboxDebugStreamEvent
+  const event = parsed as SandboxDebugStreamEvent
+  if (event.type === "trace" || event.type === "terminal") {
+    return {
+      ...event,
+      trace: normalizeSandboxDebugTrace(event.trace as RawSandboxDebugTrace),
+    }
+  }
+  return event
 }
 
 export function streamSandboxDebugRun(

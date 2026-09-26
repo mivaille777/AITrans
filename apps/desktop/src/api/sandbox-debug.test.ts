@@ -8,6 +8,7 @@ import {
   startSandboxDebugRun,
   streamSandboxDebugRun,
   normalizeSandboxRuntimeHealth,
+  normalizeSandboxRunStatus,
   type SandboxDebugTrace,
   type SandboxRunSummary,
 } from "./sandbox-debug"
@@ -117,6 +118,26 @@ describe("sandbox debug api", () => {
       detail: "ready",
       error_code: "",
     })
+  })
+
+  it("normalizes backend execution status into the UI lifecycle", () => {
+    expect(normalizeSandboxRunStatus("succeeded")).toBe("completed")
+    expect(normalizeSandboxRunStatus("timed_out")).toBe("timed_out")
+    expect(normalizeSandboxRunStatus("future_unknown_status")).toBe("failed")
+  })
+
+  it("normalizes succeeded status returned by run APIs", async () => {
+    const succeededRun = { ...run, status: "succeeded" }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify([succeededRun]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const runs = await listSandboxDebugRuns()
+    expect(runs[0]?.status).toBe("completed")
   })
 
   it("starts and cancels a manual run using the bounded request contract", async () => {
