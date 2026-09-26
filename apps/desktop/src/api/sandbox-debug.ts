@@ -118,7 +118,15 @@ export interface SandboxEffectivePolicy {
   timeout_seconds: number
   stdout_limit_bytes: number
   stderr_limit_bytes: number
-  docker_socket_mounted: boolean
+  output_limit_bytes?: number
+  docker_socket_mounted: boolean | null
+}
+
+type RawSandboxEffectivePolicy = Partial<SandboxEffectivePolicy> & {
+  network_mode?: string
+  read_only_rootfs?: boolean
+  nano_cpus?: number
+  max_total_output_bytes?: number
 }
 
 export interface SandboxDebugFile {
@@ -146,8 +154,9 @@ export interface SandboxDebugTrace {
   error: string
 }
 
-type RawSandboxDebugTrace = Omit<SandboxDebugTrace, "run"> & {
+type RawSandboxDebugTrace = Omit<SandboxDebugTrace, "run" | "policy"> & {
   run: RawSandboxRunSummary
+  policy: RawSandboxEffectivePolicy
 }
 
 export interface StartSandboxDebugRunRequest {
@@ -255,7 +264,39 @@ function normalizeSandboxRunSummary(run: RawSandboxRunSummary): SandboxRunSummar
 }
 
 function normalizeSandboxDebugTrace(trace: RawSandboxDebugTrace): SandboxDebugTrace {
-  return { ...trace, run: normalizeSandboxRunSummary(trace.run) }
+  return {
+    ...trace,
+    run: normalizeSandboxRunSummary(trace.run),
+    policy: normalizeSandboxEffectivePolicy(trace.policy),
+  }
+}
+
+export function normalizeSandboxEffectivePolicy(
+  policy: RawSandboxEffectivePolicy,
+): SandboxEffectivePolicy {
+  return {
+    network: policy.network ?? policy.network_mode ?? "",
+    root_filesystem_read_only:
+      policy.root_filesystem_read_only ?? policy.read_only_rootfs ?? false,
+    user: policy.user ?? "",
+    cap_drop: Array.isArray(policy.cap_drop) ? policy.cap_drop : [],
+    no_new_privileges: policy.no_new_privileges ?? false,
+    seccomp: policy.seccomp ?? "",
+    cpu_limit:
+      policy.cpu_limit
+      ?? (typeof policy.nano_cpus === "number" ? policy.nano_cpus / 1_000_000_000 : 0),
+    memory_limit_bytes: policy.memory_limit_bytes ?? 0,
+    pids_limit: policy.pids_limit ?? 0,
+    timeout_seconds: policy.timeout_seconds ?? 0,
+    stdout_limit_bytes: policy.stdout_limit_bytes ?? 0,
+    stderr_limit_bytes: policy.stderr_limit_bytes ?? 0,
+    output_limit_bytes:
+      policy.output_limit_bytes ?? policy.max_total_output_bytes ?? 0,
+    docker_socket_mounted:
+      typeof policy.docker_socket_mounted === "boolean"
+        ? policy.docker_socket_mounted
+        : null,
+  }
 }
 
 function parseSandboxDebugStreamEvent(raw: string): SandboxDebugStreamEvent {

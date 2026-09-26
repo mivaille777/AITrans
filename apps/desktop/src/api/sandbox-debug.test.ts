@@ -9,6 +9,7 @@ import {
   streamSandboxDebugRun,
   normalizeSandboxRuntimeHealth,
   normalizeSandboxRunStatus,
+  normalizeSandboxEffectivePolicy,
   type SandboxDebugTrace,
   type SandboxRunSummary,
 } from "./sandbox-debug"
@@ -138,6 +139,29 @@ describe("sandbox debug api", () => {
 
     const runs = await listSandboxDebugRuns()
     expect(runs[0]?.status).toBe("completed")
+  })
+
+  it("normalizes backend sandbox policy fields into the UI contract", () => {
+    expect(normalizeSandboxEffectivePolicy({
+      network_mode: "none",
+      read_only_rootfs: true,
+      user: "10001:10001",
+      cap_drop: ["ALL"],
+      no_new_privileges: true,
+      nano_cpus: 1_000_000_000,
+      memory_limit_bytes: 512 * 1024 * 1024,
+      pids_limit: 64,
+      timeout_seconds: 30,
+      stdout_limit_bytes: 1024 * 1024,
+      stderr_limit_bytes: 1024 * 1024,
+      max_total_output_bytes: 50 * 1024 * 1024,
+    })).toMatchObject({
+      network: "none",
+      root_filesystem_read_only: true,
+      cpu_limit: 1,
+      output_limit_bytes: 50 * 1024 * 1024,
+      docker_socket_mounted: null,
+    })
   })
 
   it("starts and cancels a manual run using the bounded request contract", async () => {
