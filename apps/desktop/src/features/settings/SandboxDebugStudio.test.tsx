@@ -23,7 +23,7 @@ vi.mock("./SandboxDebugResources", () => ({ default: () => <div>No resource samp
 vi.mock("./SandboxDebugPolicy", () => ({ default: () => <div>No effective policy recorded</div> }))
 vi.mock("./SandboxDebugRuns", () => ({ default: () => <div>No sandbox runs recorded</div> }))
 
-import { getSandboxDebugRun } from "../../api/sandbox-debug"
+import { getSandboxDebugRun, getSandboxRuntimeHealth } from "../../api/sandbox-debug"
 import SandboxDebugStudio from "./SandboxDebugStudio"
 
 afterEach(() => {
@@ -42,6 +42,22 @@ describe("SandboxDebugStudio", () => {
       const tab = screen.getByRole("tab", { name: label })
       expect((tab as HTMLButtonElement).disabled).toBe(false)
     }
+  })
+
+  it("shows a safe backend-specific runtime reason", async () => {
+    vi.mocked(getSandboxRuntimeHealth).mockResolvedValueOnce({
+      available: false,
+      runtime: "docker",
+      image: "aitrans-sandbox:latest",
+      daemon_ready: false,
+      os_type: "windows",
+      detail: "",
+      error_code: "docker_not_linux",
+    })
+
+    render(<SandboxDebugStudio />)
+
+    await waitFor(() => expect(screen.getByText("Sandbox requires a Linux Docker runtime.")).toBeTruthy())
   })
 
   it("starts on Trace and switches between tab panels", () => {

@@ -12,6 +12,7 @@ import SandboxDebugPolicy from "./SandboxDebugPolicy"
 import SandboxDebugResources from "./SandboxDebugResources"
 import SandboxDebugRuns from "./SandboxDebugRuns"
 import SandboxDebugTrace from "./SandboxDebugTrace"
+import { sandboxDebugErrorFromCode } from "./sandbox-debug-errors"
 
 type SandboxDebugTab = "trace" | "filesystem" | "resources" | "policy" | "runs"
 
@@ -22,25 +23,6 @@ const TABS: Array<{ id: SandboxDebugTab; label: string }> = [
   { id: "policy", label: "Policy" },
   { id: "runs", label: "Runs" },
 ]
-
-const EMPTY_STATES: Record<Exclude<SandboxDebugTab, "trace">, { title: string; description: string }> = {
-  filesystem: {
-    title: "No filesystem activity recorded",
-    description: "Run a Sandbox trace with workspace input to inspect staged files and file access.",
-  },
-  resources: {
-    title: "No resource samples recorded",
-    description: "CPU, memory, PID and output usage will appear here for the selected Sandbox run.",
-  },
-  policy: {
-    title: "No effective policy recorded",
-    description: "The security policy enforced for a Sandbox run will appear here once runtime data is available.",
-  },
-  runs: {
-    title: "No sandbox runs recorded",
-    description: "Sandbox execution history will appear here after the runtime API is connected.",
-  },
-}
 
 export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialSandboxId?: string }) {
   const [activeTab, setActiveTab] = useState<SandboxDebugTab>("trace")
@@ -94,6 +76,13 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   /* oxlint-enable react-hooks/set-state-in-effect */
 
   const runtimeReady = Boolean(runtimeHealth?.available && runtimeHealth.daemon_ready)
+  const runtimeStatusLabel = runtimeHealthPending
+    ? "Checking runtime"
+    : runtimeReady
+      ? "Docker · Ready"
+      : runtimeHealth?.error_code
+        ? sandboxDebugErrorFromCode(runtimeHealth.error_code, "Runtime status unavailable")
+        : "Runtime status unavailable"
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
@@ -116,11 +105,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
               className={`h-1.5 w-1.5 rounded-full ${runtimeReady ? "bg-emerald-500" : "bg-slate-400"}`}
               aria-hidden="true"
             />
-            {runtimeHealthPending
-              ? "Checking runtime"
-              : runtimeReady
-                ? "Docker · Ready"
-                : "Runtime status unavailable"}
+            {runtimeStatusLabel}
           </span>
         </div>
 
@@ -188,26 +173,10 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
                   }}
                 />
               )}
-              {id !== "trace" && id !== "filesystem" && id !== "resources" && id !== "policy" && id !== "runs" && <SandboxEmptyState tab={id} />}
             </div>
           )
         })}
       </div>
     </section>
-  )
-}
-
-function SandboxEmptyState({ tab }: { tab: Exclude<SandboxDebugTab, "trace"> }) {
-  const emptyState = EMPTY_STATES[tab]
-  return (
-    <div className="flex h-full items-center justify-center overflow-auto px-8 py-10">
-      <div className="w-full max-w-3xl rounded-[10px] border border-slate-200 bg-white px-8 py-10 text-center shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-          Sandbox / {TABS.find((item) => item.id === tab)?.label}
-        </p>
-        <h2 className="mt-3 text-[16px] font-semibold text-slate-900">{emptyState.title}</h2>
-        <p className="mx-auto mt-2 max-w-xl text-[12px] leading-5 text-slate-500">{emptyState.description}</p>
-      </div>
-    </div>
   )
 }
