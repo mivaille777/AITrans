@@ -5,6 +5,7 @@ import type {
   SandboxActivityEvent,
   SandboxDebugFile,
   SandboxDebugTrace,
+  SandboxDebugWorkspaceChange,
 } from "../../api/sandbox-debug"
 
 type ActivityFilter = "all" | "file" | "network" | "process" | "denied"
@@ -67,6 +68,8 @@ export default function SandboxDebugFilesystem({ trace }: { trace: SandboxDebugT
 
         <FileSection title="Staged Inputs" icon={<FileInput size={14} />} files={trace.input_files} empty="No staged inputs" />
 
+        <WorkspaceChangesSection changes={trace.workspace_changes ?? []} />
+
         <section className="rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
           <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -125,6 +128,66 @@ export default function SandboxDebugFilesystem({ trace }: { trace: SandboxDebugT
         <FileSection title="Collected Outputs" icon={<FileOutput size={14} />} files={trace.output_files} empty="No collected outputs" output />
       </div>
     </div>
+  )
+}
+
+function WorkspaceChangesSection({ changes }: { changes: SandboxDebugWorkspaceChange[] }) {
+  return (
+    <section className="rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
+        <FileOutput size={14} className="text-slate-500" />
+        <div>
+          <h2 className="text-[12px] font-semibold text-slate-800">Workspace Changes</h2>
+          <p className="mt-1 text-[10px] text-slate-400">Sandbox diff with content hashes and size delta.</p>
+        </div>
+      </div>
+      {changes.length === 0 ? (
+        <p className="px-5 py-8 text-center text-[11px] text-slate-400">No workspace changes recorded.</p>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {changes.map((change) => <WorkspaceChangeRow key={`${change.operation}:${change.path}`} change={change} />)}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function WorkspaceChangeRow({ change }: { change: SandboxDebugWorkspaceChange }) {
+  const operation = change.operation === "create"
+    ? { short: "A", label: "Added", className: "bg-emerald-50 text-emerald-700" }
+    : change.operation === "delete"
+      ? { short: "D", label: "Deleted", className: "bg-rose-50 text-rose-700" }
+      : { short: "M", label: "Modified", className: "bg-amber-50 text-amber-800" }
+
+  return (
+    <div className="grid gap-3 px-5 py-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_90px] lg:items-start">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[9px] font-bold ${operation.className}`} title={operation.label}>
+          {operation.short}
+        </span>
+        <span className="truncate font-mono text-[10px] text-slate-700" title={safeDisplayPath(change.path)}>
+          {safeDisplayPath(change.path)}
+        </span>
+      </div>
+      <div className="grid gap-1.5 sm:grid-cols-2">
+        <HashValue label="Before SHA-256" value={change.before_sha256} />
+        <HashValue label="After SHA-256" value={change.after_sha256} />
+      </div>
+      <div className="lg:text-right">
+        <p className="text-[9px] uppercase tracking-[0.08em] text-slate-400">Size delta</p>
+        <p className={`mt-1 font-mono text-[10px] font-medium ${change.size_delta > 0 ? "text-emerald-700" : change.size_delta < 0 ? "text-rose-700" : "text-slate-600"}`}>
+          {formatDeltaBytes(change.size_delta)}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function HashValue({ label, value }: { label: string; value: string | null }) {
+  return (
+    <p className="min-w-0 truncate text-[9px] text-slate-400" title={value ?? "Not present"}>
+      {label} <span className="font-mono text-slate-600">{value ?? "—"}</span>
+    </p>
   )
 }
 
@@ -238,6 +301,12 @@ function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatDeltaBytes(value: number): string {
+  if (value > 0) return `+${formatBytes(value)}`
+  if (value < 0) return `−${formatBytes(Math.abs(value))}`
+  return "0 B"
 }
 
 async function copyText(value: string): Promise<void> {

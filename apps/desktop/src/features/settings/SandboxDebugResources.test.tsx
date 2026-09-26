@@ -28,6 +28,7 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
     stdout: "",
     stderr: "",
     activities: [],
+    workspace_changes: [],
     resources: [
       { timestamp_ms: 0, cpu_percent: 20, memory_bytes: 64 * 1024 * 1024, pids: 2, stdout_bytes: 1024, stderr_bytes: 0, output_bytes: 1024 },
       { timestamp_ms: 100, cpu_percent: 38, memory_bytes: 72 * 1024 * 1024, pids: 4, stdout_bytes: 21 * 1024, stderr_bytes: 0, output_bytes: 31 * 1024 },

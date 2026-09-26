@@ -94,6 +94,7 @@ class SandboxActivityEvent(SandboxDebugModel):
         "consumed",
     ]
     reason: str = Field(default="", max_length=1024)
+    permission_action: str = Field(default="", max_length=128)
     policy_rule: str = Field(default="", max_length=128)
     approval_id: str = Field(default="", max_length=128)
     grant_id: str = Field(default="", max_length=128)

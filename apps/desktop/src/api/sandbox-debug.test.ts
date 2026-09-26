@@ -61,6 +61,7 @@ const trace: SandboxDebugTrace = {
   },
   input_files: [],
   output_files: [],
+  workspace_changes: [],
   error: "",
 }
 
@@ -207,6 +208,8 @@ describe("sandbox debug api", () => {
     const loaded = await getSandboxDebugRun("sb-1")
     expect(loaded.input_files).toEqual([])
     expect(loaded.output_files).toEqual([])
+    expect(loaded.workspace_changes).toEqual([])
+    expect(loaded.activities).toEqual([])
   })
 
   it("starts and cancels a manual run using the bounded request contract", async () => {

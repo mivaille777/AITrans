@@ -147,6 +147,7 @@ describe("SandboxDebugStudio", () => {
       stdout: "",
       stderr: "",
       activities: [],
+      workspace_changes: [],
       resources: [],
       policy: {
         network: "none",

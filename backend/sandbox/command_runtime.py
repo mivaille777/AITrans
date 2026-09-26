@@ -67,6 +67,7 @@ class SandboxCommandExecutor:
             target: str = "",
             decision: str,
             reason: str = "",
+            permission_action: str = "",
             policy_rule: str = "",
             approval_id: str = "",
             grant_id: str = "",
@@ -80,6 +81,7 @@ class SandboxCommandExecutor:
                     target=target,
                     decision=decision,
                     reason=reason,
+                    permission_action=permission_action,
                     policy_rule=policy_rule,
                     approval_id=approval_id,
                     grant_id=grant_id,
@@ -106,6 +108,7 @@ class SandboxCommandExecutor:
                 target=request.target,
                 decision="observed",
                 reason=request.reason,
+                permission_action=request.action,
                 policy_rule=request.action,
             )
             if decision is None:
@@ -126,6 +129,7 @@ class SandboxCommandExecutor:
                 target=request.target,
                 decision=event_decision,
                 reason=decision.reason,
+                permission_action=request.action,
                 policy_rule=decision.reason_code,
             )
 
@@ -164,6 +168,7 @@ class SandboxCommandExecutor:
                 "approval_required": "approval_required",
             }.get(command_permission.decision, "denied"),
             reason=command_permission.reason,
+            permission_action="command.execute",
             policy_rule=command_permission.reason_code,
         )
         record_stage(
@@ -202,6 +207,7 @@ class SandboxCommandExecutor:
                     else "denied"
                 ),
                 reason=filesystem_permission.reason,
+                permission_action=filesystem_request.action,
                 policy_rule=filesystem_permission.reason_code,
             )
             if filesystem_permission.decision != "allow":
@@ -245,6 +251,7 @@ class SandboxCommandExecutor:
                     "allowed" if write_permission.decision == "allow" else "denied"
                 ),
                 reason=write_permission.reason,
+                permission_action=write_request.action,
                 policy_rule=write_permission.reason_code,
             )
             if write_permission.decision != "allow":
@@ -258,6 +265,7 @@ class SandboxCommandExecutor:
                 target=request.network_host,
                 decision="observed",
                 reason="Request exact-host network access for this command.",
+                permission_action="network.connect",
                 policy_rule="network.connect",
                 approval_id=request.network_approval_id or "",
             )
@@ -287,6 +295,7 @@ class SandboxCommandExecutor:
                     target=request.network_host,
                     decision="denied",
                     reason="Sandbox network approval is unavailable.",
+                    permission_action="network.connect",
                     policy_rule="network.approval_service_unavailable",
                 )
                 record_activity(
@@ -314,6 +323,7 @@ class SandboxCommandExecutor:
                         target=request.network_host,
                         decision="denied",
                         reason=str(exc),
+                        permission_action="network.connect",
                         policy_rule=exc.code,
                     )
                     record_activity(
@@ -338,6 +348,7 @@ class SandboxCommandExecutor:
                     target=request.network_host,
                     decision="approval_required",
                     reason=approval.reason,
+                    permission_action="network.connect",
                     policy_rule=decision.reason_code,
                     approval_id=approval.approval_id,
                 )
@@ -367,6 +378,7 @@ class SandboxCommandExecutor:
                     target=request.network_host,
                     decision="denied",
                     reason=str(exc),
+                    permission_action="network.connect",
                     policy_rule=exc.code,
                     approval_id=request.network_approval_id or "",
                 )
@@ -386,6 +398,7 @@ class SandboxCommandExecutor:
                 target=request.network_host,
                 decision="allowed",
                 reason="Single-use exact-host approval was consumed.",
+                permission_action="network.connect",
                 policy_rule="network.approval.consumed",
                 approval_id=request.network_approval_id,
             )

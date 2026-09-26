@@ -164,6 +164,7 @@ class SandboxDebugService:
             target="python_execute",
             decision="observed",
             reason="Manual Sandbox execution requested from Debug Studio.",
+            permission_action="python_execute",
             policy_rule="sandbox.python_execute.safe_default",
         )
         self._add_activity(
@@ -173,6 +174,7 @@ class SandboxDebugService:
             target="python_execute",
             decision="allowed",
             reason="Debug Studio permits isolated Python execution.",
+            permission_action="python_execute",
             policy_rule="sandbox.python_execute.safe_default",
         )
         self._set_run_status(summary.sandbox_id, "preparing")
@@ -228,6 +230,7 @@ class SandboxDebugService:
                 target=permission_target,
                 decision="observed",
                 reason=f"Agent requested {permission_action}.",
+                permission_action=permission_action,
                 policy_rule=permission_rule,
             )
             self._add_activity(
@@ -237,6 +240,7 @@ class SandboxDebugService:
                 target=permission_target,
                 decision="allowed",
                 reason="Isolated Python execution is allowed by the Sandbox policy.",
+                permission_action=permission_action,
                 policy_rule=permission_rule,
             )
         self._set_stage(
@@ -480,6 +484,7 @@ class SandboxDebugService:
         target: str,
         decision: str,
         reason: str,
+        permission_action: str = "",
         policy_rule: str = "",
         approval_id: str = "",
         grant_id: str = "",
@@ -495,6 +500,7 @@ class SandboxDebugService:
                 target=target,
                 decision=decision,
                 reason=reason,
+                permission_action=permission_action,
                 policy_rule=policy_rule,
                 approval_id=approval_id,
                 grant_id=grant_id,
@@ -509,6 +515,7 @@ class SandboxDebugService:
         target: str = "",
         decision: str,
         reason: str = "",
+        permission_action: str = "",
         policy_rule: str = "",
         approval_id: str = "",
         grant_id: str = "",
@@ -521,6 +528,7 @@ class SandboxDebugService:
             target=target,
             decision=decision,
             reason=reason,
+            permission_action=permission_action,
             policy_rule=policy_rule,
             approval_id=approval_id,
             grant_id=grant_id,
@@ -599,6 +607,7 @@ class SandboxDebugService:
         target: str,
         decision: str,
         reason: str,
+        permission_action: str = "",
         policy_rule: str = "",
         approval_id: str = "",
         grant_id: str = "",
@@ -611,6 +620,7 @@ class SandboxDebugService:
             target=_safe_trace_target(target),
             decision=decision,
             reason=_safe_trace_text(reason, limit=1024),
+            permission_action=_safe_trace_text(permission_action, limit=128),
             policy_rule=_safe_trace_text(policy_rule, limit=128),
             approval_id=_safe_trace_text(approval_id, limit=128),
             grant_id=_safe_trace_text(grant_id, limit=128),

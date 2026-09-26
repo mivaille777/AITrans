@@ -75,6 +75,7 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
     stdout: "285",
     stderr: "",
     activities: [],
+    workspace_changes: [],
     resources: [],
     policy: {
       network: "none",

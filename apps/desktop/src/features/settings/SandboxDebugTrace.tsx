@@ -18,11 +18,16 @@ import {
 
 const INITIAL_STAGES: SandboxDebugStage[] = [
   { key: "request", label: "Request", status: "pending", elapsed_ms: 0, note: "Validate debug request" },
+  { key: "permission", label: "Permission", status: "pending", elapsed_ms: 0, note: "Evaluate requested access" },
+  { key: "approval", label: "Approval", status: "pending", elapsed_ms: 0, note: "Wait for user approval when required" },
   { key: "workspace", label: "Workspace", status: "pending", elapsed_ms: 0, note: "Resolve filesystem scope" },
   { key: "staging", label: "Staging", status: "pending", elapsed_ms: 0, note: "Stage bounded inputs" },
   { key: "create", label: "Container", status: "pending", elapsed_ms: 0, note: "Create isolated container" },
   { key: "start", label: "Start", status: "pending", elapsed_ms: 0, note: "Start runtime" },
   { key: "execute", label: "Execute", status: "pending", elapsed_ms: 0, note: "Execute Python" },
+  { key: "network", label: "Network", status: "pending", elapsed_ms: 0, note: "Apply network policy" },
+  { key: "changes", label: "Changes", status: "pending", elapsed_ms: 0, note: "Collect workspace changes" },
+  { key: "apply", label: "Apply", status: "pending", elapsed_ms: 0, note: "Apply approved host changes" },
   { key: "collect", label: "Collect", status: "pending", elapsed_ms: 0, note: "Collect outputs" },
   { key: "cleanup", label: "Cleanup", status: "pending", elapsed_ms: 0, note: "Remove runtime resources" },
 ]
@@ -426,6 +431,7 @@ function createPendingTrace(
     },
     input_files: [],
     output_files: [],
+    workspace_changes: [],
     error: "",
   }
 }

@@ -54,6 +54,11 @@ const trace = {
   output_files: [
     { file_id: "out-1", path: "result.csv", size_bytes: 21000, sha256: "def", source: "generated" as const },
   ],
+  workspace_changes: [
+    { operation: "modify" as const, path: "src/main.py", before_sha256: "a".repeat(64), after_sha256: "b".repeat(64), size_before: 10, size_after: 15, size_delta: 5 },
+    { operation: "create" as const, path: "tests/test_main.py", before_sha256: null, after_sha256: "c".repeat(64), size_before: null, size_after: 12, size_delta: 12 },
+    { operation: "delete" as const, path: "src/legacy.py", before_sha256: "d".repeat(64), after_sha256: null, size_before: 3, size_after: null, size_delta: -3 },
+  ],
   error: "",
 }
 
@@ -66,6 +71,14 @@ describe("SandboxDebugFilesystem", () => {
     expect(screen.getByText("/input/data.csv")).toBeTruthy()
     expect(screen.getByText("example.com:443")).toBeTruthy()
     expect(screen.getByText("result.csv")).toBeTruthy()
+    expect(screen.getByText("Workspace Changes")).toBeTruthy()
+    expect(screen.getByText("src/main.py")).toBeTruthy()
+    expect(screen.getByText("tests/test_main.py")).toBeTruthy()
+    expect(screen.getByText("src/legacy.py")).toBeTruthy()
+    expect(screen.getByText("+5 B")).toBeTruthy()
+    expect(screen.getByText("−3 B")).toBeTruthy()
+    expect(screen.getByText("a".repeat(64))).toBeTruthy()
+    expect(screen.getByText("b".repeat(64))).toBeTruthy()
   })
 
   it("filters denied activity", () => {

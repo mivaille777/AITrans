@@ -1,6 +1,10 @@
 import { AlertTriangle, CheckCircle2, ShieldCheck } from "lucide-react"
 
-import type { SandboxDebugTrace, SandboxEffectivePolicy } from "../../api/sandbox-debug"
+import type {
+  SandboxActivityEvent,
+  SandboxDebugTrace,
+  SandboxEffectivePolicy,
+} from "../../api/sandbox-debug"
 
 export default function SandboxDebugPolicy({ trace }: { trace: SandboxDebugTrace | null }) {
   if (!trace) {
@@ -19,6 +23,10 @@ export default function SandboxDebugPolicy({ trace }: { trace: SandboxDebugTrace
   const policy = trace.policy
   const warnings = policyWarnings(policy)
   const rows = buildRows(policy)
+  const permissionDecisions = trace.activities.filter(
+    (activity) => activity.kind === "policy" && activity.action.startsWith("permission."),
+  )
+  const approvals = latestApprovalEvents(trace.activities)
 
   return (
     <div className="h-full overflow-auto bg-slate-50/40 px-8 py-6">
@@ -54,6 +62,68 @@ export default function SandboxDebugPolicy({ trace }: { trace: SandboxDebugTrace
             </div>
           </section>
         ) : null}
+
+        <section className="overflow-hidden rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
+            <ShieldCheck size={14} className="text-slate-500" />
+            <div>
+              <h2 className="text-[12px] font-semibold text-slate-800">Permission Decision</h2>
+              <p className="mt-1 text-[10px] text-slate-400">Recorded policy decisions for this run.</p>
+            </div>
+          </div>
+          {permissionDecisions.length === 0 ? (
+            <p className="px-5 py-7 text-center text-[11px] text-slate-400">No permission decisions recorded.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[9px] uppercase tracking-[0.09em] text-slate-400">
+                    <th className="px-5 py-2.5 font-medium">Action</th>
+                    <th className="px-3 py-2.5 font-medium">Target</th>
+                    <th className="px-3 py-2.5 font-medium">Decision</th>
+                    <th className="px-3 py-2.5 font-medium">Reason</th>
+                    <th className="px-5 py-2.5 font-medium">Rule</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {permissionDecisions.map((activity) => (
+                    <PermissionRow key={activity.sequence} activity={activity} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="overflow-hidden rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
+            <ShieldCheck size={14} className="text-slate-500" />
+            <div>
+              <h2 className="text-[12px] font-semibold text-slate-800">Approval</h2>
+              <p className="mt-1 text-[10px] text-slate-400">Latest status for each approval request.</p>
+            </div>
+          </div>
+          {approvals.length === 0 ? (
+            <p className="px-5 py-7 text-center text-[11px] text-slate-400">No approval was requested for this run.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {approvals.map((activity) => (
+                <div key={activity.approval_id} className="grid gap-2 px-5 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-[10px] text-slate-700" title={safeDisplayTarget(activity.target)}>
+                      {safeDisplayTarget(activity.target) || activity.permission_action || "Sandbox permission"}
+                    </p>
+                    <p className="mt-1 truncate font-mono text-[9px] text-slate-400" title={activity.approval_id}>
+                      {activity.approval_id}
+                      {activity.grant_id ? ` · grant ${activity.grant_id}` : ""}
+                    </p>
+                  </div>
+                  <DecisionBadge decision={activity.decision} />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="overflow-hidden rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
           <div className="border-b border-slate-200 px-5 py-4">
@@ -92,7 +162,8 @@ export default function SandboxDebugPolicy({ trace }: { trace: SandboxDebugTrace
 
 export function policyWarnings(policy: SandboxEffectivePolicy): string[] {
   const warnings: string[] = []
-  if (policy.network.trim().toLowerCase() !== "none") warnings.push("Network is not disabled.")
+  const networkMode = policy.network.trim().toLowerCase()
+  if (networkMode !== "none" && networkMode !== "restricted") warnings.push("Network is not disabled or approval-gated.")
   if (!policy.root_filesystem_read_only) warnings.push("Root filesystem is writable.")
   if (!policy.user.trim()) warnings.push("Sandbox user is not reported.")
   else if (["0", "0:0", "root"].includes(policy.user.trim().toLowerCase())) warnings.push("Sandbox is running as root.")
@@ -118,8 +189,9 @@ function buildRows(policy: SandboxEffectivePolicy) {
     : policy.docker_socket_mounted
       ? "unsafe"
       : "safe"
+  const network = policy.network.trim().toLowerCase()
   return [
-    { label: "Network", value: policy.network || "—", state: policy.network.trim().toLowerCase() === "none" ? "safe" : "unsafe" },
+    { label: "Network", value: network === "restricted" ? "restricted · exact-host approval" : policy.network || "—", state: network === "none" || network === "restricted" ? "safe" : network ? "unsafe" : "unknown" },
     { label: "Root filesystem", value: policy.root_filesystem_read_only ? "read-only" : "read / write", state: policy.root_filesystem_read_only ? "safe" : "unsafe" },
     { label: "User", value: policy.user || "—", state: user ? (userSafe ? "safe" : "unsafe") : "unknown" },
     { label: "Capabilities", value: policy.cap_drop.length ? `DROP ${policy.cap_drop.join(", ")}` : "—", state: capabilitiesSafe ? "safe" : "unsafe" },
@@ -134,6 +206,57 @@ function buildRows(policy: SandboxEffectivePolicy) {
     { label: "Output files", value: formatBytes(policy.output_limit_bytes ?? 0), state: (policy.output_limit_bytes ?? 0) > 0 ? "safe" : "unknown" },
     { label: "Docker socket", value: policy.docker_socket_mounted === null ? "unknown" : policy.docker_socket_mounted ? "mounted" : "not mounted", state: socketState },
   ] as Array<{ label: string; value: string; state: "safe" | "unsafe" | "unknown" }>
+}
+
+function PermissionRow({ activity }: { activity: SandboxActivityEvent }) {
+  const action = activity.permission_action || activity.action.replace(/^permission\./, "")
+  return (
+    <tr className="border-b border-slate-100 text-[10px] text-slate-600 last:border-b-0">
+      <td className="px-5 py-3 font-mono text-slate-700">{action}</td>
+      <td className="max-w-[220px] truncate px-3 py-3 font-mono" title={safeDisplayTarget(activity.target)}>{safeDisplayTarget(activity.target) || "—"}</td>
+      <td className="px-3 py-3"><DecisionBadge decision={activity.decision} /></td>
+      <td className="max-w-[260px] px-3 py-3 text-slate-500">{activity.reason || "—"}</td>
+      <td className="max-w-[220px] truncate px-5 py-3 font-mono text-slate-500" title={activity.policy_rule}>{activity.policy_rule || "—"}</td>
+    </tr>
+  )
+}
+
+function DecisionBadge({ decision }: { decision: SandboxActivityEvent["decision"] }) {
+  const label = decision === "approval_required"
+    ? "Approval Required"
+    : decision === "observed"
+      ? "Requested"
+      : decision.charAt(0).toUpperCase() + decision.slice(1).replaceAll("_", " ")
+  const className = decision === "allowed" || decision === "approved"
+    ? "bg-emerald-50 text-emerald-700"
+    : decision === "denied"
+      ? "bg-rose-50 text-rose-700"
+      : decision === "approval_required" || decision === "pending"
+        ? "bg-amber-50 text-amber-800"
+        : "bg-slate-100 text-slate-600"
+  return <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-semibold ${className}`}>{label}</span>
+}
+
+function latestApprovalEvents(activities: SandboxActivityEvent[]): SandboxActivityEvent[] {
+  const latest = new Map<string, SandboxActivityEvent>()
+  for (const activity of activities) {
+    if (activity.kind !== "approval" || !activity.approval_id) continue
+    latest.set(activity.approval_id, activity)
+  }
+  return [...latest.values()].sort((left, right) => left.sequence - right.sequence)
+}
+
+function safeDisplayTarget(value: string): string {
+  const target = value.trim()
+  if (!target) return ""
+  const containerPath = target === "/input"
+    || target.startsWith("/input/")
+    || target === "/workspace"
+    || target.startsWith("/workspace/")
+  if (/^[a-z]:[\\/]/i.test(target) || /^\\\\/.test(target) || /^file:\/\//i.test(target) || (target.startsWith("/") && !containerPath)) {
+    return "[host path redacted]"
+  }
+  return target
 }
 
 function formatBytes(value: number): string {

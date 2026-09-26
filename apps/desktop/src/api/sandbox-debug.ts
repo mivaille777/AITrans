@@ -53,11 +53,16 @@ export interface SandboxRunSummary {
 
 export type SandboxDebugStageKey =
   | "request"
+  | "permission"
+  | "approval"
   | "workspace"
   | "staging"
   | "create"
   | "start"
   | "execute"
+  | "network"
+  | "changes"
+  | "apply"
   | "collect"
   | "cleanup"
 
@@ -82,8 +87,17 @@ export type SandboxActivityKind =
   | "process"
   | "runtime"
   | "policy"
+  | "approval"
 
-export type SandboxActivityDecision = "allowed" | "denied" | "observed"
+export type SandboxActivityDecision =
+  | "allowed"
+  | "denied"
+  | "observed"
+  | "approval_required"
+  | "pending"
+  | "approved"
+  | "expired"
+  | "consumed"
 
 export interface SandboxActivityEvent {
   sequence: number
@@ -93,7 +107,19 @@ export interface SandboxActivityEvent {
   target: string
   decision: SandboxActivityDecision
   reason: string
+  permission_action?: string
+  policy_rule?: string
+  approval_id?: string
+  grant_id?: string
 }
+
+type RawSandboxActivityEvent = Omit<
+  SandboxActivityEvent,
+  "target" | "reason" | "permission_action" | "policy_rule" | "approval_id" | "grant_id"
+> & Partial<Pick<
+  SandboxActivityEvent,
+  "target" | "reason" | "permission_action" | "policy_rule" | "approval_id" | "grant_id"
+>>
 
 export interface SandboxResourceSample {
   timestamp_ms: number
@@ -137,6 +163,16 @@ export interface SandboxDebugFile {
   source: "workspace" | "generated" | "runtime"
 }
 
+export interface SandboxDebugWorkspaceChange {
+  operation: "create" | "modify" | "delete"
+  path: string
+  before_sha256: string | null
+  after_sha256: string | null
+  size_before: number | null
+  size_after: number | null
+  size_delta: number
+}
+
 type RawSandboxDebugFile = Partial<SandboxDebugFile> & {
   relative_path?: string
 }
@@ -155,17 +191,20 @@ export interface SandboxDebugTrace {
   policy: SandboxEffectivePolicy
   input_files: SandboxDebugFile[]
   output_files: SandboxDebugFile[]
+  workspace_changes: SandboxDebugWorkspaceChange[]
   error: string
 }
 
 type RawSandboxDebugTrace = Omit<
   SandboxDebugTrace,
-  "run" | "policy" | "input_files" | "output_files"
+  "run" | "policy" | "input_files" | "output_files" | "activities" | "workspace_changes"
 > & {
   run: RawSandboxRunSummary
   policy: RawSandboxEffectivePolicy
   input_files?: RawSandboxDebugFile[]
   output_files?: RawSandboxDebugFile[]
+  activities?: RawSandboxActivityEvent[]
+  workspace_changes?: SandboxDebugWorkspaceChange[]
 }
 
 export interface StartSandboxDebugRunRequest {
@@ -277,8 +316,24 @@ function normalizeSandboxDebugTrace(trace: RawSandboxDebugTrace): SandboxDebugTr
     ...trace,
     run: normalizeSandboxRunSummary(trace.run),
     policy: normalizeSandboxEffectivePolicy(trace.policy),
+    activities: (trace.activities ?? []).map(normalizeSandboxActivityEvent),
     input_files: (trace.input_files ?? []).map((file) => normalizeSandboxDebugFile(file, "workspace")),
     output_files: (trace.output_files ?? []).map((file) => normalizeSandboxDebugFile(file, "generated")),
+    workspace_changes: trace.workspace_changes ?? [],
+  }
+}
+
+function normalizeSandboxActivityEvent(
+  activity: RawSandboxActivityEvent,
+): SandboxActivityEvent {
+  return {
+    ...activity,
+    target: activity.target ?? "",
+    reason: activity.reason ?? "",
+    permission_action: activity.permission_action ?? "",
+    policy_rule: activity.policy_rule ?? "",
+    approval_id: activity.approval_id ?? "",
+    grant_id: activity.grant_id ?? "",
   }
 }
 
@@ -347,6 +402,9 @@ function parseSandboxDebugStreamEvent(raw: string): SandboxDebugStreamEvent {
       ...event,
       trace: normalizeSandboxDebugTrace(event.trace as RawSandboxDebugTrace),
     }
+  }
+  if (event.type === "activity") {
+    return { ...event, activity: normalizeSandboxActivityEvent(event.activity) }
   }
   return event
 }

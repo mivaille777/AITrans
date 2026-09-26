@@ -51,6 +51,7 @@ def _setup(
             target=target,
             decision=approval.status,
             reason=approval.reason,
+            permission_action=approval.permission_action,
             policy_rule=approval.permission_action,
             approval_id=approval.approval_id,
             grant_id=grant_id,

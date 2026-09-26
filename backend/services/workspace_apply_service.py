@@ -155,6 +155,7 @@ class WorkspaceApplyService:
             target=target,
             decision="observed",
             reason="Request to apply sandbox changes to the selected host workspace.",
+            permission_action="filesystem.apply_host",
             policy_rule="workspace_write.host_apply",
         )
         request = PermissionRequest(
@@ -178,6 +179,7 @@ class WorkspaceApplyService:
                 target=target,
                 decision="denied",
                 reason=decision.reason,
+                permission_action="filesystem.apply_host",
                 policy_rule=decision.reason_code,
             )
             raise WorkspaceApplyError(
@@ -192,6 +194,7 @@ class WorkspaceApplyService:
             target=target,
             decision="approval_required",
             reason=decision.reason,
+            permission_action="filesystem.apply_host",
             policy_rule=decision.reason_code,
         )
         try:
@@ -238,6 +241,7 @@ class WorkspaceApplyService:
                 target=changeset.changes[0].path,
                 decision="denied",
                 reason=exc.code,
+                permission_action="filesystem.apply_host",
                 policy_rule="workspace_write.host_apply",
                 approval_id=approval_id,
             )
@@ -288,6 +292,7 @@ class WorkspaceApplyService:
                     target=change.path,
                     decision="allowed",
                     reason=f"Applied approved {change.operation} change to the host workspace.",
+                    permission_action="filesystem.apply_host",
                     policy_rule="workspace_write.host_apply",
                     approval_id=grant.approval_id,
                     grant_id=grant.grant_id,
@@ -311,6 +316,7 @@ class WorkspaceApplyService:
                 target=changeset.changes[0].path,
                 decision="denied",
                 reason=exc.code,
+                permission_action="filesystem.apply_host",
                 policy_rule="workspace_write.host_apply",
                 approval_id=grant.approval_id,
                 grant_id=grant.grant_id,
@@ -333,6 +339,7 @@ class WorkspaceApplyService:
                 target=changeset.changes[0].path,
                 decision="denied",
                 reason=error.code,
+                permission_action="filesystem.apply_host",
                 policy_rule="workspace_write.host_apply",
                 approval_id=grant.approval_id,
                 grant_id=grant.grant_id,
@@ -355,6 +362,7 @@ class WorkspaceApplyService:
                 target=changeset.changes[0].path,
                 decision="denied",
                 reason=error.code,
+                permission_action="filesystem.apply_host",
                 policy_rule="workspace_write.host_apply",
                 approval_id=grant.approval_id,
                 grant_id=grant.grant_id,

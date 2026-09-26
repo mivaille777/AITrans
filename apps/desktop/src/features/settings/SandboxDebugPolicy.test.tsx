@@ -2,7 +2,11 @@
 import { cleanup, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
 
-import type { SandboxEffectivePolicy } from "../../api/sandbox-debug"
+import type {
+  SandboxActivityEvent,
+  SandboxDebugTrace,
+  SandboxEffectivePolicy,
+} from "../../api/sandbox-debug"
 import SandboxDebugPolicy, { policyWarnings } from "./SandboxDebugPolicy"
 
 afterEach(() => cleanup())
@@ -24,7 +28,10 @@ const safePolicy: SandboxEffectivePolicy = {
   docker_socket_mounted: false,
 }
 
-function traceWith(policy: SandboxEffectivePolicy) {
+function traceWith(
+  policy: SandboxEffectivePolicy,
+  activities: SandboxActivityEvent[] = [],
+): SandboxDebugTrace {
   return {
     run: {
       sandbox_id: "sb-1",
@@ -44,11 +51,12 @@ function traceWith(policy: SandboxEffectivePolicy) {
     stages: [],
     stdout: "",
     stderr: "",
-    activities: [],
+    activities,
     resources: [],
     policy,
     input_files: [],
     output_files: [],
+    workspace_changes: [],
     error: "",
   }
 }
@@ -84,9 +92,57 @@ describe("SandboxDebugPolicy", () => {
       user: "0:0",
       root_filesystem_read_only: false,
     })
-    expect(warnings).toContain("Network is not disabled.")
+    expect(warnings).toContain("Network is not disabled or approval-gated.")
     expect(warnings).toContain("Sandbox is running as root.")
     expect(warnings).toContain("Root filesystem is writable.")
+  })
+
+  it("accepts the approval-gated restricted network policy", () => {
+    expect(policyWarnings({ ...safePolicy, network: "restricted" })).not.toContain(
+      "Network is not disabled or approval-gated.",
+    )
+  })
+
+  it("shows permission decisions and the latest approval state", () => {
+    const trace = traceWith(safePolicy, [
+      {
+        sequence: 1,
+        timestamp: "",
+        kind: "policy",
+        action: "permission.approval_required",
+        target: "src/main.py",
+        decision: "approval_required",
+        reason: "Host write requires explicit grant.",
+        permission_action: "filesystem.apply_host",
+        policy_rule: "workspace_write.host_apply",
+      },
+      ...(["pending", "approved", "denied", "expired", "consumed"] as const).map(
+        (decision, index) => ({
+          sequence: index + 2,
+          timestamp: "",
+          kind: "approval" as const,
+          action: `approval.${decision}`,
+          target: `src/file-${index}.py`,
+          decision,
+          reason: "Approval status changed.",
+          approval_id: `apr-${index}`,
+          permission_action: "filesystem.apply_host",
+          policy_rule: "workspace_write.host_apply",
+          grant_id: decision === "consumed" ? "grant-1" : "",
+        }),
+      ),
+    ])
+
+    render(<SandboxDebugPolicy trace={trace} />)
+
+    expect(screen.getByText("filesystem.apply_host")).toBeTruthy()
+    expect(screen.getByText("Approval Required")).toBeTruthy()
+    expect(screen.getByText("workspace_write.host_apply")).toBeTruthy()
+    expect(screen.getByText("Pending")).toBeTruthy()
+    expect(screen.getByText("Approved")).toBeTruthy()
+    expect(screen.getByText("Denied")).toBeTruthy()
+    expect(screen.getByText("Expired")).toBeTruthy()
+    expect(screen.getByText("Consumed")).toBeTruthy()
   })
 
   it("shows unsafe status visibly in the UI", () => {
