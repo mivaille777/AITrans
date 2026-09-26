@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   createFilesystemWorkspace,
   getFilesystemWorkspace,
+  revokeFilesystemWorkspace,
 } from "../../../api/filesystem-workspaces"
 import { desktop } from "../../../desktop"
 import { useFilesystemWorkspace } from "./useFilesystemWorkspace"
@@ -13,6 +14,7 @@ import { useFilesystemWorkspace } from "./useFilesystemWorkspace"
 vi.mock("../../../api/filesystem-workspaces", () => ({
   createFilesystemWorkspace: vi.fn(),
   getFilesystemWorkspace: vi.fn(),
+  revokeFilesystemWorkspace: vi.fn(),
 }))
 
 vi.mock("../../../desktop", () => ({
@@ -75,6 +77,43 @@ describe("useFilesystemWorkspace", () => {
     expect(createFilesystemWorkspace).toHaveBeenCalledWith("D:\\Private\\AITrans")
     expect(window.localStorage.getItem("aitrans.agent.filesystemWorkspaceId")).toBe("fsw-123")
     expect(JSON.stringify({ ...window.localStorage })).not.toContain("D:\\Private\\AITrans")
+  })
+
+  it("revokes backend authority before clearing the selected workspace", async () => {
+    window.localStorage.setItem("aitrans.agent.filesystemWorkspaceId", "fsw-123")
+    vi.mocked(getFilesystemWorkspace).mockResolvedValue(workspace)
+    vi.mocked(revokeFilesystemWorkspace).mockResolvedValue({
+      workspace_id: "fsw-123",
+      revoked: true,
+    })
+
+    const { result } = renderHook(() => useFilesystemWorkspace(true))
+    await waitFor(() => expect(result.current.workspace?.workspace_id).toBe("fsw-123"))
+
+    await act(async () => {
+      await result.current.clearWorkspace()
+    })
+
+    expect(revokeFilesystemWorkspace).toHaveBeenCalledWith("fsw-123")
+    expect(result.current.workspace).toBeNull()
+    expect(window.localStorage.getItem("aitrans.agent.filesystemWorkspaceId")).toBeNull()
+  })
+
+  it("keeps workspace authority visible when revocation cannot be confirmed", async () => {
+    window.localStorage.setItem("aitrans.agent.filesystemWorkspaceId", "fsw-123")
+    vi.mocked(getFilesystemWorkspace).mockResolvedValue(workspace)
+    vi.mocked(revokeFilesystemWorkspace).mockRejectedValue(new Error("offline"))
+
+    const { result } = renderHook(() => useFilesystemWorkspace(true))
+    await waitFor(() => expect(result.current.workspace?.workspace_id).toBe("fsw-123"))
+
+    await act(async () => {
+      await result.current.clearWorkspace()
+    })
+
+    expect(result.current.workspace?.workspace_id).toBe("fsw-123")
+    expect(result.current.error).toBe("Filesystem workspace access could not be revoked.")
+    expect(window.localStorage.getItem("aitrans.agent.filesystemWorkspaceId")).toBe("fsw-123")
   })
 
   it("removes stale ids when backend authority rejects the saved workspace", async () => {

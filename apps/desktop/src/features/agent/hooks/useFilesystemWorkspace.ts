@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react"
 import {
   createFilesystemWorkspace,
   getFilesystemWorkspace,
+  revokeFilesystemWorkspace,
   type FilesystemWorkspace,
 } from "../../../api/filesystem-workspaces"
 import { desktop } from "../../../desktop"
@@ -90,11 +91,31 @@ export function useFilesystemWorkspace(enabled = true) {
     }
   }, [choosing, enabled])
 
-  const clearWorkspace = useCallback(() => {
-    persistActiveWorkspaceId("")
-    setWorkspace(null)
+  const clearWorkspace = useCallback(async () => {
+    if (choosing) return
+    const workspaceId = workspace?.workspace_id ?? readActiveWorkspaceId()
+    if (!workspaceId) {
+      persistActiveWorkspaceId("")
+      setWorkspace(null)
+      setError("")
+      return
+    }
+
+    setChoosing(true)
     setError("")
-  }, [])
+    try {
+      const result = await revokeFilesystemWorkspace(workspaceId)
+      if (!result.revoked) {
+        throw new Error("Workspace revocation was not confirmed.")
+      }
+      persistActiveWorkspaceId("")
+      setWorkspace(null)
+    } catch {
+      setError("Filesystem workspace access could not be revoked.")
+    } finally {
+      setChoosing(false)
+    }
+  }, [choosing, workspace?.workspace_id])
 
   return {
     workspace: enabled ? workspace : null,

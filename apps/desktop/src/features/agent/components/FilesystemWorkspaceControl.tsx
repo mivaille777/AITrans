@@ -17,7 +17,7 @@ export function FilesystemWorkspaceControl({
   error: string
   disabled: boolean
   onChoose: () => Promise<void>
-  onClear: () => void
+  onClear: () => Promise<void>
 }) {
   if (loading) {
     return (
@@ -71,9 +71,10 @@ export function FilesystemWorkspaceControl({
           </button>
           <button
             type="button"
-            onClick={onClear}
+            onClick={() => void onClear()}
             disabled={disabled || choosing}
             aria-label="Clear filesystem workspace"
+            title="Revoke filesystem workspace access"
             className="inline-flex h-7 w-7 items-center justify-center rounded-[7px] border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <X size={12} />
