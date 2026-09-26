@@ -45,6 +45,7 @@ const health = {
   daemon_ready: true,
   os_type: "linux",
   detail: "",
+  error_code: "",
 }
 
 function makeTrace(overrides: Record<string, unknown> = {}) {

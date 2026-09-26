@@ -1,11 +1,12 @@
 import { cleanup, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
 
+import type { SandboxEffectivePolicy } from "../../api/sandbox-debug"
 import SandboxDebugPolicy, { policyWarnings } from "./SandboxDebugPolicy"
 
 afterEach(() => cleanup())
 
-const safePolicy = {
+const safePolicy: SandboxEffectivePolicy = {
   network: "none",
   root_filesystem_read_only: true,
   user: "10001:10001",
@@ -22,7 +23,7 @@ const safePolicy = {
   docker_socket_mounted: false,
 }
 
-function traceWith(policy: typeof safePolicy) {
+function traceWith(policy: SandboxEffectivePolicy) {
   return {
     run: {
       sandbox_id: "sb-1",
@@ -70,7 +71,7 @@ describe("SandboxDebugPolicy", () => {
     const policy = { ...safePolicy, docker_socket_mounted: null }
     expect(policyWarnings(policy)).toContain("Docker socket mount status is unknown.")
 
-    render(<SandboxDebugPolicy trace={traceWith(policy as typeof safePolicy)} />)
+    render(<SandboxDebugPolicy trace={traceWith(policy)} />)
     expect(screen.getByText("unknown")).toBeTruthy()
     expect(screen.getByText("Unknown")).toBeTruthy()
   })
