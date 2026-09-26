@@ -65,6 +65,7 @@ class SandboxManager:
         code: str,
         *,
         input_files: tuple[SandboxInputFile, ...] = (),
+        workspace_write: bool = False,
         sandbox_id: str | None = None,
         on_stage: Callable[[str, str, str], None] | None = None,
         cancel_event: Event | None = None,
@@ -95,8 +96,16 @@ class SandboxManager:
                     max_bytes=MAX_SANDBOX_TOTAL_INPUT_BYTES - staged_bytes,
                 )
                 staged_bytes += staged_path.stat().st_size
-            self._workspace_manager.write_code(workspace, code)
-            self._emit_stage(on_stage, "staging", "complete", "Inputs staged read-only.")
+            if workspace_write:
+                self._workspace_manager.copy_inputs_to_workspace(
+                    workspace, input_files
+                )
+            self._emit_stage(
+                on_stage,
+                "staging",
+                "complete",
+                "Inputs staged read-only with an isolated editable copy.",
+            )
             if cancel_event is not None and cancel_event.is_set():
                 result = SandboxExecutionResult(
                     sandbox_id=request.sandbox_id,

@@ -63,6 +63,19 @@ def test_allowed_argv_runs_through_shell_free_sandbox_runner() -> None:
     assert manager.calls[0][1]["sandbox_id"] == result.sandbox_id
 
 
+def test_selected_workspace_gets_an_editable_sandbox_copy() -> None:
+    executor, manager = _executor()
+
+    result = executor.execute(
+        SandboxCommandRequest(argv=["python", "--version"]),
+        execution_policy=_policy(workspace_id="fsw_selected"),
+        input_files=(SandboxInputFile("file-1", "a.txt", Path("a.txt")),),
+    )
+
+    assert result.status == "succeeded"
+    assert manager.calls[0][1]["workspace_write"] is True
+
+
 @pytest.mark.parametrize("executable", ["/bin/sh", "docker", "curl", "powershell.exe"])
 def test_non_allowlisted_executable_is_denied_before_runtime(executable: str) -> None:
     executor, manager = _executor()

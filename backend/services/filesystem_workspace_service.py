@@ -314,6 +314,7 @@ class FilesystemWorkspaceService:
                             relative_path=relative_path,
                             expected_size_bytes=size_bytes,
                             expected_sha256=digest,
+                            expected_mode=stat.S_IMODE(metadata.st_mode),
                         )
                     )
                     manifest.append(
@@ -322,6 +323,7 @@ class FilesystemWorkspaceService:
                             "relative_path": relative_path,
                             "size_bytes": size_bytes,
                             "sha256": digest,
+                            "mode": stat.S_IMODE(metadata.st_mode),
                             "source": "workspace",
                         }
                     )

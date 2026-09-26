@@ -113,6 +113,7 @@ def test_runtime_uses_no_network_and_removes_completed_container(tmp_path) -> No
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
     assert result.status == "succeeded"
+    assert client.create_kwargs["command"] == ["python", "-c", "print('ok')"]
     assert client.create_kwargs["network_mode"] == "none"
     assert client.create_kwargs["user"] == "10001:10001"
     assert client.create_kwargs["read_only"] is True

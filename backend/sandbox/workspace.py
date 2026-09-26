@@ -48,6 +48,7 @@ class SandboxInputFile:
     relative_path: str = ""
     expected_size_bytes: int | None = None
     expected_sha256: str = ""
+    expected_mode: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +234,57 @@ class SandboxWorkspaceManager:
             raise SandboxCreateError(
                 "Failed to prepare Python code for sandbox execution."
             ) from exc
+
+    def copy_inputs_to_workspace(
+        self,
+        workspace: SandboxWorkspace,
+        input_files: tuple[SandboxInputFile, ...],
+    ) -> None:
+        """Copy staged, read-only inputs into the editable working directory."""
+
+        self._assert_workspace(workspace)
+        for input_file in input_files:
+            relative_path = self._safe_relative_path(
+                input_file.relative_path or input_file.display_name
+            )
+            source = workspace.input_dir.joinpath(*relative_path.parts)
+            destination = workspace.workspace_dir.joinpath(*relative_path.parts)
+            self._assert_contained(source, workspace.input_dir)
+            self._assert_contained(destination, workspace.workspace_dir)
+            try:
+                source_stat = source.lstat()
+                if not stat.S_ISREG(source_stat.st_mode):
+                    raise SandboxInvalidInputError(
+                        "Sandbox inputs must be regular files, not links or devices."
+                    )
+                if destination.exists() or destination.is_symlink():
+                    raise SandboxInvalidInputError(
+                        "Sandbox working-copy filenames must be unique."
+                    )
+                self._make_safe_directories(destination.parent, workspace.workspace_dir)
+                size_bytes, digest = self._copy_input_hash(
+                    source,
+                    destination,
+                    max_bytes=MAX_SANDBOX_INPUT_FILE_BYTES,
+                    expected_size_bytes=input_file.expected_size_bytes,
+                    expected_sha256=input_file.expected_sha256,
+                )
+                if size_bytes != source_stat.st_size or digest != self._sha256(source):
+                    raise SandboxInvalidInputError(
+                        "A staged sandbox input changed before working-copy creation."
+                    )
+                original_mode = (
+                    input_file.expected_mode
+                    if input_file.expected_mode is not None
+                    else stat.S_IMODE(source_stat.st_mode)
+                )
+                destination.chmod(0o666 | (original_mode & 0o111))
+            except SandboxInvalidInputError:
+                raise
+            except (OSError, RuntimeError) as exc:
+                raise SandboxInvalidInputError(
+                    "Sandbox working copy could not be prepared safely."
+                ) from exc
 
     def collect_outputs(
         self,
@@ -494,3 +546,27 @@ class SandboxWorkspaceManager:
             temporary.unlink(missing_ok=True)
             raise
         return size_bytes, digest.hexdigest()
+
+    @classmethod
+    def _make_safe_directories(cls, directory: Path, root: Path) -> None:
+        current = root
+        for part in directory.relative_to(root).parts:
+            current = current / part
+            cls._assert_contained(current, root)
+            if current.is_symlink():
+                raise SandboxInvalidInputError(
+                    "Sandbox working-copy paths must not contain symbolic links."
+                )
+            current.mkdir(mode=0o777, exist_ok=True)
+            if not current.is_dir():
+                raise SandboxInvalidInputError(
+                    "Sandbox working-copy path is not a directory."
+                )
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()

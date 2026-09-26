@@ -210,7 +210,7 @@ class DockerSandboxRuntime:
             try:
                 container = client.containers.create(
                     image=self.image,
-                    command=["python", "/workspace/main.py"],
+                    command=["python", "-c", request.code],
                     name=container_name,
                     labels={
                         SANDBOX_LABEL: "true",

@@ -80,9 +80,26 @@ class SandboxCommandExecutor:
                     sandbox_id, request, filesystem_permission
                 )
 
+        workspace_write = bool(execution_policy.workspace_id.strip())
+        if workspace_write:
+            write_permission = self._policy_engine.evaluate(
+                PermissionRequest(
+                    action="filesystem.write_sandbox",
+                    target="/workspace",
+                    reason="Edit an isolated copy of the selected workspace.",
+                    tool_name="command_execute",
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                ),
+                execution_policy,
+            )
+            if write_permission.decision != "allow":
+                return self._permission_result(sandbox_id, request, write_permission)
+
         result = self._sandbox_manager.execute_python(
             _runner_code(request),
             input_files=input_files,
+            workspace_write=workspace_write,
             sandbox_id=sandbox_id,
             on_stage=on_stage,
             cancel_event=cancel_event,
