@@ -200,6 +200,7 @@ function ActivityRow({ activity }: { activity: SandboxActivityEvent }) {
         <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase ${decisionClass}`}>
           {activity.decision}
         </span>
+        {activity.reason ? <p className="mt-1 font-mono text-[8px] text-slate-400">{activity.reason}</p> : null}
       </td>
     </tr>
   )

@@ -87,6 +87,7 @@ describe("SandboxDebugFilesystem", () => {
 
     expect(screen.queryByText(/C:\\Users\\/)).toBeNull()
     expect(screen.getByText("[host path redacted]/id_rsa")).toBeTruthy()
+    expect(screen.getByText("PATH_OUTSIDE_WORKSPACE")).toBeTruthy()
   })
 
   it("shows an empty state before a trace exists", () => {

@@ -69,12 +69,8 @@ export function useFilesystemWorkspace(enabled = true) {
       }
       persistActiveWorkspaceId(next.workspace_id)
       setWorkspace(next)
-    } catch (chooseError) {
-      setError(
-        chooseError instanceof Error
-          ? chooseError.message
-          : "Unable to register the filesystem workspace.",
-      )
+    } catch {
+      setError("Filesystem workspace is unavailable.")
     } finally {
       setChoosing(false)
     }
