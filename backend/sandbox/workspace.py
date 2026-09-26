@@ -17,8 +17,10 @@ from backend.sandbox.errors import (
     SandboxCreateError,
     SandboxExecutionError,
     SandboxInvalidInputError,
+    SandboxOutputLimitError,
 )
 from backend.sandbox.models import SandboxOutputFile
+from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY, SandboxPolicy
 
 _SANDBOX_ID = re.compile(r"^sb_[a-f0-9]{32}$")
 _FILE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -68,9 +70,7 @@ def docker_volume_bindings(workspace: SandboxWorkspace) -> dict[str, dict[str, s
     try:
         resolved_root = workspace.root.resolve(strict=True)
     except OSError as exc:
-        raise SandboxCreateError(
-            "Sandbox workspace directory is unavailable."
-        ) from exc
+        raise SandboxCreateError("Sandbox workspace directory is unavailable.") from exc
 
     bindings: dict[str, dict[str, str]] = {}
     for host_path, container_path, mode in (
@@ -95,16 +95,26 @@ class SandboxWorkspaceManager:
         *,
         sandbox_root: str | Path | None = None,
         artifact_root: str | Path | None = None,
+        policy: SandboxPolicy = DEFAULT_SANDBOX_POLICY,
     ) -> None:
         runtime_root = data_root() / "runtime"
-        self.sandbox_root = Path(
-            sandbox_root if sandbox_root is not None else runtime_root / "sandboxes"
-        ).expanduser().resolve()
-        self.artifact_root = Path(
-            artifact_root
-            if artifact_root is not None
-            else runtime_root / "sandbox_artifacts"
-        ).expanduser().resolve()
+        self.sandbox_root = (
+            Path(
+                sandbox_root if sandbox_root is not None else runtime_root / "sandboxes"
+            )
+            .expanduser()
+            .resolve()
+        )
+        self.artifact_root = (
+            Path(
+                artifact_root
+                if artifact_root is not None
+                else runtime_root / "sandbox_artifacts"
+            )
+            .expanduser()
+            .resolve()
+        )
+        self.policy = policy
         if (
             self.sandbox_root == self.artifact_root
             or self.sandbox_root in self.artifact_root.parents
@@ -124,9 +134,12 @@ class SandboxWorkspaceManager:
             input_dir = root / "input"
             workspace_dir = root / "workspace"
             output_dir = root / "output"
-            input_dir.mkdir(mode=0o700)
+            input_dir.mkdir(mode=0o755)
             workspace_dir.mkdir(mode=0o777)
             output_dir.mkdir(mode=0o777)
+            input_dir.chmod(0o755)
+            workspace_dir.chmod(0o777)
+            output_dir.chmod(0o777)
             return SandboxWorkspace(
                 sandbox_id=sandbox_id,
                 root=root,
@@ -197,8 +210,10 @@ class SandboxWorkspaceManager:
         self._assert_workspace(workspace)
         output_root = workspace.output_dir.resolve(strict=True)
         candidates: list[tuple[Path, PurePosixPath]] = []
+        total_output_bytes = 0
 
         def scan(directory: Path, relative: PurePosixPath) -> None:
+            nonlocal total_output_bytes
             try:
                 entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
                 for entry in entries:
@@ -210,6 +225,19 @@ class SandboxWorkspaceManager:
                         self._assert_contained(child, output_root)
                         scan(child, child_relative)
                     elif stat.S_ISREG(metadata.st_mode):
+                        if metadata.st_size > self.policy.max_output_file_bytes:
+                            raise SandboxOutputLimitError(
+                                "A sandbox output file exceeds the size limit."
+                            )
+                        total_output_bytes += metadata.st_size
+                        if total_output_bytes > self.policy.max_total_output_bytes:
+                            raise SandboxOutputLimitError(
+                                "Sandbox outputs exceed the total size limit."
+                            )
+                        if len(candidates) >= self.policy.max_output_files:
+                            raise SandboxOutputLimitError(
+                                "Sandbox produced too many output files."
+                            )
                         resolved = child.resolve(strict=True)
                         self._assert_contained(resolved, output_root)
                         candidates.append((resolved, child_relative))
@@ -217,7 +245,7 @@ class SandboxWorkspaceManager:
                         raise SandboxExecutionError(
                             "Sandbox output contains a link or unsupported file."
                         )
-            except SandboxExecutionError:
+            except (SandboxExecutionError, SandboxOutputLimitError):
                 raise
             except (OSError, RuntimeError) as exc:
                 raise SandboxExecutionError(
@@ -235,7 +263,17 @@ class SandboxWorkspaceManager:
                 destination = artifact_sandbox_root.joinpath(*relative_path.parts)
                 self._assert_contained(destination, artifact_sandbox_root)
                 destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                size_bytes, digest = self._copy_hash(source, destination)
+                remaining_bytes = self.policy.max_total_output_bytes - sum(
+                    item.size_bytes for item in promoted
+                )
+                size_bytes, digest = self._copy_hash(
+                    source,
+                    destination,
+                    max_bytes=min(
+                        self.policy.max_output_file_bytes,
+                        remaining_bytes,
+                    ),
+                )
                 promoted.append(
                     SandboxOutputFile(
                         file_id=f"sbo_{uuid4().hex}",
@@ -244,7 +282,7 @@ class SandboxWorkspaceManager:
                         sha256=digest,
                     )
                 )
-        except SandboxExecutionError:
+        except (SandboxExecutionError, SandboxOutputLimitError):
             if created_artifact_root:
                 shutil.rmtree(artifact_sandbox_root, ignore_errors=True)
             raise
@@ -337,23 +375,38 @@ class SandboxWorkspaceManager:
     def _assert_contained(path: Path, parent: Path) -> None:
         resolved_path = path.resolve(strict=False)
         resolved_parent = parent.resolve(strict=False)
-        if resolved_path != resolved_parent and resolved_parent not in resolved_path.parents:
-            raise SandboxInvalidInputError("Sandbox path is outside its allowed directory.")
+        if (
+            resolved_path != resolved_parent
+            and resolved_parent not in resolved_path.parents
+        ):
+            raise SandboxInvalidInputError(
+                "Sandbox path is outside its allowed directory."
+            )
 
     @staticmethod
-    def _copy_hash(source: Path, destination: Path) -> tuple[int, str]:
-        temporary = destination.with_name(
-            f".{destination.name}.{uuid4().hex}.partial"
-        )
+    def _copy_hash(
+        source: Path,
+        destination: Path,
+        *,
+        max_bytes: int,
+    ) -> tuple[int, str]:
+        temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.partial")
         digest = hashlib.sha256()
         size_bytes = 0
         try:
             with source.open("rb") as source_handle, temporary.open("xb") as target:
                 while chunk := source_handle.read(1024 * 1024):
                     size_bytes += len(chunk)
+                    if size_bytes > max_bytes:
+                        raise SandboxOutputLimitError(
+                            "Sandbox output changed beyond its allowed size."
+                        )
                     digest.update(chunk)
                     target.write(chunk)
             os.replace(temporary, destination)
+        except SandboxOutputLimitError:
+            temporary.unlink(missing_ok=True)
+            raise
         except OSError:
             temporary.unlink(missing_ok=True)
             raise

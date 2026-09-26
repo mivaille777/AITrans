@@ -8,6 +8,7 @@ from backend.sandbox.errors import (
     SandboxExecutionError,
     SandboxImageMissingError,
     SandboxInvalidInputError,
+    SandboxOutputLimitError,
 )
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import (
@@ -16,6 +17,7 @@ from backend.sandbox.models import (
     SandboxOutputFile,
     SandboxRuntimeHealth,
 )
+from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY, SandboxPolicy
 from backend.sandbox.workspace import (
     SandboxInputFile,
     SandboxWorkspace,
@@ -23,6 +25,7 @@ from backend.sandbox.workspace import (
 )
 
 __all__ = [
+    "DEFAULT_SANDBOX_POLICY",
     "DockerNotLinuxError",
     "DockerUnavailableError",
     "SandboxCleanupError",
@@ -35,6 +38,8 @@ __all__ = [
     "SandboxInvalidInputError",
     "SandboxManager",
     "SandboxOutputFile",
+    "SandboxOutputLimitError",
+    "SandboxPolicy",
     "SandboxRuntimeHealth",
     "SandboxWorkspace",
     "SandboxWorkspaceManager",

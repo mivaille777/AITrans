@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from backend.sandbox.errors import SandboxExecutionError, SandboxInvalidInputError
+from backend.sandbox.errors import (
+    SandboxExecutionError,
+    SandboxInvalidInputError,
+    SandboxOutputLimitError,
+)
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import (
     SandboxExecutionRequest,
     SandboxExecutionResult,
 )
+from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY
 from backend.sandbox.workspace import (
     SandboxInputFile,
     SandboxWorkspace,
@@ -192,3 +198,42 @@ def test_workspace_code_file_is_read_only_until_cleanup(tmp_path: Path) -> None:
         assert code_path.stat().st_mode & 0o222 == 0
     manager.cleanup(workspace)
     assert not workspace.root.exists()
+
+
+def test_output_file_count_and_size_limits_are_enforced(tmp_path: Path) -> None:
+    policy = replace(
+        DEFAULT_SANDBOX_POLICY,
+        max_output_files=1,
+        max_output_file_bytes=4,
+        max_total_output_bytes=4,
+    )
+    manager = SandboxWorkspaceManager(
+        sandbox_root=tmp_path / "sandboxes",
+        artifact_root=tmp_path / "artifacts",
+        policy=policy,
+    )
+    workspace = manager.create("sb_" + "d" * 32)
+    (workspace.output_dir / "one.txt").write_text("12345", encoding="utf-8")
+
+    with pytest.raises(SandboxOutputLimitError) as error:
+        manager.collect_outputs(workspace)
+
+    assert error.value.code == "sandbox_file_limit"
+    manager.cleanup(workspace)
+
+
+def test_output_file_count_limit_is_enforced(tmp_path: Path) -> None:
+    policy = replace(DEFAULT_SANDBOX_POLICY, max_output_files=1)
+    manager = SandboxWorkspaceManager(
+        sandbox_root=tmp_path / "sandboxes",
+        artifact_root=tmp_path / "artifacts",
+        policy=policy,
+    )
+    workspace = manager.create("sb_" + "e" * 32)
+    (workspace.output_dir / "one.txt").write_text("one", encoding="utf-8")
+    (workspace.output_dir / "two.txt").write_text("two", encoding="utf-8")
+
+    with pytest.raises(SandboxOutputLimitError):
+        manager.collect_outputs(workspace)
+
+    manager.cleanup(workspace)

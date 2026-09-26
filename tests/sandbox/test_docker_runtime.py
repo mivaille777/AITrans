@@ -11,13 +11,16 @@ from backend.sandbox.errors import (
     SandboxImageMissingError,
 )
 from backend.sandbox.models import SandboxExecutionRequest
+from backend.sandbox.policy import SandboxPolicy
 from backend.sandbox.workspace import SandboxWorkspaceManager
 
 
 class FakeContainer:
     def __init__(self, *, timeout_after_polls: int | None = 1) -> None:
         self.status = "created"
-        self.attrs = {"State": {"Status": "created", "ExitCode": None, "OOMKilled": False}}
+        self.attrs = {
+            "State": {"Status": "created", "ExitCode": None, "OOMKilled": False}
+        }
         self.timeout_after_polls = timeout_after_polls
         self.polls = 0
         self.removed = False
@@ -36,7 +39,10 @@ class FakeContainer:
                 OOMKilled=False,
             )
             self.status = "exited"
-        elif self.timeout_after_polls is not None and self.polls >= self.timeout_after_polls:
+        elif (
+            self.timeout_after_polls is not None
+            and self.polls >= self.timeout_after_polls
+        ):
             self.attrs["State"].update(Status="exited", ExitCode=0, OOMKilled=False)
             self.status = "exited"
         else:
@@ -49,12 +55,11 @@ class FakeContainer:
     def wait(self, timeout: float | None = None) -> dict[str, int]:
         return {"StatusCode": 137}
 
-    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
-        if stdout:
-            return b"ok\n"
-        if stderr:
-            return b""
-        return b""
+    def attach(self, *, stream: bool, logs: bool, demux: bool):
+        assert stream is True
+        assert logs is False
+        assert demux is True
+        return iter([(b"ok\n", None)])
 
     def remove(self, *, force: bool = False) -> None:
         assert force is True
@@ -109,6 +114,19 @@ def test_runtime_uses_no_network_and_removes_completed_container(tmp_path) -> No
     assert result.exit_code == 0
     assert result.status == "succeeded"
     assert client.create_kwargs["network_mode"] == "none"
+    assert client.create_kwargs["user"] == "10001:10001"
+    assert client.create_kwargs["read_only"] is True
+    assert client.create_kwargs["cap_drop"] == ["ALL"]
+    assert client.create_kwargs["security_opt"] == ["no-new-privileges"]
+    assert "seccomp=unconfined" not in client.create_kwargs["security_opt"]
+    assert client.create_kwargs["privileged"] is False
+    assert client.create_kwargs["nano_cpus"] == 1_000_000_000
+    assert client.create_kwargs["mem_limit"] == 512 * 1024 * 1024
+    assert client.create_kwargs["memswap_limit"] == 512 * 1024 * 1024
+    assert client.create_kwargs["pids_limit"] == 64
+    assert client.create_kwargs["ulimits"][0].name == "nofile"
+    assert client.create_kwargs["ulimits"][0].soft == 256
+    assert client.create_kwargs["tmpfs"]["/tmp"].endswith("size=64m,mode=1777")
     assert client.create_kwargs["labels"]["com.aitrans.sandbox_id"] == (
         "sb_" + "1" * 32
     )
@@ -135,6 +153,34 @@ def test_runtime_kills_timed_out_container_and_removes_it(tmp_path) -> None:
 
     assert result.timed_out is True
     assert result.status == "timed_out"
+    assert container.killed is True
+    assert container.removed is True
+
+
+def test_runtime_stops_when_stdout_limit_is_exceeded(tmp_path) -> None:
+    container = FakeContainer(timeout_after_polls=None)
+    container.attach = lambda **kwargs: iter([(b"1234", None), (b"5", None)])
+    client = FakeDockerClient(container)
+    runtime = DockerSandboxRuntime(
+        client=client,
+        policy=SandboxPolicy(stdout_limit_bytes=4),
+        poll_interval_seconds=0.001,
+    )
+
+    result = _execute(
+        runtime,
+        SandboxExecutionRequest(
+            sandbox_id="sb_" + "3" * 32,
+            code="while True: print('x')",
+        ),
+        tmp_path,
+    )
+
+    assert result.output_limit_exceeded is True
+    assert result.status == "output_limit_exceeded"
+    assert result.timed_out is False
+    assert result.stdout_bytes == 4
+    assert result.stdout == "1234"
     assert container.killed is True
     assert container.removed is True
 
@@ -176,7 +222,9 @@ def test_health_requires_linux_containers() -> None:
     assert health.error_code == DockerNotLinuxError.code
 
 
-@pytest.mark.parametrize("image", ["", "python:latest", "aitrans-python-sandbox:latest"])
+@pytest.mark.parametrize(
+    "image", ["", "python:latest", "aitrans-python-sandbox:latest"]
+)
 def test_runtime_rejects_unpinned_or_missing_image(image: str) -> None:
     with pytest.raises(ValueError):
         DockerSandboxRuntime(image=image)

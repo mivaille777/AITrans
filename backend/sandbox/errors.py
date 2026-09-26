@@ -41,5 +41,9 @@ class SandboxCleanupError(SandboxError):
     code = "sandbox_cleanup_failed"
 
 
+class SandboxOutputLimitError(SandboxError):
+    code = "sandbox_file_limit"
+
+
 class SandboxInvalidInputError(SandboxError):
     code = "sandbox_invalid_input"

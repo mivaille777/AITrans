@@ -25,7 +25,13 @@ class SandboxOutputFile(SandboxModel):
 
 class SandboxExecutionResult(SandboxModel):
     sandbox_id: str = Field(min_length=1, max_length=80)
-    status: Literal["succeeded", "failed", "timed_out", "oom_killed"]
+    status: Literal[
+        "succeeded",
+        "failed",
+        "timed_out",
+        "oom_killed",
+        "output_limit_exceeded",
+    ]
     exit_code: int | None = None
     stdout: str = ""
     stderr: str = ""
@@ -33,6 +39,8 @@ class SandboxExecutionResult(SandboxModel):
     timed_out: bool = False
     output_limit_exceeded: bool = False
     oom_killed: bool = False
+    stdout_bytes: int = Field(default=0, ge=0)
+    stderr_bytes: int = Field(default=0, ge=0)
     runtime: str = "docker"
     image: str = ""
     output_files: list[SandboxOutputFile] = Field(default_factory=list)
