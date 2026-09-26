@@ -23,6 +23,22 @@ The backend must be restarted after changing these variables. With the flag
 unset or false, or when Docker/the image is unavailable, the Python tool is not
 registered. The image must use a pinned tag; `latest` is rejected.
 
+When starting the desktop app with the development launcher, opt in explicitly:
+
+```powershell
+.\scripts\start.ps1 -Mode Desktop -SkipInstall -EnableSandbox
+```
+
+If another backend is already using port `8766`, use a free API port so the
+launcher does not connect the frontend to that older process:
+
+```powershell
+.\scripts\start.ps1 -Mode Desktop -SkipInstall -EnableSandbox -ApiPort 8767
+```
+
+The launcher checks that the selected checkout contains Sandbox Debug Studio
+and that the backend exposes a healthy sandbox runtime and `python_execute`.
+
 The runtime policy is fixed by the backend: no network, non-root user,
 read-only root filesystem, dropped capabilities, no-new-privileges, 30-second
 execution limit, and bounded CPU, memory, processes, logs, and output files.

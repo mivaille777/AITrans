@@ -15,6 +15,10 @@ param(
     # when the environment is already prepared and the launcher must be read-only.
     [switch]$SkipInstall,
 
+    # Opt in to the Docker-backed Python sandbox for this development session.
+    [switch]$EnableSandbox,
+    [string]$SandboxImage = "aitrans-python-sandbox:v1",
+
     # Open the Vite URL automatically for -Mode Web.
     [switch]$OpenBrowser,
 
@@ -31,6 +35,9 @@ $PackageJson = Join-Path $DesktopDir "package.json"
 $PackageLock = Join-Path $DesktopDir "package-lock.json"
 $ApiBaseUrl = "http://$ApiHost`:$ApiPort"
 $HealthUrl = "$ApiBaseUrl/health"
+$SandboxHealthUrl = "$ApiBaseUrl/api/sandbox/debug/health"
+$SandboxStudioSource = Join-Path $DesktopDir "src\features\settings\SandboxDebugStudio.tsx"
+$SandboxEnabledValue = if ($EnableSandbox) { "true" } else { "false" }
 
 function Write-Section {
     param([string]$Title)
@@ -139,6 +146,39 @@ function Test-HttpEndpoint {
     }
     catch {
         return $false
+    }
+}
+
+function Get-SandboxRuntimeHealth {
+    try {
+        return Invoke-RestMethod -Uri $SandboxHealthUrl -TimeoutSec 3 -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+}
+
+function Assert-SandboxBackendReady {
+    $sandboxHealth = Get-SandboxRuntimeHealth
+    if ($null -eq $sandboxHealth) {
+        throw "Sandbox was requested, but the API at $ApiBaseUrl does not expose $SandboxHealthUrl. It is an older/different backend. Stop it or rerun with -ApiPort set to a free port (for example 8767)."
+    }
+
+    if (-not $sandboxHealth.available) {
+        $reason = if ($sandboxHealth.error_code) { $sandboxHealth.error_code } else { "runtime_unavailable" }
+        throw "Sandbox was requested, but the API at $ApiBaseUrl reports '$reason'. An already-running backend cannot inherit -EnableSandbox; stop it or use another -ApiPort, then verify Docker Linux mode and image '$SandboxImage'."
+    }
+
+    $catalog = $null
+    try {
+        $catalog = Invoke-RestMethod -Uri "$ApiBaseUrl/api/agent/tools" -TimeoutSec 3 -ErrorAction Stop
+    }
+    catch {
+        throw "Sandbox runtime is healthy at $ApiBaseUrl, but the Agent tool catalog could not be read. Confirm this API belongs to the current checkout."
+    }
+
+    if (-not ($catalog.tools | Where-Object { $_.name -eq "python_execute" })) {
+        throw "Sandbox runtime is healthy at $ApiBaseUrl, but python_execute is missing from /api/agent/tools. The API is likely from a different checkout; stop it or choose another -ApiPort."
     }
 }
 
@@ -268,12 +308,17 @@ Write-Section "AITranslator development launcher"
 Write-Host "Mode       : $Mode"
 Write-Host "Repository : $RepoRoot"
 Write-Host "API        : $ApiBaseUrl"
+Write-Host "Sandbox    : $(if ($EnableSandbox) { "enabled ($SandboxImage)" } else { "disabled (pass -EnableSandbox to opt in)" })"
 if ($Mode -ne "Backend") {
     Write-Host "Frontend   : http://$FrontendHost`:$FrontendPort"
 }
 
 if (-not (Test-Path -LiteralPath $DesktopDir)) {
     throw "Desktop project directory was not found: $DesktopDir"
+}
+
+if ($EnableSandbox -and -not (Test-Path -LiteralPath $SandboxStudioSource)) {
+    throw "Sandbox Debug Studio is not present in this checkout. Use branch 'codex/sandbox-frontend-integration' before starting with -EnableSandbox."
 }
 
 $CondaExe = Resolve-CondaExecutable
@@ -310,6 +355,8 @@ Set-Location $(ConvertTo-PowerShellLiteral $RepoRoot)
 `$env:AITRANS_API_HOST = $(ConvertTo-PowerShellLiteral $ApiHost)
 `$env:AITRANS_API_PORT = $(ConvertTo-PowerShellLiteral ([string]$ApiPort))
 `$env:AITRANS_FRONTEND_ORIGIN = $(ConvertTo-PowerShellLiteral ("http://$FrontendHost`:$FrontendPort"))
+`$env:AITRANS_SANDBOX_ENABLED = $(ConvertTo-PowerShellLiteral $SandboxEnabledValue)
+`$env:AITRANS_SANDBOX_IMAGE = $(ConvertTo-PowerShellLiteral $SandboxImage)
 Write-Host 'AITranslator backend' -ForegroundColor Cyan
 Write-Host 'Health: $HealthUrl' -ForegroundColor DarkGray
 Write-Host 'Conda : $CondaEnvironment' -ForegroundColor DarkGray
@@ -333,11 +380,19 @@ else {
 }
 
 if ($Mode -eq "Backend") {
+    if ($EnableSandbox) {
+        Assert-SandboxBackendReady
+    }
     Write-Section "Backend ready"
     Write-Host "Health : $HealthUrl" -ForegroundColor Green
     Write-Host "Docs   : $ApiBaseUrl/docs" -ForegroundColor Green
     Write-Host "Close the FastAPI terminal window to stop the backend." -ForegroundColor DarkGray
     exit 0
+}
+
+if ($EnableSandbox) {
+    Assert-SandboxBackendReady
+    Write-Host "  Sandbox Debug API and python_execute are ready" -ForegroundColor Green
 }
 
 $FrontendBaseUrl = "http://$FrontendHost`:$FrontendPort"
