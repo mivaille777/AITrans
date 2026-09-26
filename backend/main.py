@@ -37,6 +37,7 @@ from backend.api.dependencies import (
     close_filesystem_workspace_service,
     close_product_agent_service,
     close_rag_debug_service,
+    close_sandbox_approval_service,
     close_sandbox_debug_service,
     close_sandbox_manager,
 )
@@ -65,6 +66,7 @@ from backend.api.reading import router as reading_router
 from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
 from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
+from backend.api.sandbox_approvals import router as sandbox_approvals_router
 from backend.api.sandbox_debug import router as sandbox_debug_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
@@ -139,6 +141,7 @@ async def lifespan(_: FastAPI):
         close_product_agent_service()
         close_agent_tool_registry()
         close_sandbox_debug_service()
+        close_sandbox_approval_service()
         close_filesystem_workspace_service()
         close_sandbox_manager()
         close_rag_runtime()
@@ -171,6 +174,7 @@ def create_app():
         agent_runtime_canonical_router,
         filesystem_workspaces_router,
         sandbox_debug_router,
+        sandbox_approvals_router,
         memory_router,
         translation_router,
         translation_cascade_router,

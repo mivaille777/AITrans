@@ -36,6 +36,7 @@ from backend.services.rag_debug_store_service import RagDebugStoreService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.research_note_service import ResearchNoteService
 from backend.services.research_workspace_service import ResearchWorkspaceService
+from backend.services.sandbox_approval_service import SandboxApprovalService
 from backend.services.sandbox_debug_service import SandboxDebugService
 from backend.services.translation_service import TranslationService
 
@@ -69,6 +70,8 @@ _filesystem_workspace_service: FilesystemWorkspaceService | None = None
 _filesystem_workspace_service_lock = Lock()
 _sandbox_debug_service: SandboxDebugService | None = None
 _sandbox_debug_service_lock = Lock()
+_sandbox_approval_service: SandboxApprovalService | None = None
+_sandbox_approval_service_lock = Lock()
 _product_agent_service: ProductAgentService | None = None
 _product_agent_service_lock = Lock()
 _rag_debug_store_service: RagDebugStoreService | None = None
@@ -350,11 +353,31 @@ def close_sandbox_debug_service() -> None:
         service.close()
 
 
+def get_sandbox_approval_service() -> SandboxApprovalService:
+    global _sandbox_approval_service
+    if _sandbox_approval_service is not None:
+        return _sandbox_approval_service
+    with _sandbox_approval_service_lock:
+        if _sandbox_approval_service is None:
+            _sandbox_approval_service = SandboxApprovalService()
+        return _sandbox_approval_service
+
+
+def close_sandbox_approval_service() -> None:
+    global _sandbox_approval_service
+    with _sandbox_approval_service_lock:
+        service = _sandbox_approval_service
+        _sandbox_approval_service = None
+    if service is not None:
+        service.close()
+
+
 def get_sandbox_runtime_health() -> SandboxRuntimeHealth:
     if not _sandbox_enabled():
         return SandboxRuntimeHealth(
             available=False,
-            image=os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE,
+            image=os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip()
+            or DEFAULT_IMAGE,
             error_code="sandbox_disabled",
             message="Sandbox execution is disabled.",
         )
