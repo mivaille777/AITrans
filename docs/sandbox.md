@@ -39,7 +39,12 @@ launcher does not connect the frontend to that older process:
 The launcher checks that the selected checkout contains Sandbox Debug Studio
 and that the backend exposes a healthy sandbox runtime and `python_execute`.
 
-The runtime policy is fixed by the backend: no network, non-root user,
-read-only root filesystem, dropped capabilities, no-new-privileges, 30-second
-execution limit, and bounded CPU, memory, processes, logs, and output files.
-These limits are not configurable through the Agent tool or environment.
+The runtime defaults to no network and enforces a non-root user, read-only root
+filesystem, dropped capabilities, no-new-privileges, 30-second execution limit,
+and bounded CPU, memory, processes, logs, and output files. A command can request
+one exact public hostname through the approval flow; this does not expose general
+network access. These limits are not configurable through the Agent tool or
+environment.
+
+For permission, approval, command, workspace-change, and Debug Trace payloads,
+see [the Sandbox API contract](sandbox-api-contract.md).
