@@ -9,6 +9,8 @@ import type {
 
 type ActivityFilter = "all" | "file" | "network" | "process" | "denied"
 
+const SAFE_CONTAINER_PATH_ROOTS = ["/input", "/workspace", "/output", "/tmp"] as const
+
 export default function SandboxDebugFilesystem({ trace }: { trace: SandboxDebugTrace | null }) {
   const [filter, setFilter] = useState<ActivityFilter>("all")
   const [query, setQuery] = useState("")
@@ -209,7 +211,16 @@ function ActivityRow({ activity }: { activity: SandboxActivityEvent }) {
 function safeDisplayPath(value: string): string {
   const path = value.trim()
   if (!path) return "—"
-  if (/^[a-zA-Z]:[\\/]/.test(path) || /^file:\/\//i.test(path)) {
+
+  const knownContainerPath = SAFE_CONTAINER_PATH_ROOTS.some(
+    (root) => path === root || path.startsWith(`${root}/`),
+  )
+  const windowsHostPath = /^[a-zA-Z]:[\\/]/.test(path)
+  const uncHostPath = /^\\\\/.test(path)
+  const fileUri = /^file:\/\//i.test(path)
+  const unknownPosixAbsolutePath = path.startsWith("/") && !knownContainerPath
+
+  if (windowsHostPath || uncHostPath || fileUri || unknownPosixAbsolutePath) {
     const filename = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "path"
     return `[host path redacted]/${filename}`
   }

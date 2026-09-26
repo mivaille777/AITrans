@@ -29,6 +29,7 @@ const trace = {
     { sequence: 2, timestamp: "2026-09-26T10:24:02Z", kind: "network" as const, action: "connect", target: "example.com:443", decision: "denied" as const, reason: "NETWORK_DISABLED" },
     { sequence: 3, timestamp: "2026-09-26T10:24:03Z", kind: "file" as const, action: "read", target: "C:\\Users\\someone\\.ssh\\id_rsa", decision: "denied" as const, reason: "PATH_OUTSIDE_WORKSPACE" },
     { sequence: 4, timestamp: "2026-09-26T10:24:04Z", kind: "process" as const, action: "spawn", target: "python3", decision: "observed" as const, reason: "" },
+    { sequence: 5, timestamp: "2026-09-26T10:24:05Z", kind: "file" as const, action: "read", target: "/Users/someone/.ssh/id_ed25519", decision: "denied" as const, reason: "PATH_OUTSIDE_WORKSPACE" },
   ],
   resources: [],
   policy: {
@@ -82,12 +83,14 @@ describe("SandboxDebugFilesystem", () => {
     expect(screen.queryByText("/input/data.csv")).toBeNull()
   })
 
-  it("never displays a Windows host path verbatim", () => {
+  it("never displays host paths verbatim across desktop platforms", () => {
     render(<SandboxDebugFilesystem trace={trace} />)
 
     expect(screen.queryByText(/C:\\Users\\/)).toBeNull()
+    expect(screen.queryByText(/\/Users\/someone/)).toBeNull()
     expect(screen.getByText("[host path redacted]/id_rsa")).toBeTruthy()
-    expect(screen.getByText("PATH_OUTSIDE_WORKSPACE")).toBeTruthy()
+    expect(screen.getByText("[host path redacted]/id_ed25519")).toBeTruthy()
+    expect(screen.getAllByText("PATH_OUTSIDE_WORKSPACE").length).toBeGreaterThanOrEqual(2)
   })
 
   it("shows an empty state before a trace exists", () => {
