@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from threading import Lock
 
 from backend.api.knowledge_dependencies import (
@@ -13,6 +14,8 @@ from backend.api.llm_dependencies import (
     build_routed_product_agent_service,
     build_routed_quick_action_service,
 )
+from backend.sandbox.docker_runtime import DEFAULT_IMAGE, DockerSandboxRuntime
+from backend.sandbox.manager import SandboxManager
 from backend.services.agent_tool_registry import AgentToolRegistry
 from backend.services.browser_context_service import BrowserContextService
 from backend.services.companion_chat_service import CompanionChatService
@@ -57,6 +60,8 @@ _companion_ownership_service: CompanionConversationOwnershipService | None = Non
 _companion_ownership_service_lock = Lock()
 _agent_tool_registry: AgentToolRegistry | None = None
 _agent_tool_registry_lock = Lock()
+_sandbox_manager: SandboxManager | None = None
+_sandbox_manager_lock = Lock()
 _product_agent_service: ProductAgentService | None = None
 _product_agent_service_lock = Lock()
 _rag_debug_store_service: RagDebugStoreService | None = None
@@ -291,8 +296,46 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 chunk_store=rag_runtime.sparse_retriever,
                 jit_search_read_enabled=rag_runtime.config.jit_search_read_enabled,
                 knowledge_workspace_service=get_knowledge_workspace_service(),
+                sandbox_manager=get_sandbox_manager(),
             )
         return _agent_tool_registry
+
+
+def _sandbox_enabled() -> bool:
+    value = os.getenv("AITRANS_SANDBOX_ENABLED", "false").strip().casefold()
+    return value in {"1", "true", "yes", "on"}
+
+
+def get_sandbox_manager() -> SandboxManager | None:
+    """Return a ready sandbox only when explicitly enabled and healthy."""
+
+    global _sandbox_manager
+    if not _sandbox_enabled():
+        return None
+    if _sandbox_manager is not None:
+        return _sandbox_manager
+    with _sandbox_manager_lock:
+        if _sandbox_manager is None:
+            image = os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip()
+            try:
+                runtime = DockerSandboxRuntime(image=image or DEFAULT_IMAGE)
+            except ValueError:
+                return None
+            health = runtime.health()
+            if not health.available:
+                runtime.close()
+                return None
+            _sandbox_manager = SandboxManager(runtime)
+        return _sandbox_manager
+
+
+def close_sandbox_manager() -> None:
+    global _sandbox_manager
+    with _sandbox_manager_lock:
+        manager = _sandbox_manager
+        _sandbox_manager = None
+    if manager is not None:
+        manager.close()
 
 
 def close_agent_tool_registry() -> None:

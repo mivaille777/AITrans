@@ -17,6 +17,8 @@ from backend.api.agent_routing import router as agent_routing_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
 from backend.api.agent_runtime_jobs import (
     canonical_router as agent_runtime_canonical_router,
+)
+from backend.api.agent_runtime_jobs import (
     close_agent_run_store,
     execute_persisted_agent_run,
     get_agent_run_store,
@@ -30,7 +32,12 @@ from backend.api.companion_stream import router as companion_stream_router
 from backend.api.conversations import router as conversations_router
 from backend.api.curator import router as curator_router
 from backend.api.curator_dependencies import close_curator_commit_service
-from backend.api.dependencies import close_rag_debug_service
+from backend.api.dependencies import (
+    close_agent_tool_registry,
+    close_product_agent_service,
+    close_rag_debug_service,
+    close_sandbox_manager,
+)
 from backend.api.evidence_ledger import router as evidence_ledger_router
 from backend.api.evidence_review import router as evidence_review_router
 from backend.api.health import router as health_router
@@ -124,6 +131,9 @@ async def lifespan(_: FastAPI):
         close_curator_commit_service()
         close_memory_coordinator()
         close_agent_checkpoint_service()
+        close_product_agent_service()
+        close_agent_tool_registry()
+        close_sandbox_manager()
 
 
 def create_app():

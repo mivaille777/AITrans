@@ -30,6 +30,11 @@ class SandboxManager:
         self._runtime = runtime
         self._workspace_manager = workspace_manager or SandboxWorkspaceManager()
 
+    def close(self) -> None:
+        close = getattr(self._runtime, "close", None)
+        if callable(close):
+            close()
+
     def execute_python(
         self,
         code: str,

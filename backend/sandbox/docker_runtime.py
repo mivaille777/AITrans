@@ -74,6 +74,16 @@ class DockerSandboxRuntime:
                 raise DockerUnavailableError("Docker daemon is unavailable.") from exc
         return self._client
 
+    def close(self) -> None:
+        """Release the lazily created Docker API client owned by this runtime."""
+
+        if self._client_was_provided:
+            return
+        client = self._client
+        self._client = None
+        if client is not None:
+            client.close()
+
     def health(self) -> SandboxRuntimeHealth:
         try:
             client = self._get_client()

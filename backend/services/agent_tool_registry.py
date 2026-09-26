@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from backend.agent_tools.base import (
@@ -17,8 +18,8 @@ from backend.agent_tools.evidence_ledger import (
     build_evidence_ledger_tool_definitions,
 )
 from backend.agent_tools.knowledge import (
-    KnowledgeChunkStore,
     KnowledgeAgentTools,
+    KnowledgeChunkStore,
     build_knowledge_tool_definitions,
 )
 from backend.agent_tools.reading import (
@@ -33,6 +34,7 @@ from backend.agent_tools.research_memory import (
     ResearchMemoryAgentTool,
     build_research_memory_tool_definition,
 )
+from backend.agent_tools.sandbox import build_python_sandbox_tool_definition
 from backend.agent_tools.translation import (
     TranslationAgentTool,
     build_translation_tool_definition,
@@ -99,6 +101,7 @@ class AgentToolRegistry:
         chunk_store: KnowledgeChunkStore | None = None,
         jit_search_read_enabled: bool = False,
         knowledge_workspace_service: KnowledgeWorkspaceService | None = None,
+        sandbox_manager: Any | None = None,
     ) -> None:
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         if translation_fallback_service is not None:
@@ -179,6 +182,11 @@ class AgentToolRegistry:
             workspace_service=knowledge_workspace_service,
         )
         knowledge_definitions = build_knowledge_tool_definitions(knowledge_tools)
+        sandbox_definitions = (
+            (build_python_sandbox_tool_definition(sandbox_manager),)
+            if sandbox_manager is not None
+            else ()
+        )
 
         self._definitions = (
             reading_by_name["inspect_reading_context"],
@@ -195,6 +203,7 @@ class AgentToolRegistry:
             reading_by_name["analyze_equation"],
             reading_by_name["summarize_current_section"],
             *knowledge_definitions,
+            *sandbox_definitions,
         )
         self._definition_by_name = {
             definition.spec.name: definition for definition in self._definitions
@@ -219,6 +228,21 @@ class AgentToolRegistry:
         if spec is None:
             raise KeyError(f"Unknown agent tool: {name}")
         return spec.validate_planner_arguments(arguments)
+
+    def trace_arguments(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return trace-safe arguments without changing ordinary tool traces."""
+
+        if str(tool_name).strip() != "python_execute":
+            return dict(arguments or {})
+        code = str((arguments or {}).get("code", "") or "")
+        return {
+            "code_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+            "code_chars": len(code),
+        }
 
     def allows_safe_retry(self, name: str) -> bool:
         definition = self.get_definition(name)
