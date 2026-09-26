@@ -27,9 +27,11 @@ const INITIAL_STAGES: SandboxDebugStage[] = [
 
 export default function SandboxDebugTrace({
   health,
+  selectedTrace = null,
   onTraceChange,
 }: {
   health: SandboxRuntimeHealth | null
+  selectedTrace?: SandboxDebugTrace | null
   onTraceChange?: (trace: SandboxDebugTrace | null) => void
 }) {
   const [code, setCode] = useState('print("Hello from AITrans Sandbox")')
@@ -50,6 +52,16 @@ export default function SandboxDebugTrace({
   useEffect(() => {
     onTraceChange?.(trace)
   }, [onTraceChange, trace])
+
+  /* oxlint-disable react-hooks/set-state-in-effect -- a Runs-tab selection replaces the inspected trace */
+  useEffect(() => {
+    if (!selectedTrace) return
+    if (selectedTrace.run.sandbox_id === trace?.run.sandbox_id) return
+    setTrace(selectedTrace)
+    setRunning(false)
+    setError("")
+  }, [selectedTrace, trace?.run.sandbox_id])
+  /* oxlint-enable react-hooks/set-state-in-effect */
 
   const summaryItems = useMemo(() => [
     ["Sandbox ID", run?.sandbox_id || "—"],

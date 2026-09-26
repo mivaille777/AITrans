@@ -8,6 +8,7 @@ import {
 import SandboxDebugFilesystem from "./SandboxDebugFilesystem"
 import SandboxDebugPolicy from "./SandboxDebugPolicy"
 import SandboxDebugResources from "./SandboxDebugResources"
+import SandboxDebugRuns from "./SandboxDebugRuns"
 import SandboxDebugTrace from "./SandboxDebugTrace"
 
 type SandboxDebugTab = "trace" | "filesystem" | "resources" | "policy" | "runs"
@@ -139,11 +140,19 @@ export default function SandboxDebugStudio() {
               aria-hidden={!visible}
               className={visible ? "h-full min-h-0 animate-[ragFadeIn_.18s_ease-out]" : "hidden"}
             >
-              {id === "trace" && <SandboxDebugTrace health={runtimeHealth} onTraceChange={setLatestTrace} />}
+              {id === "trace" && <SandboxDebugTrace health={runtimeHealth} selectedTrace={latestTrace} onTraceChange={setLatestTrace} />}
               {id === "filesystem" && <SandboxDebugFilesystem trace={latestTrace} />}
               {id === "resources" && <SandboxDebugResources trace={latestTrace} />}
               {id === "policy" && <SandboxDebugPolicy trace={latestTrace} />}
-              {id !== "trace" && id !== "filesystem" && id !== "resources" && id !== "policy" && <SandboxEmptyState tab={id} />}
+              {id === "runs" && (
+                <SandboxDebugRuns
+                  onSelectTrace={(nextTrace) => {
+                    setLatestTrace(nextTrace)
+                    setActiveTab("trace")
+                  }}
+                />
+              )}
+              {id !== "trace" && id !== "filesystem" && id !== "resources" && id !== "policy" && id !== "runs" && <SandboxEmptyState tab={id} />}
             </div>
           )
         })}
