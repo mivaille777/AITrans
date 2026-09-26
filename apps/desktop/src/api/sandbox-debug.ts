@@ -164,8 +164,8 @@ type RawSandboxDebugTrace = Omit<
 > & {
   run: RawSandboxRunSummary
   policy: RawSandboxEffectivePolicy
-  input_files: RawSandboxDebugFile[]
-  output_files: RawSandboxDebugFile[]
+  input_files?: RawSandboxDebugFile[]
+  output_files?: RawSandboxDebugFile[]
 }
 
 export interface StartSandboxDebugRunRequest {
@@ -277,8 +277,8 @@ function normalizeSandboxDebugTrace(trace: RawSandboxDebugTrace): SandboxDebugTr
     ...trace,
     run: normalizeSandboxRunSummary(trace.run),
     policy: normalizeSandboxEffectivePolicy(trace.policy),
-    input_files: trace.input_files.map((file) => normalizeSandboxDebugFile(file, "workspace")),
-    output_files: trace.output_files.map((file) => normalizeSandboxDebugFile(file, "generated")),
+    input_files: (trace.input_files ?? []).map((file) => normalizeSandboxDebugFile(file, "workspace")),
+    output_files: (trace.output_files ?? []).map((file) => normalizeSandboxDebugFile(file, "generated")),
   }
 }
 

@@ -190,6 +190,25 @@ describe("sandbox debug api", () => {
     })
   })
 
+  it("treats omitted file collections as an empty trace section", async () => {
+    const backendTrace = {
+      ...trace,
+      input_files: undefined,
+      output_files: undefined,
+    }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(backendTrace), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const loaded = await getSandboxDebugRun("sb-1")
+    expect(loaded.input_files).toEqual([])
+    expect(loaded.output_files).toEqual([])
+  })
+
   it("starts and cancels a manual run using the bounded request contract", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(
