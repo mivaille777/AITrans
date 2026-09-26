@@ -10,12 +10,20 @@ vi.mock("../../api/sandbox-debug", () => ({
     os_type: "linux",
     detail: "",
   }),
+  getSandboxDebugRun: vi.fn(),
 }))
 
 vi.mock("./SandboxDebugTrace", () => ({
-  default: () => <div>Sandbox trace content</div>,
+  default: ({ selectedTrace }: { selectedTrace?: { run?: { sandbox_id?: string } } | null }) => (
+    <div>Sandbox trace content{selectedTrace?.run?.sandbox_id ? ` · ${selectedTrace.run.sandbox_id}` : ""}</div>
+  ),
 }))
+vi.mock("./SandboxDebugFilesystem", () => ({ default: () => <div>No filesystem activity recorded</div> }))
+vi.mock("./SandboxDebugResources", () => ({ default: () => <div>No resource samples recorded</div> }))
+vi.mock("./SandboxDebugPolicy", () => ({ default: () => <div>No effective policy recorded</div> }))
+vi.mock("./SandboxDebugRuns", () => ({ default: () => <div>No sandbox runs recorded</div> }))
 
+import { getSandboxDebugRun } from "../../api/sandbox-debug"
 import SandboxDebugStudio from "./SandboxDebugStudio"
 
 afterEach(() => {
@@ -69,5 +77,54 @@ describe("SandboxDebugStudio", () => {
 
     expect(traceTab.querySelector("span")?.className).toContain("scale-x-0")
     expect(policyTab.querySelector("span")?.className).toContain("scale-x-100")
+  })
+
+  it("loads the requested trace when navigation provides a sandbox id", async () => {
+    vi.mocked(getSandboxDebugRun).mockResolvedValue({
+      run: {
+        sandbox_id: "sb-123",
+        run_id: "run-123",
+        tool_call_id: "tool-123",
+        source: "agent",
+        workspace_id: "fsw-123",
+        workspace_name: "AITrans",
+        runtime: "docker",
+        image: "aitrans-sandbox:latest",
+        status: "completed",
+        started_at: "",
+        finished_at: "",
+        duration_ms: 842,
+        exit_code: 0,
+      },
+      stages: [],
+      stdout: "",
+      stderr: "",
+      activities: [],
+      resources: [],
+      policy: {
+        network: "none",
+        root_filesystem_read_only: true,
+        user: "10001:10001",
+        cap_drop: ["ALL"],
+        no_new_privileges: true,
+        seccomp: "default",
+        cpu_limit: 1,
+        memory_limit_bytes: 536870912,
+        pids_limit: 64,
+        timeout_seconds: 30,
+        stdout_limit_bytes: 1048576,
+        stderr_limit_bytes: 1048576,
+        docker_socket_mounted: false,
+      },
+      input_files: [],
+      output_files: [],
+      error: "",
+    })
+
+    render(<SandboxDebugStudio initialSandboxId="sb-123" />)
+
+    await waitFor(() => expect(getSandboxDebugRun).toHaveBeenCalledWith("sb-123"))
+    await waitFor(() => expect(screen.getByText("Sandbox trace content · sb-123")).toBeTruthy())
+    expect(screen.getByRole("tab", { name: "Trace" }).getAttribute("aria-selected")).toBe("true")
   })
 })

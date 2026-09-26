@@ -1,5 +1,4 @@
 import type { ReactNode } from "react"
-import { useMemo } from "react"
 
 import type { SandboxDebugTrace, SandboxResourceSample } from "../../api/sandbox-debug"
 
@@ -7,14 +6,14 @@ export default function SandboxDebugResources({ trace }: { trace: SandboxDebugTr
   const samples = trace?.resources ?? []
   const policy = trace?.policy
 
-  const peaks = useMemo(() => ({
+  const peaks = {
     cpu: max(samples, (sample) => sample.cpu_percent),
     memory: max(samples, (sample) => sample.memory_bytes),
     pids: max(samples, (sample) => sample.pids),
     stdout: max(samples, (sample) => sample.stdout_bytes),
     stderr: max(samples, (sample) => sample.stderr_bytes),
     output: max(samples, (sample) => sample.output_bytes),
-  }), [samples])
+  }
 
   if (!trace) {
     return <ResourcesEmpty />

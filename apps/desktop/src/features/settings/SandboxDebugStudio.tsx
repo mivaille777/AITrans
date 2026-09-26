@@ -75,6 +75,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
     }
   }, [])
 
+  /* oxlint-disable react-hooks/set-state-in-effect -- navigation intent selects the requested Sandbox trace */
   useEffect(() => {
     const sandboxId = initialSandboxId.trim()
     if (!sandboxId || inspectedIntentRef.current === sandboxId) return
@@ -84,6 +85,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
       .then(setLatestTrace)
       .catch(() => undefined)
   }, [initialSandboxId])
+  /* oxlint-enable react-hooks/set-state-in-effect */
 
   const runtimeReady = Boolean(runtimeHealth?.available && runtimeHealth.daemon_ready)
 

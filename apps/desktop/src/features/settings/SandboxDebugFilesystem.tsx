@@ -1,5 +1,5 @@
 import { Copy, FileInput, FileOutput, ShieldCheck } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 
 import type {
   SandboxActivityEvent,
@@ -143,7 +143,7 @@ function FileSection({
   output = false,
 }: {
   title: string
-  icon: React.ReactNode
+  icon: ReactNode
   files: SandboxDebugFile[]
   empty: string
   output?: boolean

@@ -38,9 +38,11 @@ export default function SandboxDebugRuns({
     }
   }
 
+  /* oxlint-disable react-hooks/exhaustive-deps -- initial run history load is intentionally one-shot */
   useEffect(() => {
     void refresh()
   }, [])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   const workspaces = useMemo(
     () => [...new Set(runs.map((run) => run.workspace_name).filter(Boolean))].sort(),
