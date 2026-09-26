@@ -164,6 +164,32 @@ describe("sandbox debug api", () => {
     })
   })
 
+  it("normalizes backend output relative_path into the filesystem UI model", async () => {
+    const backendTrace = {
+      ...trace,
+      output_files: [{
+        file_id: "sbo-1",
+        relative_path: "reports/result.csv",
+        size_bytes: 21_000,
+        sha256: "a".repeat(64),
+      }],
+    }
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(backendTrace), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const loaded = await getSandboxDebugRun("sb-1")
+    expect(loaded.output_files[0]).toMatchObject({
+      file_id: "sbo-1",
+      path: "reports/result.csv",
+      source: "generated",
+    })
+  })
+
   it("starts and cancels a manual run using the bounded request contract", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(

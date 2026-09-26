@@ -137,6 +137,10 @@ export interface SandboxDebugFile {
   source: "workspace" | "generated" | "runtime"
 }
 
+type RawSandboxDebugFile = Partial<SandboxDebugFile> & {
+  relative_path?: string
+}
+
 type RawSandboxRunSummary = Omit<SandboxRunSummary, "status"> & {
   status: RawSandboxRunStatus
 }
@@ -154,9 +158,14 @@ export interface SandboxDebugTrace {
   error: string
 }
 
-type RawSandboxDebugTrace = Omit<SandboxDebugTrace, "run" | "policy"> & {
+type RawSandboxDebugTrace = Omit<
+  SandboxDebugTrace,
+  "run" | "policy" | "input_files" | "output_files"
+> & {
   run: RawSandboxRunSummary
   policy: RawSandboxEffectivePolicy
+  input_files: RawSandboxDebugFile[]
+  output_files: RawSandboxDebugFile[]
 }
 
 export interface StartSandboxDebugRunRequest {
@@ -268,6 +277,21 @@ function normalizeSandboxDebugTrace(trace: RawSandboxDebugTrace): SandboxDebugTr
     ...trace,
     run: normalizeSandboxRunSummary(trace.run),
     policy: normalizeSandboxEffectivePolicy(trace.policy),
+    input_files: trace.input_files.map((file) => normalizeSandboxDebugFile(file, "workspace")),
+    output_files: trace.output_files.map((file) => normalizeSandboxDebugFile(file, "generated")),
+  }
+}
+
+function normalizeSandboxDebugFile(
+  file: RawSandboxDebugFile,
+  fallbackSource: SandboxDebugFile["source"],
+): SandboxDebugFile {
+  return {
+    file_id: file.file_id ?? "",
+    path: file.path ?? file.relative_path ?? "",
+    size_bytes: file.size_bytes ?? 0,
+    sha256: file.sha256 ?? "",
+    source: file.source ?? fallbackSource,
   }
 }
 
