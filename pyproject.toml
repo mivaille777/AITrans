@@ -13,6 +13,7 @@ dependencies = [
     # Retained for the headless Windows clipboard selection fallback.
     "pynput>=1.7.6",
     "cachetools>=5.3",
+    "docker>=7.2,<8",
     "certifi>=2024.8.30",
     # Web-compatible translation providers use a persistent browser-like HTTP session.
     "requests>=2.32,<3",
@@ -69,4 +70,5 @@ python_files = ["test_*.py"]
 addopts = "-ra"
 markers = [
     "rag_gpu: opt-in tests that load real local RAG models and require suitable hardware",
+    "docker_integration: tests requiring a running local Docker daemon",
 ]

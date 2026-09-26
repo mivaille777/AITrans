@@ -1,0 +1,1 @@
+# Keep the V1 image minimal; add runtime packages only when a sandbox use case needs them.
