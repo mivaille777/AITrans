@@ -108,6 +108,7 @@ class AgentToolRegistry:
         sandbox_manager: Any | None = None,
         filesystem_workspace_service: Any | None = None,
         sandbox_debug_service: Any | None = None,
+        sandbox_network_permission_service: Any | None = None,
     ) -> None:
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         if translation_fallback_service is not None:
@@ -198,6 +199,7 @@ class AgentToolRegistry:
                 build_command_execute_tool_definition(
                     sandbox_manager,
                     filesystem_workspace_service=filesystem_workspace_service,
+                    network_permission_service=sandbox_network_permission_service,
                 ),
             )
             if sandbox_manager is not None

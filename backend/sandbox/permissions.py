@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
-from ipaddress import ip_address
 
 from pydantic import ValidationError
 
@@ -14,6 +12,7 @@ from backend.models.sandbox_permissions import (
     PermissionRequest,
 )
 from backend.sandbox.execution_policy import get_sandbox_permission_profile
+from backend.sandbox.network_policy import normalize_hostname
 
 _KNOWN_ACTIONS = frozenset(
     {
@@ -25,7 +24,6 @@ _KNOWN_ACTIONS = frozenset(
         "secret.read",
     }
 )
-_HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class PermissionPolicyEngine:
@@ -111,16 +109,28 @@ class PermissionPolicyEngine:
             )
 
         if action == "network.connect":
-            host = self._normalize_host(request.target)
+            host = normalize_hostname(request.target)
+            if profile.network != "allowlist" or host is None:
+                return self._deny(
+                    "policy.network_denied",
+                    "Network access is disabled or the requested host is invalid.",
+                )
             allowed_hosts = {
                 normalized
                 for value in execution_policy.network_allowlist
-                if (normalized := self._normalize_host(value)) is not None
+                if (normalized := normalize_hostname(value)) is not None
             }
-            if profile.network == "allowlist" and host and host in allowed_hosts:
+            if host in allowed_hosts:
                 return self._allow(
                     "The requested host is in the execution allowlist.",
                     {"action": action, "host": host},
+                )
+            if not execution_policy.network_allowlist:
+                return PermissionDecision(
+                    decision="approval_required",
+                    reason_code="policy.network_approval_required",
+                    reason=f"Network access to {host} requires user approval.",
+                    granted_scope=scope,
                 )
             return self._deny(
                 "policy.network_denied",
@@ -162,22 +172,6 @@ class PermissionPolicyEngine:
             "workspace_id": execution_policy.workspace_id,
             "target": request.target or None,
         }
-
-    @staticmethod
-    def _normalize_host(value: str) -> str | None:
-        host = value.strip().lower().rstrip(".")
-        if not host or ":" in host or "/" in host or "\\" in host:
-            return None
-        try:
-            ip_address(host)
-        except ValueError:
-            pass
-        else:
-            return None
-        labels = host.split(".")
-        if len(host) > 253 or any(not _HOST_LABEL.fullmatch(label) for label in labels):
-            return None
-        return host
 
     @staticmethod
     def _allow(

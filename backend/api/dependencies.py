@@ -38,6 +38,9 @@ from backend.services.research_note_service import ResearchNoteService
 from backend.services.research_workspace_service import ResearchWorkspaceService
 from backend.services.sandbox_approval_service import SandboxApprovalService
 from backend.services.sandbox_debug_service import SandboxDebugService
+from backend.services.sandbox_network_permission_service import (
+    SandboxNetworkPermissionService,
+)
 from backend.services.translation_service import TranslationService
 from backend.services.workspace_apply_service import WorkspaceApplyService
 
@@ -312,6 +315,9 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 sandbox_manager=get_sandbox_manager(),
                 filesystem_workspace_service=get_filesystem_workspace_service(),
                 sandbox_debug_service=get_sandbox_debug_service(),
+                sandbox_network_permission_service=SandboxNetworkPermissionService(
+                    get_sandbox_approval_service()
+                ),
             )
         return _agent_tool_registry
 

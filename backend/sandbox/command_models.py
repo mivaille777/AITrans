@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backend.models.sandbox_permissions import PermissionDecision
 from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
@@ -29,6 +29,23 @@ class SandboxCommandRequest(SandboxCommandModel):
     argv: list[str] = Field(min_length=1, max_length=64)
     cwd: str = Field(default=".", min_length=1, max_length=1024)
     timeout_seconds: float = Field(default=30, gt=0, le=30)
+    network_host: str | None = Field(
+        default=None,
+        max_length=253,
+        description="One exact hostname to request for this command; requires user approval.",
+    )
+    network_approval_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Approved request ID to consume for this host in the same Agent run.",
+    )
+
+    @model_validator(mode="after")
+    def validate_network_approval(self) -> SandboxCommandRequest:
+        if self.network_approval_id is not None and self.network_host is None:
+            raise ValueError("network_approval_id requires an explicit network_host.")
+        return self
 
     @field_validator("argv")
     @classmethod
@@ -76,6 +93,7 @@ class SandboxCommandResult(SandboxCommandModel):
     runtime: str = "docker"
     image: str = ""
     permission_decision: PermissionDecision | None = None
+    approval_id: str | None = Field(default=None, min_length=1, max_length=128)
     workspace_changeset: WorkspaceChangeSet | None = None
 
 

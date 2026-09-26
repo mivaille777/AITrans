@@ -26,6 +26,17 @@ class CommandExecuteArgs(AgentToolModel):
     argv: list[str] = Field(min_length=1, max_length=64)
     cwd: str = Field(default=".", min_length=1, max_length=1024)
     timeout_seconds: float = Field(default=30, gt=0, le=30)
+    network_host: str | None = Field(
+        default=None,
+        max_length=253,
+        description="One exact hostname to request for this command; requires user approval.",
+    )
+    network_approval_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Approved request ID to consume for this host in the same Agent run.",
+    )
 
     @model_validator(mode="after")
     def validate_sandbox_command(self) -> CommandExecuteArgs:
@@ -51,6 +62,7 @@ class CommandExecuteResultData(AgentToolModel):
     runtime: str = "docker"
     image: str = ""
     permission_decision: PermissionDecision | None = None
+    approval_id: str | None = None
     workspace_changeset: WorkspaceChangeSet | None = None
 
 
@@ -68,6 +80,8 @@ def _result_text(result: SandboxCommandResult) -> str:
             if result.permission_decision
             else result.stderr
         )
+        if result.approval_id:
+            return f"Command needs approval ({result.approval_id}): {reason}"
         return f"Command needs approval: {reason}"
     if result.timed_out:
         return "Command execution timed out."
@@ -87,8 +101,12 @@ def build_command_execute_tool_definition(
     sandbox_manager: SandboxManager,
     *,
     filesystem_workspace_service: Any | None = None,
+    network_permission_service: Any | None = None,
 ) -> TypedAgentToolDefinition:
-    executor = SandboxCommandExecutor(sandbox_manager)
+    executor = SandboxCommandExecutor(
+        sandbox_manager,
+        network_permission_service=network_permission_service,
+    )
 
     def execute(
         context: AgentToolInvocationContext,
@@ -128,7 +146,10 @@ def build_command_execute_tool_definition(
         description=(
             "Run one allowlisted command as an argv array inside an isolated Docker "
             "sandbox. Commands do not use a shell, have bounded runtime and output, "
-            "and may read only files from an explicitly selected workspace copy."
+            "and may read only files from an explicitly selected workspace copy. "
+            "Network access is disabled unless a single hostname is approved for "
+            "this Agent run. Set network_host to request approval; repeat the command "
+            "with the approved network_approval_id to consume the single-use grant."
         ),
         category="compute",
         effect="compute",

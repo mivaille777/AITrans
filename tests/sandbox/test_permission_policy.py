@@ -99,6 +99,47 @@ def test_restricted_network_requires_exact_allowlisted_hostname(
     assert denied.decision == "deny"
 
 
+def test_restricted_network_requires_approval_without_a_server_allowlist(
+    engine: PermissionPolicyEngine,
+) -> None:
+    decision = engine.evaluate(
+        _request("network.connect", target="PyPI.org."),
+        _policy("restricted_network"),
+    )
+
+    assert decision.decision == "approval_required"
+    assert decision.reason_code == "policy.network_approval_required"
+    assert decision.granted_scope["target"] == "PyPI.org."
+
+
+def test_invalid_server_network_allowlist_fails_closed(
+    engine: PermissionPolicyEngine,
+) -> None:
+    decision = engine.evaluate(
+        _request("network.connect", target="pypi.org"),
+        _policy("restricted_network", network_allowlist=("not a host",)),
+    )
+
+    assert decision.decision == "deny"
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["localhost", "127.0.0.1", "169.254.169.254", "db.internal", "bad host"],
+)
+def test_restricted_network_denies_ip_literals_and_local_hosts(
+    engine: PermissionPolicyEngine,
+    host: str,
+) -> None:
+    decision = engine.evaluate(
+        _request("network.connect", target=host),
+        _policy("restricted_network"),
+    )
+
+    assert decision.decision == "deny"
+    assert decision.reason_code == "policy.network_denied"
+
+
 def test_unknown_action_is_denied(engine: PermissionPolicyEngine) -> None:
     decision = engine.evaluate(_request("docker.socket_mount"), _policy("read_only"))
 

@@ -9,13 +9,19 @@ from uuid import uuid4
 
 from backend.models.sandbox_permissions import (
     ExecutionPolicy,
+    PermissionDecision,
     PermissionRequest,
 )
 from backend.sandbox.command_models import SandboxCommandRequest, SandboxCommandResult
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxExecutionResult
+from backend.sandbox.network_policy import DEFAULT_NETWORK_POLICY
 from backend.sandbox.permissions import PermissionPolicyEngine
 from backend.sandbox.workspace import SandboxInputFile
+from backend.services.sandbox_network_permission_service import (
+    SandboxNetworkPermissionError,
+    SandboxNetworkPermissionService,
+)
 
 _COMMAND_TIMEOUT_MARKER = "[AITRANS_COMMAND_TIMEOUT]"
 
@@ -28,9 +34,11 @@ class SandboxCommandExecutor:
         sandbox_manager: SandboxManager,
         *,
         permission_policy_engine: PermissionPolicyEngine | None = None,
+        network_permission_service: SandboxNetworkPermissionService | None = None,
     ) -> None:
         self._sandbox_manager = sandbox_manager
         self._policy_engine = permission_policy_engine or PermissionPolicyEngine()
+        self._network_permission_service = network_permission_service
 
     def execute(
         self,
@@ -96,16 +104,82 @@ class SandboxCommandExecutor:
             if write_permission.decision != "allow":
                 return self._permission_result(sandbox_id, request, write_permission)
 
+        network_policy = DEFAULT_NETWORK_POLICY
+        if request.network_host is not None:
+            if self._network_permission_service is None:
+                return self._network_error_result(
+                    sandbox_id,
+                    request,
+                    SandboxNetworkPermissionError(
+                        "network_permission_service_unavailable",
+                        "Sandbox network approval is unavailable.",
+                        status_code=503,
+                    ),
+                )
+            if request.network_approval_id is None:
+                try:
+                    approval = self._network_permission_service.request_approval(
+                        request.network_host,
+                        run_id=run_id,
+                        tool_call_id=tool_call_id,
+                    )
+                except SandboxNetworkPermissionError as exc:
+                    return self._network_error_result(sandbox_id, request, exc)
+                decision = PermissionDecision(
+                    decision="approval_required",
+                    reason_code="policy.network_approval_required",
+                    reason=approval.reason,
+                    granted_scope=approval.requested_scope,
+                )
+                return SandboxCommandResult(
+                    sandbox_id=sandbox_id,
+                    argv=list(request.argv),
+                    status="approval_required",
+                    stderr=approval.reason,
+                    duration_ms=0,
+                    permission_decision=decision,
+                    approval_id=approval.approval_id,
+                )
+            try:
+                network_policy = self._network_permission_service.consume_grant(
+                    request.network_approval_id,
+                    request.network_host,
+                    run_id=run_id,
+                )
+            except SandboxNetworkPermissionError as exc:
+                return self._network_error_result(sandbox_id, request, exc)
+
         result = self._sandbox_manager.execute_python(
             _runner_code(request),
             input_files=input_files,
             workspace_write=workspace_write,
             workspace_id=execution_policy.workspace_id,
+            network_policy=network_policy,
             sandbox_id=sandbox_id,
             on_stage=on_stage,
             cancel_event=cancel_event,
         )
         return _command_result(request, result, command_permission)
+
+    @staticmethod
+    def _network_error_result(
+        sandbox_id: str,
+        request: SandboxCommandRequest,
+        error: SandboxNetworkPermissionError,
+    ) -> SandboxCommandResult:
+        decision = PermissionDecision(
+            decision="deny",
+            reason_code=error.code,
+            reason=str(error),
+        )
+        return SandboxCommandResult(
+            sandbox_id=sandbox_id,
+            argv=list(request.argv),
+            status="denied",
+            stderr=str(error),
+            duration_ms=0,
+            permission_decision=decision,
+        )
 
     @staticmethod
     def _permission_result(
