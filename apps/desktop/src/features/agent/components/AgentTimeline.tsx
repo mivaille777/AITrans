@@ -1,4 +1,5 @@
-import { Check, Circle, LoaderCircle, TriangleAlert } from "lucide-react"
+import { Box, Check, Circle, LoaderCircle, TriangleAlert } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 
 import { AITPanel } from "@/shared/components/AITPanel"
 import type { AgentActivityItem } from "../state/agent-workspace-state"
@@ -62,6 +63,13 @@ function activityCopy(item: AgentActivityItem): { label: string; detail: string 
   }
 }
 
+function sandboxIdFromActivity(item: AgentActivityItem): string {
+  if (item.eventType !== "tool_result") return ""
+  const payload = item.payload ?? {}
+  const data = record(payload.data)
+  return stringValue(data.sandbox_id) || stringValue(payload.sandbox_id)
+}
+
 export function AgentTimeline({
   activities,
   running,
@@ -77,6 +85,7 @@ export function AgentTimeline({
   totalDurationMs: number
   runStatus?: string
 }) {
+  const navigate = useNavigate()
   const stages = deriveAgentTimelineStages(activities, running)
   const hierarchy = deriveAgentTimelineHierarchy(activities)
 
@@ -204,6 +213,21 @@ export function AgentTimeline({
                         <p className="text-sm font-medium text-slate-800">{copy.label}</p>
                       </div>
                       <p className="mt-1 break-words text-xs leading-5 text-slate-500">{copy.detail}</p>
+                      {sandboxIdFromActivity(item) ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate("/settings", {
+                            state: {
+                              studio: "sandbox",
+                              sandboxId: sandboxIdFromActivity(item),
+                            },
+                          })}
+                          className="mt-2 inline-flex items-center gap-1.5 rounded-[8px] border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        >
+                          <Box size={11} />
+                          Inspect sandbox
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </li>

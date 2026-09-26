@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useLocation } from "react-router-dom"
 
 import {
   getAvailableLlmModels,
@@ -57,6 +58,11 @@ type SettingsSectionId =
 type SettingsDrawer = "llm" | "browser" | "research-data" | "advanced" | null
 type SettingsStudio = "rag" | "sandbox" | null
 
+interface SettingsNavigationState {
+  studio?: "rag" | "sandbox"
+  sandboxId?: string
+}
+
 const settingsSections: Array<{
   id: SettingsSectionId
   label: string
@@ -80,12 +86,14 @@ export default function SettingsWorkspace({
   workspace: TranslationWorkspaceController
 }) {
   const queryClient = useQueryClient()
+  const location = useLocation()
   const scrollRef = useRef<HTMLDivElement>(null)
   const sectionRefs = useRef<Partial<Record<SettingsSectionId, HTMLElement | null>>>({})
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general")
   const [drawer, setDrawer] = useState<SettingsDrawer>(null)
   const [notice, setNotice] = useState("")
   const [activeStudio, setActiveStudio] = useState<SettingsStudio>(null)
+  const [sandboxIntentId, setSandboxIntentId] = useState("")
   const [, setOverlayPreferences] = useState(readOverlayPreferences)
 
   const llmSettingsQuery = useQuery({
@@ -119,6 +127,20 @@ export default function SettingsWorkspace({
   })
 
   useEffect(() => subscribeOverlayPreferences(setOverlayPreferences), [])
+
+  /* oxlint-disable react-hooks/set-state-in-effect -- router state intentionally selects a debug studio */
+  useEffect(() => {
+    const navigationState = (location.state ?? null) as SettingsNavigationState | null
+    if (navigationState?.studio === "rag") {
+      setActiveStudio("rag")
+      return
+    }
+    if (navigationState?.studio === "sandbox") {
+      setActiveStudio("sandbox")
+      setSandboxIntentId(navigationState.sandboxId?.trim() ?? "")
+    }
+  }, [location.state])
+  /* oxlint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     const root = scrollRef.current
@@ -419,7 +441,7 @@ export default function SettingsWorkspace({
           <RagDebugStudioTrace />
         </div>
         <div className={activeStudio === "sandbox" ? "block h-full min-h-0" : "hidden"}>
-          <SandboxDebugStudio />
+          <SandboxDebugStudio initialSandboxId={sandboxIntentId} />
         </div>
 
         <footer className="ait-settings-actions">

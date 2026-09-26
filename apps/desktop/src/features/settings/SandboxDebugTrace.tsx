@@ -65,6 +65,8 @@ export default function SandboxDebugTrace({
 
   const summaryItems = useMemo(() => [
     ["Sandbox ID", run?.sandbox_id || "—"],
+    ["Agent Run", run?.run_id || "—"],
+    ["Tool Call", run?.tool_call_id || "—"],
     ["Runtime", run?.runtime || "Docker / Python"],
     ["Image", run?.image || health?.image || "—"],
     ["Exit Code", run?.exit_code === null || run?.exit_code === undefined ? "—" : String(run.exit_code)],
@@ -193,7 +195,7 @@ export default function SandboxDebugTrace({
           />
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <ReadOnlyField label="Filesystem Workspace" value="No workspace" />
+            <ReadOnlyField label="Filesystem Workspace" value={run?.workspace_name || "No workspace"} />
             <ReadOnlyField label="Runtime" value="Docker / Python" />
             <ReadOnlyField label="Timeout" value="30 s" />
           </div>
@@ -238,7 +240,7 @@ export default function SandboxDebugTrace({
           </div>
         </section>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {summaryItems.map(([label, value]) => (
             <div key={label} className="rounded-[10px] border border-slate-200 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
               <p className="text-[10px] font-medium uppercase tracking-[0.11em] text-slate-400">{label}</p>

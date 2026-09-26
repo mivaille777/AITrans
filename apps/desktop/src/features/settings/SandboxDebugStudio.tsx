@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import {
+  getSandboxDebugRun,
   getSandboxRuntimeHealth,
   type SandboxDebugTrace as SandboxDebugTraceData,
   type SandboxRuntimeHealth,
@@ -40,12 +41,13 @@ const EMPTY_STATES: Record<Exclude<SandboxDebugTab, "trace">, { title: string; d
   },
 }
 
-export default function SandboxDebugStudio() {
+export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialSandboxId?: string }) {
   const [activeTab, setActiveTab] = useState<SandboxDebugTab>("trace")
   const [visitedTabs, setVisitedTabs] = useState<Set<SandboxDebugTab>>(() => new Set(["trace"]))
   const [runtimeHealth, setRuntimeHealth] = useState<SandboxRuntimeHealth | null>(null)
   const [runtimeHealthPending, setRuntimeHealthPending] = useState(true)
   const [latestTrace, setLatestTrace] = useState<SandboxDebugTraceData | null>(null)
+  const inspectedIntentRef = useRef("")
 
   /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
   useEffect(() => {
@@ -72,6 +74,16 @@ export default function SandboxDebugStudio() {
       disposed = true
     }
   }, [])
+
+  useEffect(() => {
+    const sandboxId = initialSandboxId.trim()
+    if (!sandboxId || inspectedIntentRef.current === sandboxId) return
+    inspectedIntentRef.current = sandboxId
+    setActiveTab("trace")
+    void getSandboxDebugRun(sandboxId)
+      .then(setLatestTrace)
+      .catch(() => undefined)
+  }, [initialSandboxId])
 
   const runtimeReady = Boolean(runtimeHealth?.available && runtimeHealth.daemon_ready)
 
