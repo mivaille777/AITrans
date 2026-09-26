@@ -24,7 +24,7 @@ export default function SandboxDebugResources({ trace }: { trace: SandboxDebugTr
   const timeoutMs = (policy?.timeout_seconds ?? 0) * 1000
   const stdoutLimit = policy?.stdout_limit_bytes ?? 0
   const stderrLimit = policy?.stderr_limit_bytes ?? 0
-  const outputLimit = Math.max(stdoutLimit + stderrLimit, peaks.output)
+  const outputLimit = policy?.output_limit_bytes ?? 0
 
   return (
     <div className="h-full overflow-auto bg-slate-50/40 px-8 py-6">

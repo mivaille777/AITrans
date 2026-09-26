@@ -18,6 +18,7 @@ const safePolicy = {
   timeout_seconds: 30,
   stdout_limit_bytes: 1024 * 1024,
   stderr_limit_bytes: 1024 * 1024,
+  output_limit_bytes: 50 * 1024 * 1024,
   docker_socket_mounted: false,
 }
 
@@ -63,6 +64,15 @@ describe("SandboxDebugPolicy", () => {
 
   it("detects a mounted Docker socket", () => {
     expect(policyWarnings({ ...safePolicy, docker_socket_mounted: true })).toContain("Docker socket is mounted.")
+  })
+
+  it("marks an unreported Docker socket state as unknown instead of safe", () => {
+    const policy = { ...safePolicy, docker_socket_mounted: null }
+    expect(policyWarnings(policy)).toContain("Docker socket mount status is unknown.")
+
+    render(<SandboxDebugPolicy trace={traceWith(policy as typeof safePolicy)} />)
+    expect(screen.getByText("unknown")).toBeTruthy()
+    expect(screen.getByText("Unknown")).toBeTruthy()
   })
 
   it("detects network, root user and writable root filesystem", () => {

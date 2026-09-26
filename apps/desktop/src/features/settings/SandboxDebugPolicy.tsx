@@ -63,18 +63,26 @@ export default function SandboxDebugPolicy({ trace }: { trace: SandboxDebugTrace
             </div>
           </div>
           <div className="divide-y divide-slate-100">
-            {rows.map((row) => (
-              <div key={row.label} className="grid gap-3 px-5 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_120px] sm:items-center">
-                <p className="text-[10px] font-medium text-slate-500">{row.label}</p>
-                <p className="break-words font-mono text-[10px] text-slate-800">{row.value}</p>
-                <span className={`inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold ${
-                  row.safe ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
-                }`}>
-                  {row.safe ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
-                  {row.safe ? "Enforced" : "Unsafe"}
-                </span>
-              </div>
-            ))}
+            {rows.map((row) => {
+              const safe = row.state === "safe"
+              const unknown = row.state === "unknown"
+              return (
+                <div key={row.label} className="grid gap-3 px-5 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_120px] sm:items-center">
+                  <p className="text-[10px] font-medium text-slate-500">{row.label}</p>
+                  <p className="break-words font-mono text-[10px] text-slate-800">{row.value}</p>
+                  <span className={`inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold ${
+                    safe
+                      ? "bg-emerald-50 text-emerald-700"
+                      : unknown
+                        ? "bg-amber-50 text-amber-800"
+                        : "bg-rose-50 text-rose-700"
+                  }`}>
+                    {safe ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
+                    {safe ? "Enforced" : unknown ? "Unknown" : "Unsafe"}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </section>
       </div>
@@ -86,11 +94,13 @@ export function policyWarnings(policy: SandboxEffectivePolicy): string[] {
   const warnings: string[] = []
   if (policy.network.trim().toLowerCase() !== "none") warnings.push("Network is not disabled.")
   if (!policy.root_filesystem_read_only) warnings.push("Root filesystem is writable.")
-  if (["0", "0:0", "root"].includes(policy.user.trim().toLowerCase())) warnings.push("Sandbox is running as root.")
+  if (!policy.user.trim()) warnings.push("Sandbox user is not reported.")
+  else if (["0", "0:0", "root"].includes(policy.user.trim().toLowerCase())) warnings.push("Sandbox is running as root.")
   if (!policy.cap_drop.map((item) => item.toUpperCase()).includes("ALL")) warnings.push("Linux capabilities are not fully dropped.")
   if (!policy.no_new_privileges) warnings.push("New privileges are allowed.")
   if (!policy.seccomp.trim() || policy.seccomp.trim().toLowerCase() === "unconfined") warnings.push("Seccomp is unconfined.")
-  if (policy.docker_socket_mounted) warnings.push("Docker socket is mounted.")
+  if (policy.docker_socket_mounted === true) warnings.push("Docker socket is mounted.")
+  if (policy.docker_socket_mounted === null) warnings.push("Docker socket mount status is unknown.")
   if (policy.cpu_limit <= 0) warnings.push("CPU limit is not enforced.")
   if (policy.memory_limit_bytes <= 0) warnings.push("Memory limit is not enforced.")
   if (policy.pids_limit <= 0) warnings.push("PID limit is not enforced.")
@@ -101,22 +111,29 @@ export function policyWarnings(policy: SandboxEffectivePolicy): string[] {
 function buildRows(policy: SandboxEffectivePolicy) {
   const capabilitiesSafe = policy.cap_drop.map((item) => item.toUpperCase()).includes("ALL")
   const seccompSafe = Boolean(policy.seccomp.trim()) && policy.seccomp.trim().toLowerCase() !== "unconfined"
-  const userSafe = !["0", "0:0", "root"].includes(policy.user.trim().toLowerCase())
+  const user = policy.user.trim()
+  const userSafe = Boolean(user) && !["0", "0:0", "root"].includes(user.toLowerCase())
+  const socketState = policy.docker_socket_mounted === null
+    ? "unknown"
+    : policy.docker_socket_mounted
+      ? "unsafe"
+      : "safe"
   return [
-    { label: "Network", value: policy.network || "—", safe: policy.network.trim().toLowerCase() === "none" },
-    { label: "Root filesystem", value: policy.root_filesystem_read_only ? "read-only" : "read / write", safe: policy.root_filesystem_read_only },
-    { label: "User", value: policy.user || "—", safe: userSafe },
-    { label: "Capabilities", value: policy.cap_drop.length ? `DROP ${policy.cap_drop.join(", ")}` : "—", safe: capabilitiesSafe },
-    { label: "New privileges", value: policy.no_new_privileges ? "disabled" : "allowed", safe: policy.no_new_privileges },
-    { label: "Seccomp", value: policy.seccomp || "—", safe: seccompSafe },
-    { label: "CPU", value: policy.cpu_limit > 0 ? `${policy.cpu_limit} core${policy.cpu_limit === 1 ? "" : "s"}` : "unlimited", safe: policy.cpu_limit > 0 },
-    { label: "Memory", value: policy.memory_limit_bytes > 0 ? formatBytes(policy.memory_limit_bytes) : "unlimited", safe: policy.memory_limit_bytes > 0 },
-    { label: "PIDs", value: policy.pids_limit > 0 ? String(policy.pids_limit) : "unlimited", safe: policy.pids_limit > 0 },
-    { label: "Timeout", value: policy.timeout_seconds > 0 ? `${policy.timeout_seconds} s` : "none", safe: policy.timeout_seconds > 0 },
-    { label: "stdout", value: formatBytes(policy.stdout_limit_bytes), safe: policy.stdout_limit_bytes > 0 },
-    { label: "stderr", value: formatBytes(policy.stderr_limit_bytes), safe: policy.stderr_limit_bytes > 0 },
-    { label: "Docker socket", value: policy.docker_socket_mounted ? "mounted" : "not mounted", safe: !policy.docker_socket_mounted },
-  ]
+    { label: "Network", value: policy.network || "—", state: policy.network.trim().toLowerCase() === "none" ? "safe" : "unsafe" },
+    { label: "Root filesystem", value: policy.root_filesystem_read_only ? "read-only" : "read / write", state: policy.root_filesystem_read_only ? "safe" : "unsafe" },
+    { label: "User", value: policy.user || "—", state: user ? (userSafe ? "safe" : "unsafe") : "unknown" },
+    { label: "Capabilities", value: policy.cap_drop.length ? `DROP ${policy.cap_drop.join(", ")}` : "—", state: capabilitiesSafe ? "safe" : "unsafe" },
+    { label: "New privileges", value: policy.no_new_privileges ? "disabled" : "allowed", state: policy.no_new_privileges ? "safe" : "unsafe" },
+    { label: "Seccomp", value: policy.seccomp || "—", state: policy.seccomp.trim() ? (seccompSafe ? "safe" : "unsafe") : "unknown" },
+    { label: "CPU", value: policy.cpu_limit > 0 ? `${policy.cpu_limit} core${policy.cpu_limit === 1 ? "" : "s"}` : "unlimited", state: policy.cpu_limit > 0 ? "safe" : "unsafe" },
+    { label: "Memory", value: policy.memory_limit_bytes > 0 ? formatBytes(policy.memory_limit_bytes) : "unlimited", state: policy.memory_limit_bytes > 0 ? "safe" : "unsafe" },
+    { label: "PIDs", value: policy.pids_limit > 0 ? String(policy.pids_limit) : "unlimited", state: policy.pids_limit > 0 ? "safe" : "unsafe" },
+    { label: "Timeout", value: policy.timeout_seconds > 0 ? `${policy.timeout_seconds} s` : "none", state: policy.timeout_seconds > 0 ? "safe" : "unsafe" },
+    { label: "stdout", value: formatBytes(policy.stdout_limit_bytes), state: policy.stdout_limit_bytes > 0 ? "safe" : "unsafe" },
+    { label: "stderr", value: formatBytes(policy.stderr_limit_bytes), state: policy.stderr_limit_bytes > 0 ? "safe" : "unsafe" },
+    { label: "Output files", value: formatBytes(policy.output_limit_bytes ?? 0), state: (policy.output_limit_bytes ?? 0) > 0 ? "safe" : "unknown" },
+    { label: "Docker socket", value: policy.docker_socket_mounted === null ? "unknown" : policy.docker_socket_mounted ? "mounted" : "not mounted", state: socketState },
+  ] as Array<{ label: string; value: string; state: "safe" | "unsafe" | "unknown" }>
 }
 
 function formatBytes(value: number): string {

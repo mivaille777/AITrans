@@ -44,6 +44,7 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
       timeout_seconds: 30,
       stdout_limit_bytes: 1024 * 1024,
       stderr_limit_bytes: 1024 * 1024,
+      output_limit_bytes: 50 * 1024 * 1024,
       docker_socket_mounted: false,
     },
     input_files: [],
@@ -61,6 +62,7 @@ describe("SandboxDebugResources", () => {
     expect(screen.getByText("72.0 MB / 512.0 MB")).toBeTruthy()
     expect(screen.getByText("4 / 64")).toBeTruthy()
     expect(screen.getByText("1.2 s / 30.0 s")).toBeTruthy()
+    expect(screen.getByText("31.0 KB / 50.0 MB")).toBeTruthy()
   })
 
   it("shows an amber warning near a resource limit", () => {
@@ -77,6 +79,22 @@ describe("SandboxDebugResources", () => {
     })} />)
 
     expect(screen.getByText("900.0 KB / 1.0 MB").parentElement?.className).toContain("border-amber-200")
+  })
+
+  it("warns when collected outputs approach the real sandbox limit", () => {
+    render(<SandboxDebugResources trace={makeTrace({
+      resources: [{
+        timestamp_ms: 0,
+        cpu_percent: 10,
+        memory_bytes: 32 * 1024 * 1024,
+        pids: 2,
+        stdout_bytes: 0,
+        stderr_bytes: 0,
+        output_bytes: 45 * 1024 * 1024,
+      }],
+    })} />)
+
+    expect(screen.getByText("45.0 MB / 50.0 MB").parentElement?.className).toContain("border-amber-200")
   })
 
   it("shows OOM termination explicitly", () => {
