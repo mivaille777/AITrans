@@ -487,6 +487,15 @@ fn pick_knowledge_document() -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+fn pick_agent_workspace() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Choose Agent Workspace")
+        .pick_folder()
+        .and_then(|path| path.canonicalize().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
 fn evidence_file_path(resource_url: &str) -> Result<PathBuf, String> {
     let parsed = url::Url::parse(resource_url).map_err(|_| "Evidence source URI is invalid.")?;
     if parsed.scheme() != "file" {
@@ -658,6 +667,7 @@ fn main() {
             window_is_maximized,
             window_close,
             pick_knowledge_document,
+            pick_agent_workspace,
             open_evidence_source,
             update_overlay_window_shape,
             enforce_overlay_borderless,
