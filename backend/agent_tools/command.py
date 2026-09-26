@@ -17,6 +17,7 @@ from backend.models.sandbox_permissions import ExecutionPolicy, PermissionDecisi
 from backend.sandbox.command_models import SandboxCommandRequest, SandboxCommandResult
 from backend.sandbox.command_runtime import SandboxCommandExecutor
 from backend.sandbox.manager import SandboxManager
+from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
 
 
 class CommandExecuteArgs(AgentToolModel):
@@ -50,6 +51,7 @@ class CommandExecuteResultData(AgentToolModel):
     runtime: str = "docker"
     image: str = ""
     permission_decision: PermissionDecision | None = None
+    workspace_changeset: WorkspaceChangeSet | None = None
 
 
 def _result_text(result: SandboxCommandResult) -> str:

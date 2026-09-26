@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.models.sandbox_permissions import PermissionDecision
+from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
 
 SandboxCommandStatus = Literal[
     "succeeded",
@@ -75,6 +76,7 @@ class SandboxCommandResult(SandboxCommandModel):
     runtime: str = "docker"
     image: str = ""
     permission_decision: PermissionDecision | None = None
+    workspace_changeset: WorkspaceChangeSet | None = None
 
 
 __all__ = ["SandboxCommandRequest", "SandboxCommandResult", "SandboxCommandStatus"]

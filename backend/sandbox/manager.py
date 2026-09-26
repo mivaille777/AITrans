@@ -22,6 +22,10 @@ from backend.sandbox.workspace import (
     SandboxInputFile,
     SandboxWorkspaceManager,
 )
+from backend.sandbox.workspace_snapshot import (
+    create_workspace_changeset,
+    snapshot_directory,
+)
 
 
 class SandboxManager:
@@ -66,6 +70,7 @@ class SandboxManager:
         *,
         input_files: tuple[SandboxInputFile, ...] = (),
         workspace_write: bool = False,
+        workspace_id: str = "",
         sandbox_id: str | None = None,
         on_stage: Callable[[str, str, str], None] | None = None,
         cancel_event: Event | None = None,
@@ -82,6 +87,7 @@ class SandboxManager:
             code=code,
         )
         workspace = self._workspace_manager.create(request.sandbox_id)
+        base_snapshot = None
         try:
             if len(input_files) > MAX_SANDBOX_INPUT_FILES:
                 raise SandboxInvalidInputError(
@@ -97,6 +103,23 @@ class SandboxManager:
                 )
                 staged_bytes += staged_path.stat().st_size
             if workspace_write:
+                if not workspace_id.strip():
+                    raise SandboxInvalidInputError(
+                        "Editable workspace access requires a selected workspace."
+                    )
+                modes = {
+                    input_file.relative_path or input_file.display_name: (
+                        input_file.expected_mode
+                        if input_file.expected_mode is not None
+                        else 0o644
+                    )
+                    for input_file in input_files
+                }
+                base_snapshot = snapshot_directory(
+                    workspace.input_dir,
+                    workspace_id,
+                    modes=modes,
+                )
                 self._workspace_manager.copy_inputs_to_workspace(
                     workspace, input_files
                 )
@@ -104,7 +127,7 @@ class SandboxManager:
                 on_stage,
                 "staging",
                 "complete",
-                "Inputs staged read-only with an isolated editable copy.",
+                "Inputs staged read-only; editable copy prepared when requested.",
             )
             if cancel_event is not None and cancel_event.is_set():
                 result = SandboxExecutionResult(
@@ -131,6 +154,21 @@ class SandboxManager:
                 )
             if cancel_event is not None and cancel_event.is_set() and result.status != "cancelled":
                 result = result.model_copy(update={"status": "cancelled"})
+            if base_snapshot is not None:
+                original_modes = {
+                    item.relative_path: item.mode for item in base_snapshot.files
+                }
+                current_snapshot = snapshot_directory(
+                    workspace.workspace_dir,
+                    workspace_id,
+                    modes=original_modes,
+                )
+                changeset = create_workspace_changeset(
+                    base_snapshot,
+                    current_snapshot,
+                    sandbox_id=request.sandbox_id,
+                )
+                result = result.model_copy(update={"workspace_changeset": changeset})
             if result.status == "cancelled":
                 self._emit_stage(on_stage, "collect", "skipped", "Run cancelled before output collection.")
                 return result

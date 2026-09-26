@@ -24,6 +24,7 @@ from backend.sandbox.workspace import (
     MAX_SANDBOX_TOTAL_INPUT_BYTES,
     SandboxInputFile,
 )
+from backend.sandbox.workspace_snapshot import is_protected_workspace_path
 
 MAX_WORKSPACES = 32
 MAX_WORKSPACE_ENTRIES = 4096
@@ -277,7 +278,7 @@ class FilesystemWorkspaceService:
                     if not self._within_root(resolved_path, resolved_root):
                         continue
                     relative = PurePosixPath(path.relative_to(root).as_posix())
-                    if ".git" in relative.parts or self._is_workspace_database(path):
+                    if is_protected_workspace_path(relative.as_posix()) or self._is_workspace_database(path):
                         continue
                     if stat.S_ISDIR(metadata.st_mode):
                         pending.append(path)

@@ -100,6 +100,7 @@ class SandboxCommandExecutor:
             _runner_code(request),
             input_files=input_files,
             workspace_write=workspace_write,
+            workspace_id=execution_policy.workspace_id,
             sandbox_id=sandbox_id,
             on_stage=on_stage,
             cancel_event=cancel_event,
@@ -211,6 +212,7 @@ def _command_result(
         runtime=result.runtime,
         image=result.image,
         permission_decision=permission_decision,
+        workspace_changeset=result.workspace_changeset,
     )
 
 

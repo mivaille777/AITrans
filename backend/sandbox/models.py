@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
+
 
 class SandboxModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
@@ -45,6 +47,7 @@ class SandboxExecutionResult(SandboxModel):
     runtime: str = "docker"
     image: str = ""
     output_files: list[SandboxOutputFile] = Field(default_factory=list)
+    workspace_changeset: WorkspaceChangeSet | None = None
 
 
 class SandboxRuntimeHealth(SandboxModel):

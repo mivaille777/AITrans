@@ -98,3 +98,20 @@ def test_workspace_snapshot_enforces_file_count_limit(tmp_path: Path) -> None:
 
     with pytest.raises(FilesystemWorkspaceLimitError):
         service.snapshot(workspace.workspace_id)
+
+
+def test_workspace_snapshot_excludes_protected_files(tmp_path: Path) -> None:
+    selected = tmp_path / "selected"
+    (selected / ".git").mkdir(parents=True)
+    (selected / "src").mkdir()
+    (selected / ".env").write_text("TOKEN=private", encoding="utf-8")
+    (selected / ".env.local").write_text("TOKEN=private", encoding="utf-8")
+    (selected / "server.key").write_text("private key", encoding="utf-8")
+    (selected / ".git" / "config").write_text("private git config", encoding="utf-8")
+    (selected / "src" / "main.py").write_text("print('safe')", encoding="utf-8")
+    service = FilesystemWorkspaceService(tmp_path / "state.sqlite3")
+
+    workspace = service.create(str(selected))
+    snapshot = service.snapshot(workspace.workspace_id)
+
+    assert [item["relative_path"] for item in snapshot.manifest] == ["src/main.py"]
