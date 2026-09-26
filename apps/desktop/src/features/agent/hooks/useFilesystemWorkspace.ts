@@ -26,11 +26,24 @@ export function useFilesystemWorkspace(enabled = true) {
   const [choosing, setChoosing] = useState(false)
   const [error, setError] = useState("")
 
+  /* oxlint-disable react-hooks/set-state-in-effect -- feature toggles intentionally reset and rehydrate bounded workspace state */
   useEffect(() => {
-    if (!enabled) return
-    const workspaceId = readActiveWorkspaceId()
-    if (!workspaceId) return
+    if (!enabled) {
+      setLoading(false)
+      setChoosing(false)
+      setError("")
+      return
+    }
 
+    const workspaceId = readActiveWorkspaceId()
+    if (!workspaceId) {
+      setWorkspace(null)
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    setError("")
     let disposed = false
     void getFilesystemWorkspace(workspaceId)
       .then((next) => {
@@ -55,6 +68,7 @@ export function useFilesystemWorkspace(enabled = true) {
       disposed = true
     }
   }, [enabled])
+  /* oxlint-enable react-hooks/set-state-in-effect */
 
   const chooseWorkspace = useCallback(async () => {
     if (!enabled || choosing) return
@@ -85,8 +99,8 @@ export function useFilesystemWorkspace(enabled = true) {
   return {
     workspace: enabled ? workspace : null,
     loading: enabled ? loading : false,
-    choosing,
-    error,
+    choosing: enabled ? choosing : false,
+    error: enabled ? error : "",
     chooseWorkspace,
     clearWorkspace,
   }
