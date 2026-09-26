@@ -2,8 +2,10 @@ import { useEffect, useState } from "react"
 
 import {
   getSandboxRuntimeHealth,
+  type SandboxDebugTrace as SandboxDebugTraceData,
   type SandboxRuntimeHealth,
 } from "../../api/sandbox-debug"
+import SandboxDebugFilesystem from "./SandboxDebugFilesystem"
 import SandboxDebugTrace from "./SandboxDebugTrace"
 
 type SandboxDebugTab = "trace" | "filesystem" | "resources" | "policy" | "runs"
@@ -40,6 +42,7 @@ export default function SandboxDebugStudio() {
   const [visitedTabs, setVisitedTabs] = useState<Set<SandboxDebugTab>>(() => new Set(["trace"]))
   const [runtimeHealth, setRuntimeHealth] = useState<SandboxRuntimeHealth | null>(null)
   const [runtimeHealthPending, setRuntimeHealthPending] = useState(true)
+  const [latestTrace, setLatestTrace] = useState<SandboxDebugTraceData | null>(null)
 
   /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
   useEffect(() => {
@@ -134,9 +137,9 @@ export default function SandboxDebugStudio() {
               aria-hidden={!visible}
               className={visible ? "h-full min-h-0 animate-[ragFadeIn_.18s_ease-out]" : "hidden"}
             >
-              {id === "trace"
-                ? <SandboxDebugTrace health={runtimeHealth} />
-                : <SandboxEmptyState tab={id} />}
+              {id === "trace" && <SandboxDebugTrace health={runtimeHealth} onTraceChange={setLatestTrace} />}
+              {id === "filesystem" && <SandboxDebugFilesystem trace={latestTrace} />}
+              {id !== "trace" && id !== "filesystem" && <SandboxEmptyState tab={id} />}
             </div>
           )
         })}

@@ -25,7 +25,13 @@ const INITIAL_STAGES: SandboxDebugStage[] = [
   { key: "cleanup", label: "Cleanup", status: "pending", elapsed_ms: 0, note: "Remove runtime resources" },
 ]
 
-export default function SandboxDebugTrace({ health }: { health: SandboxRuntimeHealth | null }) {
+export default function SandboxDebugTrace({
+  health,
+  onTraceChange,
+}: {
+  health: SandboxRuntimeHealth | null
+  onTraceChange?: (trace: SandboxDebugTrace | null) => void
+}) {
   const [code, setCode] = useState('print("Hello from AITrans Sandbox")')
   const [trace, setTrace] = useState<SandboxDebugTrace | null>(null)
   const [running, setRunning] = useState(false)
@@ -40,6 +46,10 @@ export default function SandboxDebugTrace({ health }: { health: SandboxRuntimeHe
     streamRef.current?.close()
     streamRef.current = null
   }, [])
+
+  useEffect(() => {
+    onTraceChange?.(trace)
+  }, [onTraceChange, trace])
 
   const summaryItems = useMemo(() => [
     ["Sandbox ID", run?.sandbox_id || "—"],
