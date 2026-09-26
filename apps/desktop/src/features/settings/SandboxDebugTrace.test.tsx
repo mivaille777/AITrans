@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 const closeStream = vi.fn()
@@ -184,6 +184,37 @@ describe("SandboxDebugTrace", () => {
 
     await waitFor(() => expect(screen.getByText("Traceback: boom")).toBeTruthy())
     expect(screen.getByText("failed")).toBeTruthy()
+  })
+
+  it("does not let a stale initial snapshot overwrite a streamed terminal trace", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({
+      sandbox_id: "sb-1",
+      run_id: "run-1",
+      status: "pending",
+    })
+
+    let resolveInitial: ((trace: ReturnType<typeof makeTrace>) => void) | null = null
+    vi.mocked(getSandboxDebugRun).mockReturnValue(new Promise((resolve) => {
+      resolveInitial = resolve
+    }))
+
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", { name: "Run" }))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy())
+
+    streamHandlers?.onEvent({
+      type: "terminal",
+      trace: makeTrace({ run: { status: "timed_out", duration_ms: 30000, exit_code: null } }),
+    })
+    await waitFor(() => expect(screen.getByText("timed_out")).toBeTruthy())
+
+    await act(async () => {
+      resolveInitial?.(makeTrace({ run: { status: "running", duration_ms: 100 } }))
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText("timed_out")).toBeTruthy()
+    expect(screen.queryByText("running")).toBeNull()
   })
 
   it("renders timeout lifecycle from a streamed terminal trace", async () => {

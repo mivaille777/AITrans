@@ -43,12 +43,14 @@ export default function SandboxDebugTrace({
   const [filesystemWorkspaces, setFilesystemWorkspaces] = useState<FilesystemWorkspace[]>([])
   const [filesystemWorkspaceId, setFilesystemWorkspaceId] = useState("")
   const streamRef = useRef<SandboxDebugStreamHandle | null>(null)
+  const runGenerationRef = useRef(0)
 
   const runtimeReady = Boolean(health?.available && health.daemon_ready)
   const stages = trace?.stages.length ? trace.stages : INITIAL_STAGES
   const run = trace?.run ?? null
 
   useEffect(() => () => {
+    runGenerationRef.current += 1
     streamRef.current?.close()
     streamRef.current = null
   }, [])
@@ -95,6 +97,8 @@ export default function SandboxDebugTrace({
   async function runTrace() {
     if (!runtimeReady || !code.trim() || running) return
 
+    const generation = runGenerationRef.current + 1
+    runGenerationRef.current = generation
     setRunning(true)
     setError("")
     setTrace(null)
@@ -109,8 +113,9 @@ export default function SandboxDebugTrace({
       setTrace(createPendingTrace(accepted.sandbox_id, accepted.run_id, health))
 
       streamRef.current = streamSandboxDebugRun(accepted.sandbox_id, {
-        onEvent: handleStreamEvent,
+        onEvent: (event) => handleStreamEvent(event, generation),
         onTransportError: (streamError) => {
+          if (runGenerationRef.current !== generation) return
           setError(sandboxDebugErrorMessage(streamError, "Sandbox trace is unavailable."))
           setRunning(false)
         },
@@ -118,12 +123,14 @@ export default function SandboxDebugTrace({
 
       try {
         const initial = await getSandboxDebugRun(accepted.sandbox_id)
+        if (runGenerationRef.current !== generation) return
         setTrace(initial)
         if (isTerminal(initial.run.status)) setRunning(false)
       } catch {
         // Streaming remains authoritative while the run record is still being created.
       }
     } catch (runError) {
+      if (runGenerationRef.current !== generation) return
       setError(sandboxDebugErrorMessage(runError, "Sandbox execution failed."))
       setRunning(false)
     }
@@ -132,6 +139,10 @@ export default function SandboxDebugTrace({
   async function stopTrace() {
     const sandboxId = trace?.run.sandbox_id
     if (!sandboxId || !running) return
+
+    runGenerationRef.current += 1
+    streamRef.current?.close()
+    streamRef.current = null
 
     try {
       const cancelled = await cancelSandboxDebugRun(sandboxId)
@@ -145,13 +156,12 @@ export default function SandboxDebugTrace({
     } catch (cancelError) {
       setError(sandboxDebugErrorMessage(cancelError, "Sandbox execution failed."))
     } finally {
-      streamRef.current?.close()
-      streamRef.current = null
       setRunning(false)
     }
   }
 
-  function handleStreamEvent(event: SandboxDebugStreamEvent) {
+  function handleStreamEvent(event: SandboxDebugStreamEvent, generation: number) {
+    if (runGenerationRef.current !== generation) return
     if (event.type === "trace" || event.type === "terminal") {
       setTrace(event.trace)
       if (event.type === "terminal") {
