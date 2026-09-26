@@ -377,6 +377,16 @@ class ProductAgentService:
             return bool(allows(tool_name))
         return effect != "write"
 
+    def _trace_arguments(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        sanitize = getattr(self._registry, "trace_arguments", None)
+        if callable(sanitize):
+            return sanitize(tool_name, arguments)
+        return dict(arguments or {})
+
     def _execute_tool(
         self,
         *,
@@ -403,7 +413,7 @@ class ProductAgentService:
 
         call_event = {
             "name": spec.name,
-            "arguments": dict(plan.arguments),
+            "arguments": self._trace_arguments(spec.name, plan.arguments),
             "effect": spec.effect,
             "requires_confirmation": spec.requires_confirmation,
             "route_source": route.source,
@@ -595,6 +605,32 @@ class ProductAgentService:
             else tool_result.data or {}
         )
         result_data = tool_result.data if isinstance(tool_result.data, dict) else {}
+        trace_output_text = tool_result.output_text
+        if tool_result.tool_name == "python_execute":
+            output_files = result_data.get("output_files", ())
+            trace_data = {
+                key: result_data[key]
+                for key in (
+                    "sandbox_id",
+                    "runtime",
+                    "image",
+                    "status",
+                    "duration_ms",
+                    "exit_code",
+                    "timed_out",
+                    "output_limit_exceeded",
+                    "oom_killed",
+                    "stdout_bytes",
+                    "stderr_bytes",
+                )
+                if key in result_data
+            }
+            trace_data["output_file_count"] = (
+                len(output_files) if isinstance(output_files, (list, tuple)) else 0
+            )
+            # The bounded stdout/stderr are returned to synthesis, but trace
+            # storage only receives byte counts and execution metadata.
+            trace_output_text = ""
         tool_metrics: dict[str, int] = {}
         if tool_result.tool_name == "search_knowledge_base":
             results = result_data.get("results", ())
@@ -611,7 +647,7 @@ class ProductAgentService:
             "tool_result",
             {
                 "tool_name": tool_result.tool_name,
-                "output_text": tool_result.output_text,
+                "output_text": trace_output_text,
                 "output_chars": len(tool_result.output_text),
                 **tool_metrics,
                 "effect": tool_result.effect,
@@ -917,7 +953,7 @@ class ProductAgentService:
                     "action": plan.action,
                     "tool_name": plan.tool_name,
                     "user_visible_reason": plan.user_visible_reason,
-                    "arguments": dict(plan.arguments),
+                    "arguments": self._trace_arguments(plan.tool_name, plan.arguments),
                     "route_kind": route.kind,
                     "route_source": route.source,
                     "request_id": request_id,
@@ -969,12 +1005,14 @@ class ProductAgentService:
 
         evidence: list[AgentEvidenceItem] = []
         citations: list[AgentCitationRef] = []
-        if tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS:
-            if (
+        if (
+            tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS
+            and (
                 tool_result.tool_name != "search_knowledge_base"
                 or not self.jit_search_read_enabled
-            ):
-                evidence, citations = self._retrieval_grounding(tool_result.data)
+            )
+        ):
+            evidence, citations = self._retrieval_grounding(tool_result.data)
 
         if tool_result.effect == "write" or skip_synthesis:
             return ProductAgentRunResult(
