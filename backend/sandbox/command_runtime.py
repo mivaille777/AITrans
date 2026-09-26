@@ -48,7 +48,9 @@ class SandboxCommandExecutor:
         input_files: tuple[SandboxInputFile, ...] = (),
         run_id: str = "",
         tool_call_id: str = "",
+        sandbox_id: str | None = None,
         on_stage: Callable[[str, str, str], None] | None = None,
+        on_activity: Callable[..., None] | None = None,
         cancel_event: Event | None = None,
     ) -> SandboxCommandResult:
         if not isinstance(request, SandboxCommandRequest):
@@ -56,7 +58,87 @@ class SandboxCommandExecutor:
         if not isinstance(execution_policy, ExecutionPolicy):
             execution_policy = ExecutionPolicy.model_validate(execution_policy)
 
-        sandbox_id = f"sb_{uuid4().hex}"
+        sandbox_id = sandbox_id or f"sb_{uuid4().hex}"
+
+        def record_activity(
+            *,
+            kind: str,
+            action: str,
+            target: str = "",
+            decision: str,
+            reason: str = "",
+            policy_rule: str = "",
+            approval_id: str = "",
+            grant_id: str = "",
+        ) -> None:
+            if on_activity is None:
+                return
+            try:
+                on_activity(
+                    kind=kind,
+                    action=action,
+                    target=target,
+                    decision=decision,
+                    reason=reason,
+                    policy_rule=policy_rule,
+                    approval_id=approval_id,
+                    grant_id=grant_id,
+                )
+            except Exception:  # noqa: BLE001 - Trace is observational only.
+                # Observability must not grant, deny, or interrupt Sandbox authority.
+                return
+
+        def record_stage(key: str, status: str, note: str) -> None:
+            if on_stage is None:
+                return
+            try:
+                on_stage(key, status, note)
+            except Exception:  # noqa: BLE001 - Trace is observational only.
+                return
+
+        def record_permission(
+            request: PermissionRequest,
+            decision: PermissionDecision | None = None,
+        ) -> None:
+            record_activity(
+                kind="policy",
+                action="permission.request",
+                target=request.target,
+                decision="observed",
+                reason=request.reason,
+                policy_rule=request.action,
+            )
+            if decision is None:
+                return
+            event_action = {
+                "allow": "permission.allow",
+                "deny": "permission.deny",
+                "approval_required": "permission.approval_required",
+            }.get(decision.decision, "permission.deny")
+            event_decision = {
+                "allow": "allowed",
+                "deny": "denied",
+                "approval_required": "approval_required",
+            }.get(decision.decision, "denied")
+            record_activity(
+                kind="policy",
+                action=event_action,
+                target=request.target,
+                decision=event_decision,
+                reason=decision.reason,
+                policy_rule=decision.reason_code,
+            )
+
+        record_permission(
+            PermissionRequest(
+                action="command.execute",
+                target=request.argv[0],
+                reason="Run an allowlisted command inside the isolated sandbox.",
+                tool_name="command_execute",
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+            )
+        )
         command_permission = self._policy_engine.evaluate(
             PermissionRequest(
                 action="command.execute",
@@ -68,46 +150,129 @@ class SandboxCommandExecutor:
             ),
             execution_policy,
         )
+        record_activity(
+            kind="policy",
+            action={
+                "allow": "permission.allow",
+                "deny": "permission.deny",
+                "approval_required": "permission.approval_required",
+            }.get(command_permission.decision, "permission.deny"),
+            target=request.argv[0],
+            decision={
+                "allow": "allowed",
+                "deny": "denied",
+                "approval_required": "approval_required",
+            }.get(command_permission.decision, "denied"),
+            reason=command_permission.reason,
+            policy_rule=command_permission.reason_code,
+        )
+        record_stage(
+            "permission",
+            "complete",
+            f"Command permission decision: {command_permission.decision}.",
+        )
         if command_permission.decision != "allow":
             return self._permission_result(sandbox_id, request, command_permission)
 
         if input_files:
+            filesystem_request = PermissionRequest(
+                action="filesystem.read",
+                target="/input",
+                reason="Read explicitly selected workspace files.",
+                tool_name="command_execute",
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+            )
+            record_permission(filesystem_request)
             filesystem_permission = self._policy_engine.evaluate(
-                PermissionRequest(
-                    action="filesystem.read",
-                    target="/input",
-                    reason="Read explicitly selected workspace files.",
-                    tool_name="command_execute",
-                    run_id=run_id,
-                    tool_call_id=tool_call_id,
-                ),
+                filesystem_request,
                 execution_policy,
+            )
+            record_activity(
+                kind="policy",
+                action=(
+                    "permission.allow"
+                    if filesystem_permission.decision == "allow"
+                    else "permission.deny"
+                ),
+                target=filesystem_request.target,
+                decision=(
+                    "allowed"
+                    if filesystem_permission.decision == "allow"
+                    else "denied"
+                ),
+                reason=filesystem_permission.reason,
+                policy_rule=filesystem_permission.reason_code,
             )
             if filesystem_permission.decision != "allow":
                 return self._permission_result(
                     sandbox_id, request, filesystem_permission
                 )
+            for item in input_files:
+                record_activity(
+                    kind="file",
+                    action="filesystem.read",
+                    target=item.relative_path or item.display_name,
+                    decision="allowed",
+                    reason="Read from the selected read-only workspace copy.",
+                    policy_rule="filesystem.read.selected_workspace",
+                )
 
         workspace_write = bool(execution_policy.workspace_id.strip())
         if workspace_write:
+            write_request = PermissionRequest(
+                action="filesystem.write_sandbox",
+                target="/workspace",
+                reason="Edit an isolated copy of the selected workspace.",
+                tool_name="command_execute",
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+            )
+            record_permission(write_request)
             write_permission = self._policy_engine.evaluate(
-                PermissionRequest(
-                    action="filesystem.write_sandbox",
-                    target="/workspace",
-                    reason="Edit an isolated copy of the selected workspace.",
-                    tool_name="command_execute",
-                    run_id=run_id,
-                    tool_call_id=tool_call_id,
-                ),
+                write_request,
                 execution_policy,
+            )
+            record_activity(
+                kind="policy",
+                action=(
+                    "permission.allow"
+                    if write_permission.decision == "allow"
+                    else "permission.deny"
+                ),
+                target=write_request.target,
+                decision=(
+                    "allowed" if write_permission.decision == "allow" else "denied"
+                ),
+                reason=write_permission.reason,
+                policy_rule=write_permission.reason_code,
             )
             if write_permission.decision != "allow":
                 return self._permission_result(sandbox_id, request, write_permission)
 
         network_policy = DEFAULT_NETWORK_POLICY
         if request.network_host is not None:
+            record_activity(
+                kind="policy",
+                action="permission.request",
+                target=request.network_host,
+                decision="observed",
+                reason="Request exact-host network access for this command.",
+                policy_rule="network.connect",
+                approval_id=request.network_approval_id or "",
+            )
+            record_activity(
+                kind="network",
+                action="network.request",
+                target=request.network_host,
+                decision="observed",
+                reason="Command requested exact-host network access.",
+                policy_rule="network.exact_host_approval",
+                approval_id=request.network_approval_id or "",
+            )
+            record_stage("network", "running", "Evaluating exact-host network access.")
             if self._network_permission_service is None:
-                return self._network_error_result(
+                result = self._network_error_result(
                     sandbox_id,
                     request,
                     SandboxNetworkPermissionError(
@@ -116,6 +281,24 @@ class SandboxCommandExecutor:
                         status_code=503,
                     ),
                 )
+                record_activity(
+                    kind="network",
+                    action="network.deny",
+                    target=request.network_host,
+                    decision="denied",
+                    reason="Sandbox network approval is unavailable.",
+                    policy_rule="network.approval_service_unavailable",
+                )
+                record_activity(
+                    kind="policy",
+                    action="permission.deny",
+                    target=request.network_host,
+                    decision="denied",
+                    reason="Sandbox network approval is unavailable.",
+                    policy_rule="network.approval_service_unavailable",
+                )
+                record_stage("network", "failed", "Network approval is unavailable.")
+                return result
             if request.network_approval_id is None:
                 try:
                     approval = self._network_permission_service.request_approval(
@@ -124,12 +307,42 @@ class SandboxCommandExecutor:
                         tool_call_id=tool_call_id,
                     )
                 except SandboxNetworkPermissionError as exc:
-                    return self._network_error_result(sandbox_id, request, exc)
+                    result = self._network_error_result(sandbox_id, request, exc)
+                    record_activity(
+                        kind="network",
+                        action="network.deny",
+                        target=request.network_host,
+                        decision="denied",
+                        reason=str(exc),
+                        policy_rule=exc.code,
+                    )
+                    record_activity(
+                        kind="policy",
+                        action="permission.deny",
+                        target=request.network_host,
+                        decision="denied",
+                        reason=str(exc),
+                        policy_rule=exc.code,
+                    )
+                    record_stage("network", "failed", "Network request was denied.")
+                    return result
                 decision = PermissionDecision(
                     decision="approval_required",
                     reason_code="policy.network_approval_required",
                     reason=approval.reason,
                     granted_scope=approval.requested_scope,
+                )
+                record_activity(
+                    kind="policy",
+                    action="permission.approval_required",
+                    target=request.network_host,
+                    decision="approval_required",
+                    reason=approval.reason,
+                    policy_rule=decision.reason_code,
+                    approval_id=approval.approval_id,
+                )
+                record_stage(
+                    "network", "complete", "Exact-host approval is required before execution."
                 )
                 return SandboxCommandResult(
                     sandbox_id=sandbox_id,
@@ -147,17 +360,82 @@ class SandboxCommandExecutor:
                     run_id=run_id,
                 )
             except SandboxNetworkPermissionError as exc:
-                return self._network_error_result(sandbox_id, request, exc)
+                result = self._network_error_result(sandbox_id, request, exc)
+                record_activity(
+                    kind="network",
+                    action="network.deny",
+                    target=request.network_host,
+                    decision="denied",
+                    reason=str(exc),
+                    policy_rule=exc.code,
+                    approval_id=request.network_approval_id or "",
+                )
+                record_activity(
+                    kind="policy",
+                    action="permission.deny",
+                    target=request.network_host,
+                    decision="denied",
+                    reason=str(exc),
+                    policy_rule=exc.code,
+                )
+                record_stage("network", "failed", "Network request was denied.")
+                return result
+            record_activity(
+                kind="policy",
+                action="permission.allow",
+                target=request.network_host,
+                decision="allowed",
+                reason="Single-use exact-host approval was consumed.",
+                policy_rule="network.approval.consumed",
+                approval_id=request.network_approval_id,
+            )
+            record_activity(
+                kind="network",
+                action="network.allow",
+                target=request.network_host,
+                decision="allowed",
+                reason="Single-use grant permits this exact host for this command.",
+                policy_rule="network.exact_host_approval",
+                approval_id=request.network_approval_id,
+            )
+            record_stage("network", "complete", "Exact-host network grant consumed.")
 
-        result = self._sandbox_manager.execute_python(
-            _runner_code(request),
-            input_files=input_files,
-            workspace_write=workspace_write,
-            workspace_id=execution_policy.workspace_id,
-            network_policy=network_policy,
-            sandbox_id=sandbox_id,
-            on_stage=on_stage,
-            cancel_event=cancel_event,
+        record_activity(
+            kind="process",
+            action="command.start",
+            target=request.argv[0],
+            decision="allowed",
+            reason="Allowlisted command started in the isolated container.",
+            policy_rule="command.execute.allowlisted",
+        )
+        try:
+            result = self._sandbox_manager.execute_python(
+                _runner_code(request),
+                input_files=input_files,
+                workspace_write=workspace_write,
+                workspace_id=execution_policy.workspace_id,
+                network_policy=network_policy,
+                sandbox_id=sandbox_id,
+                on_stage=on_stage,
+                cancel_event=cancel_event,
+            )
+        except Exception:
+            record_activity(
+                kind="process",
+                action="command.exit",
+                target=request.argv[0],
+                decision="observed",
+                reason="Command execution failed inside the sandbox.",
+                policy_rule="command.execute.allowlisted",
+            )
+            raise
+        record_activity(
+            kind="process",
+            action="command.exit",
+            target=request.argv[0],
+            decision="observed",
+            reason=f"Command finished with status {result.status}.",
+            policy_rule="command.execute.allowlisted",
         )
         return _command_result(request, result, command_permission)
 

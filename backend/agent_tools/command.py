@@ -102,6 +102,7 @@ def build_command_execute_tool_definition(
     *,
     filesystem_workspace_service: Any | None = None,
     network_permission_service: Any | None = None,
+    sandbox_debug_service: Any | None = None,
 ) -> TypedAgentToolDefinition:
     executor = SandboxCommandExecutor(
         sandbox_manager,
@@ -113,6 +114,7 @@ def build_command_execute_tool_definition(
         args: CommandExecuteArgs,
     ) -> AgentToolExecutionResult:
         workspace_id = context.filesystem_workspace_id.strip()
+        snapshot = None
         input_files = ()
         if workspace_id:
             if filesystem_workspace_service is None:
@@ -120,16 +122,70 @@ def build_command_execute_tool_definition(
             snapshot = filesystem_workspace_service.snapshot(workspace_id)
             input_files = snapshot.input_files
 
-        result = executor.execute(
-            SandboxCommandRequest.model_validate(args.model_dump()),
-            execution_policy=ExecutionPolicy(
-                profile="workspace_write",
-                workspace_id=workspace_id,
-            ),
-            input_files=input_files,
-            run_id=context.run_id,
-            tool_call_id=context.tool_call_id,
-        )
+        sandbox_id = ""
+        on_stage = None
+        on_activity = None
+        input_manifest_recorded = False
+        if sandbox_debug_service is not None:
+            try:
+                sandbox_id, on_stage = sandbox_debug_service.begin_agent_run(
+                    run_id=context.run_id,
+                    tool_call_id=context.tool_call_id,
+                    filesystem_workspace_id=workspace_id,
+                    workspace_name=(snapshot.workspace.display_name if snapshot else ""),
+                    input_manifest=(),
+                    manager=sandbox_manager,
+                    record_default_permission_events=False,
+                    permission_action="command.execute",
+                    permission_target=args.argv[0],
+                    permission_rule="command.execute.allowlisted",
+                )
+                def record_activity(**activity: str) -> None:
+                    nonlocal input_manifest_recorded
+                    sandbox_debug_service.record_activity(sandbox_id, **activity)
+                    if (
+                        not input_manifest_recorded
+                        and activity.get("action") == "filesystem.read"
+                        and snapshot is not None
+                    ):
+                        sandbox_debug_service.record_input_files(
+                            sandbox_id, snapshot.manifest
+                        )
+                        input_manifest_recorded = True
+
+                on_activity = record_activity
+            except Exception:  # noqa: BLE001 - Trace is observational only.
+                # Debug history is observational; it cannot prevent a safe execution.
+                sandbox_id = ""
+                on_stage = None
+                on_activity = None
+
+        try:
+            result = executor.execute(
+                SandboxCommandRequest.model_validate(args.model_dump()),
+                execution_policy=ExecutionPolicy(
+                    profile="workspace_write",
+                    workspace_id=workspace_id,
+                ),
+                input_files=input_files,
+                run_id=context.run_id,
+                tool_call_id=context.tool_call_id,
+                sandbox_id=sandbox_id or None,
+                on_stage=on_stage,
+                on_activity=on_activity,
+            )
+        except Exception as exc:
+            if sandbox_id:
+                try:
+                    sandbox_debug_service.fail_agent_run(sandbox_id, exc)
+                except Exception:  # noqa: BLE001, S110 - Trace cannot block execution.
+                    pass
+            raise
+        if sandbox_id:
+            try:
+                sandbox_debug_service.finish_command_run(sandbox_id, result)
+            except Exception:  # noqa: BLE001, S110 - Trace cannot block execution.
+                pass
         data = CommandExecuteResultData.model_validate(result.model_dump())
         return AgentToolExecutionResult(
             tool_name="command_execute",

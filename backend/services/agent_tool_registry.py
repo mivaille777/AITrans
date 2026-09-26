@@ -200,6 +200,7 @@ class AgentToolRegistry:
                     sandbox_manager,
                     filesystem_workspace_service=filesystem_workspace_service,
                     network_permission_service=sandbox_network_permission_service,
+                    sandbox_debug_service=sandbox_debug_service,
                 ),
             )
             if sandbox_manager is not None

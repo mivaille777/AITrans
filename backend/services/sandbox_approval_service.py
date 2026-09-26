@@ -37,6 +37,8 @@ class SandboxApprovalService:
         ttl_seconds: int = _DEFAULT_TTL_SECONDS,
         max_approvals: int = _MAX_APPROVALS,
         clock: Callable[[], datetime] | None = None,
+        transition_recorder: Callable[[SandboxApprovalRequest, str, str], None]
+        | None = None,
     ) -> None:
         if not 0 < ttl_seconds <= _MAX_TTL_SECONDS:
             raise ValueError("Approval TTL must be between 1 and 3600 seconds.")
@@ -45,6 +47,7 @@ class SandboxApprovalService:
         self.ttl_seconds = ttl_seconds
         self.max_approvals = max_approvals
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._transition_recorder = transition_recorder
         self._lock = RLock()
         self._approvals: OrderedDict[str, SandboxApprovalRequest] = OrderedDict()
         self._grants: dict[str, PermissionGrant] = {}
@@ -99,6 +102,7 @@ class SandboxApprovalService:
         with self._lock:
             self._make_room()
             self._approvals[approval.approval_id] = approval
+        self._record_transition(approval, "created")
         return approval.model_copy(deep=True)
 
     def list_pending(self) -> list[SandboxApprovalRequest]:
@@ -132,7 +136,9 @@ class SandboxApprovalService:
             self._approvals[approval_id] = approved
             self._grants[grant.grant_id] = grant
             self._grant_ids_by_approval[approval_id] = grant.grant_id
-            return approved.model_copy(deep=True)
+            result = approved.model_copy(deep=True)
+        self._record_transition(approved, "approved", grant.grant_id)
+        return result
 
     def deny(self, approval_id: str) -> SandboxApprovalRequest:
         with self._lock:
@@ -140,7 +146,9 @@ class SandboxApprovalService:
             approval = self._require_pending(approval)
             denied = approval.model_copy(update={"status": "denied"})
             self._approvals[approval_id] = denied
-            return denied.model_copy(deep=True)
+            result = denied.model_copy(deep=True)
+        self._record_transition(denied, "denied")
+        return result
 
     def consume_grant(
         self,
@@ -196,7 +204,9 @@ class SandboxApprovalService:
             self._approvals[approval_id] = consumed
             self._grants.pop(grant_id, None)
             self._grant_ids_by_approval.pop(approval_id, None)
-            return grant.model_copy(deep=True)
+            result = grant.model_copy(deep=True)
+        self._record_transition(consumed, "consumed", grant.grant_id)
+        return result
 
     def close(self) -> None:
         """Clear ephemeral approvals and grants so shutdown cannot preserve authority."""
@@ -263,10 +273,27 @@ class SandboxApprovalService:
         approval_id: str,
         approval: SandboxApprovalRequest,
     ) -> None:
-        self._approvals[approval_id] = approval.model_copy(update={"status": "expired"})
         grant_id = self._grant_ids_by_approval.pop(approval_id, "")
+        expired = approval.model_copy(update={"status": "expired"})
+        self._approvals[approval_id] = expired
         if grant_id:
             self._grants.pop(grant_id, None)
+        self._record_transition(expired, "expired", grant_id)
+
+    def _record_transition(
+        self,
+        approval: SandboxApprovalRequest,
+        transition: str,
+        grant_id: str = "",
+    ) -> None:
+        recorder = self._transition_recorder
+        if recorder is None:
+            return
+        try:
+            recorder(approval.model_copy(deep=True), transition, grant_id)
+        except Exception:  # noqa: BLE001 - Trace cannot alter approval authority.
+            # Trace collection is observational and cannot affect approval authority.
+            return
 
     def _make_room(self) -> None:
         self._expire_due()

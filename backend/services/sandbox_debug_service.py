@@ -25,6 +25,7 @@ from backend.models.sandbox_debug import (
     SandboxRunStatus,
     SandboxRunSummary,
 )
+from backend.sandbox.command_models import SandboxCommandResult
 from backend.sandbox.environment import (
     known_secret_environment_values,
     redact_known_secret_values,
@@ -194,6 +195,10 @@ class SandboxDebugService:
         workspace_name: str = "",
         input_manifest: tuple[dict[str, object], ...] = (),
         manager: Any,
+        record_default_permission_events: bool = True,
+        permission_action: str = "python_execute",
+        permission_target: str = "python_execute",
+        permission_rule: str = "sandbox.python_execute.safe_default",
     ) -> tuple[str, Callable[[str, str, str], None]]:
         summary = SandboxRunSummary(
             sandbox_id=f"sb_{uuid4().hex}",
@@ -211,25 +216,29 @@ class SandboxDebugService:
         sandbox_id = summary.sandbox_id
         self._add_entry(trace)
         self._set_stage(sandbox_id, "request", "complete", "Agent requested Python execution.")
-        self._set_stage(sandbox_id, "permission", "complete", "Sandbox Python execution is allowed by policy.")
-        self._add_activity(
-            sandbox_id,
-            kind="policy",
-            action="permission.request",
-            target="python_execute",
-            decision="observed",
-            reason="Agent requested isolated Python execution.",
-            policy_rule="sandbox.python_execute.safe_default",
-        )
-        self._add_activity(
-            sandbox_id,
-            kind="policy",
-            action="permission.allow",
-            target="python_execute",
-            decision="allowed",
-            reason="Isolated Python execution is allowed by the Sandbox policy.",
-            policy_rule="sandbox.python_execute.safe_default",
-        )
+        if record_default_permission_events:
+            self._set_stage(sandbox_id, "permission", "complete", "Sandbox Python execution is allowed by policy.")
+        else:
+            self._set_stage(sandbox_id, "permission", "running", "Evaluating the requested Sandbox command.")
+        if record_default_permission_events:
+            self._add_activity(
+                sandbox_id,
+                kind="policy",
+                action="permission.request",
+                target=permission_target,
+                decision="observed",
+                reason=f"Agent requested {permission_action}.",
+                policy_rule=permission_rule,
+            )
+            self._add_activity(
+                sandbox_id,
+                kind="policy",
+                action="permission.allow",
+                target=permission_target,
+                decision="allowed",
+                reason="Isolated Python execution is allowed by the Sandbox policy.",
+                policy_rule=permission_rule,
+            )
         self._set_stage(
             sandbox_id,
             "workspace",
@@ -265,6 +274,48 @@ class SandboxDebugService:
         result: SandboxExecutionResult,
     ) -> SandboxDebugTrace:
         return self._finish_result(sandbox_id, result)
+
+    def finish_command_run(
+        self,
+        sandbox_id: str,
+        result: SandboxCommandResult,
+    ) -> SandboxDebugTrace:
+        status = result.status
+        execution_status = status if status in _TERMINAL - {"pending"} else "failed"
+        error_override = None
+        if status == "denied":
+            error_override = "Command was denied by the Sandbox permission policy."
+        elif status == "approval_required":
+            error_override = "Command requires approval and was not executed."
+            self.record_stage(
+                sandbox_id,
+                "approval",
+                "complete",
+                "Approval requested; awaiting a user decision.",
+            )
+        elif status == "failed":
+            error_override = (
+                f"Command exited with code {result.exit_code}."
+                if result.exit_code is not None
+                else "Command execution failed."
+            )
+        command_result = SandboxExecutionResult(
+            sandbox_id=sandbox_id,
+            status=execution_status,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_ms=result.duration_ms,
+            timed_out=result.timed_out,
+            output_limit_exceeded=result.output_limit_exceeded,
+            oom_killed=result.oom_killed,
+            runtime=result.runtime,
+            image=result.image,
+            workspace_changeset=result.workspace_changeset,
+        )
+        return self._finish_result(
+            sandbox_id, command_result, error_override=error_override
+        )
 
     def fail_agent_run(self, sandbox_id: str, error: Exception) -> None:
         self._finish_error(sandbox_id, error)
@@ -479,6 +530,66 @@ class SandboxDebugService:
         """Expose lifecycle stage updates to command and apply services."""
         self._set_stage(sandbox_id, key, status, note)
 
+    def record_input_files(
+        self,
+        sandbox_id: str,
+        manifest: tuple[dict[str, object], ...],
+    ) -> None:
+        with self._condition:
+            entry = self._runs.get(sandbox_id)
+            if entry is None:
+                return
+            entry.trace = entry.trace.model_copy(
+                update={"input_files": [_safe_debug_file(item) for item in manifest]}
+            )
+            self._record_event_locked(
+                entry,
+                {"type": "trace", "trace": entry.trace.model_dump(mode="json")},
+            )
+
+    def record_activity_for_context(
+        self,
+        run_id: str,
+        tool_call_id: str,
+        **activity: str,
+    ) -> str | None:
+        """Attach an approval event to the trace for its original tool request."""
+        with self._condition:
+            sandbox_id = next(
+                (
+                    key
+                    for key, entry in reversed(self._runs.items())
+                    if entry.trace.run.run_id == run_id
+                    and entry.trace.run.tool_call_id == tool_call_id
+                ),
+                None,
+            )
+        if sandbox_id is None:
+            return None
+        self.record_activity(sandbox_id, **activity)
+        return sandbox_id
+
+    def record_stage_for_context(
+        self,
+        run_id: str,
+        tool_call_id: str,
+        key: str,
+        status: str,
+        note: str = "",
+    ) -> None:
+        with self._condition:
+            sandbox_id = next(
+                (
+                    sandbox_id
+                    for sandbox_id, entry in reversed(self._runs.items())
+                    if entry.trace.run.run_id == run_id
+                    and entry.trace.run.tool_call_id == tool_call_id
+                ),
+                None,
+            )
+        if sandbox_id is not None:
+            self.record_stage(sandbox_id, key, status, note)
+
     def _append_activity_locked(
         self,
         entry: _RunEntry,
@@ -512,7 +623,13 @@ class SandboxDebugService:
             {"type": "activity", "activity": activity.model_dump(mode="json")},
         )
 
-    def _finish_result(self, sandbox_id: str, result: SandboxExecutionResult) -> SandboxDebugTrace:
+    def _finish_result(
+        self,
+        sandbox_id: str,
+        result: SandboxExecutionResult,
+        *,
+        error_override: str | None = None,
+    ) -> SandboxDebugTrace:
         with self._condition:
             entry = self._runs.get(sandbox_id)
             if entry is None:
@@ -569,7 +686,11 @@ class SandboxDebugService:
                         for item in result.output_files
                     ],
                     "workspace_changes": workspace_changes,
-                    "error": self._result_message(result),
+                    "error": (
+                        error_override
+                        if error_override is not None
+                        else self._result_message(result)
+                    ),
                 }
             )
             for change in workspace_changes:

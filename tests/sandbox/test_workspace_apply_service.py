@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY
 from backend.sandbox.workspace_snapshot import (
     WorkspaceChangeSet,
     create_workspace_changeset,
@@ -12,6 +13,7 @@ from backend.sandbox.workspace_snapshot import (
 )
 from backend.services.filesystem_workspace_service import FilesystemWorkspaceService
 from backend.services.sandbox_approval_service import SandboxApprovalService
+from backend.services.sandbox_debug_service import SandboxDebugService
 from backend.services.workspace_apply_service import (
     WorkspaceApplyError,
     WorkspaceApplyService,
@@ -20,7 +22,12 @@ from backend.services.workspace_apply_service import (
 _SANDBOX_ID = "sb_" + "a" * 32
 
 
-def _setup(tmp_path: Path, files: dict[str, bytes]):
+def _setup(
+    tmp_path: Path,
+    files: dict[str, bytes],
+    *,
+    debug_service: SandboxDebugService | None = None,
+):
     selected = tmp_path / "selected"
     for relative_path, content in files.items():
         path = selected.joinpath(*relative_path.split("/"))
@@ -28,15 +35,51 @@ def _setup(tmp_path: Path, files: dict[str, bytes]):
         path.write_bytes(content)
     workspaces = FilesystemWorkspaceService(tmp_path / "workspace-state.sqlite3")
     workspace = workspaces.create(str(selected))
-    approvals = SandboxApprovalService()
+    def record_approval(approval, transition: str, grant_id: str) -> None:
+        if debug_service is None:
+            return
+        target = (
+            approval.requested_changes[0].path
+            if approval.requested_changes
+            else approval.target
+        )
+        sandbox_id = debug_service.record_activity_for_context(
+            approval.run_id,
+            approval.tool_call_id,
+            kind="approval",
+            action=f"approval.{transition}",
+            target=target,
+            decision=approval.status,
+            reason=approval.reason,
+            policy_rule=approval.permission_action,
+            approval_id=approval.approval_id,
+            grant_id=grant_id,
+        )
+        if sandbox_id is not None:
+            debug_service.record_stage(
+                sandbox_id,
+                "approval",
+                "running" if transition == "created" else "complete",
+                f"Approval {approval.status}.",
+            )
+
+    approvals = SandboxApprovalService(
+        transition_recorder=record_approval if debug_service is not None else None
+    )
     change_store = tmp_path / "artifacts" / "workspace_changes"
     service = WorkspaceApplyService(
         workspaces,
         approvals,
         change_store_root=change_store,
         audit_database_path=tmp_path / "workspace-audit.sqlite3",
+        debug_service=debug_service,
     )
     return selected, workspace, workspaces, approvals, service, change_store
+
+
+class _DebugManager:
+    image = "aitrans-python-sandbox:v1"
+    policy = DEFAULT_SANDBOX_POLICY
 
 
 def _make_changeset(
@@ -153,6 +196,49 @@ def test_approved_changeset_creates_modifies_and_deletes_atomically(
     with pytest.raises(WorkspaceApplyError) as replay:
         service.apply(changeset, approval_id=approval_id)
     assert replay.value.code == "approval_grant_replayed"
+
+
+def test_workspace_apply_and_approval_transitions_are_traced(tmp_path: Path) -> None:
+    debug_service = SandboxDebugService()
+    try:
+        selected, workspace, workspaces, approvals, service, change_store = _setup(
+            tmp_path,
+            {"src/file.txt": b"before"},
+            debug_service=debug_service,
+        )
+        sandbox_id, _on_stage = debug_service.begin_agent_run(
+            run_id="run-apply-trace",
+            tool_call_id="call-apply-trace",
+            filesystem_workspace_id=workspace.workspace_id,
+            workspace_name=workspace.display_name,
+            manager=_DebugManager(),
+        )
+        changeset = _make_changeset(
+            selected,
+            workspace.workspace_id,
+            workspaces,
+            change_store,
+            updates={"src/file.txt": b"after"},
+            sandbox_id=sandbox_id,
+        )
+
+        approval = service.request_approval(changeset)
+        approvals.approve(approval.approval_id)
+        service.apply(changeset, approval_id=approval.approval_id)
+
+        trace = debug_service.get_run(sandbox_id)
+        actions = [activity.action for activity in trace.activities]
+        assert "permission.request" in actions
+        assert "permission.approval_required" in actions
+        assert "approval.created" in actions
+        assert "approval.approved" in actions
+        assert "approval.consumed" in actions
+        assert "filesystem.apply" in actions
+        assert trace.stages[-3].key == "apply"
+        assert trace.stages[-3].status == "complete"
+        assert trace.activities[-1].grant_id
+    finally:
+        debug_service.close()
 
 
 def test_apply_rejects_missing_approval_and_wrong_changeset_scope(

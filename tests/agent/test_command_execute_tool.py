@@ -4,6 +4,7 @@ from backend.agent_tools.command import CommandExecuteArgs
 from backend.sandbox.models import SandboxExecutionResult
 from backend.services.agent_tool_registry import AgentToolRegistry
 from backend.services.sandbox_approval_service import SandboxApprovalService
+from backend.services.sandbox_debug_service import SandboxDebugService
 from backend.services.sandbox_network_permission_service import (
     SandboxNetworkPermissionService,
 )
@@ -61,6 +62,35 @@ def test_command_execute_denies_unknown_executable_without_runtime_call() -> Non
     assert result.data["status"] == "denied"
     decision = result.data["permission_decision"]
     assert decision["decision"] == "deny"
+
+
+def test_command_execute_records_a_sandbox_debug_trace() -> None:
+    manager = FakeSandboxManager()
+    debug_service = SandboxDebugService()
+    try:
+        registry = AgentToolRegistry(
+            sandbox_manager=manager,
+            sandbox_debug_service=debug_service,
+        )
+
+        result = registry.execute(
+            "command_execute",
+            argv=["python", "--version"],
+            run_id="run-command-trace",
+            tool_call_id="call-command-trace",
+        )
+        trace = debug_service.get_run(result.data["sandbox_id"])
+        actions = [activity.action for activity in trace.activities]
+
+        assert trace.run.run_id == "run-command-trace"
+        assert trace.run.tool_call_id == "call-command-trace"
+        assert trace.run.status == "succeeded"
+        assert "permission.request" in actions
+        assert "permission.allow" in actions
+        assert "command.start" in actions
+        assert "command.exit" in actions
+    finally:
+        debug_service.close()
 
 
 def test_command_execute_rejects_non_array_argv() -> None:

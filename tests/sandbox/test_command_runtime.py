@@ -77,6 +77,47 @@ def test_allowed_argv_runs_through_shell_free_sandbox_runner() -> None:
     assert manager.calls[0][1]["sandbox_id"] == result.sandbox_id
 
 
+def test_command_records_permission_process_and_selected_file_events() -> None:
+    executor, _manager = _executor()
+    events: list[dict[str, str]] = []
+
+    result = executor.execute(
+        SandboxCommandRequest(argv=["python", "--version"]),
+        execution_policy=_policy(workspace_id="fsw_selected"),
+        input_files=(SandboxInputFile("file-1", "src/a.py", Path("src/a.py")),),
+        run_id="run-trace",
+        tool_call_id="call-trace",
+        sandbox_id="sb_trace",
+        on_activity=lambda **event: events.append(event),
+    )
+
+    actions = [event["action"] for event in events]
+    assert result.sandbox_id == "sb_trace"
+    assert actions.count("permission.request") == 3
+    assert "permission.allow" in actions
+    assert "filesystem.read" in actions
+    assert "command.start" in actions
+    assert "command.exit" in actions
+    read_event = next(event for event in events if event["action"] == "filesystem.read")
+    assert read_event["target"] == "src/a.py"
+
+
+def test_denied_command_records_policy_reason_without_starting() -> None:
+    executor, manager = _executor()
+    events: list[dict[str, str]] = []
+
+    result = executor.execute(
+        SandboxCommandRequest(argv=["curl", "https://example.com"]),
+        execution_policy=_policy(),
+        on_activity=lambda **event: events.append(event),
+    )
+
+    assert result.status == "denied"
+    assert any(event["action"] == "permission.deny" for event in events)
+    assert not any(event["action"] == "command.start" for event in events)
+    assert manager.calls == []
+
+
 def test_selected_workspace_gets_an_editable_sandbox_copy() -> None:
     executor, manager = _executor()
 
@@ -174,6 +215,7 @@ def test_network_is_pending_until_approval_then_uses_exact_host_policy() -> None
     approvals = SandboxApprovalService()
     network_permissions = SandboxNetworkPermissionService(approvals)
     executor, manager = _executor(network_permission_service=network_permissions)
+    events: list[dict[str, str]] = []
     request = SandboxCommandRequest(
         argv=["python", "-c", "print('network')"],
         network_host="pypi.org",
@@ -184,6 +226,7 @@ def test_network_is_pending_until_approval_then_uses_exact_host_policy() -> None
         execution_policy=_policy(),
         run_id="run-1",
         tool_call_id="call-1",
+        on_activity=lambda **event: events.append(event),
     )
 
     assert pending.status == "approval_required"
@@ -198,12 +241,17 @@ def test_network_is_pending_until_approval_then_uses_exact_host_policy() -> None
         execution_policy=_policy(),
         run_id="run-1",
         tool_call_id="call-2",
+        on_activity=lambda **event: events.append(event),
     )
 
     assert result.status == "succeeded"
     assert manager.calls[0][1]["network_policy"].mode == "restricted"
     assert manager.calls[0][1]["network_policy"].allowed_hosts == ("pypi.org",)
     assert approvals.get(pending.approval_id).status == "consumed"
+    actions = [event["action"] for event in events]
+    assert "network.request" in actions
+    assert "permission.approval_required" in actions
+    assert "network.allow" in actions
 
 
 def test_network_grant_for_wrong_run_or_host_never_reaches_runtime() -> None:

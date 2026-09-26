@@ -71,6 +71,52 @@ def test_create_and_approve_creates_run_bound_single_use_grant() -> None:
     assert service.get(approval.approval_id).status == "consumed"
 
 
+def test_transition_recorder_observes_pending_approved_and_consumed_states() -> None:
+    transitions: list[tuple[str, str, str]] = []
+    service = SandboxApprovalService(
+        transition_recorder=lambda approval, transition, grant_id: transitions.append(
+            (transition, approval.status, grant_id)
+        )
+    )
+    request, decision = _approval_context()
+    approval = service.create_approval(request, decision)
+    approved = service.approve(approval.approval_id)
+    grant = service.consume_grant(
+        approval.approval_id,
+        action="filesystem.apply_host",
+        scope=decision.granted_scope,
+        run_id="run-1",
+        tool_call_id="call-1",
+    )
+
+    assert [transition[:2] for transition in transitions] == [
+        ("created", "pending"),
+        ("approved", "approved"),
+        ("consumed", "consumed"),
+    ]
+    assert transitions[1][2] == grant.grant_id
+    assert transitions[2][2] == grant.grant_id
+    assert approved.status == "approved"
+
+
+def test_transition_recorder_observes_expiry() -> None:
+    clock = MutableClock()
+    transitions: list[tuple[str, str]] = []
+    service = SandboxApprovalService(
+        ttl_seconds=5,
+        clock=clock,
+        transition_recorder=lambda approval, transition, _grant_id: transitions.append(
+            (transition, approval.status)
+        ),
+    )
+    request, decision = _approval_context()
+    approval = service.create_approval(request, decision)
+    clock.value += timedelta(seconds=6)
+
+    assert service.get(approval.approval_id).status == "expired"
+    assert transitions == [("created", "pending"), ("expired", "expired")]
+
+
 def test_deny_never_creates_a_usable_grant() -> None:
     service = SandboxApprovalService()
     request, decision = _approval_context()

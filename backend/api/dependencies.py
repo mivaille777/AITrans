@@ -14,6 +14,7 @@ from backend.api.llm_dependencies import (
     build_routed_product_agent_service,
     build_routed_quick_action_service,
 )
+from backend.models.sandbox_approval import SandboxApprovalRequest
 from backend.sandbox.docker_runtime import DEFAULT_IMAGE, DockerSandboxRuntime
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxRuntimeHealth
@@ -362,13 +363,49 @@ def close_sandbox_debug_service() -> None:
         service.close()
 
 
+def _record_sandbox_approval_transition(
+    approval: SandboxApprovalRequest,
+    transition: str,
+    grant_id: str,
+) -> None:
+    debug_service = get_sandbox_debug_service()
+    target = approval.target
+    if approval.requested_changes:
+        target = (
+            approval.requested_changes[0].path
+            if len(approval.requested_changes) == 1
+            else f"{len(approval.requested_changes)} workspace files"
+        )
+    sandbox_id = debug_service.record_activity_for_context(
+        approval.run_id,
+        approval.tool_call_id,
+        kind="approval",
+        action=f"approval.{transition}",
+        target=target,
+        decision=approval.status,
+        reason=approval.reason,
+        policy_rule=approval.permission_action,
+        approval_id=approval.approval_id,
+        grant_id=grant_id,
+    )
+    if sandbox_id is not None:
+        debug_service.record_stage(
+            sandbox_id,
+            "approval",
+            "running" if transition == "created" else "complete",
+            f"Approval {approval.status}.",
+        )
+
+
 def get_sandbox_approval_service() -> SandboxApprovalService:
     global _sandbox_approval_service
     if _sandbox_approval_service is not None:
         return _sandbox_approval_service
     with _sandbox_approval_service_lock:
         if _sandbox_approval_service is None:
-            _sandbox_approval_service = SandboxApprovalService()
+            _sandbox_approval_service = SandboxApprovalService(
+                transition_recorder=_record_sandbox_approval_transition
+            )
         return _sandbox_approval_service
 
 
@@ -390,6 +427,7 @@ def get_workspace_apply_service() -> WorkspaceApplyService:
             _workspace_apply_service = WorkspaceApplyService(
                 get_filesystem_workspace_service(),
                 get_sandbox_approval_service(),
+                debug_service=get_sandbox_debug_service(),
             )
         return _workspace_apply_service
 

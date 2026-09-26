@@ -96,6 +96,7 @@ class WorkspaceApplyService:
         change_store_root: str | Path | None = None,
         audit_database_path: str | Path | None = None,
         permission_policy_engine: PermissionPolicyEngine | None = None,
+        debug_service: object | None = None,
     ) -> None:
         self.filesystem_workspace_service = filesystem_workspace_service
         self.approval_service = approval_service
@@ -118,6 +119,7 @@ class WorkspaceApplyService:
             .resolve()
         )
         self._policy_engine = permission_policy_engine or PermissionPolicyEngine()
+        self._debug_service = debug_service
         self._lock = RLock()
         self._initialize_audit_store()
 
@@ -136,13 +138,32 @@ class WorkspaceApplyService:
             )
         self._load_payloads(changeset)
         self._assert_base_is_current(changeset)
+        run_id = f"run_{uuid4().hex}"
+        tool_call_id = f"tool_{uuid4().hex}"
+        if self._debug_service is not None:
+            try:
+                trace = self._debug_service.get_run(changeset.sandbox_id)
+                run_id = trace.run.run_id
+                tool_call_id = trace.run.tool_call_id or tool_call_id
+            except Exception:  # noqa: BLE001, S110 - Trace is non-authoritative.
+                pass
+        target = changeset.changes[0].path
+        self._record_trace_activity(
+            changeset.sandbox_id,
+            kind="policy",
+            action="permission.request",
+            target=target,
+            decision="observed",
+            reason="Request to apply sandbox changes to the selected host workspace.",
+            policy_rule="workspace_write.host_apply",
+        )
         request = PermissionRequest(
             action="filesystem.apply_host",
             target=changeset.changeset_hash,
             reason=f"Apply {len(changeset.changes)} approved workspace change(s).",
             tool_name="workspace_apply",
-            run_id=f"run_{uuid4().hex}",
-            tool_call_id=f"tool_{uuid4().hex}",
+            run_id=run_id,
+            tool_call_id=tool_call_id,
         )
         policy = ExecutionPolicy(
             profile="workspace_write",
@@ -150,11 +171,29 @@ class WorkspaceApplyService:
         )
         decision = self._policy_engine.evaluate(request, policy)
         if decision.decision != "approval_required":
+            self._record_trace_activity(
+                changeset.sandbox_id,
+                kind="policy",
+                action="permission.deny",
+                target=target,
+                decision="denied",
+                reason=decision.reason,
+                policy_rule=decision.reason_code,
+            )
             raise WorkspaceApplyError(
                 "workspace_apply_denied",
                 "The active permission policy does not allow host workspace apply.",
                 status_code=403,
             )
+        self._record_trace_activity(
+            changeset.sandbox_id,
+            kind="policy",
+            action="permission.approval_required",
+            target=target,
+            decision="approval_required",
+            reason=decision.reason,
+            policy_rule=decision.reason_code,
+        )
         try:
             approval = self.approval_service.create_approval(
                 request,
@@ -189,8 +228,27 @@ class WorkspaceApplyService:
                 "There are no workspace changes to apply.",
                 status_code=400,
             )
-        self._consume_approval(changeset, approval_id)
+        try:
+            grant = self._consume_approval(changeset, approval_id)
+        except WorkspaceApplyError as exc:
+            self._record_trace_activity(
+                changeset.sandbox_id,
+                kind="file",
+                action="filesystem.apply",
+                target=changeset.changes[0].path,
+                decision="denied",
+                reason=exc.code,
+                policy_rule="workspace_write.host_apply",
+                approval_id=approval_id,
+            )
+            self._record_trace_stage(
+                changeset.sandbox_id, "apply", "failed", "Host apply was not authorized."
+            )
+            raise
         audit_id = self._record_audit(changeset, "applying")
+        self._record_trace_stage(
+            changeset.sandbox_id, "apply", "running", "Applying approved workspace changes."
+        )
         try:
             payloads = self._load_payloads(changeset)
             root = self.filesystem_workspace_service.active_root_path(
@@ -222,6 +280,21 @@ class WorkspaceApplyService:
 
             self._update_audit(audit_id, "applied", "")
             self._remove_payload_store(changeset.sandbox_id)
+            for change in changeset.changes:
+                self._record_trace_activity(
+                    changeset.sandbox_id,
+                    kind="file",
+                    action="filesystem.apply",
+                    target=change.path,
+                    decision="allowed",
+                    reason=f"Applied approved {change.operation} change to the host workspace.",
+                    policy_rule="workspace_write.host_apply",
+                    approval_id=grant.approval_id,
+                    grant_id=grant.grant_id,
+                )
+            self._record_trace_stage(
+                changeset.sandbox_id, "apply", "complete", "Approved workspace changes applied."
+            )
             return WorkspaceApplyResult(
                 audit_id=audit_id,
                 changeset_hash=changeset.changeset_hash,
@@ -231,6 +304,20 @@ class WorkspaceApplyService:
         except WorkspaceApplyError as exc:
             status = "conflict" if exc.code == "workspace_conflict" else "failed"
             self._update_audit(audit_id, status, exc.code)
+            self._record_trace_activity(
+                changeset.sandbox_id,
+                kind="file",
+                action="filesystem.apply",
+                target=changeset.changes[0].path,
+                decision="denied",
+                reason=exc.code,
+                policy_rule="workspace_write.host_apply",
+                approval_id=grant.approval_id,
+                grant_id=grant.grant_id,
+            )
+            self._record_trace_stage(
+                changeset.sandbox_id, "apply", "failed", "Approved apply failed safely."
+            )
             raise
         except FilesystemWorkspaceError as exc:
             error = WorkspaceApplyError(
@@ -239,6 +326,20 @@ class WorkspaceApplyService:
                 status_code=409,
             )
             self._update_audit(audit_id, "failed", error.code)
+            self._record_trace_activity(
+                changeset.sandbox_id,
+                kind="file",
+                action="filesystem.apply",
+                target=changeset.changes[0].path,
+                decision="denied",
+                reason=error.code,
+                policy_rule="workspace_write.host_apply",
+                approval_id=grant.approval_id,
+                grant_id=grant.grant_id,
+            )
+            self._record_trace_stage(
+                changeset.sandbox_id, "apply", "failed", "Approved apply failed safely."
+            )
             raise error from exc
         except (OSError, RuntimeError, ValueError) as exc:
             error = WorkspaceApplyError(
@@ -247,7 +348,39 @@ class WorkspaceApplyService:
                 status_code=409,
             )
             self._update_audit(audit_id, "failed", error.code)
+            self._record_trace_activity(
+                changeset.sandbox_id,
+                kind="file",
+                action="filesystem.apply",
+                target=changeset.changes[0].path,
+                decision="denied",
+                reason=error.code,
+                policy_rule="workspace_write.host_apply",
+                approval_id=grant.approval_id,
+                grant_id=grant.grant_id,
+            )
+            self._record_trace_stage(
+                changeset.sandbox_id, "apply", "failed", "Approved apply failed safely."
+            )
             raise error from exc
+
+    def _record_trace_activity(self, sandbox_id: str, **activity: str) -> None:
+        recorder = getattr(self._debug_service, "record_activity", None)
+        if callable(recorder):
+            try:
+                recorder(sandbox_id, **activity)
+            except Exception:  # noqa: BLE001 - Trace is non-authoritative.
+                return
+
+    def _record_trace_stage(
+        self, sandbox_id: str, key: str, status: str, note: str
+    ) -> None:
+        recorder = getattr(self._debug_service, "record_stage", None)
+        if callable(recorder):
+            try:
+                recorder(sandbox_id, key, status, note)
+            except Exception:  # noqa: BLE001 - Trace is non-authoritative.
+                return
 
     def list_audit(self, *, limit: int = 100) -> list[WorkspaceApplyAuditRecord]:
         if not 1 <= limit <= 500:
