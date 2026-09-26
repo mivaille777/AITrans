@@ -7,6 +7,19 @@ export interface SandboxRuntimeHealth {
   daemon_ready: boolean
   os_type: string
   detail: string
+  error_code: string
+}
+
+interface RawSandboxRuntimeHealth {
+  available: boolean
+  runtime?: string
+  image?: string
+  daemon_ready?: boolean
+  os_type?: string
+  detail?: string
+  server_os?: string
+  error_code?: string | null
+  message?: string
 }
 
 export type SandboxRunStatus =
@@ -155,8 +168,23 @@ export interface SandboxDebugStreamHandle {
   close: () => void
 }
 
-export function getSandboxRuntimeHealth(): Promise<SandboxRuntimeHealth> {
-  return apiGet<SandboxRuntimeHealth>("/api/sandbox/debug/health")
+export async function getSandboxRuntimeHealth(): Promise<SandboxRuntimeHealth> {
+  const raw = await apiGet<RawSandboxRuntimeHealth>("/api/sandbox/debug/health")
+  return normalizeSandboxRuntimeHealth(raw)
+}
+
+export function normalizeSandboxRuntimeHealth(
+  raw: RawSandboxRuntimeHealth,
+): SandboxRuntimeHealth {
+  return {
+    available: Boolean(raw.available),
+    runtime: "docker",
+    image: raw.image ?? "",
+    daemon_ready: raw.daemon_ready ?? Boolean(raw.available),
+    os_type: raw.os_type ?? raw.server_os ?? "",
+    detail: raw.detail ?? raw.message ?? "",
+    error_code: raw.error_code ?? "",
+  }
 }
 
 export function listSandboxDebugRuns(): Promise<SandboxRunSummary[]> {

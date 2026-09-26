@@ -7,6 +7,7 @@ import {
   listSandboxDebugRuns,
   startSandboxDebugRun,
   streamSandboxDebugRun,
+  normalizeSandboxRuntimeHealth,
   type SandboxDebugTrace,
   type SandboxRunSummary,
 } from "./sandbox-debug"
@@ -86,6 +87,7 @@ describe("sandbox debug api", () => {
 
     const health = await getSandboxRuntimeHealth()
     expect(health.daemon_ready).toBe(true)
+    expect(health.error_code).toBe("")
 
     const runs = await listSandboxDebugRuns()
     expect(runs[0]?.sandbox_id).toBe("sb-1")
@@ -96,6 +98,25 @@ describe("sandbox debug api", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/sandbox/debug/health")
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/sandbox/debug/runs")
     expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/api/sandbox/debug/runs/sb-1")
+  })
+
+  it("normalizes the backend sandbox health model into the UI contract", () => {
+    expect(normalizeSandboxRuntimeHealth({
+      available: true,
+      runtime: "docker",
+      image: "aitrans-sandbox:latest",
+      server_os: "linux",
+      error_code: null,
+      message: "ready",
+    })).toEqual({
+      available: true,
+      runtime: "docker",
+      image: "aitrans-sandbox:latest",
+      daemon_ready: true,
+      os_type: "linux",
+      detail: "ready",
+      error_code: "",
+    })
   })
 
   it("starts and cancels a manual run using the bounded request contract", async () => {
