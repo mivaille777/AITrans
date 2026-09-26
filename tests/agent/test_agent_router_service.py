@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from backend.models.agent_tools import AgentPlan
+from backend.services.agent_planner_service import AgentPlannerService
 from backend.services.agent_router_service import (
     AgentDeterministicRouterService,
     AgentSemanticRouterService,
@@ -166,3 +165,26 @@ def test_semantic_router_wraps_existing_single_step_planner() -> None:
     assert route.source == "semantic_router"
     assert route.tool_name == "explain_selection"
     assert router.provider_name == "fake-router"
+
+
+def test_semantic_planner_receives_only_relative_workspace_file_metadata() -> None:
+    prompt = AgentPlannerService()._planner_payload(
+        user_message="Analyze the selected CSV.",
+        source_text="",
+        translated_text="",
+        resource_url="",
+        resource_title="",
+        section_heading="",
+        context_before="",
+        context_after="",
+        source_kind="desktop",
+        tools=(),
+        filesystem_workspace_files=[
+            {"relative_path": "input/data.csv", "size_bytes": 42}
+        ],
+    )
+
+    assert '"relative_path": "input/data.csv"' in prompt
+    assert "42" in prompt
+    assert "filesystem_workspace_id" not in prompt
+    assert "C:" not in prompt

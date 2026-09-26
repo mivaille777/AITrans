@@ -16,6 +16,7 @@ from backend.api.llm_dependencies import (
 )
 from backend.sandbox.docker_runtime import DEFAULT_IMAGE, DockerSandboxRuntime
 from backend.sandbox.manager import SandboxManager
+from backend.sandbox.models import SandboxRuntimeHealth
 from backend.services.agent_tool_registry import AgentToolRegistry
 from backend.services.browser_context_service import BrowserContextService
 from backend.services.companion_chat_service import CompanionChatService
@@ -26,6 +27,7 @@ from backend.services.companion_ownership_service import (
 from backend.services.companion_query_router import CompanionQueryRouter
 from backend.services.conversation_lifecycle_service import ConversationLifecycleService
 from backend.services.conversation_store_service import ConversationStoreService
+from backend.services.filesystem_workspace_service import FilesystemWorkspaceService
 from backend.services.overlay_state_service import OverlayStateService
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.quick_action_service import QuickActionService
@@ -34,6 +36,7 @@ from backend.services.rag_debug_store_service import RagDebugStoreService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.research_note_service import ResearchNoteService
 from backend.services.research_workspace_service import ResearchWorkspaceService
+from backend.services.sandbox_debug_service import SandboxDebugService
 from backend.services.translation_service import TranslationService
 
 _translation_service: TranslationService | None = None
@@ -62,6 +65,10 @@ _agent_tool_registry: AgentToolRegistry | None = None
 _agent_tool_registry_lock = Lock()
 _sandbox_manager: SandboxManager | None = None
 _sandbox_manager_lock = Lock()
+_filesystem_workspace_service: FilesystemWorkspaceService | None = None
+_filesystem_workspace_service_lock = Lock()
+_sandbox_debug_service: SandboxDebugService | None = None
+_sandbox_debug_service_lock = Lock()
 _product_agent_service: ProductAgentService | None = None
 _product_agent_service_lock = Lock()
 _rag_debug_store_service: RagDebugStoreService | None = None
@@ -297,6 +304,8 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 jit_search_read_enabled=rag_runtime.config.jit_search_read_enabled,
                 knowledge_workspace_service=get_knowledge_workspace_service(),
                 sandbox_manager=get_sandbox_manager(),
+                filesystem_workspace_service=get_filesystem_workspace_service(),
+                sandbox_debug_service=get_sandbox_debug_service(),
             )
         return _agent_tool_registry
 
@@ -304,6 +313,68 @@ def get_agent_tool_registry() -> AgentToolRegistry:
 def _sandbox_enabled() -> bool:
     value = os.getenv("AITRANS_SANDBOX_ENABLED", "false").strip().casefold()
     return value in {"1", "true", "yes", "on"}
+
+
+def get_filesystem_workspace_service() -> FilesystemWorkspaceService:
+    global _filesystem_workspace_service
+    if _filesystem_workspace_service is not None:
+        return _filesystem_workspace_service
+    with _filesystem_workspace_service_lock:
+        if _filesystem_workspace_service is None:
+            _filesystem_workspace_service = FilesystemWorkspaceService()
+        return _filesystem_workspace_service
+
+
+def close_filesystem_workspace_service() -> None:
+    global _filesystem_workspace_service
+    with _filesystem_workspace_service_lock:
+        _filesystem_workspace_service = None
+
+
+def get_sandbox_debug_service() -> SandboxDebugService:
+    global _sandbox_debug_service
+    if _sandbox_debug_service is not None:
+        return _sandbox_debug_service
+    with _sandbox_debug_service_lock:
+        if _sandbox_debug_service is None:
+            _sandbox_debug_service = SandboxDebugService()
+        return _sandbox_debug_service
+
+
+def close_sandbox_debug_service() -> None:
+    global _sandbox_debug_service
+    with _sandbox_debug_service_lock:
+        service = _sandbox_debug_service
+        _sandbox_debug_service = None
+    if service is not None:
+        service.close()
+
+
+def get_sandbox_runtime_health() -> SandboxRuntimeHealth:
+    if not _sandbox_enabled():
+        return SandboxRuntimeHealth(
+            available=False,
+            image=os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE,
+            error_code="sandbox_disabled",
+            message="Sandbox execution is disabled.",
+        )
+    manager = _sandbox_manager
+    if manager is not None:
+        return manager.health()
+    image = os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE
+    try:
+        runtime = DockerSandboxRuntime(image=image)
+    except ValueError:
+        return SandboxRuntimeHealth(
+            available=False,
+            image=image,
+            error_code="invalid_sandbox_image",
+            message="The configured sandbox image is invalid.",
+        )
+    try:
+        return runtime.health()
+    finally:
+        runtime.close()
 
 
 def get_sandbox_manager() -> SandboxManager | None:

@@ -63,6 +63,8 @@ _CONTEXT_FIELDS = (
     "style",
     "ai_action",
     "workspace_id",
+    "filesystem_workspace_id",
+    "tool_call_id",
     "knowledge_document_ids",
     "knowledge_scope_allow_global",
     "request_id",
@@ -102,6 +104,8 @@ class AgentToolRegistry:
         jit_search_read_enabled: bool = False,
         knowledge_workspace_service: KnowledgeWorkspaceService | None = None,
         sandbox_manager: Any | None = None,
+        filesystem_workspace_service: Any | None = None,
+        sandbox_debug_service: Any | None = None,
     ) -> None:
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         if translation_fallback_service is not None:
@@ -183,7 +187,13 @@ class AgentToolRegistry:
         )
         knowledge_definitions = build_knowledge_tool_definitions(knowledge_tools)
         sandbox_definitions = (
-            (build_python_sandbox_tool_definition(sandbox_manager),)
+            (
+                build_python_sandbox_tool_definition(
+                    sandbox_manager,
+                    filesystem_workspace_service=filesystem_workspace_service,
+                    sandbox_debug_service=sandbox_debug_service,
+                ),
+            )
             if sandbox_manager is not None
             else ()
         )

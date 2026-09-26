@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
+from threading import Event
 from typing import Any
 
 import docker
@@ -84,6 +87,24 @@ class DockerSandboxRuntime:
         if client is not None:
             client.close()
 
+    def cancel(self, sandbox_id: str) -> bool:
+        """Kill the named in-flight container without creating a new client."""
+
+        if not self._client or not re.fullmatch(r"sb_[a-f0-9]{32}", sandbox_id):
+            return False
+        try:
+            container = self._client.containers.get(f"aitrans-sb-{sandbox_id}")
+            container.reload()
+            state = (container.attrs or {}).get("State", {})
+            if str(state.get("Status", "")).lower() != "running":
+                return False
+            container.kill()
+            return True
+        except NotFound:
+            return False
+        except DockerException:
+            return False
+
     def health(self) -> SandboxRuntimeHealth:
         try:
             client = self._get_client()
@@ -156,8 +177,12 @@ class DockerSandboxRuntime:
         request: SandboxExecutionRequest,
         *,
         workspace: SandboxWorkspace,
+        on_stage: Callable[[str, str, str], None] | None = None,
+        cancel_event: Event | None = None,
     ) -> SandboxExecutionResult:
         self._ensure_ready()
+        if cancel_event is not None and cancel_event.is_set():
+            return self._result_cancelled(request)
         client = self._get_client()
         container_name = f"aitrans-sb-{request.sandbox_id}"
         container = None
@@ -170,14 +195,18 @@ class DockerSandboxRuntime:
         output_queue: queue.Queue[Any] = queue.Queue(maxsize=32)
         started_at = time.monotonic()
         timed_out = False
+        cancelled = False
         output_limit_exceeded = False
         exit_code: int | None = None
         oom_killed = False
         stdout_buffer = bytearray()
         stderr_buffer = bytearray()
         primary_error: BaseException | None = None
+        active_stage = ""
 
         try:
+            self._emit_stage(on_stage, "create", "running", "Creating isolated Docker container.")
+            active_stage = "create"
             try:
                 container = client.containers.create(
                     image=self.image,
@@ -217,9 +246,18 @@ class DockerSandboxRuntime:
                     tty=False,
                 )
             except DockerException as exc:
+                self._emit_stage(on_stage, "create", "failed", "Docker container creation failed.")
+                active_stage = ""
                 raise SandboxCreateError(
                     "Failed to create the Python sandbox container."
                 ) from exc
+            self._emit_stage(on_stage, "create", "complete", "Isolated Docker container created.")
+            active_stage = ""
+
+            if cancel_event is not None and cancel_event.is_set():
+                self._emit_stage(on_stage, "start", "skipped", "Run cancelled before container start.")
+                self._emit_stage(on_stage, "execute", "skipped", "Run cancelled before Python execution.")
+                return self._result_cancelled(request)
 
             try:
                 if self._client_was_provided:
@@ -251,12 +289,26 @@ class DockerSandboxRuntime:
             )
             reader_thread.start()
 
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                self._emit_stage(on_stage, "start", "skipped", "Run cancelled before container start.")
+                self._emit_stage(on_stage, "execute", "skipped", "Run cancelled before Python execution.")
+                return self._result_cancelled(request)
+
+            self._emit_stage(on_stage, "start", "running", "Starting isolated container.")
+            active_stage = "start"
             try:
                 container.start()
             except DockerException as exc:
+                self._emit_stage(on_stage, "start", "failed", "Container start failed.")
+                active_stage = ""
                 raise SandboxStartError(
                     "Failed to start the Python sandbox container."
                 ) from exc
+            self._emit_stage(on_stage, "start", "complete", "Container started.")
+            active_stage = ""
+            self._emit_stage(on_stage, "execute", "running", "Running Python in the isolated container.")
+            active_stage = "execute"
 
             deadline = time.monotonic() + self.timeout_seconds
             container_finished = False
@@ -329,6 +381,22 @@ class DockerSandboxRuntime:
 
                 now = time.monotonic()
                 if (
+                    cancel_event is not None
+                    and cancel_event.is_set()
+                    and not container_finished
+                    and kill_deadline is None
+                ):
+                    cancelled = True
+                    self._stop_output_reader(
+                        output_stream,
+                        reader_thread,
+                        stop_reader,
+                    )
+                    output_stream = None
+                    self._kill(container)
+                    kill_deadline = now + self.docker_api_timeout_seconds
+                    drain_deadline = kill_deadline
+                if (
                     not container_finished
                     and kill_deadline is None
                     and output_limit_exceeded
@@ -364,8 +432,17 @@ class DockerSandboxRuntime:
             if state.get("ExitCode") is not None:
                 exit_code = int(state["ExitCode"])
             oom_killed = bool(state.get("OOMKilled", oom_killed))
+            self._emit_stage(
+                on_stage,
+                "execute",
+                "complete",
+                "Python execution stopped after cancellation." if cancelled else "Python execution finished.",
+            )
+            active_stage = ""
 
-            if output_limit_exceeded:
+            if cancelled:
+                status = "cancelled"
+            elif output_limit_exceeded:
                 status = "output_limit_exceeded"
             elif timed_out:
                 status = "timed_out"
@@ -391,6 +468,8 @@ class DockerSandboxRuntime:
             )
         except BaseException as exc:
             primary_error = exc
+            if active_stage:
+                self._emit_stage(on_stage, active_stage, "failed", "Sandbox runtime stage failed.")
             raise
         finally:
             stop_reader.set()
@@ -414,6 +493,25 @@ class DockerSandboxRuntime:
                             f"Original sandbox failure: {type(primary_error).__name__}."
                         )
                     raise cleanup_error from exc
+
+    @staticmethod
+    def _result_cancelled(request: SandboxExecutionRequest) -> SandboxExecutionResult:
+        return SandboxExecutionResult(
+            sandbox_id=request.sandbox_id,
+            status="cancelled",
+            duration_ms=0,
+            runtime="docker",
+        )
+
+    @staticmethod
+    def _emit_stage(
+        callback: Callable[[str, str, str], None] | None,
+        key: str,
+        status: str,
+        note: str,
+    ) -> None:
+        if callback is not None:
+            callback(key, status, note)
 
     def _kill(self, container: Any) -> None:
         try:

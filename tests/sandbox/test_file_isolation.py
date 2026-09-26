@@ -150,6 +150,29 @@ def test_symlink_inputs_are_rejected(tmp_path: Path) -> None:
         manager.cleanup(workspace)
 
 
+def test_input_copy_is_bounded_by_file_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("12345", encoding="utf-8")
+    monkeypatch.setattr(
+        "backend.sandbox.workspace.MAX_SANDBOX_INPUT_FILE_BYTES",
+        4,
+    )
+    runtime = OutputRuntime()
+    manager = SandboxManager(runtime, _workspace_manager(tmp_path))
+
+    with pytest.raises(SandboxInvalidInputError):
+        manager.execute_python(
+            "print('never run')",
+            input_files=(SandboxInputFile("file-1", "input.txt", source),),
+        )
+
+    assert runtime.requests == []
+    assert list((tmp_path / "sandboxes").iterdir()) == []
+
+
 def test_outputs_are_promoted_with_safe_metadata_and_workspace_is_removed(
     tmp_path: Path,
 ) -> None:

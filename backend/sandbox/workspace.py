@@ -33,6 +33,9 @@ _WINDOWS_RESERVED_NAMES = {
     *(f"LPT{index}" for index in range(1, 10)),
 }
 _INVALID_FILENAME_CHARACTERS = set('<>:"/\\|?*')
+MAX_SANDBOX_INPUT_FILES = 64
+MAX_SANDBOX_INPUT_FILE_BYTES = 20 * 1024 * 1024
+MAX_SANDBOX_TOTAL_INPUT_BYTES = 50 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,9 @@ class SandboxInputFile:
     file_id: str
     display_name: str
     source_path: Path
+    relative_path: str = ""
+    expected_size_bytes: int | None = None
+    expected_sha256: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,26 +166,51 @@ class SandboxWorkspaceManager:
         self,
         workspace: SandboxWorkspace,
         input_file: SandboxInputFile,
+        *,
+        max_bytes: int | None = None,
     ) -> Path:
         self._assert_workspace(workspace)
         if not _FILE_ID.fullmatch(str(input_file.file_id or "")):
             raise SandboxInvalidInputError("Sandbox input file identifier is invalid.")
         display_name = self._safe_filename(input_file.display_name)
+        relative_path = self._safe_relative_path(
+            input_file.relative_path or display_name
+        )
         source_path = Path(input_file.source_path).expanduser()
+        allowed_bytes = min(
+            MAX_SANDBOX_INPUT_FILE_BYTES,
+            MAX_SANDBOX_INPUT_FILE_BYTES if max_bytes is None else max(0, int(max_bytes)),
+        )
         try:
             source_stat = source_path.lstat()
             if not stat.S_ISREG(source_stat.st_mode):
                 raise SandboxInvalidInputError(
                     "Sandbox inputs must be regular files, not links or devices."
                 )
+            if source_stat.st_size > allowed_bytes:
+                raise SandboxInvalidInputError(
+                    "A sandbox input file exceeds the input size limit."
+                )
             source = source_path.resolve(strict=True)
-            destination = workspace.input_dir / display_name
+            destination = workspace.input_dir.joinpath(*relative_path.parts)
             self._assert_contained(destination, workspace.input_dir)
             if destination.exists() or destination.is_symlink():
                 raise SandboxInvalidInputError(
                     "Sandbox input filenames must be unique."
                 )
-            shutil.copy2(source, destination, follow_symlinks=False)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_input_hash(
+                source,
+                destination,
+                max_bytes=allowed_bytes,
+                expected_size_bytes=input_file.expected_size_bytes,
+                expected_sha256=input_file.expected_sha256,
+            )
+            copied_stat = destination.lstat()
+            if not stat.S_ISREG(copied_stat.st_mode):
+                raise SandboxInvalidInputError(
+                    "Sandbox inputs must be regular files, not links or devices."
+                )
             destination.chmod(0o444)
             return destination
         except SandboxInvalidInputError:
@@ -370,6 +401,58 @@ class SandboxWorkspaceManager:
         if stem in _WINDOWS_RESERVED_NAMES:
             raise SandboxInvalidInputError("Sandbox filename is invalid.")
         return candidate
+
+    @classmethod
+    def _safe_relative_path(cls, value: str) -> PurePosixPath:
+        raw = str(value or "").replace("\\", "/")
+        relative = PurePosixPath(raw)
+        if (
+            not raw
+            or len(raw) > 1024
+            or relative.is_absolute()
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
+        ):
+            raise SandboxInvalidInputError("Sandbox input path is invalid.")
+        for part in relative.parts:
+            cls._safe_filename(part)
+        return relative
+
+    @staticmethod
+    def _copy_input_hash(
+        source: Path,
+        destination: Path,
+        *,
+        max_bytes: int,
+        expected_size_bytes: int | None,
+        expected_sha256: str,
+    ) -> tuple[int, str]:
+        temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.partial")
+        digest = hashlib.sha256()
+        size_bytes = 0
+        try:
+            with source.open("rb") as source_handle, temporary.open("xb") as target:
+                while chunk := source_handle.read(1024 * 1024):
+                    size_bytes += len(chunk)
+                    if size_bytes > max_bytes:
+                        raise SandboxInvalidInputError(
+                            "A sandbox input file exceeds the input size limit."
+                        )
+                    digest.update(chunk)
+                    target.write(chunk)
+            calculated_digest = digest.hexdigest()
+            if (
+                expected_size_bytes is not None
+                and size_bytes != expected_size_bytes
+            ) or (expected_sha256 and calculated_digest != expected_sha256):
+                raise SandboxInvalidInputError(
+                    "A sandbox input changed while it was being staged."
+                )
+            os.replace(temporary, destination)
+            return size_bytes, calculated_digest
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _assert_contained(path: Path, parent: Path) -> None:

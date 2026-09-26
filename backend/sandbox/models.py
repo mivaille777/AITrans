@@ -28,6 +28,7 @@ class SandboxExecutionResult(SandboxModel):
     status: Literal[
         "succeeded",
         "failed",
+        "cancelled",
         "timed_out",
         "oom_killed",
         "output_limit_exceeded",

@@ -7,11 +7,13 @@ from fastapi.testclient import TestClient
 from backend.agent_core.events import AgentEvent, AgentEventType
 from backend.agent_core.exceptions import AgentRuntimeError
 from backend.agent_core.state import AgentState
+from backend.api import dependencies
 from backend.api.agent import run_product_agent, run_product_agent_trace
 from backend.api.agent_dependencies import get_agent_runtime
 from backend.main import create_app
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.models.agent_tools import AgentRunRequest
+from backend.services.filesystem_workspace_service import FilesystemWorkspaceService
 
 
 class FakeRuntime:
@@ -249,6 +251,37 @@ def test_agent_run_api_preserves_existing_response_contract_through_runtime() ->
     assert response.tool_result is not None
     assert response.tool_result.tool_name == "translate_selection"
     assert response.tool_result.data["target_language"] == "zh-CN"
+
+
+def test_agent_run_context_includes_relative_files_from_selected_workspace(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    selected = tmp_path / "workspace"
+    selected.mkdir()
+    (selected / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
+    workspaces = FilesystemWorkspaceService(tmp_path / "state" / "workspaces.sqlite3")
+    workspace = workspaces.create(str(selected))
+    monkeypatch.setattr(
+        dependencies,
+        "get_filesystem_workspace_service",
+        lambda: workspaces,
+    )
+    request = _request().model_copy(
+        update={"filesystem_workspace_id": workspace.workspace_id}
+    )
+    runtime = FakeRuntime()
+
+    run_product_agent(request, runtime)
+
+    assert runtime.received is not None
+    assert runtime.received.browser_context["filesystem_workspace_id"] == workspace.workspace_id
+    assert runtime.received.browser_context["filesystem_workspace_files"] == [
+        {
+            "relative_path": "data.csv",
+            "size_bytes": len((selected / "data.csv").read_bytes()),
+        }
+    ]
 
 
 def test_agent_run_api_preserves_write_confirmation_gate() -> None:

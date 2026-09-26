@@ -153,6 +153,22 @@ def _state_from_run_request(
             "source_text",
         }
     )
+    filesystem_workspace_id = payload.filesystem_workspace_id.strip()
+    if filesystem_workspace_id:
+        from backend.api.dependencies import get_filesystem_workspace_service
+
+        filesystem_snapshot = get_filesystem_workspace_service().snapshot(
+            filesystem_workspace_id
+        )
+        context["filesystem_workspace_files"] = [
+            {
+                "relative_path": str(item.get("relative_path", "")),
+                "size_bytes": int(item.get("size_bytes", 0)),
+            }
+            for item in filesystem_snapshot.manifest
+        ]
+    else:
+        context["filesystem_workspace_files"] = []
     active_workspace_id = payload.workspace_id.strip()
     workspace_document_ids: tuple[str, ...] = ()
     workspace_research_source_ids: tuple[str, ...] = ()

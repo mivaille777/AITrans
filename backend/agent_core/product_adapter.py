@@ -18,7 +18,6 @@ from backend.models.agent_runtime import (
 from backend.models.knowledge_access import (
     KnowledgeAccessDecision,
     KnowledgeAccessPolicy,
-    KnowledgeScopeStrategy,
     ResolvedKnowledgeScope,
 )
 from backend.rag.citation_service import build_evidence_citations
@@ -136,6 +135,12 @@ class ProductAgentRuntimeAdapter:
             "source_kind": str(context.get("source_kind", "desktop") or "desktop"),
             "style": str(context.get("style", "academic") or "academic"),
             "workspace_id": str(context.get("workspace_id", "") or "").strip(),
+            "filesystem_workspace_id": str(
+                context.get("filesystem_workspace_id", "") or ""
+            ).strip(),
+            "filesystem_workspace_files": context.get(
+                "filesystem_workspace_files", []
+            ),
             "conversation_id": state.conversation.conversation_id,
             "history": history,
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],

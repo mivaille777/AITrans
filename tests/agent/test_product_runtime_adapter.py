@@ -70,6 +70,26 @@ def test_product_runtime_adapter_maps_existing_service_result_to_agent_state():
     assert result.response["status"] == "completed"
 
 
+def test_product_runtime_adapter_preserves_explicit_filesystem_workspace_context():
+    service = FakeProductAgentService()
+    adapter = ProductAgentRuntimeAdapter(service)
+    files = [{"relative_path": "input/data.csv", "size_bytes": 42}]
+
+    adapter(
+        AgentState(
+            session_id="session-1",
+            user_input="Read the selected CSV",
+            browser_context={
+                "filesystem_workspace_id": "fsw_opaque-id",
+                "filesystem_workspace_files": files,
+            },
+        )
+    )
+
+    assert service.payload["filesystem_workspace_id"] == "fsw_opaque-id"
+    assert service.payload["filesystem_workspace_files"] == files
+
+
 def test_agent_runtime_emits_tool_events_for_product_workflow():
     service = FakeProductAgentService()
     runtime = AgentRuntime(

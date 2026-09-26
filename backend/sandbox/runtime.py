@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from threading import Event
 from typing import Protocol
 
 from backend.sandbox.models import (
@@ -21,5 +23,10 @@ class SandboxRuntime(Protocol):
         request: SandboxExecutionRequest,
         *,
         workspace: SandboxWorkspace,
+        on_stage: Callable[[str, str, str], None] | None = None,
+        cancel_event: Event | None = None,
     ) -> SandboxExecutionResult:
         """Run one request in a disposable execution environment."""
+
+    def cancel(self, sandbox_id: str) -> bool:
+        """Stop a currently running request when the provider supports it."""

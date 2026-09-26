@@ -168,6 +168,9 @@ class ProductAgentService:
             "knowledge_context": normalize_knowledge_context(
                 payload.get("knowledge_context")
             ),
+            "filesystem_workspace_files": payload.get(
+                "filesystem_workspace_files", []
+            ),
         }
 
     @staticmethod
@@ -300,6 +303,9 @@ class ProductAgentService:
             "context_after": str(reading["context_after"]),
             "source_kind": str(reading["source_kind"]),
             "knowledge_context": dict(reading.get("knowledge_context", {}) or {}),
+            "filesystem_workspace_files": reading.get(
+                "filesystem_workspace_files", []
+            ),
             "history": history,
         }
         route = self._semantic_route(tools=tools, payload=semantic_payload)
@@ -464,6 +470,12 @@ class ProductAgentService:
         workspace_id = str(payload.get("workspace_id", "") or "").strip()
         if workspace_id:
             execution_payload["workspace_id"] = workspace_id
+        if spec.name == "python_execute":
+            execution_payload["filesystem_workspace_id"] = str(
+                payload.get("filesystem_workspace_id", "") or ""
+            ).strip()
+            execution_payload["run_id"] = str(payload.get("run_id", "") or "").strip()
+            execution_payload["trace_id"] = str(payload.get("trace_id", "") or "").strip()
         if spec.name in {
             "search_knowledge_base",
             "read_knowledge_chunk",

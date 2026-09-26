@@ -60,6 +60,8 @@ def _output_text(result: SandboxExecutionResult) -> str:
         parts.append(result.stderr)
     if parts:
         return "\n".join(parts)
+    if result.status == "cancelled":
+        return "Python execution was cancelled."
     if result.timed_out:
         return "Python execution timed out."
     if result.output_limit_exceeded:
@@ -73,17 +75,52 @@ def _output_text(result: SandboxExecutionResult) -> str:
 
 def build_python_sandbox_tool_definition(
     sandbox_manager: Any,
+    *,
+    filesystem_workspace_service: Any | None = None,
+    sandbox_debug_service: Any | None = None,
 ) -> TypedAgentToolDefinition:
     """Build the Python capability around the provider-neutral manager API."""
 
     def execute(
-        _context: AgentToolInvocationContext,
+        context: AgentToolInvocationContext,
         args: PythonExecuteArgs,
     ) -> AgentToolExecutionResult:
-        result = sandbox_manager.execute_python(args.code)
+        snapshot = None
+        workspace_id = context.filesystem_workspace_id.strip()
+        if workspace_id:
+            if filesystem_workspace_service is None:
+                raise ValueError("Filesystem workspace support is unavailable.")
+            snapshot = filesystem_workspace_service.snapshot(workspace_id)
+
+        sandbox_id = ""
+        on_stage = None
+        if sandbox_debug_service is not None:
+            sandbox_id, on_stage = sandbox_debug_service.begin_agent_run(
+                run_id=context.run_id,
+                tool_call_id=context.tool_call_id,
+                filesystem_workspace_id=workspace_id,
+                workspace_name=(snapshot.workspace.display_name if snapshot else ""),
+                input_manifest=(snapshot.manifest if snapshot else ()),
+                manager=sandbox_manager,
+            )
+
+        manager_kwargs: dict[str, Any] = {}
+        if snapshot is not None:
+            manager_kwargs["input_files"] = snapshot.input_files
+        if sandbox_id:
+            manager_kwargs["sandbox_id"] = sandbox_id
+            manager_kwargs["on_stage"] = on_stage
+        try:
+            result = sandbox_manager.execute_python(args.code, **manager_kwargs)
+        except Exception as exc:
+            if sandbox_id:
+                sandbox_debug_service.fail_agent_run(sandbox_id, exc)
+            raise
         if not isinstance(result, SandboxExecutionResult):
             # Keep the public tool contract stable even for a faulty adapter.
             result = SandboxExecutionResult.model_validate(result)
+        if sandbox_id:
+            sandbox_debug_service.finish_agent_run(sandbox_id, result)
         data = PythonExecuteResultData(
             sandbox_id=result.sandbox_id,
             runtime=result.runtime,
@@ -117,7 +154,9 @@ def build_python_sandbox_tool_definition(
         title="Python Sandbox",
         description=(
             "Execute Python code in an isolated, network-disabled sandbox "
-            "for calculations, data processing, and local code tasks."
+            "for calculations, data processing, and local code tasks. Files "
+            "from an explicitly selected read-only workspace are copied under "
+            "/input using their relative paths."
         ),
         category="compute",
         effect="compute",

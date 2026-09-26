@@ -34,16 +34,20 @@ from backend.api.curator import router as curator_router
 from backend.api.curator_dependencies import close_curator_commit_service
 from backend.api.dependencies import (
     close_agent_tool_registry,
+    close_filesystem_workspace_service,
     close_product_agent_service,
     close_rag_debug_service,
+    close_sandbox_debug_service,
     close_sandbox_manager,
 )
 from backend.api.evidence_ledger import router as evidence_ledger_router
 from backend.api.evidence_review import router as evidence_review_router
+from backend.api.filesystem_workspaces import router as filesystem_workspaces_router
 from backend.api.health import router as health_router
 from backend.api.knowledge import router as knowledge_router
 from backend.api.knowledge_boards import router as knowledge_boards_router
 from backend.api.knowledge_canvas import router as knowledge_canvas_router
+from backend.api.knowledge_dependencies import close_rag_runtime
 from backend.api.knowledge_items import router as knowledge_items_router
 from backend.api.knowledge_preview import router as knowledge_preview_router
 from backend.api.knowledge_relation_suggestions import (
@@ -61,6 +65,7 @@ from backend.api.reading import router as reading_router
 from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
 from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
+from backend.api.sandbox_debug import router as sandbox_debug_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
 from backend.api.writing import router as writing_router
@@ -133,7 +138,10 @@ async def lifespan(_: FastAPI):
         close_agent_checkpoint_service()
         close_product_agent_service()
         close_agent_tool_registry()
+        close_sandbox_debug_service()
+        close_filesystem_workspace_service()
         close_sandbox_manager()
+        close_rag_runtime()
 
 
 def create_app():
@@ -161,6 +169,8 @@ def create_app():
         agent_runtime_config_router,
         agent_runtime_jobs_router,
         agent_runtime_canonical_router,
+        filesystem_workspaces_router,
+        sandbox_debug_router,
         memory_router,
         translation_router,
         translation_cascade_router,

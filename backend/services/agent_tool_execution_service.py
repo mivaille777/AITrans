@@ -212,10 +212,16 @@ class AgentToolExecutionService:
                 control.checkpoint(f"tool:{name}:attempt:{attempt}")
                 try:
                     if spec.effect == "write":
-                        result = self.registry.execute(name, **payload)
+                        result = self.registry.execute(
+                            name,
+                            **{**payload, "tool_call_id": call.tool_call_id},
+                        )
                     else:
                         result = run_safe_tool_with_timeout(
-                            lambda: self.registry.execute(name, **payload),
+                            lambda: self.registry.execute(
+                                name,
+                                **{**payload, "tool_call_id": call.tool_call_id},
+                            ),
                             control=control, tool_name=name,
                             timeout_seconds=spec.timeout_seconds,
                         )

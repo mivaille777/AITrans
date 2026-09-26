@@ -4,12 +4,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.models.agent_runtime import (
     AgentCitationRef,
     AgentEvidenceItem,
     AgentPlanContext,
 )
+from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.models.quick_actions import ReadingContextPayload
 
 AgentToolEffect = Literal["read", "compute", "write"]
@@ -140,9 +140,11 @@ class AgentToolExecuteRequest(ReadingContextPayload):
     style: str = Field(default="academic", min_length=1, max_length=64)
     user_note: str = Field(default="", max_length=20_000)
     ai_content: str = Field(default="", max_length=30_000)
+    code: str = Field(default="", max_length=50_000)
     ai_action: str = Field(default="", max_length=128)
     conversation_id: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
+    filesystem_workspace_id: str = Field(default="", max_length=128)
     request_id: int = Field(default=0, ge=0)
 
 
@@ -189,6 +191,7 @@ class AgentRunRequest(ReadingContextPayload):
     style: str = Field(default="academic", min_length=1, max_length=64)
     conversation_id: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
+    filesystem_workspace_id: str = Field(default="", max_length=128)
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
     enabled_tools: list[str] = Field(default_factory=list, max_length=64)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
@@ -219,6 +222,7 @@ class AgentRunRequest(ReadingContextPayload):
                 else KnowledgeAccessPolicy.NEVER
             )
         self.attached_document_id = self.attached_document_id.strip()
+        self.filesystem_workspace_id = self.filesystem_workspace_id.strip()
         return self
 
 
