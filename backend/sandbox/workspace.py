@@ -21,6 +21,7 @@ from backend.sandbox.errors import (
 )
 from backend.sandbox.models import SandboxOutputFile
 from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY, SandboxPolicy
+from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
 
 _SANDBOX_ID = re.compile(r"^sb_[a-f0-9]{32}$")
 _FILE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -180,7 +181,9 @@ class SandboxWorkspaceManager:
         source_path = Path(input_file.source_path).expanduser()
         allowed_bytes = min(
             MAX_SANDBOX_INPUT_FILE_BYTES,
-            MAX_SANDBOX_INPUT_FILE_BYTES if max_bytes is None else max(0, int(max_bytes)),
+            MAX_SANDBOX_INPUT_FILE_BYTES
+            if max_bytes is None
+            else max(0, int(max_bytes)),
         )
         try:
             source_stat = source_path.lstat()
@@ -377,6 +380,70 @@ class SandboxWorkspaceManager:
             ) from exc
         return promoted
 
+    def store_workspace_changes(
+        self,
+        workspace: SandboxWorkspace,
+        changeset: WorkspaceChangeSet,
+    ) -> Path | None:
+        """Retain bounded create/modify payloads for a later approved host apply."""
+
+        self._assert_workspace(workspace)
+        writes = [
+            change
+            for change in changeset.changes
+            if change.operation in {"create", "modify"}
+        ]
+        if not writes:
+            return None
+        store_root = self.artifact_root / "workspace_changes"
+        sandbox_store = store_root / workspace.sandbox_id
+        created_store = False
+        try:
+            self.artifact_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if store_root.is_symlink():
+                raise SandboxExecutionError("Workspace change storage is unavailable.")
+            store_root.mkdir(mode=0o700, exist_ok=True)
+            self._assert_contained(sandbox_store, store_root)
+            sandbox_store.mkdir(mode=0o700, exist_ok=False)
+            created_store = True
+            total_bytes = 0
+            for change in writes:
+                relative_path = self._safe_relative_path(change.path)
+                source = workspace.workspace_dir.joinpath(*relative_path.parts)
+                destination = sandbox_store.joinpath(*relative_path.parts)
+                self._assert_contained(source, workspace.workspace_dir)
+                self._assert_contained(destination, sandbox_store)
+                source_stat = source.lstat()
+                if not stat.S_ISREG(source_stat.st_mode):
+                    raise SandboxExecutionError(
+                        "A workspace change is not a regular file."
+                    )
+                if source_stat.st_size != change.size_after:
+                    raise SandboxExecutionError(
+                        "A workspace change changed before it could be retained."
+                    )
+                self._make_safe_directories(destination.parent, sandbox_store)
+                size_bytes, digest = self._copy_hash(
+                    source,
+                    destination,
+                    max_bytes=MAX_SANDBOX_INPUT_FILE_BYTES,
+                )
+                if size_bytes != change.size_after or digest != change.after_sha256:
+                    raise SandboxExecutionError(
+                        "A workspace change changed before it could be retained."
+                    )
+                destination.chmod(0o600)
+                total_bytes += size_bytes
+                if total_bytes > MAX_SANDBOX_TOTAL_INPUT_BYTES:
+                    raise SandboxExecutionError(
+                        "Workspace changes exceed the storage size limit."
+                    )
+            return sandbox_store
+        except Exception:
+            if created_store:
+                shutil.rmtree(sandbox_store, ignore_errors=True)
+            raise
+
     def cleanup(self, workspace: SandboxWorkspace) -> None:
         if not workspace.root.exists() and not workspace.root.is_symlink():
             return
@@ -494,8 +561,7 @@ class SandboxWorkspaceManager:
                     target.write(chunk)
             calculated_digest = digest.hexdigest()
             if (
-                expected_size_bytes is not None
-                and size_bytes != expected_size_bytes
+                expected_size_bytes is not None and size_bytes != expected_size_bytes
             ) or (expected_sha256 and calculated_digest != expected_sha256):
                 raise SandboxInvalidInputError(
                     "A sandbox input changed while it was being staged."

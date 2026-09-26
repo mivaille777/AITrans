@@ -238,4 +238,13 @@ def test_sandbox_manager_captures_changes_before_cleanup(tmp_path) -> None:
         ("src/delete.txt", "delete"),
         ("src/modify.txt", "modify"),
     ]
+    retained = (
+        tmp_path
+        / "artifacts"
+        / "workspace_changes"
+        / result.sandbox_id
+        / "src"
+        / "modify.txt"
+    )
+    assert retained.read_text(encoding="utf-8") == "after"
     assert (selected / "src" / "modify.txt").read_text(encoding="utf-8") == "before"

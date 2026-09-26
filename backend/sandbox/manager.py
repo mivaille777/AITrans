@@ -168,6 +168,7 @@ class SandboxManager:
                     current_snapshot,
                     sandbox_id=request.sandbox_id,
                 )
+                self._workspace_manager.store_workspace_changes(workspace, changeset)
                 result = result.model_copy(update={"workspace_changeset": changeset})
             if result.status == "cancelled":
                 self._emit_stage(on_stage, "collect", "skipped", "Run cancelled before output collection.")
