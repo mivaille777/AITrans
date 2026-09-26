@@ -1,6 +1,7 @@
 import { AlertCircle, LoaderCircle, Play, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
+import { listFilesystemWorkspaces, type FilesystemWorkspace } from "../../api/filesystem-workspaces"
 import {
   cancelSandboxDebugRun,
   getSandboxDebugRun,
@@ -38,6 +39,8 @@ export default function SandboxDebugTrace({
   const [trace, setTrace] = useState<SandboxDebugTrace | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState("")
+  const [filesystemWorkspaces, setFilesystemWorkspaces] = useState<FilesystemWorkspace[]>([])
+  const [filesystemWorkspaceId, setFilesystemWorkspaceId] = useState("")
   const streamRef = useRef<SandboxDebugStreamHandle | null>(null)
 
   const runtimeReady = Boolean(health?.available && health.daemon_ready)
@@ -47,6 +50,20 @@ export default function SandboxDebugTrace({
   useEffect(() => () => {
     streamRef.current?.close()
     streamRef.current = null
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    void listFilesystemWorkspaces()
+      .then((workspaces) => {
+        if (!disposed) setFilesystemWorkspaces(workspaces.filter((item) => item.status === "active"))
+      })
+      .catch(() => {
+        if (!disposed) setFilesystemWorkspaces([])
+      })
+    return () => {
+      disposed = true
+    }
   }, [])
 
   useEffect(() => {
@@ -84,7 +101,10 @@ export default function SandboxDebugTrace({
     streamRef.current = null
 
     try {
-      const accepted = await startSandboxDebugRun({ code: code.trim() })
+      const accepted = await startSandboxDebugRun({
+        code: code.trim(),
+        ...(filesystemWorkspaceId ? { filesystem_workspace_id: filesystemWorkspaceId } : {}),
+      })
       setTrace(createPendingTrace(accepted.sandbox_id, accepted.run_id, health))
 
       streamRef.current = streamSandboxDebugRun(accepted.sandbox_id, {
@@ -195,7 +215,23 @@ export default function SandboxDebugTrace({
           />
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <ReadOnlyField label="Filesystem Workspace" value={run?.workspace_name || "No workspace"} />
+            <label className="rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-slate-400">Filesystem Workspace</span>
+              <select
+                aria-label="Filesystem Workspace"
+                value={filesystemWorkspaceId}
+                disabled={running}
+                onChange={(event) => setFilesystemWorkspaceId(event.target.value)}
+                className="mt-1 w-full bg-transparent text-[11px] font-medium text-slate-700 outline-none disabled:text-slate-400"
+              >
+                <option value="">No workspace</option>
+                {filesystemWorkspaces.map((workspace) => (
+                  <option key={workspace.workspace_id} value={workspace.workspace_id}>
+                    {workspace.display_name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <ReadOnlyField label="Runtime" value="Docker / Python" />
             <ReadOnlyField label="Timeout" value="30 s" />
           </div>

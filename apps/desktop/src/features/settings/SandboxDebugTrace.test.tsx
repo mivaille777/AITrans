@@ -7,6 +7,20 @@ let streamHandlers: {
   onTransportError: (error: Error) => void
 } | null = null
 
+vi.mock("../../api/filesystem-workspaces", () => ({
+  listFilesystemWorkspaces: vi.fn().mockResolvedValue([
+    {
+      workspace_id: "fsw-1",
+      display_name: "AITrans",
+      readable: true,
+      writable: false,
+      status: "active",
+      created_at: "",
+      last_used_at: "",
+    },
+  ]),
+}))
+
 vi.mock("../../api/sandbox-debug", () => ({
   startSandboxDebugRun: vi.fn(),
   getSandboxDebugRun: vi.fn(),
@@ -106,6 +120,28 @@ describe("SandboxDebugTrace", () => {
     await waitFor(() => expect(screen.getByText("285")).toBeTruthy())
     expect(screen.getByText("842 ms")).toBeTruthy()
     expect(screen.getByText("0")).toBeTruthy()
+  })
+
+  it("attaches a selected filesystem workspace to a manual run", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({
+      sandbox_id: "sb-1",
+      run_id: "run-1",
+      status: "pending",
+    })
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace())
+
+    render(<SandboxDebugTrace health={health} />)
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "AITrans" })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText("Filesystem Workspace"), {
+      target: { value: "fsw-1" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Run" }))
+
+    await waitFor(() => expect(startSandboxDebugRun).toHaveBeenCalledWith({
+      code: 'print("Hello from AITrans Sandbox")',
+      filesystem_workspace_id: "fsw-1",
+    }))
   })
 
   it("renders runtime errors from a terminal trace", async () => {
