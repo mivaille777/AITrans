@@ -23,7 +23,9 @@ def _request(action: str, *, target: str = "src/app.py") -> PermissionRequest:
     )
 
 
-def _policy(profile: str, *, workspace_id: str = "workspace-test", **kwargs) -> ExecutionPolicy:
+def _policy(
+    profile: str, *, workspace_id: str = "workspace-test", **kwargs
+) -> ExecutionPolicy:
     return ExecutionPolicy(profile=profile, workspace_id=workspace_id, **kwargs)
 
 
@@ -104,6 +106,22 @@ def test_unknown_action_is_denied(engine: PermissionPolicyEngine) -> None:
     assert decision.reason_code == "policy.action_unknown"
 
 
+def test_command_execution_is_limited_to_the_server_allowlist(
+    engine: PermissionPolicyEngine,
+) -> None:
+    allowed = engine.evaluate(
+        _request("command.execute", target="python"), _policy("read_only")
+    )
+    denied = engine.evaluate(
+        _request("command.execute", target="/bin/sh"), _policy("read_only")
+    )
+
+    assert allowed.decision == "allow"
+    assert allowed.granted_scope["executable"] == "python"
+    assert denied.decision == "deny"
+    assert denied.reason_code == "policy.command_executable_denied"
+
+
 def test_unknown_profile_is_denied(engine: PermissionPolicyEngine) -> None:
     decision = engine.evaluate(
         _request("command.execute"), _policy("danger_full_access")
@@ -127,9 +145,7 @@ def test_filesystem_access_is_denied_without_workspace(
 def test_host_apply_is_denied_for_read_only_profile(
     engine: PermissionPolicyEngine,
 ) -> None:
-    decision = engine.evaluate(
-        _request("filesystem.apply_host"), _policy("read_only")
-    )
+    decision = engine.evaluate(_request("filesystem.apply_host"), _policy("read_only"))
 
     assert decision.decision == "deny"
     assert decision.reason_code == "policy.filesystem_apply_denied"

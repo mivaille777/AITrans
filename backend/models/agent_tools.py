@@ -162,7 +162,7 @@ class AgentPlan(BaseModel):
     action: AgentPlanAction
     tool_name: str = Field(default="", max_length=128)
     user_visible_reason: str = Field(default="", max_length=500)
-    arguments: dict[str, str] = Field(default_factory=dict)
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_tool_action(self) -> AgentPlan:
@@ -195,7 +195,9 @@ class AgentRunRequest(ReadingContextPayload):
     confirmed_write_tools: list[str] = Field(default_factory=list, max_length=16)
     enabled_tools: list[str] = Field(default_factory=list, max_length=64)
     knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
-    explicit_knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
+    explicit_knowledge_document_ids: list[str] = Field(
+        default_factory=list, max_length=100
+    )
     attached_document_id: str = Field(default="", max_length=256)
     research_source_ids: list[str] = Field(default_factory=list, max_length=100)
     knowledge_context: AgentKnowledgeContext | None = None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 from backend.agent_tools.base import (
@@ -9,6 +10,7 @@ from backend.agent_tools.base import (
     AgentToolSpec,
     TypedAgentToolDefinition,
 )
+from backend.agent_tools.command import build_command_execute_tool_definition
 from backend.agent_tools.cross_document_research import (
     CrossDocumentResearchAgentTool,
     build_cross_document_research_tool_definition,
@@ -193,6 +195,10 @@ class AgentToolRegistry:
                     filesystem_workspace_service=filesystem_workspace_service,
                     sandbox_debug_service=sandbox_debug_service,
                 ),
+                build_command_execute_tool_definition(
+                    sandbox_manager,
+                    filesystem_workspace_service=filesystem_workspace_service,
+                ),
             )
             if sandbox_manager is not None
             else ()
@@ -233,7 +239,7 @@ class AgentToolRegistry:
         self,
         name: str,
         arguments: dict[str, Any],
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         spec = self.get_tool(name)
         if spec is None:
             raise KeyError(f"Unknown agent tool: {name}")
@@ -246,13 +252,22 @@ class AgentToolRegistry:
     ) -> dict[str, Any]:
         """Return trace-safe arguments without changing ordinary tool traces."""
 
-        if str(tool_name).strip() != "python_execute":
-            return dict(arguments or {})
-        code = str((arguments or {}).get("code", "") or "")
-        return {
-            "code_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
-            "code_chars": len(code),
-        }
+        name = str(tool_name).strip()
+        if name == "python_execute":
+            code = str((arguments or {}).get("code", "") or "")
+            return {
+                "code_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                "code_chars": len(code),
+            }
+        if name == "command_execute":
+            argv = (arguments or {}).get("argv", [])
+            encoded = json.dumps(argv, ensure_ascii=False, separators=(",", ":"))
+            return {
+                "argv_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+                "argv_count": len(argv) if isinstance(argv, list) else 0,
+                "argv_chars": len(encoded),
+            }
+        return dict(arguments or {})
 
     def allows_safe_retry(self, name: str) -> bool:
         definition = self.get_definition(name)

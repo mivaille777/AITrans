@@ -92,7 +92,7 @@ class AgentToolSpec:
         if self.effect == "write" and self.parallel_safe:
             raise ValueError("write tools cannot be parallel_safe")
 
-    def validate_planner_arguments(self, arguments: dict[str, Any]) -> dict[str, str]:
+    def validate_planner_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         raw = {str(key): value for key, value in dict(arguments or {}).items()}
         unknown = set(raw) - set(self.input_schema)
         if unknown:
@@ -102,9 +102,45 @@ class AgentToolSpec:
                 f"{names} not accepted by tool {self.name}."
             )
 
-        sanitized: dict[str, str] = {}
+        sanitized: dict[str, Any] = {}
         for key, value in raw.items():
             schema = self.input_schema.get(key, {})
+            if isinstance(schema, dict) and schema.get("type") == "array":
+                if not isinstance(value, list):
+                    raise ValueError(
+                        f"Agent planner argument {key} must be an array for tool {self.name}."
+                    )
+                min_items = int(schema.get("minItems", 0) or 0)
+                max_items = int(schema.get("maxItems", 0) or 0)
+                if min_items and len(value) < min_items:
+                    raise ValueError(
+                        f"Agent planner argument {key} has too few items for tool {self.name}."
+                    )
+                if max_items and len(value) > max_items:
+                    raise ValueError(
+                        f"Agent planner argument {key} has too many items for tool {self.name}."
+                    )
+                item_schema = schema.get("items", {})
+                if (
+                    isinstance(item_schema, dict)
+                    and item_schema.get("type") == "string"
+                ):
+                    max_item_length = int(item_schema.get("maxLength", 0) or 0)
+                    min_item_length = int(item_schema.get("minLength", 0) or 0)
+                    if any(not isinstance(item, str) for item in value):
+                        raise ValueError(
+                            f"Agent planner argument {key} must contain only strings."
+                        )
+                    if any(
+                        (max_item_length and len(item) > max_item_length)
+                        or (min_item_length and len(item.strip()) < min_item_length)
+                        for item in value
+                    ):
+                        raise ValueError(
+                            f"Agent planner argument {key} contains an invalid string."
+                        )
+                sanitized[key] = list(value)
+                continue
             text = str(value or "")
             if self.name != "python_execute":
                 text = text.strip()
@@ -264,7 +300,9 @@ def typed_tool_definition(
             requires_confirmation=requires_confirmation,
             input_schema=input_schema,
             timeout_seconds=timeout_seconds,
-            parallel_safe=(effect != "write" if parallel_safe is None else parallel_safe),
+            parallel_safe=(
+                effect != "write" if parallel_safe is None else parallel_safe
+            ),
             idempotent=(effect != "write" if idempotent is None else idempotent),
             tool_version=tool_version,
         ),

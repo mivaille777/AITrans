@@ -80,7 +80,9 @@ class PermissionPolicyEngine:
         if action == "filesystem.read":
             if profile.filesystem_read:
                 return self._allow("The selected workspace may be read.", scope)
-            return self._deny("policy.filesystem_read_denied", "Workspace reading is disabled.")
+            return self._deny(
+                "policy.filesystem_read_denied", "Workspace reading is disabled."
+            )
 
         if action == "filesystem.write_sandbox":
             if profile.filesystem_write_sandbox:
@@ -127,9 +129,19 @@ class PermissionPolicyEngine:
 
         if action == "command.execute":
             if profile.command_execution:
+                executable = request.target.strip().lower()
+                if executable not in execution_policy.command_allowlist:
+                    return self._deny(
+                        "policy.command_executable_denied",
+                        "The executable is not in the sandbox command allowlist.",
+                    )
                 return self._allow(
                     "Commands may run inside the isolated sandbox.",
-                    {"action": action, "runtime": "sandbox"},
+                    {
+                        "action": action,
+                        "executable": executable,
+                        "runtime": "sandbox",
+                    },
                 )
             return self._deny(
                 "policy.command_denied",

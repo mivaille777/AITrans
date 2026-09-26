@@ -16,7 +16,7 @@ from backend.services.agent_tool_registry import AgentToolSpec
 REACT_DECISION_SYSTEM_PROMPT = """You are the bounded ReAct decision layer for AITranslator's reading agent.
 Choose exactly one next observable action based on the user's request, registered tools, reading context, first-class Knowledge/Canvas context, conversation history, compact prior observations, deterministic evidence-gate state, and remaining execution budget.
 Return one JSON object only. Do not include markdown fences, analysis, chain-of-thought, hidden reasoning, or any fields outside the schema.
-Schema: {"kind":"tool|final","tool_name":"registered tool name or empty","arguments":{"optional":"string values only"},"action_summary":"one short user-facing sentence","final_answer":"answer text or empty"}
+Schema: {"kind":"tool|final","tool_name":"registered tool name or empty","arguments":{"optional":"values matching the selected tool input schema, including string arrays where required"},"action_summary":"one short user-facing sentence","final_answer":"answer text or empty"}
 Rules:
 - kind=tool means select exactly one registered tool. tool_name is required and final_answer must be empty.
 - kind=final means no tool_name and no arguments. final_answer must directly answer the user.
@@ -59,7 +59,7 @@ class _DecisionEnvelope(BaseModel):
     final_answer: str = ""
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "_DecisionEnvelope":
+    def validate_shape(self) -> _DecisionEnvelope:
         if self.kind not in {"tool", "final"}:
             raise ValueError("kind must be tool or final")
         if self.kind == "tool":
@@ -92,7 +92,9 @@ class AgentReActDecisionService:
         security_service: AgentSecurityService | None = None,
     ) -> None:
         self._text_service = text_service
-        self._prompt_registry = prompt_registry or PromptRegistry((REACT_DECISION_PROMPT,))
+        self._prompt_registry = prompt_registry or PromptRegistry(
+            (REACT_DECISION_PROMPT,)
+        )
         self._security = security_service or AgentSecurityService()
 
     def _get_text_service(self) -> AITextService | Any:
@@ -104,7 +106,10 @@ class AgentReActDecisionService:
     def provider_name(self) -> str:
         if self._text_service is None:
             return "unknown"
-        return str(getattr(self._text_service, "provider_name", "") or "").strip() or "unknown"
+        return (
+            str(getattr(self._text_service, "provider_name", "") or "").strip()
+            or "unknown"
+        )
 
     @property
     def model(self) -> str:
@@ -148,7 +153,11 @@ class AgentReActDecisionService:
     @staticmethod
     def _coerce_observation(raw: object) -> AgentObservation | None:
         try:
-            return raw if isinstance(raw, AgentObservation) else AgentObservation.model_validate(raw)
+            return (
+                raw
+                if isinstance(raw, AgentObservation)
+                else AgentObservation.model_validate(raw)
+            )
         except (ValidationError, TypeError, ValueError):
             return None
 
@@ -249,7 +258,8 @@ class AgentReActDecisionService:
             "knowledge_context": compact_knowledge_context(
                 knowledge_context,
                 max_chars=8_000,
-            ) or None,
+            )
+            or None,
             "prior_observations": self._compact_observations(
                 observations,
                 max_chars=max_observation_chars,
@@ -306,7 +316,9 @@ class AgentReActDecisionService:
         try:
             return _DecisionEnvelope.model_validate(json.loads(candidate))
         except (json.JSONDecodeError, ValidationError, TypeError) as exc:
-            raise AIResponseError("ReAct decision model returned invalid structured output.") from exc
+            raise AIResponseError(
+                "ReAct decision model returned invalid structured output."
+            ) from exc
 
     @staticmethod
     def _validate_tool_decision(
@@ -314,7 +326,7 @@ class AgentReActDecisionService:
         *,
         tools: tuple[AgentToolSpec, ...],
         source_text: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         tool_by_name = {tool.name: tool for tool in tools}
         spec = tool_by_name.get(envelope.tool_name)
         if spec is None:
@@ -407,7 +419,7 @@ class AgentReActDecisionService:
 
 
 __all__ = [
-    "AgentReActDecisionService",
     "REACT_DECISION_PROMPT",
     "REACT_DECISION_SYSTEM_PROMPT",
+    "AgentReActDecisionService",
 ]

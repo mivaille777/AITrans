@@ -12,6 +12,7 @@ SandboxPermissionProfileName = Literal[
     "restricted_network",
 ]
 SandboxPermissionDecisionKind = Literal["allow", "deny", "approval_required"]
+DEFAULT_SANDBOX_COMMAND_ALLOWLIST = ("python", "pytest")
 
 
 class SandboxPermissionModel(BaseModel):
@@ -49,6 +50,11 @@ class ExecutionPolicy(SandboxPermissionModel):
     profile: str = Field(min_length=1, max_length=64)
     workspace_id: str = Field(default="", max_length=128)
     network_allowlist: tuple[str, ...] = Field(default=(), max_length=128)
+    command_allowlist: tuple[str, ...] = Field(
+        default=DEFAULT_SANDBOX_COMMAND_ALLOWLIST,
+        min_length=1,
+        max_length=32,
+    )
 
 
 class PermissionDecision(SandboxPermissionModel):
@@ -61,6 +67,7 @@ class PermissionDecision(SandboxPermissionModel):
 
 
 __all__ = [
+    "DEFAULT_SANDBOX_COMMAND_ALLOWLIST",
     "ExecutionPolicy",
     "PermissionDecision",
     "PermissionRequest",

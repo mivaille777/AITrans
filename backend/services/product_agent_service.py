@@ -371,7 +371,7 @@ class ProductAgentService:
         self,
         tool_name: str,
         arguments: dict[str, Any],
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         validate = getattr(self._registry, "validate_planner_arguments", None)
         if callable(validate):
             return validate(tool_name, arguments)

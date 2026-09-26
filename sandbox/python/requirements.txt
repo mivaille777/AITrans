@@ -1,1 +1,2 @@
-# Keep the V1 image minimal; add runtime packages only when a sandbox use case needs them.
+# Pytest is available for bounded project checks inside disposable sandboxes.
+pytest==9.0.3
