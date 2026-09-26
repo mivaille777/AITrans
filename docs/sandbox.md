@@ -1,9 +1,10 @@
 # Python Sandbox
 
-The Agent's `python_execute` capability runs Python in a disposable Docker
-container. It is opt-in and appears in `GET /api/agent/tools` only when the
-sandbox is enabled, Docker is using Linux containers, and the configured image
-is available.
+The Agent's `python_execute` and `command_execute` capabilities run in a
+disposable Docker container. They are opt-in and appear in `GET /api/agent/tools`
+only when the sandbox is enabled, Docker is using Linux containers, and the
+configured image is available. `command_execute` accepts an argv array for an
+allowlisted command; it does not invoke a host shell.
 
 Build the default image from the repository root in PowerShell:
 
@@ -20,8 +21,8 @@ $env:AITRANS_SANDBOX_IMAGE = "aitrans-python-sandbox:v1"
 ```
 
 The backend must be restarted after changing these variables. With the flag
-unset or false, or when Docker/the image is unavailable, the Python tool is not
-registered. The image must use a pinned tag; `latest` is rejected.
+unset or false, or when Docker/the image is unavailable, the Sandbox tools are
+not registered. The image must use a pinned tag; `latest` is rejected.
 
 When starting the desktop app with the development launcher, opt in explicitly:
 
