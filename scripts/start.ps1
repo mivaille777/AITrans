@@ -149,6 +149,98 @@ function Test-HttpEndpoint {
     }
 }
 
+function Test-TcpPortAvailable {
+    param([int]$Port)
+
+    $listener = $null
+    try {
+        $hostAddress = [Net.Dns]::GetHostAddresses($ApiHost) | Select-Object -First 1
+        $listener = [Net.Sockets.TcpListener]::new($hostAddress, $Port)
+        $listener.Start()
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($null -ne $listener) {
+            $listener.Stop()
+        }
+    }
+}
+
+function Test-SandboxBackendApiCompatible {
+    param([string]$BaseUrl)
+
+    try {
+        Invoke-RestMethod -Uri "$BaseUrl/api/sandbox/debug/health" -TimeoutSec 2 -ErrorAction Stop | Out-Null
+        $catalog = Invoke-RestMethod -Uri "$BaseUrl/api/agent/tools" -TimeoutSec 2 -ErrorAction Stop
+        return [bool]($catalog.tools | Where-Object { $_.name -eq "python_execute" })
+    }
+    catch {
+        return $false
+    }
+}
+
+function Resolve-SandboxApiPort {
+    if (-not $EnableSandbox -or -not (Test-HttpEndpoint $HealthUrl)) {
+        return
+    }
+
+    try {
+        Invoke-RestMethod -Uri $SandboxHealthUrl -TimeoutSec 2 -ErrorAction Stop | Out-Null
+        return
+    }
+    catch {
+        $statusCode = 0
+        if ($null -ne $_.Exception.Response) {
+            try {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            catch {
+                $statusCode = 0
+            }
+        }
+
+        if ($statusCode -ne 404) {
+            return
+        }
+    }
+
+    $occupiedApiUrl = $ApiBaseUrl
+    $lastPort = [Math]::Min(65535, $ApiPort + 50)
+    $firstFreePort = $null
+    for ($candidate = $ApiPort + 1; $candidate -le $lastPort; $candidate++) {
+        if (Test-TcpPortAvailable -Port $candidate) {
+            if ($null -eq $firstFreePort) {
+                $firstFreePort = $candidate
+            }
+            continue
+        }
+
+        $candidateBaseUrl = "http://$ApiHost`:$candidate"
+        if (Test-SandboxBackendApiCompatible -BaseUrl $candidateBaseUrl) {
+            $script:ApiPort = $candidate
+            $script:ApiBaseUrl = $candidateBaseUrl
+            $script:HealthUrl = "$ApiBaseUrl/health"
+            $script:SandboxHealthUrl = "$ApiBaseUrl/api/sandbox/debug/health"
+            Write-Host "  $occupiedApiUrl has no Sandbox Debug API; reusing compatible backend at $ApiBaseUrl." -ForegroundColor DarkYellow
+            return
+        }
+    }
+
+    if ($null -eq $firstFreePort) {
+        throw "No free API port was found between $($ApiPort + 1) and $lastPort. Pass -ApiPort with an unused port."
+    }
+
+    $script:ApiPort = $firstFreePort
+    $script:ApiBaseUrl = "http://$ApiHost`:$ApiPort"
+    $script:HealthUrl = "$ApiBaseUrl/health"
+    $script:SandboxHealthUrl = "$ApiBaseUrl/api/sandbox/debug/health"
+
+    Write-Host "  $occupiedApiUrl is serving a backend without Sandbox Debug API; using free port $ApiPort for this sandbox-enabled session." -ForegroundColor DarkYellow
+}
+
 function Get-SandboxRuntimeHealth {
     $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
     $lastError = "No response was received."
@@ -170,7 +262,7 @@ function Get-SandboxRuntimeHealth {
             }
 
             if ($statusCode -eq 404) {
-                throw "The API at $ApiBaseUrl returned 404 for $SandboxHealthUrl. It is an older/different backend. Stop it or rerun with -ApiPort set to a free port (for example 8767)."
+                throw "The API at $ApiBaseUrl returned 404 for $SandboxHealthUrl. The backend started for this session does not include the Sandbox Debug API; confirm that scripts/start.ps1 and the backend are from the same checkout."
             }
 
             $lastError = $_.Exception.Message
@@ -325,6 +417,8 @@ function Ensure-FrontendRuntime {
         Pop-Location
     }
 }
+
+Resolve-SandboxApiPort
 
 Write-Section "AITranslator development launcher"
 Write-Host "Mode       : $Mode"
