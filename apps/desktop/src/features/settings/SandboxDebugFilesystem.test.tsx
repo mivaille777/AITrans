@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -60,7 +61,7 @@ describe("SandboxDebugFilesystem", () => {
   it("renders staged inputs, activity and collected outputs", () => {
     render(<SandboxDebugFilesystem trace={trace} />)
 
-    expect(screen.getByText("AITrans")).toBeTruthy()
+    expect(screen.getAllByText("AITrans")).toHaveLength(2)
     expect(screen.getByText("backend/main.py")).toBeTruthy()
     expect(screen.getByText("/input/data.csv")).toBeTruthy()
     expect(screen.getByText("example.com:443")).toBeTruthy()

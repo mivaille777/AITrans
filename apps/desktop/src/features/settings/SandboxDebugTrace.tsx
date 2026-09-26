@@ -44,6 +44,7 @@ export default function SandboxDebugTrace({
   const [filesystemWorkspaceId, setFilesystemWorkspaceId] = useState("")
   const streamRef = useRef<SandboxDebugStreamHandle | null>(null)
   const runGenerationRef = useRef(0)
+  const streamedTerminalGenerationRef = useRef<number | null>(null)
 
   const runtimeReady = Boolean(health?.available && health.daemon_ready)
   const stages = trace?.stages.length ? trace.stages : INITIAL_STAGES
@@ -99,6 +100,7 @@ export default function SandboxDebugTrace({
 
     const generation = runGenerationRef.current + 1
     runGenerationRef.current = generation
+    streamedTerminalGenerationRef.current = null
     setRunning(true)
     setError("")
     setTrace(null)
@@ -124,6 +126,7 @@ export default function SandboxDebugTrace({
       try {
         const initial = await getSandboxDebugRun(accepted.sandbox_id)
         if (runGenerationRef.current !== generation) return
+        if (streamedTerminalGenerationRef.current === generation) return
         setTrace(initial)
         if (isTerminal(initial.run.status)) setRunning(false)
       } catch {
@@ -163,6 +166,9 @@ export default function SandboxDebugTrace({
   function handleStreamEvent(event: SandboxDebugStreamEvent, generation: number) {
     if (runGenerationRef.current !== generation) return
     if (event.type === "trace" || event.type === "terminal") {
+      if (event.type === "terminal") {
+        streamedTerminalGenerationRef.current = generation
+      }
       setTrace(event.trace)
       if (event.type === "terminal") {
         setRunning(false)

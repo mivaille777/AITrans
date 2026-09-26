@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -90,7 +91,7 @@ describe("SandboxDebugPolicy", () => {
 
   it("shows unsafe status visibly in the UI", () => {
     render(<SandboxDebugPolicy trace={traceWith({ ...safePolicy, docker_socket_mounted: true })} />)
-    expect(screen.getByText(/warning/)).toBeTruthy()
+    expect(screen.getByText("1 warning")).toBeTruthy()
     expect(screen.getAllByText("Unsafe").length).toBeGreaterThan(0)
   })
 })

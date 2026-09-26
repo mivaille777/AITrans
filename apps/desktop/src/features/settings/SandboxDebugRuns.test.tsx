@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -55,6 +56,7 @@ describe("SandboxDebugRuns", () => {
   it("shows API errors", async () => {
     vi.mocked(listSandboxDebugRuns).mockRejectedValue(new Error("backend unavailable"))
     render(<SandboxDebugRuns onSelectTrace={vi.fn()} />)
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("backend unavailable"))
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Sandbox trace is unavailable."))
+    expect(screen.getByRole("alert").textContent).not.toContain("backend unavailable")
   })
 })
