@@ -6,6 +6,7 @@ import {
   type SandboxRuntimeHealth,
 } from "../../api/sandbox-debug"
 import SandboxDebugFilesystem from "./SandboxDebugFilesystem"
+import SandboxDebugResources from "./SandboxDebugResources"
 import SandboxDebugTrace from "./SandboxDebugTrace"
 
 type SandboxDebugTab = "trace" | "filesystem" | "resources" | "policy" | "runs"
@@ -139,7 +140,8 @@ export default function SandboxDebugStudio() {
             >
               {id === "trace" && <SandboxDebugTrace health={runtimeHealth} onTraceChange={setLatestTrace} />}
               {id === "filesystem" && <SandboxDebugFilesystem trace={latestTrace} />}
-              {id !== "trace" && id !== "filesystem" && <SandboxEmptyState tab={id} />}
+              {id === "resources" && <SandboxDebugResources trace={latestTrace} />}
+              {id !== "trace" && id !== "filesystem" && id !== "resources" && <SandboxEmptyState tab={id} />}
             </div>
           )
         })}
