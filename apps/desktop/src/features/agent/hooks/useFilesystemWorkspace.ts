@@ -20,13 +20,14 @@ function persistActiveWorkspaceId(workspaceId: string): void {
   else window.localStorage.removeItem(ACTIVE_WORKSPACE_KEY)
 }
 
-export function useFilesystemWorkspace() {
+export function useFilesystemWorkspace(enabled = true) {
   const [workspace, setWorkspace] = useState<FilesystemWorkspace | null>(null)
-  const [loading, setLoading] = useState(() => Boolean(readActiveWorkspaceId()))
+  const [loading, setLoading] = useState(() => enabled && Boolean(readActiveWorkspaceId()))
   const [choosing, setChoosing] = useState(false)
   const [error, setError] = useState("")
 
   useEffect(() => {
+    if (!enabled) return
     const workspaceId = readActiveWorkspaceId()
     if (!workspaceId) return
 
@@ -53,10 +54,10 @@ export function useFilesystemWorkspace() {
     return () => {
       disposed = true
     }
-  }, [])
+  }, [enabled])
 
   const chooseWorkspace = useCallback(async () => {
-    if (choosing) return
+    if (!enabled || choosing) return
     setChoosing(true)
     setError("")
     try {
@@ -77,7 +78,7 @@ export function useFilesystemWorkspace() {
     } finally {
       setChoosing(false)
     }
-  }, [choosing])
+  }, [choosing, enabled])
 
   const clearWorkspace = useCallback(() => {
     persistActiveWorkspaceId("")
@@ -86,8 +87,8 @@ export function useFilesystemWorkspace() {
   }, [])
 
   return {
-    workspace,
-    loading,
+    workspace: enabled ? workspace : null,
+    loading: enabled ? loading : false,
     choosing,
     error,
     chooseWorkspace,

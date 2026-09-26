@@ -135,11 +135,16 @@ export default function SettingsWorkspace({
       setActiveStudio("rag")
       return
     }
-    if (navigationState?.studio === "sandbox") {
+    if (navigationState?.studio === "sandbox" && workspace.sandboxEnabled) {
       setActiveStudio("sandbox")
       setSandboxIntentId(navigationState.sandboxId?.trim() ?? "")
+      return
     }
-  }, [location.state])
+    if (navigationState?.studio === "sandbox" && !workspace.sandboxEnabled) {
+      setActiveStudio(null)
+      setSandboxIntentId("")
+    }
+  }, [location.state, workspace.sandboxEnabled])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -272,12 +277,14 @@ export default function SettingsWorkspace({
             type="button"
             className={`ait-settings-nav-item${activeStudio === "sandbox" ? " is-active" : ""}`}
             aria-current={activeStudio === "sandbox" ? "page" : undefined}
-            onClick={() => setActiveStudio("sandbox")}
+            disabled={!workspace.sandboxEnabled}
+            aria-disabled={!workspace.sandboxEnabled}
+            onClick={() => workspace.sandboxEnabled && setActiveStudio("sandbox")}
           >
             <Box size={18} strokeWidth={1.8} aria-hidden="true" />
             <span className="ait-settings-nav-item-copy">
               <strong>Sandbox Debug Studio</strong>
-              <small>Inspect isolated execution</small>
+              <small>{workspace.sandboxEnabled ? "Inspect isolated execution" : "Disabled by feature flag"}</small>
             </span>
             <ChevronRight className="ait-settings-nav-item-arrow" size={15} strokeWidth={1.7} aria-hidden="true" />
           </button>
@@ -440,9 +447,11 @@ export default function SettingsWorkspace({
         <div className={activeStudio === "rag" ? "block h-full min-h-0" : "hidden"}>
           <RagDebugStudioTrace />
         </div>
-        <div className={activeStudio === "sandbox" ? "block h-full min-h-0" : "hidden"}>
-          <SandboxDebugStudio initialSandboxId={sandboxIntentId} />
-        </div>
+        {workspace.sandboxEnabled ? (
+          <div className={activeStudio === "sandbox" ? "block h-full min-h-0" : "hidden"}>
+            <SandboxDebugStudio initialSandboxId={sandboxIntentId} />
+          </div>
+        ) : null}
 
         <footer className="ait-settings-actions">
           <button type="button" className="ait-settings-secondary-button" onClick={resetDefaults}><RotateCcw size={14} /> Reset to defaults</button>

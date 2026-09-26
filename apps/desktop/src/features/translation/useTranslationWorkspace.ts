@@ -18,6 +18,7 @@ import type {
   TranslationResponse,
 } from "../../api/types"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
+import { resolveSandboxFeatureEnabled } from "../sandbox/sandbox-feature"
 import { resolveLanguageSwap } from "./translation-utils"
 
 export type BackendState = "checking" | "connected" | "offline"
@@ -42,6 +43,7 @@ export interface ResearchRetrievalScope {
 export interface TranslationWorkspaceController {
   backendState: BackendState
   backendService: string
+  sandboxEnabled: boolean
   providerName: string
   translationProvider: TranslationProviderName
   providerSwitching: boolean
@@ -204,6 +206,7 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
     : healthQuery.isSuccess
       ? "connected"
       : "offline"
+  const sandboxEnabled = resolveSandboxFeatureEnabled(healthQuery.data?.sandbox_enabled)
 
   function updateSourceText(value: string) {
     setAcademicReadingContext(null)
@@ -285,6 +288,7 @@ export function useTranslationWorkspace(): TranslationWorkspaceController {
   return {
     backendState,
     backendService: healthQuery.data?.service ?? "aitrans-backend",
+    sandboxEnabled,
     providerName: translationStatusQuery.data?.provider ?? "Not loaded",
     translationProvider,
     providerSwitching: providerMutation.isPending,
