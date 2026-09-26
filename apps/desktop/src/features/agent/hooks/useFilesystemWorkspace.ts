@@ -28,10 +28,7 @@ export function useFilesystemWorkspace() {
 
   useEffect(() => {
     const workspaceId = readActiveWorkspaceId()
-    if (!workspaceId) {
-      setLoading(false)
-      return
-    }
+    if (!workspaceId) return
 
     let disposed = false
     void getFilesystemWorkspace(workspaceId)

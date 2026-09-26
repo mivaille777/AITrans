@@ -71,11 +71,13 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
       },
     }
   }, [knowledgeAgentContext, resolvedKnowledgeContext, workspace])
+  const filesystemWorkspace = useFilesystemWorkspace()
   const runtime = useAgentRuntime(
     runtimeWorkspace,
     resolvedKnowledgeContext?.knowledgeContext ?? null,
+    filesystemWorkspace.workspace?.workspace_id ?? "",
+    !filesystemWorkspace.loading,
   )
-  const filesystemWorkspace = useFilesystemWorkspace()
   const { pending, prompt, setPrompt, setWorkflowAction, sourceText, submitPrompt } = runtime
   const appliedDraftRef = useRef("")
   const submittedDraftRef = useRef("")

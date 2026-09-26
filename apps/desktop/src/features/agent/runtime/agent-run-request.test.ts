@@ -37,6 +37,7 @@ describe("Agent run request", () => {
       style: "academic",
       conversation_id: "conversation-1",
       workspace_id: "",
+      filesystem_workspace_id: "",
       confirmed_write_tools: [],
       knowledge_context: null,
       knowledge_access_policy: "auto",
@@ -155,11 +156,13 @@ describe("Agent run request", () => {
       targetLanguage: "zh-CN",
       conversationId: "conversation-1",
       workspaceId: "workspace-16",
+      filesystemWorkspaceId: "fsw-16",
       knowledgeDocumentIds: ["temporary-doc"],
       researchSourceIds: ["temporary-source"],
     })
 
     expect(request.workspace_id).toBe("workspace-16")
+    expect(request.filesystem_workspace_id).toBe("fsw-16")
     expect(request.knowledge_document_ids).toEqual(["temporary-doc"])
     expect(request.research_source_ids).toEqual(["temporary-source"])
   })

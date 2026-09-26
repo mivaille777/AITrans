@@ -51,6 +51,8 @@ import { deriveAgentWorkspaceState } from "../state/agent-workspace-state"
 export function useAgentRuntime(
   workspace: TranslationWorkspaceController,
   knowledgeContext: AgentKnowledgeContext | null = null,
+  filesystemWorkspaceId = "",
+  filesystemWorkspaceHydrated = true,
 ) {
   const [prompt, setPrompt] = useState("")
   const [trace, setTrace] = useState<AgentRunTraceResponse | null>(null)
@@ -78,6 +80,8 @@ export function useAgentRuntime(
   const initialTargetLanguage = useRef(workspace.targetLanguage)
   const transportRecoveryCount = useRef(0)
   const activeWorkspaceId = useRef(workspace.activeResearchWorkspaceId)
+  const activeFilesystemWorkspaceId = useRef(filesystemWorkspaceId)
+  const filesystemBoundaryInitialized = useRef(false)
 
   useEffect(() => {
     return () => {
@@ -112,6 +116,39 @@ export function useAgentRuntime(
     setErrorMessage("")
     setFallbackReason("")
   }, [workspace.activeResearchWorkspaceId])
+  /* oxlint-enable react-hooks/set-state-in-effect */
+
+  /* oxlint-disable react-hooks/set-state-in-effect -- filesystem workspace changes are security-boundary changes */
+  useEffect(() => {
+    if (!filesystemWorkspaceHydrated) return
+    if (!filesystemBoundaryInitialized.current) {
+      filesystemBoundaryInitialized.current = true
+      activeFilesystemWorkspaceId.current = filesystemWorkspaceId
+      return
+    }
+    if (activeFilesystemWorkspaceId.current === filesystemWorkspaceId) return
+
+    activeFilesystemWorkspaceId.current = filesystemWorkspaceId
+    streamHandle.current?.cancel()
+    streamHandle.current?.close()
+    streamHandle.current = null
+    durableStreamHandle.current?.close()
+    durableStreamHandle.current = null
+    clearPendingAgentRun(activeRunId.current)
+    activeRunId.current = ""
+    conversationId.current = ""
+    conversationMode.current = null
+    lastPayload.current = null
+    setTrace(null)
+    setLiveEvents([])
+    setRunSnapshot(null)
+    setDurableRun(null)
+    setPending(false)
+    setCancelRequested(false)
+    setCancelledMessage("")
+    setErrorMessage("")
+    setFallbackReason("")
+  }, [filesystemWorkspaceHydrated, filesystemWorkspaceId])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
   const academic = workspace.academicReadingContext
@@ -611,6 +648,7 @@ export function useAgentRuntime(
       targetLanguage: workspace.targetLanguage,
       conversationId: conversationId.current,
       workspaceId: workspace.activeResearchWorkspaceId,
+      filesystemWorkspaceId,
       knowledgeDocumentIds: workspace.researchRetrievalScope.knowledgeDocumentIds,
       researchSourceIds: workspace.researchRetrievalScope.researchSourceIds,
       knowledgeContext,
