@@ -80,6 +80,27 @@ describe("SandboxDebugStudio", () => {
     expect(screen.getByText("No sandbox runs recorded")).toBeTruthy()
   })
 
+  it("supports arrow, Home and End keyboard navigation between tabs", async () => {
+    render(<SandboxDebugStudio />)
+
+    const traceTab = screen.getByRole("tab", { name: "Trace" })
+    const filesystemTab = screen.getByRole("tab", { name: "Filesystem" })
+    const runsTab = screen.getByRole("tab", { name: "Runs" })
+
+    traceTab.focus()
+    fireEvent.keyDown(traceTab, { key: "ArrowRight" })
+    expect(filesystemTab.getAttribute("aria-selected")).toBe("true")
+    await waitFor(() => expect(document.activeElement).toBe(filesystemTab))
+
+    fireEvent.keyDown(filesystemTab, { key: "End" })
+    expect(runsTab.getAttribute("aria-selected")).toBe("true")
+    await waitFor(() => expect(document.activeElement).toBe(runsTab))
+
+    fireEvent.keyDown(runsTab, { key: "Home" })
+    expect(traceTab.getAttribute("aria-selected")).toBe("true")
+    await waitFor(() => expect(document.activeElement).toBe(traceTab))
+  })
+
   it("moves the active underline with the selected tab", () => {
     render(<SandboxDebugStudio />)
 

@@ -1,5 +1,5 @@
 import { AlertCircle, LoaderCircle } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 
 import {
   getSandboxDebugRun,
@@ -75,6 +75,31 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   }, [initialSandboxId])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
+  function focusTab(index: number) {
+    const normalizedIndex = (index + TABS.length) % TABS.length
+    const nextTab = TABS[normalizedIndex]
+    setActiveTab(nextTab.id)
+    window.requestAnimationFrame(() => {
+      document.getElementById(`sandbox-debug-tab-${nextTab.id}`)?.focus()
+    })
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key === "ArrowRight") {
+      event.preventDefault()
+      focusTab(index + 1)
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault()
+      focusTab(index - 1)
+    } else if (event.key === "Home") {
+      event.preventDefault()
+      focusTab(0)
+    } else if (event.key === "End") {
+      event.preventDefault()
+      focusTab(TABS.length - 1)
+    }
+  }
+
   const runtimeReady = Boolean(runtimeHealth?.available && runtimeHealth.daemon_ready)
   const runtimeStatusLabel = runtimeHealthPending
     ? "Checking runtime"
@@ -110,7 +135,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
         </div>
 
         <nav className="mt-5 flex gap-8" aria-label="Sandbox Debug Studio tabs" role="tablist">
-          {TABS.map((tab) => (
+          {TABS.map((tab, index) => (
             <button
               key={tab.id}
               type="button"
@@ -118,6 +143,8 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
               aria-selected={activeTab === tab.id}
               aria-controls={`sandbox-debug-panel-${tab.id}`}
               id={`sandbox-debug-tab-${tab.id}`}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              onKeyDown={(event) => handleTabKeyDown(event, index)}
               onClick={() => setActiveTab(tab.id)}
               className={`relative px-1 pb-4 text-[13px] font-medium transition-colors duration-150 ${activeTab === tab.id ? "text-slate-950" : "text-slate-500 hover:text-slate-800"}`}
             >
