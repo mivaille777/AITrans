@@ -254,6 +254,8 @@ Start the local development environment:
 .\scripts\start.ps1
 ```
 
+For the opt-in Python Sandbox setup, see [docs/sandbox.md](docs/sandbox.md).
+
 ### Local verification
 
 The repository provides a unified verification entry point:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from backend.sandbox.docker_runtime import DockerSandboxRuntime
 from backend.sandbox.errors import SandboxExecutionError, SandboxInvalidInputError
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxExecutionRequest, SandboxExecutionResult
@@ -105,3 +106,27 @@ def test_unexpected_runtime_exception_is_normalized(tmp_path) -> None:
 
     assert error.value.code == "sandbox_execution_failed"
     assert str(error.value) == "Python sandbox execution failed."
+
+
+def test_docker_runtime_close_releases_only_its_owned_client(monkeypatch) -> None:
+    class FakeClient:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    owned = FakeClient()
+    monkeypatch.setattr(
+        "backend.sandbox.docker_runtime.docker.from_env",
+        lambda **_kwargs: owned,
+    )
+    runtime = DockerSandboxRuntime()
+    assert runtime._get_client() is owned
+    runtime.close()
+    assert owned.closed
+
+    provided = FakeClient()
+    injected_runtime = DockerSandboxRuntime(client=provided)
+    injected_runtime.close()
+    assert not provided.closed
+    assert injected_runtime._get_client() is provided
