@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react"
 
+import {
+  getSandboxRuntimeHealth,
+  type SandboxRuntimeHealth,
+} from "../../api/sandbox-debug"
+import SandboxDebugTrace from "./SandboxDebugTrace"
+
 type SandboxDebugTab = "trace" | "filesystem" | "resources" | "policy" | "runs"
 
 const TABS: Array<{ id: SandboxDebugTab; label: string }> = [
@@ -10,11 +16,7 @@ const TABS: Array<{ id: SandboxDebugTab; label: string }> = [
   { id: "runs", label: "Runs" },
 ]
 
-const EMPTY_STATES: Record<SandboxDebugTab, { title: string; description: string }> = {
-  trace: {
-    title: "Run a Python sandbox trace",
-    description: "Execute isolated Python code and inspect container lifecycle, output and cleanup.",
-  },
+const EMPTY_STATES: Record<Exclude<SandboxDebugTab, "trace">, { title: string; description: string }> = {
   filesystem: {
     title: "No filesystem activity recorded",
     description: "Run a Sandbox trace with workspace input to inspect staged files and file access.",
@@ -36,6 +38,8 @@ const EMPTY_STATES: Record<SandboxDebugTab, { title: string; description: string
 export default function SandboxDebugStudio() {
   const [activeTab, setActiveTab] = useState<SandboxDebugTab>("trace")
   const [visitedTabs, setVisitedTabs] = useState<Set<SandboxDebugTab>>(() => new Set(["trace"]))
+  const [runtimeHealth, setRuntimeHealth] = useState<SandboxRuntimeHealth | null>(null)
+  const [runtimeHealthPending, setRuntimeHealthPending] = useState(true)
 
   /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
   useEffect(() => {
@@ -45,6 +49,25 @@ export default function SandboxDebugStudio() {
     })
   }, [activeTab])
   /* oxlint-enable react/set-state-in-effect */
+
+  useEffect(() => {
+    let disposed = false
+    void getSandboxRuntimeHealth()
+      .then((health) => {
+        if (!disposed) setRuntimeHealth(health)
+      })
+      .catch(() => {
+        if (!disposed) setRuntimeHealth(null)
+      })
+      .finally(() => {
+        if (!disposed) setRuntimeHealthPending(false)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [])
+
+  const runtimeReady = Boolean(runtimeHealth?.available && runtimeHealth.daemon_ready)
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
@@ -56,9 +79,22 @@ export default function SandboxDebugStudio() {
               Inspect isolated execution, filesystem activity, resource limits and effective sandbox policy.
             </p>
           </div>
-          <span className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-600">
-            <span className="h-1.5 w-1.5 rounded-full bg-slate-400" aria-hidden="true" />
-            Runtime status unavailable
+          <span
+            className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${
+              runtimeReady
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-slate-200 bg-slate-50 text-slate-600"
+            }`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${runtimeReady ? "bg-emerald-500" : "bg-slate-400"}`}
+              aria-hidden="true"
+            />
+            {runtimeHealthPending
+              ? "Checking runtime"
+              : runtimeReady
+                ? "Docker · Ready"
+                : "Runtime status unavailable"}
           </span>
         </div>
 
@@ -88,7 +124,7 @@ export default function SandboxDebugStudio() {
         {TABS.map(({ id }) => {
           const visible = activeTab === id
           if (!visible && !visitedTabs.has(id)) return null
-          const emptyState = EMPTY_STATES[id]
+
           return (
             <div
               key={id}
@@ -98,17 +134,28 @@ export default function SandboxDebugStudio() {
               aria-hidden={!visible}
               className={visible ? "h-full min-h-0 animate-[ragFadeIn_.18s_ease-out]" : "hidden"}
             >
-              <div className="flex h-full items-center justify-center overflow-auto px-8 py-10">
-                <div className="w-full max-w-3xl rounded-[10px] border border-slate-200 bg-white px-8 py-10 text-center shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Sandbox / {TABS.find((tab) => tab.id === id)?.label}</p>
-                  <h2 className="mt-3 text-[16px] font-semibold text-slate-900">{emptyState.title}</h2>
-                  <p className="mx-auto mt-2 max-w-xl text-[12px] leading-5 text-slate-500">{emptyState.description}</p>
-                </div>
-              </div>
+              {id === "trace"
+                ? <SandboxDebugTrace health={runtimeHealth} />
+                : <SandboxEmptyState tab={id} />}
             </div>
           )
         })}
       </div>
     </section>
+  )
+}
+
+function SandboxEmptyState({ tab }: { tab: Exclude<SandboxDebugTab, "trace"> }) {
+  const emptyState = EMPTY_STATES[tab]
+  return (
+    <div className="flex h-full items-center justify-center overflow-auto px-8 py-10">
+      <div className="w-full max-w-3xl rounded-[10px] border border-slate-200 bg-white px-8 py-10 text-center shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+          Sandbox / {TABS.find((item) => item.id === tab)?.label}
+        </p>
+        <h2 className="mt-3 text-[16px] font-semibold text-slate-900">{emptyState.title}</h2>
+        <p className="mx-auto mt-2 max-w-xl text-[12px] leading-5 text-slate-500">{emptyState.description}</p>
+      </div>
+    </div>
   )
 }

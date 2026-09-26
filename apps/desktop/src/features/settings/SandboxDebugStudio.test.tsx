@@ -1,18 +1,34 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, describe, expect, it } from "vitest"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
+
+vi.mock("../../api/sandbox-debug", () => ({
+  getSandboxRuntimeHealth: vi.fn().mockResolvedValue({
+    available: true,
+    runtime: "docker",
+    image: "aitrans-sandbox:latest",
+    daemon_ready: true,
+    os_type: "linux",
+    detail: "",
+  }),
+}))
+
+vi.mock("./SandboxDebugTrace", () => ({
+  default: () => <div>Sandbox trace content</div>,
+}))
 
 import SandboxDebugStudio from "./SandboxDebugStudio"
 
 afterEach(() => {
   cleanup()
+  vi.clearAllMocks()
 })
 
 describe("SandboxDebugStudio", () => {
-  it("renders the studio shell and all five tabs", () => {
+  it("renders the studio shell and all five tabs", async () => {
     render(<SandboxDebugStudio />)
 
     expect(screen.getByText("Sandbox Debug Studio")).toBeTruthy()
-    expect(screen.getByText("Runtime status unavailable")).toBeTruthy()
+    await waitFor(() => expect(screen.getByText("Docker · Ready")).toBeTruthy())
 
     for (const label of ["Trace", "Filesystem", "Resources", "Policy", "Runs"]) {
       const tab = screen.getByRole("tab", { name: label })
@@ -24,7 +40,7 @@ describe("SandboxDebugStudio", () => {
     render(<SandboxDebugStudio />)
 
     expect(screen.getByRole("tab", { name: "Trace" }).getAttribute("aria-selected")).toBe("true")
-    expect(screen.getByText("Run a Python sandbox trace")).toBeTruthy()
+    expect(screen.getByText("Sandbox trace content")).toBeTruthy()
 
     fireEvent.click(screen.getByRole("tab", { name: "Filesystem" }))
     expect(screen.getByRole("tab", { name: "Filesystem" }).getAttribute("aria-selected")).toBe("true")
