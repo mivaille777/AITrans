@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.sandbox.docker_runtime import DockerSandboxRuntime
+from backend.sandbox.environment import build_sandbox_environment
 from backend.sandbox.errors import (
     DockerNotLinuxError,
     DockerUnavailableError,
@@ -100,7 +101,11 @@ def _execute(runtime, request, tmp_path):
         workspace_manager.cleanup(workspace)
 
 
-def test_runtime_uses_no_network_and_removes_completed_container(tmp_path) -> None:
+def test_runtime_uses_no_network_and_removes_completed_container(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AITRANS_TEST_SECRET", "DO_NOT_LEAK")
     container = FakeContainer(timeout_after_polls=1)
     client = FakeDockerClient(container)
     runtime = DockerSandboxRuntime(client=client)
@@ -116,6 +121,9 @@ def test_runtime_uses_no_network_and_removes_completed_container(tmp_path) -> No
     assert result.status == "succeeded"
     assert client.create_kwargs["command"] == ["python", "-c", "print('ok')"]
     assert client.create_kwargs["network_mode"] == "none"
+    assert client.create_kwargs["environment"] == build_sandbox_environment()
+    assert "AITRANS_TEST_SECRET" not in client.create_kwargs["environment"]
+    assert "DO_NOT_LEAK" not in client.create_kwargs["environment"].values()
     assert client.create_kwargs["user"] == "10001:10001"
     assert client.create_kwargs["read_only"] is True
     assert client.create_kwargs["cap_drop"] == ["ALL"]
@@ -202,16 +210,10 @@ def test_restricted_network_uses_internal_proxy_and_cleans_up(tmp_path) -> None:
     assert client.proxy_create_kwargs["network_mode"] == "bridge"
     assert client.proxy_create_kwargs["read_only"] is True
     assert client.main_create_kwargs["network_mode"] == client.network.name
-    assert client.main_create_kwargs["environment"] == [
-        "HTTP_PROXY=http://172.30.0.2:8888",
-        "HTTPS_PROXY=http://172.30.0.2:8888",
-        "http_proxy=http://172.30.0.2:8888",
-        "https_proxy=http://172.30.0.2:8888",
-        "ALL_PROXY=",
-        "all_proxy=",
-        "NO_PROXY=",
-        "no_proxy=",
-    ]
+    assert client.main_create_kwargs["environment"] == build_sandbox_environment(
+        proxy_address="172.30.0.2"
+    )
+    assert client.proxy_create_kwargs["environment"] == build_sandbox_environment()
     assert client.proxy.removed is True
     assert client.container.removed is True
     assert client.network.removed is True

@@ -23,6 +23,10 @@ from backend.models.sandbox_debug import (
     SandboxRunStatus,
     SandboxRunSummary,
 )
+from backend.sandbox.environment import (
+    known_secret_environment_values,
+    redact_known_secret_values,
+)
 from backend.sandbox.models import SandboxExecutionResult
 from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY
 
@@ -66,7 +70,13 @@ class _RunEntry:
 class SandboxDebugService:
     """Own bounded run records while avoiding persistence of user code/output."""
 
-    def __init__(self, *, max_runs: int = 100, max_active_runs: int = 4) -> None:
+    def __init__(
+        self,
+        *,
+        max_runs: int = 100,
+        max_active_runs: int = 4,
+        secret_values_provider: Callable[[], tuple[str, ...]] | None = None,
+    ) -> None:
         self.max_runs = max(1, int(max_runs))
         self.max_active_runs = max(1, int(max_active_runs))
         self._condition = Condition(Lock())
@@ -74,6 +84,9 @@ class SandboxDebugService:
         self._executor = ThreadPoolExecutor(
             max_workers=2,
             thread_name_prefix="sandbox-debug",
+        )
+        self._secret_values_provider = (
+            secret_values_provider or known_secret_environment_values
         )
         self._closed = False
 
@@ -391,6 +404,7 @@ class SandboxDebugService:
                 raise SandboxDebugError("run_not_found", "Sandbox run not found.", status_code=404)
             now = self._now()
             status = result.status
+            known_secrets = self._secret_values_provider()
             entry.trace = entry.trace.model_copy(
                 update={
                     "run": entry.trace.run.model_copy(
@@ -403,8 +417,14 @@ class SandboxDebugService:
                             "image": result.image or entry.trace.run.image,
                         }
                     ),
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
+                    "stdout": redact_known_secret_values(
+                        result.stdout,
+                        secret_values=known_secrets,
+                    ),
+                    "stderr": redact_known_secret_values(
+                        result.stderr,
+                        secret_values=known_secrets,
+                    ),
                     "output_files": [
                         SandboxDebugFile(
                             file_id=item.file_id,
@@ -435,6 +455,10 @@ class SandboxDebugService:
             # Host paths must never be included in this user-facing trace.
             if ":\\" in message or message.startswith("/"):
                 message = "Sandbox execution failed."
+            message = redact_known_secret_values(
+                message,
+                secret_values=self._secret_values_provider(),
+            )
             entry.trace = entry.trace.model_copy(
                 update={
                     "run": entry.trace.run.model_copy(

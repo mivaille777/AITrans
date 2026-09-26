@@ -127,3 +127,39 @@ def test_agent_run_can_be_opened_in_debug_history() -> None:
         assert trace.activities[0].target == "data.csv"
     finally:
         service.close()
+
+
+def test_debug_trace_redacts_known_secret_values_from_both_output_streams(
+    monkeypatch,
+) -> None:
+    secret = "DO_NOT_LEAK_TRACE_VALUE"
+    monkeypatch.setenv("AITRANS_TEST_SECRET", secret)
+    service = SandboxDebugService()
+    try:
+        sandbox_id, _on_stage = service.begin_agent_run(
+            run_id="agent-run-secret",
+            tool_call_id="tool-call-secret",
+            manager=FakeManager(),
+        )
+        trace = service.finish_agent_run(
+            sandbox_id,
+            SandboxExecutionResult(
+                sandbox_id=sandbox_id,
+                status="failed",
+                exit_code=1,
+                stdout=f"stdout={secret}",
+                stderr=f"stderr={secret}",
+                duration_ms=12,
+                image=FakeManager.image,
+            ),
+        )
+        events, complete = service.wait_events(sandbox_id, 0, timeout=0)
+
+        assert trace.stdout == "stdout=[REDACTED]"
+        assert trace.stderr == "stderr=[REDACTED]"
+        assert secret not in str(trace.model_dump(mode="json"))
+        assert secret not in str(events)
+        assert events[-1]["type"] == "terminal"
+        assert complete is True
+    finally:
+        service.close()

@@ -17,6 +17,7 @@ import docker
 from docker.errors import DockerException, ImageNotFound, NotFound
 from docker.types import LogConfig, Ulimit
 
+from backend.sandbox.environment import build_sandbox_environment
 from backend.sandbox.errors import (
     DockerNotLinuxError,
     DockerUnavailableError,
@@ -245,10 +246,8 @@ class DockerSandboxRuntime:
                         if proxy_network is not None
                         else self.policy.network_mode
                     ),
-                    environment=(
-                        self._proxy_environment(proxy_address)
-                        if proxy_address
-                        else None
+                    environment=build_sandbox_environment(
+                        proxy_address=proxy_address or None
                     ),
                     working_dir="/workspace",
                     volumes=docker_volume_bindings(workspace),
@@ -621,6 +620,7 @@ class DockerSandboxRuntime:
                     RUNTIME_LABEL: "egress_proxy",
                 },
                 network_mode="bridge",
+                environment=build_sandbox_environment(),
                 user=self.policy.user,
                 read_only=self.policy.read_only_rootfs,
                 cap_drop=list(self.policy.cap_drop),
@@ -655,7 +655,14 @@ class DockerSandboxRuntime:
             details = networks.get(network_name, {})
             address = str(details.get("IPAddress", "") or "")
             parsed_address = ipaddress.ip_address(address)
-            if parsed_address.is_global:
+            if (
+                parsed_address.version != 4
+                or not parsed_address.is_private
+                or parsed_address.is_unspecified
+                or parsed_address.is_loopback
+                or parsed_address.is_link_local
+                or parsed_address.is_multicast
+            ):
                 raise SandboxCreateError(
                     "Restricted proxy received an invalid internal network address."
                 )
@@ -682,20 +689,6 @@ class DockerSandboxRuntime:
             raise SandboxCreateError(
                 "Restricted sandbox egress proxy could not be configured safely."
             ) from exc
-
-    @staticmethod
-    def _proxy_environment(address: str) -> list[str]:
-        endpoint = f"http://{address}:8888"
-        return [
-            f"HTTP_PROXY={endpoint}",
-            f"HTTPS_PROXY={endpoint}",
-            f"http_proxy={endpoint}",
-            f"https_proxy={endpoint}",
-            "ALL_PROXY=",
-            "all_proxy=",
-            "NO_PROXY=",
-            "no_proxy=",
-        ]
 
     @staticmethod
     def _result_cancelled(request: SandboxExecutionRequest) -> SandboxExecutionResult:
