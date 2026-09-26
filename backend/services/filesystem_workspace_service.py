@@ -210,6 +210,36 @@ class FilesystemWorkspaceService:
             raise FilesystemWorkspaceNotFoundError("Filesystem workspace not found.")
         return self._public_record(row)
 
+    def active_root_path(self, workspace_id: str) -> Path:
+        """Resolve an active workspace root for trusted backend write services."""
+
+        row = self._get_row(workspace_id)
+        if row is None:
+            raise FilesystemWorkspaceNotFoundError("Filesystem workspace not found.")
+        if row["status"] != "active":
+            raise FilesystemWorkspaceUnavailableError(
+                "Filesystem workspace access has been revoked."
+            )
+        root = Path(str(row["root_path"]))
+        try:
+            metadata = root.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                raise FilesystemWorkspaceUnavailableError(
+                    "Filesystem workspace is unavailable."
+                )
+            resolved = root.resolve(strict=True)
+            if resolved != root:
+                raise FilesystemWorkspaceUnavailableError(
+                    "Filesystem workspace is unavailable."
+                )
+            return resolved
+        except FilesystemWorkspaceError:
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise FilesystemWorkspaceUnavailableError(
+                "Filesystem workspace is unavailable."
+            ) from exc
+
     def revoke(self, workspace_id: str) -> bool:
         with self._connection() as connection:
             cursor = connection.execute(

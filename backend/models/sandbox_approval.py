@@ -20,6 +20,15 @@ class SandboxApprovalModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class SandboxApprovalChange(SandboxApprovalModel):
+    """Path-level operations shown to a user before granting host-write access."""
+
+    operation: Literal["create", "modify", "delete"]
+    path: str = Field(min_length=1, max_length=1024)
+    size_before: int | None = Field(default=None, ge=0)
+    size_after: int | None = Field(default=None, ge=0)
+
+
 class SandboxApprovalRequest(SandboxApprovalModel):
     approval_id: str = Field(min_length=1, max_length=128)
     run_id: str = Field(min_length=1, max_length=128)
@@ -28,6 +37,7 @@ class SandboxApprovalRequest(SandboxApprovalModel):
     target: str = Field(default="", max_length=1024)
     reason: str = Field(min_length=1, max_length=1024)
     requested_scope: dict[str, str | bool | int | None] = Field(default_factory=dict)
+    requested_changes: tuple[SandboxApprovalChange, ...] = ()
     status: SandboxApprovalStatus
     created_at: datetime
     expires_at: datetime
@@ -44,4 +54,9 @@ class PermissionGrant(SandboxApprovalModel):
     single_use: Literal[True] = True
 
 
-__all__ = ["PermissionGrant", "SandboxApprovalRequest", "SandboxApprovalStatus"]
+__all__ = [
+    "PermissionGrant",
+    "SandboxApprovalChange",
+    "SandboxApprovalRequest",
+    "SandboxApprovalStatus",
+]

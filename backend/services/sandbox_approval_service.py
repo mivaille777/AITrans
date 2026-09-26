@@ -9,7 +9,11 @@ from datetime import UTC, datetime, timedelta
 from threading import RLock
 from uuid import uuid4
 
-from backend.models.sandbox_approval import PermissionGrant, SandboxApprovalRequest
+from backend.models.sandbox_approval import (
+    PermissionGrant,
+    SandboxApprovalChange,
+    SandboxApprovalRequest,
+)
 from backend.models.sandbox_permissions import PermissionDecision, PermissionRequest
 
 _DEFAULT_TTL_SECONDS = 300
@@ -50,6 +54,8 @@ class SandboxApprovalService:
         self,
         request: PermissionRequest,
         decision: PermissionDecision,
+        *,
+        requested_changes: tuple[SandboxApprovalChange, ...] = (),
     ) -> SandboxApprovalRequest:
         if decision.decision != "approval_required":
             raise SandboxApprovalError(
@@ -85,6 +91,7 @@ class SandboxApprovalService:
             target=request.target,
             reason=request.reason,
             requested_scope=deepcopy(decision.granted_scope),
+            requested_changes=requested_changes,
             status="pending",
             created_at=now,
             expires_at=now + timedelta(seconds=self.ttl_seconds),
