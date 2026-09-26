@@ -103,7 +103,10 @@ class AgentToolSpec:
         sanitized: dict[str, str] = {}
         for key, value in raw.items():
             schema = self.input_schema.get(key, {})
-            text = str(value or "").strip()
+            text = str(value or "")
+            if self.name != "python_execute":
+                text = text.strip()
+            validation_text = text.strip() if self.name == "python_execute" else text
             if isinstance(schema, dict):
                 max_length = int(schema.get("maxLength", 0) or 0)
                 min_length = int(schema.get("minLength", 0) or 0)
@@ -111,7 +114,7 @@ class AgentToolSpec:
                     raise ValueError(
                         f"Agent planner argument {key} exceeds the allowed length for tool {self.name}."
                     )
-                if min_length > 0 and len(text) < min_length:
+                if min_length > 0 and len(validation_text) < min_length:
                     raise ValueError(
                         f"Agent planner argument {key} is too short for tool {self.name}."
                     )
