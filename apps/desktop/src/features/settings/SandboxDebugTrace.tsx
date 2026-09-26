@@ -2,6 +2,7 @@ import { AlertCircle, Copy, LoaderCircle, Play, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { listFilesystemWorkspaces, type FilesystemWorkspace } from "../../api/filesystem-workspaces"
+import { sandboxDebugErrorFromCode, sandboxDebugErrorMessage } from "./sandbox-debug-errors"
 import {
   cancelSandboxDebugRun,
   getSandboxDebugRun,
@@ -110,7 +111,7 @@ export default function SandboxDebugTrace({
       streamRef.current = streamSandboxDebugRun(accepted.sandbox_id, {
         onEvent: handleStreamEvent,
         onTransportError: (streamError) => {
-          setError(streamError.message)
+          setError(sandboxDebugErrorMessage(streamError, "Sandbox trace is unavailable."))
           setRunning(false)
         },
       })
@@ -123,7 +124,7 @@ export default function SandboxDebugTrace({
         // Streaming remains authoritative while the run record is still being created.
       }
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : "Unable to start Sandbox run.")
+      setError(sandboxDebugErrorMessage(runError, "Sandbox execution failed."))
       setRunning(false)
     }
   }
@@ -142,7 +143,7 @@ export default function SandboxDebugTrace({
         // The cancellation summary is sufficient to leave running state safely.
       }
     } catch (cancelError) {
-      setError(cancelError instanceof Error ? cancelError.message : "Unable to cancel Sandbox run.")
+      setError(sandboxDebugErrorMessage(cancelError, "Sandbox execution failed."))
     } finally {
       streamRef.current?.close()
       streamRef.current = null
@@ -160,7 +161,7 @@ export default function SandboxDebugTrace({
       return
     }
     if (event.type === "error") {
-      setError(event.message)
+      setError(sandboxDebugErrorFromCode(event.code, "Sandbox execution failed."))
       setRunning(false)
       streamRef.current = null
       return

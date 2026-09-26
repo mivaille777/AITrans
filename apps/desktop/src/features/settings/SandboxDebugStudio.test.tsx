@@ -79,6 +79,15 @@ describe("SandboxDebugStudio", () => {
     expect(policyTab.querySelector("span")?.className).toContain("scale-x-100")
   })
 
+  it("shows an unavailable state when the requested trace cannot be loaded", async () => {
+    vi.mocked(getSandboxDebugRun).mockRejectedValue(new Error("raw daemon path C:\\Users\\secret"))
+
+    render(<SandboxDebugStudio initialSandboxId="sb-missing" />)
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Sandbox trace is unavailable."))
+    expect(screen.queryByText(/C:\\Users\\secret/)).toBeNull()
+  })
+
   it("loads the requested trace when navigation provides a sandbox id", async () => {
     vi.mocked(getSandboxDebugRun).mockResolvedValue({
       run: {

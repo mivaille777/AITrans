@@ -8,6 +8,7 @@ import {
   type SandboxRunStatus,
   type SandboxRunSummary,
 } from "../../api/sandbox-debug"
+import { sandboxDebugErrorMessage } from "./sandbox-debug-errors"
 
 type StatusFilter = "all" | SandboxRunStatus
 type SourceFilter = "all" | "agent" | "manual"
@@ -32,7 +33,7 @@ export default function SandboxDebugRuns({
     try {
       setRuns(await listSandboxDebugRuns())
     } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : "Unable to load Sandbox runs.")
+      setError(sandboxDebugErrorMessage(refreshError, "Sandbox trace is unavailable."))
     } finally {
       setLoading(false)
     }
@@ -68,7 +69,7 @@ export default function SandboxDebugRuns({
     try {
       onSelectTrace(await getSandboxDebugRun(run.sandbox_id))
     } catch (inspectError) {
-      setError(inspectError instanceof Error ? inspectError.message : "Unable to load Sandbox trace.")
+      setError(sandboxDebugErrorMessage(inspectError, "Sandbox trace is unavailable."))
     } finally {
       setSelectingId("")
     }

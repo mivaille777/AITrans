@@ -1,3 +1,4 @@
+import { AlertCircle, LoaderCircle } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import {
@@ -47,6 +48,8 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   const [runtimeHealth, setRuntimeHealth] = useState<SandboxRuntimeHealth | null>(null)
   const [runtimeHealthPending, setRuntimeHealthPending] = useState(true)
   const [latestTrace, setLatestTrace] = useState<SandboxDebugTraceData | null>(null)
+  const [traceIntentPending, setTraceIntentPending] = useState(false)
+  const [traceIntentError, setTraceIntentError] = useState("")
   const inspectedIntentRef = useRef("")
 
   /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
@@ -81,9 +84,12 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
     if (!sandboxId || inspectedIntentRef.current === sandboxId) return
     inspectedIntentRef.current = sandboxId
     setActiveTab("trace")
+    setTraceIntentPending(true)
+    setTraceIntentError("")
     void getSandboxDebugRun(sandboxId)
       .then(setLatestTrace)
-      .catch(() => undefined)
+      .catch(() => setTraceIntentError("Sandbox trace is unavailable."))
+      .finally(() => setTraceIntentPending(false))
   }, [initialSandboxId])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
@@ -154,7 +160,23 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
               aria-hidden={!visible}
               className={visible ? "h-full min-h-0 animate-[ragFadeIn_.18s_ease-out]" : "hidden"}
             >
-              {id === "trace" && <SandboxDebugTrace health={runtimeHealth} selectedTrace={latestTrace} onTraceChange={setLatestTrace} />}
+              {id === "trace" && (
+                <div className="relative h-full min-h-0">
+                  {traceIntentPending ? (
+                    <div className="absolute right-5 top-4 z-20 inline-flex items-center gap-2 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-600 shadow-sm">
+                      <LoaderCircle size={12} className="animate-spin" />
+                      Loading Sandbox trace…
+                    </div>
+                  ) : null}
+                  {traceIntentError ? (
+                    <div className="absolute right-5 top-4 z-20 inline-flex items-center gap-2 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] text-rose-700 shadow-sm" role="alert">
+                      <AlertCircle size={12} />
+                      {traceIntentError}
+                    </div>
+                  ) : null}
+                  <SandboxDebugTrace health={runtimeHealth} selectedTrace={latestTrace} onTraceChange={setLatestTrace} />
+                </div>
+              )}
               {id === "filesystem" && <SandboxDebugFilesystem trace={latestTrace} />}
               {id === "resources" && <SandboxDebugResources trace={latestTrace} />}
               {id === "policy" && <SandboxDebugPolicy trace={latestTrace} />}
