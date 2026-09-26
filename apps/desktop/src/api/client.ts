@@ -4,11 +4,13 @@ export const API_BASE_URL = (configuredBaseUrl ?? "http://127.0.0.1:8766").repla
 
 export class ApiError extends Error {
   readonly status: number
+  readonly code: string
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code = "") {
     super(message)
     this.name = "ApiError"
     this.status = status
+    this.code = code
   }
 }
 
@@ -32,13 +34,15 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`
+    let code = ""
     try {
-      const body = (await response.json()) as { detail?: string }
-      if (body.detail) detail = body.detail
+      const parsed = parseApiErrorPayload(await response.json())
+      if (parsed.message) detail = parsed.message
+      if (parsed.code) code = parsed.code
     } catch {
       // Keep the HTTP status text when the backend did not return JSON.
     }
-    throw new ApiError(detail, response.status)
+    throw new ApiError(detail, response.status, code)
   }
 
   return (await response.json()) as T
@@ -71,4 +75,35 @@ export function apiPut<TResponse, TBody>(path: string, body: TBody): Promise<TRe
 
 export function apiDelete<TResponse>(path: string): Promise<TResponse> {
   return apiRequest<TResponse>(path, { method: "DELETE" })
+}
+
+
+function parseApiErrorPayload(payload: unknown): { message: string; code: string } {
+  if (!payload || typeof payload !== "object") return { message: "", code: "" }
+
+  const body = payload as {
+    detail?: unknown
+    code?: unknown
+    message?: unknown
+  }
+
+  const nested = body.detail && typeof body.detail === "object"
+    ? body.detail as { code?: unknown; message?: unknown }
+    : null
+
+  const message = typeof body.detail === "string"
+    ? body.detail
+    : typeof body.message === "string"
+      ? body.message
+      : typeof nested?.message === "string"
+        ? nested.message
+        : ""
+
+  const code = typeof body.code === "string"
+    ? body.code
+    : typeof nested?.code === "string"
+      ? nested.code
+      : ""
+
+  return { message, code }
 }
