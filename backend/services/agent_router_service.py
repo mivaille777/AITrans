@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 import unicodedata
 from typing import Any
@@ -7,7 +8,6 @@ from typing import Any
 from backend.models.agent_runtime import AgentRouteDecision
 from backend.services.agent_planner_service import AgentPlannerService
 from backend.services.agent_tool_registry import AgentToolSpec
-
 
 _LANGUAGE_ALIASES = {
     "中文": "zh-CN",
@@ -168,13 +168,13 @@ _COMPOUND_CONNECTORS = (
     "after that",
 )
 _COMPOUND_ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("translate", re.compile(r"(翻译|翻成|译成|\btranslate\b)", re.I)),
-    ("explain", re.compile(r"(解释|\bexplain\b)", re.I)),
-    ("summarize", re.compile(r"(总结|概括|\bsummarize\b)", re.I)),
-    ("polish", re.compile(r"(润色|\bpolish\b)", re.I)),
-    ("section_role", re.compile(r"(分析.{0,12}(作用|角色)|section\s+role)", re.I)),
-    ("save_note", re.compile(r"(保存.{0,8}笔记|记到笔记|记入笔记|save.{0,10}note)", re.I)),
-    ("save_knowledge", re.compile(r"(保存.{0,10}知识库|保存.{0,10}知识卡片|save.{0,16}knowledge)", re.I)),
+    ("translate", re.compile(r"(翻译|翻成|译成|\btranslate\b)", re.IGNORECASE)),
+    ("explain", re.compile(r"(解释|\bexplain\b)", re.IGNORECASE)),
+    ("summarize", re.compile(r"(总结|概括|\bsummarize\b)", re.IGNORECASE)),
+    ("polish", re.compile(r"(润色|\bpolish\b)", re.IGNORECASE)),
+    ("section_role", re.compile(r"(分析.{0,12}(作用|角色)|section\s+role)", re.IGNORECASE)),
+    ("save_note", re.compile(r"(保存.{0,8}笔记|记到笔记|记入笔记|save.{0,10}note)", re.IGNORECASE)),
+    ("save_knowledge", re.compile(r"(保存.{0,10}知识库|保存.{0,10}知识卡片|save.{0,16}knowledge)", re.IGNORECASE)),
 )
 
 _KNOWLEDGE_STRUCTURE_QUERY = re.compile(
@@ -182,12 +182,73 @@ _KNOWLEDGE_STRUCTURE_QUERY = re.compile(
     r"|(?:\b(?:canvas|knowledge)\b.{0,80}\brelations?\b.{0,120}\b(?:relation\s+id|source\s+card|target\s+card|relation\s+type|origin|label)\b)"
     r"|(?:列出|显示|枚举|描述).{0,80}(?:画布|canvas|知识).{0,50}关系"
     r"|(?:画布|canvas|知识).{0,50}关系.{0,80}(?:关系\s*id|源卡片|目标卡片|关系类型|标签|来源)",
-    re.I,
+    re.IGNORECASE,
 )
 _KNOWLEDGE_FACTUAL_QUERY = re.compile(
     r"\b(?:prove|verify|evidence|factual|scientific\s+claim)\b|证据|证明|验证|事实性|科学结论",
-    re.I,
+    re.IGNORECASE,
 )
+_PYTHON_CODE_PREFIX = re.compile(
+    r"^\s*(?:(?:请\s*)?(?:帮我\s*)?(?:运行|执行)(?:一下)?"
+    r"(?:这段|以下|下面)?\s*Python(?:\s*代码)?|"
+    r"(?:please\s+)?(?:run|execute)\s+(?:(?:this|the following)\s+)?"
+    r"Python(?:\s+code)?)\s*[:：]?\s*(?P<body>[\s\S]+?)\s*$",
+    re.IGNORECASE,
+)
+_PYTHON_CALCULATION_PREFIX = re.compile(
+    r"^\s*(?:请\s*)?(?:帮我\s*)?用\s*Python\s*计算(?:一下)?\s*[:：]?\s*"
+    r"(?P<body>[\s\S]+?)\s*$|"
+    r"^\s*(?:please\s+)?calculate\s+this\s+with\s+Python\s*[:：]?\s*"
+    r"(?P<english_body>[\s\S]+?)\s*$",
+    re.IGNORECASE,
+)
+_PYTHON_FENCE = re.compile(
+    r"^\s*```(?:python|py)?[ \t]*\r?\n?(.*?)\r?\n?```\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _python_body(value: str) -> tuple[str, bool]:
+    """Unwrap a complete code fence and identify an expression to print."""
+
+    body = value.strip()
+    fenced = _PYTHON_FENCE.fullmatch(body)
+    if fenced is not None:
+        body = fenced.group(1)
+    try:
+        expression = ast.parse(body, mode="eval").body
+    except (SyntaxError, ValueError, RecursionError):
+        return body, False
+    if (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and expression.func.id == "print"
+    ):
+        return body, False
+    return body, True
+
+
+def _explicit_python_arguments(user_message: str) -> dict[str, str] | None:
+    """Extract code only from an explicit, narrow Python execution command."""
+
+    match = _PYTHON_CODE_PREFIX.fullmatch(user_message)
+    if match is not None:
+        body = match.group("body").strip()
+        fenced = _PYTHON_FENCE.fullmatch(body)
+        code = fenced.group(1) if fenced is not None else body
+        if code.strip() and len(code) <= 50_000:
+            return {"code": code}
+
+    match = _PYTHON_CALCULATION_PREFIX.fullmatch(user_message)
+    if match is None:
+        return None
+    body = match.group("body") or match.group("english_body") or ""
+    if len(body) > 50_000:
+        return None
+    code, expression = _python_body(body)
+    if not code.strip() or len(code) > 50_000:
+        return None
+    return {"code": f"print({code})" if expression else code}
 
 
 def _normalize_command(value: object) -> str:
@@ -277,6 +338,15 @@ class AgentDeterministicRouterService:
                 source="deterministic",
                 intent="answer",
                 user_visible_reason="Answer directly from the attached Knowledge/Canvas structure.",
+            )
+
+        python_arguments = _explicit_python_arguments(user_message)
+        if python_arguments is not None:
+            return self._tool_route(
+                tool_name="python_execute",
+                available_tools=available,
+                reason="Run the explicitly requested Python code in the isolated sandbox.",
+                arguments=python_arguments,
             )
 
         target_match = _ZH_TRANSLATE_TARGET.fullmatch(command)
