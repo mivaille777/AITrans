@@ -18,7 +18,19 @@ SandboxRunStatus = Literal[
     "oom_killed",
 ]
 SandboxDebugStageKey = Literal[
-    "request", "workspace", "staging", "create", "start", "execute", "collect", "cleanup"
+    "request",
+    "permission",
+    "approval",
+    "workspace",
+    "staging",
+    "create",
+    "start",
+    "execute",
+    "network",
+    "changes",
+    "apply",
+    "collect",
+    "cleanup",
 ]
 SandboxDebugStageStatus = Literal[
     "pending", "running", "complete", "failed", "skipped"
@@ -68,11 +80,23 @@ class SandboxDebugStage(SandboxDebugModel):
 class SandboxActivityEvent(SandboxDebugModel):
     sequence: int = Field(ge=0)
     timestamp: str
-    kind: Literal["file", "network", "process", "runtime", "policy"]
-    action: str
-    target: str = ""
-    decision: Literal["allowed", "denied", "observed"]
-    reason: str = ""
+    kind: Literal["file", "network", "process", "runtime", "policy", "approval"]
+    action: str = Field(min_length=1, max_length=128)
+    target: str = Field(default="", max_length=1024)
+    decision: Literal[
+        "allowed",
+        "denied",
+        "observed",
+        "approval_required",
+        "pending",
+        "approved",
+        "expired",
+        "consumed",
+    ]
+    reason: str = Field(default="", max_length=1024)
+    policy_rule: str = Field(default="", max_length=128)
+    approval_id: str = Field(default="", max_length=128)
+    grant_id: str = Field(default="", max_length=128)
 
 
 class SandboxResourceSample(SandboxDebugModel):
@@ -110,6 +134,16 @@ class SandboxDebugFile(SandboxDebugModel):
     source: Literal["workspace", "generated", "runtime"]
 
 
+class SandboxDebugWorkspaceChange(SandboxDebugModel):
+    operation: Literal["create", "modify", "delete"]
+    path: str = Field(min_length=1, max_length=1024)
+    before_sha256: str | None = Field(default=None, max_length=64)
+    after_sha256: str | None = Field(default=None, max_length=64)
+    size_before: int | None = Field(default=None, ge=0)
+    size_after: int | None = Field(default=None, ge=0)
+    size_delta: int
+
+
 class SandboxDebugTrace(SandboxDebugModel):
     run: SandboxRunSummary
     stages: list[SandboxDebugStage] = Field(default_factory=list)
@@ -120,6 +154,7 @@ class SandboxDebugTrace(SandboxDebugModel):
     policy: SandboxEffectivePolicy
     input_files: list[SandboxDebugFile] = Field(default_factory=list)
     output_files: list[SandboxDebugFile] = Field(default_factory=list)
+    workspace_changes: list[SandboxDebugWorkspaceChange] = Field(default_factory=list)
     error: str = ""
 
 
@@ -148,6 +183,7 @@ __all__ = [
     "SandboxDebugRunRequest",
     "SandboxDebugStage",
     "SandboxDebugTrace",
+    "SandboxDebugWorkspaceChange",
     "SandboxEffectivePolicy",
     "SandboxResourceSample",
     "SandboxRunStatus",

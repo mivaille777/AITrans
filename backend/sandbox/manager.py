@@ -160,6 +160,12 @@ class SandboxManager:
             ):
                 result = result.model_copy(update={"status": "cancelled"})
             if base_snapshot is not None:
+                self._emit_stage(
+                    on_stage,
+                    "changes",
+                    "running",
+                    "Comparing the sandbox workspace to its base snapshot.",
+                )
                 original_modes = {
                     item.relative_path: item.mode for item in base_snapshot.files
                 }
@@ -175,6 +181,12 @@ class SandboxManager:
                 )
                 self._workspace_manager.store_workspace_changes(workspace, changeset)
                 result = result.model_copy(update={"workspace_changeset": changeset})
+                self._emit_stage(
+                    on_stage,
+                    "changes",
+                    "complete",
+                    f"Recorded {len(changeset.changes)} workspace changes.",
+                )
             if result.status == "cancelled":
                 self._emit_stage(
                     on_stage,

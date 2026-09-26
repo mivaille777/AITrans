@@ -214,7 +214,7 @@ class DockerSandboxRuntime:
             if request.network_policy.mode == "restricted":
                 self._emit_stage(
                     on_stage,
-                    "proxy",
+                    "network",
                     "running",
                     "Starting an isolated exact-host egress proxy.",
                 )
@@ -223,7 +223,7 @@ class DockerSandboxRuntime:
                 )
                 self._emit_stage(
                     on_stage,
-                    "proxy",
+                    "network",
                     "complete",
                     "Restricted egress proxy is ready.",
                 )

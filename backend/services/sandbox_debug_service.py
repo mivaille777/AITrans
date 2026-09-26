@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -19,6 +20,7 @@ from backend.models.sandbox_debug import (
     SandboxDebugFile,
     SandboxDebugStage,
     SandboxDebugTrace,
+    SandboxDebugWorkspaceChange,
     SandboxEffectivePolicy,
     SandboxRunStatus,
     SandboxRunSummary,
@@ -32,11 +34,16 @@ from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY
 
 _STAGE_LABELS = {
     "request": "Request",
+    "permission": "Permission",
+    "approval": "Approval",
     "workspace": "Workspace",
     "staging": "Staging",
     "create": "Container",
     "start": "Start",
     "execute": "Execute",
+    "network": "Network",
+    "changes": "Changes",
+    "apply": "Apply",
     "collect": "Collect",
     "cleanup": "Cleanup",
 }
@@ -48,6 +55,8 @@ _TERMINAL = {
     "output_limit_exceeded",
     "oom_killed",
 }
+_WINDOWS_ABSOLUTE_PATH = re.compile(r"(?i)(?<![\w])(?:[a-z]:[\\/]|\\\\)[^\s\"'<>|,;]+")
+_SAFE_CONTAINER_PATHS = {"/input", "/workspace"}
 
 
 class SandboxDebugError(RuntimeError):
@@ -137,7 +146,7 @@ class SandboxDebugService:
             run_id=f"run_{uuid4().hex}",
             source="manual",
             workspace_id=filesystem_workspace_id,
-            workspace_name=workspace_name,
+            workspace_name=_safe_trace_text(workspace_name, limit=256),
             runtime="docker",
             image=str(getattr(manager, "image", "") or ""),
             status="pending",
@@ -146,6 +155,25 @@ class SandboxDebugService:
         trace = self._new_trace(summary, manager, initial_status="pending")
         entry = self._add_entry(trace)
         self._set_stage(summary.sandbox_id, "request", "complete", "Debug request accepted.")
+        self._set_stage(summary.sandbox_id, "permission", "complete", "Manual Sandbox execution is allowed by the Debug Studio policy.")
+        self._add_activity(
+            summary.sandbox_id,
+            kind="policy",
+            action="permission.request",
+            target="python_execute",
+            decision="observed",
+            reason="Manual Sandbox execution requested from Debug Studio.",
+            policy_rule="sandbox.python_execute.safe_default",
+        )
+        self._add_activity(
+            summary.sandbox_id,
+            kind="policy",
+            action="permission.allow",
+            target="python_execute",
+            decision="allowed",
+            reason="Debug Studio permits isolated Python execution.",
+            policy_rule="sandbox.python_execute.safe_default",
+        )
         self._set_run_status(summary.sandbox_id, "preparing")
         entry.future = self._executor.submit(
             self._run_manual,
@@ -173,7 +201,7 @@ class SandboxDebugService:
             tool_call_id=tool_call_id,
             source="agent",
             workspace_id=filesystem_workspace_id,
-            workspace_name=workspace_name,
+            workspace_name=_safe_trace_text(workspace_name, limit=256),
             runtime="docker",
             image=str(getattr(manager, "image", "") or ""),
             status="running",
@@ -183,6 +211,25 @@ class SandboxDebugService:
         sandbox_id = summary.sandbox_id
         self._add_entry(trace)
         self._set_stage(sandbox_id, "request", "complete", "Agent requested Python execution.")
+        self._set_stage(sandbox_id, "permission", "complete", "Sandbox Python execution is allowed by policy.")
+        self._add_activity(
+            sandbox_id,
+            kind="policy",
+            action="permission.request",
+            target="python_execute",
+            decision="observed",
+            reason="Agent requested isolated Python execution.",
+            policy_rule="sandbox.python_execute.safe_default",
+        )
+        self._add_activity(
+            sandbox_id,
+            kind="policy",
+            action="permission.allow",
+            target="python_execute",
+            decision="allowed",
+            reason="Isolated Python execution is allowed by the Sandbox policy.",
+            policy_rule="sandbox.python_execute.safe_default",
+        )
         self._set_stage(
             sandbox_id,
             "workspace",
@@ -194,15 +241,17 @@ class SandboxDebugService:
             entry = self._runs[sandbox_id]
             entry.trace = entry.trace.model_copy(
                 update={
-                    "input_files": [SandboxDebugFile.model_validate(item) for item in input_manifest]
+                    "input_files": [
+                        _safe_debug_file(item) for item in input_manifest
+                    ]
                 }
             )
         for item in input_manifest:
             self._add_activity(
                 sandbox_id,
                 kind="file",
-                action="copy",
-                target=str(item.get("relative_path", "")),
+                action="filesystem.read",
+                target=_safe_trace_relative_path(item.get("relative_path", "")),
                 decision="allowed",
                 reason="Copied into the sandbox input mount, which is read-only.",
             )
@@ -246,7 +295,7 @@ class SandboxDebugService:
                                 update={"workspace_name": snapshot.workspace.display_name}
                             ),
                             "input_files": [
-                                SandboxDebugFile.model_validate(item)
+                                _safe_debug_file(item)
                                 for item in snapshot.manifest
                             ],
                         }
@@ -255,8 +304,8 @@ class SandboxDebugService:
                     self._add_activity(
                         sandbox_id,
                         kind="file",
-                        action="copy",
-                        target=str(item.get("relative_path", "")),
+                        action="filesystem.read",
+                        target=_safe_trace_relative_path(item.get("relative_path", "")),
                         decision="allowed",
                         reason="Copied into the sandbox input mount, which is read-only.",
                     )
@@ -354,7 +403,13 @@ class SandboxDebugService:
             if key in entry.stage_started and status in {"complete", "failed", "skipped"}:
                 elapsed = max(0, int((now - entry.stage_started.pop(key)) * 1000))
             stages = [
-                stage.model_copy(update={"status": status, "elapsed_ms": elapsed, "note": note})
+                stage.model_copy(
+                    update={
+                        "status": status,
+                        "elapsed_ms": elapsed,
+                        "note": _safe_trace_text(note, limit=1024),
+                    }
+                )
                 if stage.key == key
                 else stage
                 for stage in entry.trace.stages
@@ -374,28 +429,88 @@ class SandboxDebugService:
         target: str,
         decision: str,
         reason: str,
+        policy_rule: str = "",
+        approval_id: str = "",
+        grant_id: str = "",
     ) -> None:
         with self._condition:
             entry = self._runs.get(sandbox_id)
             if entry is None:
                 return
-            sequence = len(entry.trace.activities)
-            activity = SandboxActivityEvent(
-                sequence=sequence,
-                timestamp=self._now(),
+            self._append_activity_locked(
+                entry,
                 kind=kind,
                 action=action,
                 target=target,
                 decision=decision,
                 reason=reason,
+                policy_rule=policy_rule,
+                approval_id=approval_id,
+                grant_id=grant_id,
             )
-            entry.trace = entry.trace.model_copy(
-                update={"activities": [*entry.trace.activities, activity]}
-            )
-            self._record_event_locked(
-                entry,
-                {"type": "activity", "activity": activity.model_dump(mode="json")},
-            )
+
+    def record_activity(
+        self,
+        sandbox_id: str,
+        *,
+        kind: str,
+        action: str,
+        target: str = "",
+        decision: str,
+        reason: str = "",
+        policy_rule: str = "",
+        approval_id: str = "",
+        grant_id: str = "",
+    ) -> None:
+        """Append a bounded, scrubbed event from another sandbox service."""
+        self._add_activity(
+            sandbox_id,
+            kind=kind,
+            action=action,
+            target=target,
+            decision=decision,
+            reason=reason,
+            policy_rule=policy_rule,
+            approval_id=approval_id,
+            grant_id=grant_id,
+        )
+
+    def record_stage(self, sandbox_id: str, key: str, status: str, note: str = "") -> None:
+        """Expose lifecycle stage updates to command and apply services."""
+        self._set_stage(sandbox_id, key, status, note)
+
+    def _append_activity_locked(
+        self,
+        entry: _RunEntry,
+        *,
+        kind: str,
+        action: str,
+        target: str,
+        decision: str,
+        reason: str,
+        policy_rule: str = "",
+        approval_id: str = "",
+        grant_id: str = "",
+    ) -> None:
+        activity = SandboxActivityEvent(
+            sequence=len(entry.trace.activities),
+            timestamp=self._now(),
+            kind=kind,
+            action=_safe_trace_text(action, limit=128),
+            target=_safe_trace_target(target),
+            decision=decision,
+            reason=_safe_trace_text(reason, limit=1024),
+            policy_rule=_safe_trace_text(policy_rule, limit=128),
+            approval_id=_safe_trace_text(approval_id, limit=128),
+            grant_id=_safe_trace_text(grant_id, limit=128),
+        )
+        entry.trace = entry.trace.model_copy(
+            update={"activities": [*entry.trace.activities, activity]}
+        )
+        self._record_event_locked(
+            entry,
+            {"type": "activity", "activity": activity.model_dump(mode="json")},
+        )
 
     def _finish_result(self, sandbox_id: str, result: SandboxExecutionResult) -> SandboxDebugTrace:
         with self._condition:
@@ -405,6 +520,22 @@ class SandboxDebugService:
             now = self._now()
             status = result.status
             known_secrets = self._secret_values_provider()
+            workspace_changes = [
+                SandboxDebugWorkspaceChange(
+                    operation=change.operation,
+                    path=change.path,
+                    before_sha256=change.before_sha256,
+                    after_sha256=change.after_sha256,
+                    size_before=change.size_before,
+                    size_after=change.size_after,
+                    size_delta=(change.size_after or 0) - (change.size_before or 0),
+                )
+                for change in (
+                    result.workspace_changeset.changes
+                    if result.workspace_changeset is not None
+                    else ()
+                )
+            ]
             entry.trace = entry.trace.model_copy(
                 update={
                     "run": entry.trace.run.model_copy(
@@ -417,27 +548,40 @@ class SandboxDebugService:
                             "image": result.image or entry.trace.run.image,
                         }
                     ),
-                    "stdout": redact_known_secret_values(
+                    "stdout": _safe_trace_text(
                         result.stdout,
+                        limit=max(1, len(result.stdout)),
                         secret_values=known_secrets,
                     ),
-                    "stderr": redact_known_secret_values(
+                    "stderr": _safe_trace_text(
                         result.stderr,
+                        limit=max(1, len(result.stderr)),
                         secret_values=known_secrets,
                     ),
                     "output_files": [
                         SandboxDebugFile(
                             file_id=item.file_id,
-                            relative_path=item.relative_path,
+                            relative_path=_safe_trace_relative_path(item.relative_path),
                             size_bytes=item.size_bytes,
                             sha256=item.sha256,
                             source="generated",
                         )
                         for item in result.output_files
                     ],
+                    "workspace_changes": workspace_changes,
                     "error": self._result_message(result),
                 }
             )
+            for change in workspace_changes:
+                self._append_activity_locked(
+                    entry,
+                    kind="file",
+                    action="filesystem.change",
+                    target=change.path,
+                    decision="observed",
+                    reason=f"Sandbox {change.operation} change recorded.",
+                    policy_rule="workspace_write.sandbox_diff",
+                )
             self._complete_remaining_stages(entry, status)
             self._record_event_locked(
                 entry,
@@ -451,12 +595,9 @@ class SandboxDebugService:
             if entry is None or entry.trace.run.status in _TERMINAL:
                 return
             now = self._now()
-            message = str(error).strip() or type(error).__name__
-            # Host paths must never be included in this user-facing trace.
-            if ":\\" in message or message.startswith("/"):
-                message = "Sandbox execution failed."
-            message = redact_known_secret_values(
-                message,
+            message = _safe_trace_text(
+                str(error).strip() or type(error).__name__,
+                limit=1000,
                 secret_values=self._secret_values_provider(),
             )
             entry.trace = entry.trace.model_copy(
@@ -620,3 +761,76 @@ class SandboxDebugService:
 
 
 __all__ = ["SandboxDebugError", "SandboxDebugService"]
+
+
+def _safe_trace_text(
+    value: object,
+    *,
+    limit: int,
+    secret_values: tuple[str, ...] | None = None,
+) -> str:
+    text = str(value or "")
+    text = _WINDOWS_ABSOLUTE_PATH.sub("[host path redacted]", text)
+    text = re.sub(
+        r"(?<![/:\\\w])/(?!/)[^\s\"'<>|,;]+",
+        lambda match: match.group(0)
+        if match.group(0) == "/input"
+        or match.group(0).startswith("/input/")
+        or match.group(0) == "/workspace"
+        or match.group(0).startswith("/workspace/")
+        else "[host path redacted]",
+        text,
+    )
+    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
+    text = re.sub(
+        r"(?i)\b(api[_-]?key|access[_-]?token|token|password|secret)\s*[:=]\s*[^\s,;]+",
+        r"\1=[REDACTED]",
+        text,
+    )
+    text = redact_known_secret_values(
+        text,
+        secret_values=(
+            secret_values
+            if secret_values is not None
+            else known_secret_environment_values()
+        ),
+    )
+    return text[:limit]
+
+
+def _safe_trace_target(value: object) -> str:
+    target = str(value or "").strip()
+    if _WINDOWS_ABSOLUTE_PATH.search(target):
+        return "[host path redacted]"
+    if target.startswith("/") and not (
+        target in _SAFE_CONTAINER_PATHS
+        or target.startswith(("/input/", "/workspace/"))
+    ):
+        return "[host path redacted]"
+    if not target.startswith("/") and "/" in target:
+        return _safe_trace_relative_path(target)
+    if ".." in target.split("\\") or ".." in target.split("/"):
+        return "[host path redacted]"
+    return _safe_trace_text(target, limit=1024)
+
+
+def _safe_trace_relative_path(value: object) -> str:
+    path = str(value or "").replace("\\", "/")
+    if (
+        not path
+        or path.startswith("/")
+        or _WINDOWS_ABSOLUTE_PATH.search(path)
+        or ":" in path
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        return "[path redacted]"
+    return _safe_trace_text(path, limit=1024)
+
+
+def _safe_debug_file(item: object) -> SandboxDebugFile:
+    if hasattr(item, "model_dump"):
+        data = item.model_dump()
+    else:
+        data = dict(item)  # type: ignore[arg-type]
+    data["relative_path"] = _safe_trace_relative_path(data.get("relative_path", ""))
+    return SandboxDebugFile.model_validate(data)
