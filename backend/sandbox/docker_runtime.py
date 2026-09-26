@@ -22,6 +22,7 @@ from backend.sandbox.models import (
     SandboxExecutionResult,
     SandboxRuntimeHealth,
 )
+from backend.sandbox.workspace import SandboxWorkspace, docker_volume_bindings
 
 DEFAULT_IMAGE = "aitrans-python-sandbox:v1"
 SANDBOX_LABEL = "com.aitrans.sandbox"
@@ -138,6 +139,8 @@ class DockerSandboxRuntime:
     def execute_python(
         self,
         request: SandboxExecutionRequest,
+        *,
+        workspace: SandboxWorkspace,
     ) -> SandboxExecutionResult:
         self._ensure_ready()
         client = self._get_client()
@@ -155,7 +158,7 @@ class DockerSandboxRuntime:
             try:
                 container = client.containers.create(
                     image=self.image,
-                    command=["python", "-c", request.code],
+                    command=["python", "/workspace/main.py"],
                     name=container_name,
                     labels={
                         SANDBOX_LABEL: "true",
@@ -164,6 +167,7 @@ class DockerSandboxRuntime:
                     },
                     network_mode="none",
                     working_dir="/workspace",
+                    volumes=docker_volume_bindings(workspace),
                     detach=True,
                     stdin_open=False,
                     tty=False,

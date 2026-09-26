@@ -11,6 +11,7 @@ from backend.sandbox.errors import (
     SandboxImageMissingError,
 )
 from backend.sandbox.models import SandboxExecutionRequest
+from backend.sandbox.workspace import SandboxWorkspaceManager
 
 
 class FakeContainer:
@@ -80,24 +81,41 @@ class FakeDockerClient:
         return self.container
 
 
-def test_runtime_uses_no_network_and_removes_completed_container() -> None:
+def _execute(runtime, request, tmp_path):
+    workspace_manager = SandboxWorkspaceManager(
+        sandbox_root=tmp_path / "sandboxes",
+        artifact_root=tmp_path / "artifacts",
+    )
+    workspace = workspace_manager.create(request.sandbox_id)
+    workspace_manager.write_code(workspace, request.code)
+    try:
+        return runtime.execute_python(request, workspace=workspace)
+    finally:
+        workspace_manager.cleanup(workspace)
+
+
+def test_runtime_uses_no_network_and_removes_completed_container(tmp_path) -> None:
     container = FakeContainer(timeout_after_polls=1)
     client = FakeDockerClient(container)
     runtime = DockerSandboxRuntime(client=client)
 
-    result = runtime.execute_python(
-        SandboxExecutionRequest(sandbox_id="sb_unit", code="print('ok')")
+    result = _execute(
+        runtime,
+        SandboxExecutionRequest(sandbox_id="sb_" + "1" * 32, code="print('ok')"),
+        tmp_path,
     )
 
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
     assert result.status == "succeeded"
     assert client.create_kwargs["network_mode"] == "none"
-    assert client.create_kwargs["labels"]["com.aitrans.sandbox_id"] == "sb_unit"
+    assert client.create_kwargs["labels"]["com.aitrans.sandbox_id"] == (
+        "sb_" + "1" * 32
+    )
     assert container.removed is True
 
 
-def test_runtime_kills_timed_out_container_and_removes_it() -> None:
+def test_runtime_kills_timed_out_container_and_removes_it(tmp_path) -> None:
     container = FakeContainer(timeout_after_polls=None)
     client = FakeDockerClient(container)
     runtime = DockerSandboxRuntime(
@@ -106,8 +124,13 @@ def test_runtime_kills_timed_out_container_and_removes_it() -> None:
         poll_interval_seconds=0.005,
     )
 
-    result = runtime.execute_python(
-        SandboxExecutionRequest(sandbox_id="sb_timeout", code="while True: pass")
+    result = _execute(
+        runtime,
+        SandboxExecutionRequest(
+            sandbox_id="sb_" + "2" * 32,
+            code="while True: pass",
+        ),
+        tmp_path,
     )
 
     assert result.timed_out is True

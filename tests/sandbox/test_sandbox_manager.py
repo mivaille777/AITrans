@@ -5,6 +5,7 @@ import pytest
 from backend.sandbox.errors import SandboxExecutionError, SandboxInvalidInputError
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxExecutionRequest, SandboxExecutionResult
+from backend.sandbox.workspace import SandboxWorkspace, SandboxWorkspaceManager
 
 
 class FakeRuntime:
@@ -16,7 +17,12 @@ class FakeRuntime:
     def health(self):
         raise NotImplementedError
 
-    def execute_python(self, request: SandboxExecutionRequest) -> SandboxExecutionResult:
+    def execute_python(
+        self,
+        request: SandboxExecutionRequest,
+        *,
+        workspace: SandboxWorkspace,
+    ) -> SandboxExecutionResult:
         self.requests.append(request)
         if self.error is not None:
             raise self.error
@@ -35,26 +41,36 @@ def _success() -> SandboxExecutionResult:
     )
 
 
+def _manager(runtime: FakeRuntime, tmp_path) -> SandboxManager:
+    return SandboxManager(
+        runtime,
+        SandboxWorkspaceManager(
+            sandbox_root=tmp_path / "sandboxes",
+            artifact_root=tmp_path / "artifacts",
+        ),
+    )
+
+
 @pytest.mark.parametrize("code", ["", " ", "\n\t"])
-def test_empty_code_is_rejected(code: str) -> None:
+def test_empty_code_is_rejected(code: str, tmp_path) -> None:
     with pytest.raises(SandboxInvalidInputError) as error:
-        SandboxManager(FakeRuntime()).execute_python(code)
+        _manager(FakeRuntime(), tmp_path).execute_python(code)
 
     assert error.value.code == "sandbox_invalid_input"
 
 
-def test_code_over_limit_is_rejected_before_runtime() -> None:
+def test_code_over_limit_is_rejected_before_runtime(tmp_path) -> None:
     runtime = FakeRuntime()
 
     with pytest.raises(SandboxInvalidInputError):
-        SandboxManager(runtime).execute_python("x" * 50_001)
+        _manager(runtime, tmp_path).execute_python("x" * 50_001)
 
     assert runtime.requests == []
 
 
-def test_success_returns_typed_result_and_unique_sandbox_id() -> None:
+def test_success_returns_typed_result_and_unique_sandbox_id(tmp_path) -> None:
     runtime = FakeRuntime(_success())
-    manager = SandboxManager(runtime)
+    manager = _manager(runtime, tmp_path)
 
     first = manager.execute_python("print(1 + 1)")
     second = manager.execute_python("print(2 + 2)")
@@ -70,22 +86,22 @@ def test_success_returns_typed_result_and_unique_sandbox_id() -> None:
     ]
 
 
-def test_runtime_sandbox_errors_keep_stable_error_code() -> None:
+def test_runtime_sandbox_errors_keep_stable_error_code(tmp_path) -> None:
     runtime = FakeRuntime(_success())
     runtime.error = SandboxExecutionError("execution failed")
 
     with pytest.raises(SandboxExecutionError) as error:
-        SandboxManager(runtime).execute_python("print(1)")
+        _manager(runtime, tmp_path).execute_python("print(1)")
 
     assert error.value.code == "sandbox_execution_failed"
 
 
-def test_unexpected_runtime_exception_is_normalized() -> None:
+def test_unexpected_runtime_exception_is_normalized(tmp_path) -> None:
     runtime = FakeRuntime(_success())
     runtime.error = RuntimeError("internal detail")
 
     with pytest.raises(SandboxExecutionError) as error:
-        SandboxManager(runtime).execute_python("print(1)")
+        _manager(runtime, tmp_path).execute_python("print(1)")
 
     assert error.value.code == "sandbox_execution_failed"
     assert str(error.value) == "Python sandbox execution failed."

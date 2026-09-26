@@ -9,6 +9,7 @@ from backend.sandbox.models import (
     SandboxExecutionResult,
     SandboxRuntimeHealth,
 )
+from backend.sandbox.workspace import SandboxWorkspace
 
 
 class SandboxRuntime(Protocol):
@@ -18,5 +19,7 @@ class SandboxRuntime(Protocol):
     def execute_python(
         self,
         request: SandboxExecutionRequest,
+        *,
+        workspace: SandboxWorkspace,
     ) -> SandboxExecutionResult:
         """Run one request in a disposable execution environment."""
