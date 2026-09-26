@@ -4,6 +4,7 @@ from threading import Lock
 
 from backend.api.knowledge_dependencies import (
     get_knowledge_library_service,
+    get_rag_runtime,
     get_retrieval_service,
 )
 from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
@@ -277,6 +278,7 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 research_memory_service=research_memory_service,
                 research_note_service=research_note_service,
             )
+            rag_runtime = get_rag_runtime()
             _agent_tool_registry = AgentToolRegistry(
                 translation_service=get_translation_service(),
                 quick_action_service=get_quick_action_service(),
@@ -284,8 +286,10 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 research_memory_service=research_memory_service,
                 cross_document_research_service=cross_document_service,
                 evidence_ledger_service=get_evidence_ledger_service(),
-                retrieval_service=get_retrieval_service(),
+                retrieval_service=rag_runtime.retrieval_service,
                 query_planner=build_rag_query_planner(),
+                chunk_store=rag_runtime.sparse_retriever,
+                jit_search_read_enabled=rag_runtime.config.jit_search_read_enabled,
                 knowledge_workspace_service=get_knowledge_workspace_service(),
             )
         return _agent_tool_registry

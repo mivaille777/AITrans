@@ -17,6 +17,7 @@ from backend.agent_tools.evidence_ledger import (
     build_evidence_ledger_tool_definitions,
 )
 from backend.agent_tools.knowledge import (
+    KnowledgeChunkStore,
     KnowledgeAgentTools,
     build_knowledge_tool_definitions,
 )
@@ -60,6 +61,8 @@ _CONTEXT_FIELDS = (
     "style",
     "ai_action",
     "workspace_id",
+    "knowledge_document_ids",
+    "knowledge_scope_allow_global",
     "request_id",
     "run_id",
     "trace_id",
@@ -93,8 +96,11 @@ class AgentToolRegistry:
         evidence_ledger_service: Any | None = None,
         retrieval_service: Any | None = None,
         query_planner: Any | None = None,
+        chunk_store: KnowledgeChunkStore | None = None,
+        jit_search_read_enabled: bool = False,
         knowledge_workspace_service: KnowledgeWorkspaceService | None = None,
     ) -> None:
+        self.jit_search_read_enabled = bool(jit_search_read_enabled)
         if translation_fallback_service is not None:
             fallback_service = translation_fallback_service
         elif translation_service is None or isinstance(
@@ -168,6 +174,8 @@ class AgentToolRegistry:
         knowledge_tools = KnowledgeAgentTools(
             retrieval_service=retrieval_service,
             query_planner=query_planner,
+            chunk_store=chunk_store,
+            jit_search_read_enabled=self.jit_search_read_enabled,
             workspace_service=knowledge_workspace_service,
         )
         knowledge_definitions = build_knowledge_tool_definitions(knowledge_tools)

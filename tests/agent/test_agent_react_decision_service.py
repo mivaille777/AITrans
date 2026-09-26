@@ -231,6 +231,7 @@ def test_react_decision_prompt_contains_retrieval_observation_and_budgets() -> N
         max_observation_chars=120,
         remaining_tool_calls=2,
         remaining_knowledge_searches=1,
+        remaining_knowledge_reads=4,
     )
 
     payload = json.loads(calls[0]["user_prompt"])
@@ -242,6 +243,7 @@ def test_react_decision_prompt_contains_retrieval_observation_and_budgets() -> N
     assert retrieval["novel_evidence_count"] == 1
     assert payload["runtime_policy"]["remaining_tool_calls"] == 2
     assert payload["runtime_policy"]["remaining_knowledge_searches"] == 1
+    assert payload["runtime_policy"]["remaining_knowledge_reads"] == 4
     assert payload["runtime_policy"]["rag_control_boundary"] == "query_continue_stop_only"
     assert "reasoning" not in payload
     assert payload["runtime_policy"]["private_reasoning_exposed"] is False
@@ -251,6 +253,21 @@ def test_react_decision_prompt_keeps_rag_internal_algorithms_outside_agent_contr
     assert "Do not attempt to control dense retrieval" in REACT_DECISION_SYSTEM_PROMPT
     assert "novel_evidence_count" in REACT_DECISION_SYSTEM_PROMPT
     assert "remaining_knowledge_searches" in REACT_DECISION_SYSTEM_PROMPT
+    assert "remaining_knowledge_reads" in REACT_DECISION_SYSTEM_PROMPT
+
+
+def test_react_uses_legacy_retrieval_policy_when_read_tools_are_not_registered() -> None:
+    _decision, calls = _decide(
+        {
+            "kind": "final",
+            "action_summary": "Answer with the retrieved evidence.",
+            "final_answer": "The evidence supports this.",
+        }
+    )
+
+    system_prompt = calls[0]["system_prompt"]
+    assert "Search results provide the evidence and citations" in system_prompt
+    assert "search_knowledge_base only locates candidates" not in system_prompt
 
 
 def test_react_decision_requires_positive_iteration_and_observation_budget() -> None:

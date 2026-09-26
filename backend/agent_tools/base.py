@@ -28,6 +28,8 @@ class AgentToolInvocationContext(AgentToolModel):
     style: str = Field(default="academic", min_length=1, max_length=64)
     ai_action: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
+    knowledge_document_ids: list[str] = Field(default_factory=list, max_length=100)
+    knowledge_scope_allow_global: bool = False
     request_id: int = Field(default=0, ge=0)
     run_id: str = Field(default="", max_length=128)
     trace_id: str = Field(default="", max_length=128)

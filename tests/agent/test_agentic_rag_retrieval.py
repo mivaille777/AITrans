@@ -10,6 +10,7 @@ from backend.agent_core.state import AgentState
 from backend.agent_graph.reading_agent_graph import ReadingAgentGraph
 from backend.models.agent_react import AgentEvidenceGateAssessment, AgentReActDecision
 from backend.models.agent_runtime import AgentEvidenceItem, AgentRouteDecision
+from backend.rag.citation_service import build_evidence_citations
 from backend.services.agent_tool_registry import AgentToolExecutionResult, AgentToolSpec
 
 
@@ -22,6 +23,16 @@ SEARCH_TOOL = AgentToolSpec(
     requires_reading_context=False,
     requires_confirmation=False,
     input_schema={"query": {"type": "string", "maxLength": 4000}},
+)
+READ_CHUNK_TOOL = AgentToolSpec(
+    name="read_knowledge_chunk",
+    title="Read knowledge chunk",
+    description="Read one located knowledge chunk.",
+    category="knowledge",
+    effect="read",
+    requires_reading_context=False,
+    requires_confirmation=False,
+    input_schema={"chunk_id": {"type": "string", "maxLength": 256}},
 )
 
 
@@ -43,10 +54,11 @@ class _AgenticService:
         self.evidence_by_query = evidence_by_query or {}
         self.fail = fail
         self.queries: list[str] = []
+        self.reads: list[str] = []
         self.payloads: list[dict] = []
 
     def list_tools(self):
-        return (SEARCH_TOOL,)
+        return (SEARCH_TOOL, READ_CHUNK_TOOL)
 
     def resolve_route(self, **_payload):
         return (
@@ -60,27 +72,66 @@ class _AgenticService:
 
     def run(self, *, _resolved_route=None, **payload):
         route = AgentRouteDecision.model_validate(_resolved_route)
-        query = str(route.arguments.get("query", "") or "")
-        self.queries.append(query)
         self.payloads.append(dict(payload))
-        if self.fail:
+        if self.fail and route.tool_name == SEARCH_TOOL.name:
             raise RuntimeError("retrieval backend unavailable")
-        evidence = tuple(self.evidence_by_query.get(query, ()))
-        result = AgentToolExecutionResult(
-            tool_name=SEARCH_TOOL.name,
-            output_text="evidence" if evidence else "No matching knowledge found.",
-            effect="read",
-            request_id=0,
-            data={
-                "query": query,
-                "retrieval_strategy": "hybrid",
-                "results": [{"chunk_id": item.evidence_id} for item in evidence],
-                "elapsed_ms": 1.0,
-                "fallback_reason": "" if evidence else "no_matching_evidence",
-                "evidence": [item.model_dump(mode="json") for item in evidence],
-                "citations": [],
-            },
-        )
+        if route.tool_name == SEARCH_TOOL.name:
+            query = str(route.arguments.get("query", "") or "")
+            self.queries.append(query)
+            candidates = tuple(self.evidence_by_query.get(query, ()))
+            evidence = ()
+            citations = ()
+            result = AgentToolExecutionResult(
+                tool_name=SEARCH_TOOL.name,
+                output_text=("candidates" if candidates else "No matching knowledge found."),
+                effect="read",
+                request_id=0,
+                data={
+                    "query": query,
+                    "retrieval_strategy": "hybrid",
+                    "results": [
+                        {
+                            "chunk_id": item.evidence_id.removeprefix("evidence:"),
+                            "snippet": item.excerpt[:320],
+                        }
+                        for item in candidates
+                    ],
+                    "elapsed_ms": 1.0,
+                    "fallback_reason": "" if candidates else "no_matching_evidence",
+                    "evidence": [],
+                    "citations": [],
+                },
+            )
+        else:
+            chunk_id = str(route.arguments.get("chunk_id", "") or "")
+            self.reads.append(chunk_id)
+            evidence = tuple(
+                item
+                for chunks in self.evidence_by_query.values()
+                for item in chunks
+                if item.evidence_id == f"evidence:{chunk_id}"
+            )
+            citations = tuple(build_evidence_citations(evidence))
+            result = AgentToolExecutionResult(
+                tool_name=READ_CHUNK_TOOL.name,
+                output_text="\n\n".join(item.excerpt for item in evidence),
+                effect="read",
+                request_id=0,
+                data={
+                    "anchor_chunk_id": chunk_id,
+                    "neighbor_radius": 0,
+                    "chunks": [
+                        {
+                            "chunk_id": chunk_id,
+                            "document_id": evidence[0].source_id if evidence else "doc-A",
+                            "text": evidence[0].excerpt if evidence else "",
+                            "chunk_index": 0,
+                        }
+                    ],
+                    "evidence": [item.model_dump(mode="json") for item in evidence],
+                    "citations": [item.model_dump(mode="json") for item in citations],
+                },
+            )
         return SimpleNamespace(
             status="completed",
             output_text=result.output_text,
@@ -89,7 +140,7 @@ class _AgenticService:
             request_id=0,
             tool_result=result,
             evidence=evidence,
-            citations=(),
+            citations=citations,
             route=AgentRouteDecision.model_validate(_resolved_route),
         )
 
@@ -132,6 +183,14 @@ class _Decisions:
                 tool_name=SEARCH_TOOL.name,
                 arguments={"query": value},
                 action_summary="Search for missing evidence.",
+            )
+        if kind == "read":
+            return AgentReActDecision(
+                iteration=iteration,
+                kind="tool",
+                tool_name=READ_CHUNK_TOOL.name,
+                arguments={"chunk_id": value},
+                action_summary="Read a relevant candidate chunk.",
             )
         return AgentReActDecision(
             iteration=iteration,
@@ -195,11 +254,21 @@ def test_one_retrieval_stops_when_evidence_is_sufficient() -> None:
     )
     result = _runtime(
         service,
-        _Decisions((("search", query), ("final", "unused"))),
+        _Decisions(
+            (
+                ("search", query),
+                ("read", "one"),
+                ("read", "two"),
+                ("final", "unused"),
+            )
+        ),
     ).execute(_state("Find evidence for the experiment."))
 
     assert service.queries == [query]
+    assert service.reads == ["one", "two"]
     assert result.retrieval_attempt_count == 1
+    assert result.knowledge_search_count == 1
+    assert result.knowledge_read_count == 2
     assert result.evidence_sufficient is True
     assert result.evidence_sufficiency is not None
     assert result.evidence_sufficiency.sufficient is True
@@ -215,15 +284,24 @@ def test_second_retrieval_is_allowed_when_first_round_is_insufficient() -> None:
         }
     )
     decisions = _Decisions(
-        (("search", first), ("search", second), ("final", "unused"))
+        (
+            ("search", first),
+            ("read", "method"),
+            ("search", second),
+            ("read", "limits"),
+            ("final", "unused"),
+        )
     )
     result = _runtime(service, decisions).execute(
         _state("Compare the method and its limitations.")
     )
 
     assert service.queries == [first, second]
-    assert len(decisions.calls) == 2
+    assert service.reads == ["method", "limits"]
+    assert len(decisions.calls) == 4
     assert result.retrieval_attempt_count == 2
+    assert result.knowledge_search_count == 2
+    assert result.knowledge_read_count == 2
     assert result.evidence_sufficient is True
 
 

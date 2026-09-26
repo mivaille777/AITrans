@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from backend.agent_core.events import AgentEvent, AgentEventType
 from backend.api.agent import _trace_event
 from backend.models.agent_tools import AgentTraceEvent, AgentTraceEventType
+from backend.services.agent_trace_store_service import _redacted_payload
 
 EVENT_TYPES = tuple(AgentEventType)
 
@@ -83,3 +84,28 @@ def test_agent_trace_event_rejects_unknown_event_type() -> None:
             event_type="unknown_event",
             timestamp="2026-09-15T00:00:00+00:00",
         )
+
+
+def test_knowledge_tool_trace_keeps_aggregate_sizes_without_content() -> None:
+    event = AgentEvent(
+        event_type=AgentEventType.TOOL_RESULT,
+        timestamp="2026-09-15T00:00:00+00:00",
+        run_id="run-metrics",
+        trace_id="trace-metrics",
+        elapsed_ms=21,
+        payload={
+            "tool_name": "search_knowledge_base",
+            "output_text": "private snippet text",
+            "output_chars": 19,
+            "candidate_count": 8,
+            "data": {"results": ["private"]},
+        },
+    )
+
+    redacted = _redacted_payload(event)
+
+    assert redacted == {
+        "tool_name": "search_knowledge_base",
+        "output_chars": 19,
+        "candidate_count": 8,
+    }

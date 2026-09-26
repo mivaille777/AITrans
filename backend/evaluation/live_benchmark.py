@@ -23,6 +23,7 @@ from backend.services.product_agent_service import ProductAgentService
 BenchmarkRouteKind = Literal["answer", "tool", "complex"]
 BenchmarkFailureMode = Literal["none", "retry_once", "fail_all"]
 _GROUNDED_TOOLS = frozenset({"search_knowledge_base", "search_research_notes"})
+_KNOWLEDGE_READ_TOOLS = frozenset({"read_knowledge_chunk", "read_knowledge_section"})
 _WRITE_TOOLS = frozenset({"save_research_note", "update_research_note"})
 
 
@@ -210,10 +211,15 @@ def validate_live_benchmark_coverage(
 
 def _tool_spec(name: str) -> AgentToolSpec:
     effect = "write" if name in _WRITE_TOOLS else (
-        "read" if name in {"inspect_reading_context", *_GROUNDED_TOOLS, "list_research_notes", "get_research_note"} else "compute"
+        "read" if name in {"inspect_reading_context", *_GROUNDED_TOOLS, *_KNOWLEDGE_READ_TOOLS, "list_research_notes", "get_research_note"} else "compute"
     )
     schemas: dict[str, dict[str, Any]] = {
         "search_knowledge_base": {"query": {"type": "string", "maxLength": 4000}},
+        "read_knowledge_chunk": {"chunk_id": {"type": "string", "maxLength": 256}},
+        "read_knowledge_section": {
+            "chunk_id": {"type": "string", "maxLength": 256},
+            "neighbor_radius": {"type": "integer", "minimum": 0, "maximum": 2},
+        },
         "search_research_notes": {"query": {"type": "string", "maxLength": 4000}},
         "save_research_note": {"user_note": {"type": "string", "maxLength": 4000}},
         "update_research_note": {
@@ -250,6 +256,8 @@ _TOOL_NAMES = (
     "analyze_equation",
     "summarize_current_section",
     "search_knowledge_base",
+    "read_knowledge_chunk",
+    "read_knowledge_section",
 )
 
 
@@ -287,7 +295,67 @@ class _ScriptedRegistry:
 
         self.execution_count += 1
         data: dict[str, Any] = {}
-        if name in _GROUNDED_TOOLS:
+        if name == "search_knowledge_base":
+            chunk_id = f"benchmark-chunk:{self.case.case_id}"
+            data = {
+                "query": str(payload.get("query", self.case.case_id) or self.case.case_id),
+                "retrieval_strategy": "benchmark-hybrid",
+                "results": [
+                    {
+                        "chunk_id": chunk_id,
+                        "document_id": f"benchmark-document:{self.case.case_id}",
+                        "title": f"Evidence for {self.case.case_id}",
+                        "snippet": f"Navigation snippet for {self.case.case_id}.",
+                        "rank": 1,
+                    }
+                ],
+                "elapsed_ms": 1.0,
+                "fallback_reason": (
+                    "benchmark_retrieval_fallback" if self.case.retrieval_fallback else ""
+                ),
+                "evidence": [],
+                "citations": [],
+            }
+        elif name in _KNOWLEDGE_READ_TOOLS:
+            evidence_id = f"benchmark:{self.case.case_id}:read:{self.execution_count}"
+            evidence = AgentEvidenceItem(
+                evidence_id=evidence_id,
+                source_type="knowledge_chunk",
+                source_id=f"benchmark-document:{self.case.case_id}",
+                title=f"Evidence for {self.case.case_id}",
+                resource_url=f"file:///benchmark-{self.case.case_id}.pdf",
+                location="Section 1",
+                excerpt=f"Read passage for {self.case.case_id}.",
+                score=1.0,
+            )
+            citation = AgentCitationRef(
+                citation_id=f"citation-{self.execution_count}",
+                evidence_ids=[evidence_id],
+                label="[1]",
+            )
+            data = {
+                "anchor_chunk_id": str(
+                    payload.get("chunk_id", f"benchmark-chunk:{self.case.case_id}")
+                ),
+                "neighbor_radius": max(0, int(payload.get("neighbor_radius", 0) or 0)),
+                "chunks": [
+                    {
+                        "chunk_id": str(
+                            payload.get("chunk_id", f"benchmark-chunk:{self.case.case_id}")
+                        ),
+                        "document_id": f"benchmark-document:{self.case.case_id}",
+                        "text": evidence.excerpt,
+                        "title": evidence.title,
+                        "section_path": ["Section 1"],
+                        "chunk_index": 0,
+                    }
+                ],
+                "evidence": [evidence.model_dump(mode="json")],
+                "citations": [citation.model_dump(mode="json")],
+                "duplicate_read": False,
+                "duplicate_evidence_count": 0,
+            }
+        elif name == "search_research_notes":
             evidence_id = f"benchmark:{self.case.case_id}:{name}:{self.execution_count}"
             evidence = AgentEvidenceItem(
                 evidence_id=evidence_id,
@@ -350,6 +418,8 @@ class _ScriptedRouter:
     def _arguments(tool_name: str, case_id: str) -> dict[str, str]:
         if tool_name in _GROUNDED_TOOLS:
             return {"query": f"{case_id} evidence"}
+        if tool_name in _KNOWLEDGE_READ_TOOLS:
+            return {"chunk_id": f"benchmark-chunk:{case_id}"}
         if tool_name == "save_research_note":
             return {"user_note": "Benchmark annotation"}
         if tool_name == "update_research_note":

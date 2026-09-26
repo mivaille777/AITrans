@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+from backend.rag.benchmarks.qasper.ablation import DEFAULT_QASPER_VARIANT
 from backend.rag.benchmarks.qasper.answer_contract import QasperContractAnswer
 from backend.rag.benchmarks.qasper.evaluator import evaluate_qasper_run
 from backend.rag.benchmarks.qasper.loader import load_qasper
@@ -15,8 +16,10 @@ from backend.rag.benchmarks.qasper.runner import (
     QasperGeneratedAnswer,
     _profile_sha256,
     _requirement_query_expansion,
+    _reranked_candidate_pool,
     _retrieve_raptor_question,
     _retrieve_requirement_aware_question,
+    _retrieve_variant_question,
     _verify_direct_contract_answer,
     run_qasper_ablation,
     run_qasper_adaptive_retrieval_ablation,
@@ -129,6 +132,24 @@ class _SequentialRetrievalService:
     def retrieve(self, query, **_kwargs):
         self.queries.append(query)
         return self.results.pop(0)
+
+
+class _FinalTopKRecordingRetrievalService:
+    def __init__(self, result):
+        self.result = result
+        self.final_top_ks = []
+
+    def retrieve(self, query, **kwargs):
+        self.final_top_ks.append(kwargs["final_top_k"])
+        return self.result.model_copy(update={"query": query})
+
+
+class _ChunkLookup:
+    def __init__(self, chunks):
+        self.chunks = {chunk.chunk_id: chunk for chunk in chunks}
+
+    def get_chunk(self, chunk_id):
+        return self.chunks.get(chunk_id)
 
 
 def _retrieval_result(chunk_id, text, *, document_id="paper-doc", paragraph_id=None):
@@ -270,6 +291,68 @@ def test_profile_sha256_is_stable_and_content_sensitive(tmp_path) -> None:
 
     profile.write_text('{"final_top_k": 9}\n', encoding="utf-8")
     assert _profile_sha256(profile) != first
+
+
+def test_qasper_retrieval_uses_configured_final_top_k() -> None:
+    document_id = "qasper:validation:paper-a"
+    retrieval_service = _FinalTopKRecordingRetrievalService(
+        _retrieval_result(
+            "chunk-a",
+            "Evidence for question A.",
+            document_id=document_id,
+        )
+    )
+    index = SimpleNamespace(
+        runtime=SimpleNamespace(
+            config=SimpleNamespace(
+                retrieval=SimpleNamespace(final_top_k=8),
+            ),
+            retrieval_service=retrieval_service,
+        )
+    )
+
+    _retrieve_variant_question(
+        SimpleNamespace(question="What supports the answer?"),
+        index=index,
+        document_id=document_id,
+        variant=DEFAULT_QASPER_VARIANT,
+        query_planner=None,
+    )
+
+    assert retrieval_service.final_top_ks == [8]
+
+
+def test_reranked_candidate_pool_keeps_candidates_above_final_top_k() -> None:
+    document_id = "qasper:validation:paper-a"
+    chunks = [
+        DocumentChunk(
+            chunk_id=f"chunk-{index}",
+            document_id=document_id,
+            text=f"Evidence paragraph {index}.",
+            chunk_index=index,
+            metadata={"source_paragraph_ids": [f"p{index}"]},
+        )
+        for index in range(5)
+    ]
+    retrieval = RetrievalResult(
+        query="question",
+        candidates=[RetrievalCandidate(chunk=chunks[0], rank=1)],
+        metadata={"post_rerank_chunk_ids": [chunk.chunk_id for chunk in chunks]},
+    )
+    index = SimpleNamespace(
+        runtime=SimpleNamespace(sparse_retriever=_ChunkLookup(chunks))
+    )
+
+    pool = _reranked_candidate_pool(
+        index=index,
+        retrieval=retrieval,
+        scope_document_id=document_id,
+    )
+
+    assert [item.chunk.chunk_id for item in pool] == [
+        chunk.chunk_id for chunk in chunks
+    ]
+    assert [item.rank for item in pool] == [1, 2, 3, 4, 5]
 
 
 def test_runner_scopes_each_question_and_writes_run_artifacts(tmp_path) -> None:

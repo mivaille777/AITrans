@@ -154,6 +154,8 @@ class AgentState(BaseModel):
     knowledge_decision: KnowledgeAccessDecision | None = None
     knowledge_scope: ResolvedKnowledgeScope = Field(default_factory=ResolvedKnowledgeScope)
     retrieval_attempt_count: int = Field(default=0, ge=0)
+    knowledge_search_count: int = Field(default=0, ge=0)
+    knowledge_read_count: int = Field(default=0, ge=0)
     evidence_sufficient: bool | None = None
     evidence_sufficiency: EvidenceSufficiency | None = None
 

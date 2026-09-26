@@ -45,11 +45,16 @@ AgentLifecycleSink = Callable[[str, dict[str, Any]], None]
 _GROUNDED_RETRIEVAL_TOOLS = frozenset(
     {
         "search_knowledge_base",
+        "read_knowledge_chunk",
+        "read_knowledge_section",
         "search_research_notes",
         "search_research_memory",
         "analyze_cross_document_research",
         "search_evidence_ledger",
     }
+)
+_KNOWLEDGE_READ_TOOLS = frozenset(
+    {"read_knowledge_chunk", "read_knowledge_section"}
 )
 
 
@@ -214,6 +219,10 @@ class ProductAgentService:
             )
         selected_set = set(selected)
         return tuple(tool for tool in tools if str(getattr(tool, "name", "") or "") in selected_set)
+
+    @property
+    def jit_search_read_enabled(self) -> bool:
+        return bool(getattr(self._registry, "jit_search_read_enabled", True))
 
     @staticmethod
     def _chat_context_mode(payload: dict[str, Any]) -> str:
@@ -445,6 +454,18 @@ class ProductAgentService:
         workspace_id = str(payload.get("workspace_id", "") or "").strip()
         if workspace_id:
             execution_payload["workspace_id"] = workspace_id
+        if spec.name in {
+            "search_knowledge_base",
+            "read_knowledge_chunk",
+            "read_knowledge_section",
+        }:
+            trusted_document_ids = _trusted_scope_ids(
+                payload.get("knowledge_document_ids", ())
+            )
+            execution_payload["knowledge_document_ids"] = trusted_document_ids
+            execution_payload["knowledge_scope_allow_global"] = bool(
+                payload.get("knowledge_scope_allow_global", False)
+            )
         if spec.name == "search_knowledge_base":
             trusted_document_ids = _trusted_scope_ids(
                 payload.get("knowledge_document_ids", ())
@@ -459,6 +480,7 @@ class ProductAgentService:
             if trusted_source_ids:
                 execution_payload["source_ids"] = trusted_source_ids
 
+        control.claim_knowledge_action(spec.name)
         tool_started = monotonic()
         if typed:
             call_id = ""
@@ -572,12 +594,26 @@ class ProductAgentService:
             if tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS
             else tool_result.data or {}
         )
+        result_data = tool_result.data if isinstance(tool_result.data, dict) else {}
+        tool_metrics: dict[str, int] = {}
+        if tool_result.tool_name == "search_knowledge_base":
+            results = result_data.get("results", ())
+            tool_metrics["candidate_count"] = (
+                len(results) if isinstance(results, (list, tuple)) else 0
+            )
+        elif tool_result.tool_name in _KNOWLEDGE_READ_TOOLS:
+            chunks = result_data.get("chunks", ())
+            tool_metrics["candidate_count"] = (
+                len(chunks) if isinstance(chunks, (list, tuple)) else 0
+            )
         self._emit(
             event_sink,
             "tool_result",
             {
                 "tool_name": tool_result.tool_name,
                 "output_text": tool_result.output_text,
+                "output_chars": len(tool_result.output_text),
+                **tool_metrics,
                 "effect": tool_result.effect,
                 "provider": tool_result.provider,
                 "model": tool_result.model,
@@ -786,6 +822,10 @@ class ProductAgentService:
         if grounded_results:
             seen_evidence: set[str] = set()
             for item in grounded_results:
+                if self.jit_search_read_enabled and str(
+                    item.get("tool_name", "") or item.get("name", "") or ""
+                ) == "search_knowledge_base":
+                    continue
                 item_evidence, _item_citations = self._retrieval_grounding(
                     dict(item.get("data", {}) or {})
                 )
@@ -930,7 +970,11 @@ class ProductAgentService:
         evidence: list[AgentEvidenceItem] = []
         citations: list[AgentCitationRef] = []
         if tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS:
-            evidence, citations = self._retrieval_grounding(tool_result.data)
+            if (
+                tool_result.tool_name != "search_knowledge_base"
+                or not self.jit_search_read_enabled
+            ):
+                evidence, citations = self._retrieval_grounding(tool_result.data)
 
         if tool_result.effect == "write" or skip_synthesis:
             return ProductAgentRunResult(

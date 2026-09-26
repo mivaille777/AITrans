@@ -162,8 +162,12 @@ class AgentObservation(AgentReActContractModel):
             raise ValueError("observation_id must not be empty")
         if not self.tool_name:
             raise ValueError("observations require tool_name")
-        if self.retrieval is not None and self.tool_name != "search_knowledge_base":
-            raise ValueError("retrieval metadata is only valid for knowledge search observations")
+        if self.retrieval is not None and self.tool_name not in {
+            "search_knowledge_base",
+            "read_knowledge_chunk",
+            "read_knowledge_section",
+        }:
+            raise ValueError("retrieval metadata is only valid for knowledge retrieval observations")
         return self
 
 

@@ -20,6 +20,7 @@ def test_rag_config_defaults_match_v1_contract() -> None:
     config = RagConfig()
 
     assert config.enabled is True
+    assert config.jit_search_read_enabled is False
     assert config.advanced_parsing.device == "cpu"
     assert config.chunking.target_tokens == 512
     assert config.chunking.preferred_max_tokens is None

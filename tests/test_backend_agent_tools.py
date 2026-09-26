@@ -76,6 +76,7 @@ def make_registry():
         translation_service=translation,
         quick_action_service=quick,
         research_note_service=research,
+        jit_search_read_enabled=True,
     )
     return registry, translation, quick, research
 
@@ -100,6 +101,8 @@ def test_agent_tool_catalog_declares_side_effect_boundaries() -> None:
         "analyze_equation",
         "summarize_current_section",
         "search_knowledge_base",
+        "read_knowledge_chunk",
+        "read_knowledge_section",
         "save_knowledge_card",
     }
     assert tools["translate_selection"].effect == "compute"

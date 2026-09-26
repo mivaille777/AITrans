@@ -98,7 +98,7 @@ def test_retrieval_observation_is_scoped_to_knowledge_tool() -> None:
     assert observation.retrieval.retrieval_strategy == "hybrid"
     assert observation.retrieval.fallback_reason == "reranker unavailable"
 
-    with pytest.raises(ValidationError, match="only valid for knowledge search"):
+    with pytest.raises(ValidationError, match="only valid for knowledge retrieval"):
         AgentObservation(
             iteration=1,
             tool_name="translate_selection",

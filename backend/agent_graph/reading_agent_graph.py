@@ -36,6 +36,9 @@ from backend.services.agent_react_decision_service import AgentReActDecisionServ
 
 GraphEventSink = Callable[[AgentEventType, dict[str, Any]], None]
 _KNOWLEDGE_SEARCH_TOOL = "search_knowledge_base"
+_KNOWLEDGE_READ_TOOLS = frozenset(
+    {"read_knowledge_chunk", "read_knowledge_section"}
+)
 
 
 class ReadingAgentGraphState(TypedDict, total=False):
@@ -156,7 +159,21 @@ def _knowledge_search_count(state: AgentState) -> int:
         for item in state.tool_calls
         if isinstance(item, dict)
     )
-    return max(int(state.retrieval_attempt_count), recorded)
+    return max(
+        int(state.knowledge_search_count),
+        int(state.retrieval_attempt_count),
+        recorded,
+    )
+
+
+def _knowledge_read_count(state: AgentState) -> int:
+    recorded = sum(
+        str(item.get("name", "") or item.get("tool_name", "") or "")
+        in _KNOWLEDGE_READ_TOOLS
+        for item in state.tool_calls
+        if isinstance(item, dict)
+    )
+    return max(int(state.knowledge_read_count), recorded)
 
 
 def _prior_evidence_ids(state: AgentState) -> set[str]:
@@ -175,7 +192,7 @@ def _cumulative_knowledge_evidence(state: AgentState) -> list[AgentEvidenceItem]
         if not isinstance(result, dict):
             continue
         tool_name = str(result.get("tool_name", "") or result.get("name", "") or "")
-        if tool_name != _KNOWLEDGE_SEARCH_TOOL:
+        if tool_name not in _KNOWLEDGE_READ_TOOLS:
             continue
         data = result.get("data", {})
         if not isinstance(data, dict):
@@ -210,15 +227,28 @@ def _retrieval_observation(
     decision: AgentReActDecision,
     result: dict[str, Any],
 ) -> AgentRetrievalObservation | None:
-    if decision.tool_name != _KNOWLEDGE_SEARCH_TOOL:
+    if decision.tool_name != _KNOWLEDGE_SEARCH_TOOL and decision.tool_name not in _KNOWLEDGE_READ_TOOLS:
         return None
     data = dict(result.get("data", {}) or {})
     evidence_ids = [item.evidence_id for item in state.evidence]
     previous = _prior_evidence_ids(state)
-    results = data.get("results", ())
-    result_count = len(results) if isinstance(results, (list, tuple)) else 0
+    if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL:
+        results = data.get("results", ())
+        result_count = len(results) if isinstance(results, (list, tuple)) else 0
+    else:
+        chunks = data.get("chunks", ())
+        result_count = len(chunks) if isinstance(chunks, (list, tuple)) else 0
+        data["retrieval_strategy"] = "jit_read"
+        data["fallback_reason"] = ""
+        if not data.get("query"):
+            data["query"] = str(
+                decision.arguments.get("chunk_id", "") or "section context read"
+            )
     query = str(
-        data.get("query", "") or decision.arguments.get("query", "") or ""
+        data.get("query", "")
+        or decision.arguments.get("query", "")
+        or decision.arguments.get("chunk_id", "")
+        or ""
     ).strip()
     return AgentRetrievalObservation(
         query=query,
@@ -595,6 +625,7 @@ class ReadingAgentGraph:
                 "iteration": state.react.iteration,
                 "tool_call_count": len(state.tool_calls),
                 "knowledge_search_count": _knowledge_search_count(state),
+                "knowledge_read_count": _knowledge_read_count(state),
                 "reason": reason,
             },
         )
@@ -772,6 +803,7 @@ class ReadingAgentGraph:
                     "max_iterations": control.policy.max_react_iterations,
                     "max_tool_calls": control.policy.max_tool_calls,
                     "max_knowledge_searches": control.policy.max_knowledge_searches,
+                    "max_knowledge_reads": control.policy.max_knowledge_reads,
                     "request_id": state.execution.request_id,
                 },
             )
@@ -844,6 +876,7 @@ class ReadingAgentGraph:
 
         iteration = state.react.iteration + 1
         knowledge_search_count = _knowledge_search_count(state)
+        knowledge_read_count = _knowledge_read_count(state)
         payload = self._adapter.build_payload(state)
         try:
             decision = run_react_decision_with_timeout(
@@ -862,6 +895,14 @@ class ReadingAgentGraph:
                             control.policy.max_tool_calls,
                         )
                         - knowledge_search_count,
+                    ),
+                    remaining_knowledge_reads=max(
+                        0,
+                        min(
+                            control.policy.max_knowledge_reads,
+                            control.policy.max_tool_calls,
+                        )
+                        - knowledge_read_count,
                     ),
                     **payload,
                 ),
@@ -911,6 +952,17 @@ class ReadingAgentGraph:
             emitted.update(
                 self._emit_react_limit(
                     state, emit, reason="knowledge_search_budget_exhausted"
+                )
+            )
+        elif (
+            decision.kind == "tool"
+            and decision.tool_name in _KNOWLEDGE_READ_TOOLS
+            and knowledge_read_count
+            >= min(control.policy.max_knowledge_reads, control.policy.max_tool_calls)
+        ):
+            emitted.update(
+                self._emit_react_limit(
+                    state, emit, reason="knowledge_read_budget_exhausted"
                 )
             )
 
@@ -974,9 +1026,18 @@ class ReadingAgentGraph:
                     graph_state.get("emitted_event_types", ()), emitted
                 ),
             }
-
-        if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL:
-            state.retrieval_attempt_count += 1
+        if decision.tool_name in _KNOWLEDGE_READ_TOOLS and _knowledge_read_count(
+            state
+        ) >= min(control.policy.max_knowledge_reads, control.policy.max_tool_calls):
+            emitted = self._emit_react_limit(
+                state, emit, reason="knowledge_read_budget_exhausted"
+            )
+            return {
+                "agent_state": _dump_agent_state(state),
+                "emitted_event_types": _merge_emitted(
+                    graph_state.get("emitted_event_types", ()), emitted
+                ),
+            }
 
         step = AgentPlanStep(
             step_id=f"react-{decision.iteration}",
@@ -1031,6 +1092,8 @@ class ReadingAgentGraph:
                             "reason": "retrieval_failed",
                             "missing_information": ["retrievable evidence"],
                             "search_count": _knowledge_search_count(state),
+                            "knowledge_search_count": _knowledge_search_count(state),
+                            "knowledge_read_count": _knowledge_read_count(state),
                         },
                     )
                     emitted.add(AgentEventType.EVIDENCE_SUFFICIENCY)
@@ -1047,6 +1110,15 @@ class ReadingAgentGraph:
                     emitted.update(
                         self._emit_react_limit(
                             state, emit, reason="knowledge_search_budget_exhausted"
+                        )
+                    )
+                elif _knowledge_read_count(state) >= min(
+                    control.policy.max_knowledge_reads,
+                    control.policy.max_tool_calls,
+                ):
+                    emitted.update(
+                        self._emit_react_limit(
+                            state, emit, reason="knowledge_read_budget_exhausted"
                         )
                     )
                 return {
@@ -1087,6 +1159,21 @@ class ReadingAgentGraph:
                 search_count=search_count,
                 remaining_searches=max(0, max_searches - search_count),
             )
+            if (
+                decision.tool_name == _KNOWLEDGE_SEARCH_TOOL
+                and retrieval.result_count > 0
+                and gate.action == "stop"
+                and "evidence_sufficient" not in gate.reason_codes
+            ):
+                gate = gate.model_copy(
+                    update={
+                        "action": "refine",
+                        "reason_codes": [
+                            *gate.reason_codes,
+                            "located_candidates_available",
+                        ],
+                    }
+                )
             state.evidence_sufficient = bool(
                 gate.action == "stop" and "evidence_sufficient" in gate.reason_codes
             )
@@ -1119,6 +1206,8 @@ class ReadingAgentGraph:
                         "unique_location_count": gate.unique_location_count,
                         "novel_evidence_count": gate.novel_evidence_count,
                         "search_count": gate.search_count,
+                        "knowledge_search_count": _knowledge_search_count(state),
+                        "knowledge_read_count": _knowledge_read_count(state),
                         "remaining_searches": gate.remaining_searches,
                         "retrieval_fallback": gate.retrieval_fallback,
                         "reason_codes": list(gate.reason_codes),
@@ -1134,6 +1223,8 @@ class ReadingAgentGraph:
                             state.evidence_sufficiency.missing_information
                         ),
                         "search_count": gate.search_count,
+                        "knowledge_search_count": _knowledge_search_count(state),
+                        "knowledge_read_count": _knowledge_read_count(state),
                     },
                 )
                 emitted.add(AgentEventType.EVIDENCE_SUFFICIENCY)
@@ -1163,6 +1254,7 @@ class ReadingAgentGraph:
                 observation_payload.update(
                     {
                         "knowledge_search_count": _knowledge_search_count(state),
+                        "knowledge_read_count": _knowledge_read_count(state),
                         "query_fingerprint": _run_local_fingerprint(
                             state, {"query": retrieval.query}
                         ),
@@ -1183,7 +1275,13 @@ class ReadingAgentGraph:
             emit(AgentEventType.OBSERVATION_READY, observation_payload)
             emitted.add(AgentEventType.OBSERVATION_READY)
 
-        if len(state.tool_calls) >= control.policy.max_tool_calls:
+        latest_gate = _latest_evidence_gate(state)
+        evidence_stop = bool(
+            latest_gate is not None
+            and latest_gate.action == "stop"
+            and "evidence_sufficient" in latest_gate.reason_codes
+        )
+        if len(state.tool_calls) >= control.policy.max_tool_calls and not evidence_stop:
             emitted.update(
                 self._emit_react_limit(state, emit, reason="tool_call_budget_exhausted")
             )
@@ -1206,6 +1304,14 @@ class ReadingAgentGraph:
             return "confirmation"
         if state.react.status == "limit_reached":
             return "finalize"
+        if state.react.observations:
+            latest = state.react.observations[-1]
+            if (
+                latest.tool_name == _KNOWLEDGE_SEARCH_TOOL
+                and latest.retrieval is not None
+                and latest.retrieval.result_count > 0
+            ):
+                return "continue"
         gate = _latest_evidence_gate(state)
         if gate is not None and gate.action == "stop":
             return "finalize"

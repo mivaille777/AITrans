@@ -233,6 +233,7 @@ def test_registry_exposes_research_memory_without_exposing_delete() -> None:
         translation_service=StubTranslationService(),
         quick_action_service=StubQuickActionService(),
         research_note_service=research,
+        jit_search_read_enabled=True,
     )
 
     assert [tool.name for tool in registry.list_tools()] == [
@@ -249,9 +250,11 @@ def test_registry_exposes_research_memory_without_exposing_delete() -> None:
         "update_research_note",
         "define_terms",
         "analyze_equation",
-        "summarize_current_section",
-        "search_knowledge_base",
-        "save_knowledge_card",
+            "summarize_current_section",
+            "search_knowledge_base",
+            "read_knowledge_chunk",
+            "read_knowledge_section",
+            "save_knowledge_card",
     ]
     assert registry.get_tool("delete_research_note") is None
 

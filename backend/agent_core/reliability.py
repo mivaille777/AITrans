@@ -36,6 +36,7 @@ class AgentExecutionPolicy:
     max_tool_calls: int = 4
     max_react_iterations: int = 6
     max_knowledge_searches: int = 3
+    max_knowledge_reads: int = 6
     react_decision_timeout_seconds: float = 12.0
     max_observation_chars: int = 3000
 
@@ -54,6 +55,8 @@ class AgentExecutionPolicy:
             raise ValueError("max_react_iterations must be positive")
         if self.max_knowledge_searches < 1:
             raise ValueError("max_knowledge_searches must be positive")
+        if self.max_knowledge_reads < 1:
+            raise ValueError("max_knowledge_reads must be positive")
         if self.react_decision_timeout_seconds <= 0:
             raise ValueError("react_decision_timeout_seconds must be positive")
         if self.max_observation_chars < 1:
@@ -66,6 +69,8 @@ class AgentRunControl:
     cancel_event: Event = field(default_factory=Event)
     pause_event: Event = field(default_factory=Event)
     started_at: float = field(default_factory=monotonic)
+    knowledge_search_count: int = 0
+    knowledge_read_count: int = 0
 
     @property
     def elapsed_seconds(self) -> float:
@@ -106,6 +111,31 @@ class AgentRunControl:
             self.policy.react_decision_timeout_seconds,
             self.remaining_seconds,
         )
+
+    def claim_knowledge_action(self, tool_name: str) -> None:
+        """Enforce separate per-run Locate and Read budgets."""
+
+        normalized = str(tool_name or "").strip()
+        if normalized == "search_knowledge_base":
+            limit = min(
+                self.policy.max_knowledge_searches,
+                self.policy.max_tool_calls,
+            )
+            if self.knowledge_search_count >= limit:
+                raise AgentBudgetExceededError(
+                    "Agent knowledge search budget is exhausted."
+                )
+            self.knowledge_search_count += 1
+        elif normalized in {"read_knowledge_chunk", "read_knowledge_section"}:
+            limit = min(
+                self.policy.max_knowledge_reads,
+                self.policy.max_tool_calls,
+            )
+            if self.knowledge_read_count >= limit:
+                raise AgentBudgetExceededError(
+                    "Agent knowledge read budget is exhausted."
+                )
+            self.knowledge_read_count += 1
 
 
 def _run_bounded_operation(

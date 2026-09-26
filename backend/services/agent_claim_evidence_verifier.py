@@ -19,6 +19,8 @@ _MARKDOWN_TABLE_DELIMITER_RE = re.compile(
     r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
 )
 _MARKDOWN_RULE_RE = re.compile(r"^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$")
+_CJK_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_LATIN_CHARACTER_RE = re.compile(r"[A-Za-z]")
 
 _STOPWORDS = {
     "the", "and", "for", "from", "with", "that", "this", "are", "was",
@@ -276,6 +278,40 @@ class AgentClaimEvidenceVerifier:
         return overlap / max(1, min(len(paragraph_tokens), len(evidence_tokens)))
 
     @staticmethod
+    def _likely_cross_language_pair(
+        statement: str,
+        item: AgentEvidenceItem,
+    ) -> bool:
+        """Detect when token overlap is a poor support signal due to language.
+
+        The verifier deliberately does not turn a language mismatch into a
+        semantic-support claim. It uses this signal only to allow the existing
+        partial-grounding release when citations are valid and paragraph
+        coverage is adequate, with an explicit user-facing caveat.
+        """
+
+        statement_cjk = len(_CJK_CHARACTER_RE.findall(statement))
+        statement_latin = len(_LATIN_CHARACTER_RE.findall(statement))
+        statement_letters = statement_cjk + statement_latin
+        evidence_text = f"{item.title} {item.location} {item.excerpt}"
+        evidence_cjk = len(_CJK_CHARACTER_RE.findall(evidence_text))
+        evidence_latin = len(_LATIN_CHARACTER_RE.findall(evidence_text))
+        evidence_letters = evidence_cjk + evidence_latin
+        if statement_letters == 0 or evidence_letters == 0:
+            return False
+
+        statement_cjk_share = statement_cjk / statement_letters
+        evidence_latin_share = evidence_latin / evidence_letters
+        evidence_cjk_share = evidence_cjk / evidence_letters
+        return (
+            statement_cjk >= 6
+            and statement_cjk_share >= 0.35
+            and evidence_latin >= 12
+            and evidence_latin_share >= 0.60
+            and evidence_cjk_share <= 0.20
+        )
+
+    @staticmethod
     def _labels(text: str) -> tuple[str, ...]:
         return tuple(
             dict.fromkeys(f"[{match}]" for match in _CITATION_RE.findall(text))
@@ -364,6 +400,7 @@ class AgentClaimEvidenceVerifier:
 
         cited_paragraphs = 0
         supported_paragraphs = 0
+        cross_language_paragraphs = 0
         paragraph_invalid_citations = 0
         paragraph_reasons: set[str] = set()
         for paragraph in paragraphs:
@@ -385,6 +422,15 @@ class AgentClaimEvidenceVerifier:
                 for item in referenced
             ) >= self.policy.minimum_paragraph_support_score:
                 supported_paragraphs += 1
+            elif any(
+                self._likely_cross_language_pair(paragraph, item)
+                for item in referenced
+            ):
+                # The citation is valid, but lexical overlap cannot assess a
+                # Chinese paraphrase of English evidence. Keep it explicitly
+                # partial rather than replacing the whole answer with excerpts.
+                cross_language_paragraphs += 1
+                paragraph_reasons.add("cross_language_support_unscored")
 
         paragraph_count = len(paragraphs)
         paragraph_citation_coverage = (
@@ -392,6 +438,11 @@ class AgentClaimEvidenceVerifier:
         )
         paragraph_support_rate = (
             supported_paragraphs / cited_paragraphs if cited_paragraphs else 0.0
+        )
+        partial_paragraph_support_rate = (
+            (supported_paragraphs + cross_language_paragraphs) / cited_paragraphs
+            if cited_paragraphs
+            else 0.0
         )
 
         if not claims:
@@ -465,10 +516,10 @@ class AgentClaimEvidenceVerifier:
             and invalid_citations == 0
             and paragraph_count > 0
             and cited_paragraphs > 0
-            and supported_paragraphs > 0
+            and supported_paragraphs + cross_language_paragraphs > 0
             and paragraph_citation_coverage
             >= self.policy.minimum_partial_paragraph_citation_coverage
-            and paragraph_support_rate
+            and partial_paragraph_support_rate
             >= self.policy.minimum_partial_paragraph_support_rate
         )
         passed = strict_passed or partial_grounding

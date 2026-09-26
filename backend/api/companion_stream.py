@@ -31,7 +31,10 @@ from backend.services.companion_ownership_service import (
 )
 from backend.services.conversation_grounding_service import save_message_grounding
 from backend.services.conversation_store_service import ConversationStoreService
-from backend.services.grounded_synthesis_service import evidence_only_grounding_fallback
+from backend.services.grounded_synthesis_service import (
+    PARTIAL_GROUNDING_NOTICE,
+    evidence_only_grounding_fallback,
+)
 
 router = APIRouter(tags=["companion-stream"])
 CompanionChatServiceDependency = Annotated[
@@ -499,7 +502,16 @@ async def stream_companion_chat(
                         "paragraph_support_rate": verification.paragraph_support_rate,
                         "reason_codes": list(verification.reason_codes),
                     }
-                    if not verification.passed:
+                    if (
+                        verification.partial_grounding
+                        and "cross_language_support_unscored"
+                        in verification.reason_codes
+                    ):
+                        text = (
+                            f"{generated_text.rstrip()}\n\n"
+                            f"{PARTIAL_GROUNDING_NOTICE}"
+                        )
+                    elif not verification.passed:
                         text = evidence_only_grounding_fallback(
                             evidence=list(grounding_evidence),
                             citations=list(grounding_citations),
@@ -520,16 +532,16 @@ async def stream_companion_chat(
                             rag_debug.update_companion_verification(
                                 companion_trace_id,
                                 verification=verification_payload,
-                                fallback_applied=text != generated_text,
+                                fallback_applied=not verification.passed,
                             )
                         except Exception:  # noqa: BLE001 - observability must not break chat
                             _logger.exception(
                                 "Failed to update Companion verification trace."
                             )
                     if text != generated_text:
-                        # accumulated_text is authoritative for delta rendering,
-                        # so a hard fallback atomically replaces the provisional
-                        # draft instead of appending to it.
+                        # The verified result is authoritative for delta
+                        # rendering, so a partial-grounding notice or hard
+                        # fallback replaces the provisional draft atomically.
                         emit(
                             {
                                 "type": "delta",

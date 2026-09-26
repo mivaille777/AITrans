@@ -48,13 +48,19 @@ class Retrieval:
         )
 
 
-def _registry(retrieval: Retrieval, planner: QueryPlanner) -> AgentToolRegistry:
+def _registry(
+    retrieval: Retrieval,
+    planner: QueryPlanner,
+    *,
+    jit_search_read_enabled: bool = False,
+) -> AgentToolRegistry:
     return AgentToolRegistry(
         translation_service=SimpleNamespace(),
         quick_action_service=SimpleNamespace(),
         research_note_service=SimpleNamespace(),
         retrieval_service=retrieval,
         query_planner=planner,
+        jit_search_read_enabled=jit_search_read_enabled,
     )
 
 
@@ -67,13 +73,14 @@ def test_agent_runs_bounded_rewritten_query_and_subqueries_then_merges_one_evide
     )
     planner = QueryPlanner(plan)
     retrieval = Retrieval()
-    registry = _registry(retrieval, planner)
+    registry = _registry(retrieval, planner, jit_search_read_enabled=True)
 
     result = registry.execute(
         "search_knowledge_base",
         query=original,
         top_k=3,
         request_id=44,
+        knowledge_scope_allow_global=True,
     )
 
     assert planner.calls == [original]
@@ -89,8 +96,8 @@ def test_agent_runs_bounded_rewritten_query_and_subqueries_then_merges_one_evide
     chunk_ids = [item["chunk_id"] for item in result.data["results"]]
     assert chunk_ids == ["shared", "unique-1", "unique-2"]
     assert len(chunk_ids) == len(set(chunk_ids)) == 3
-    assert len(result.data["evidence"]) == 3
-    assert len(result.data["citations"]) == 3
+    assert result.data["evidence"] == []
+    assert result.data["citations"] == []
 
 
 def test_fallback_plan_keeps_rag_on_original_query() -> None:
@@ -108,6 +115,7 @@ def test_fallback_plan_keeps_rag_on_original_query() -> None:
         "search_knowledge_base",
         query=original,
         top_k=2,
+        knowledge_scope_allow_global=True,
     )
 
     assert retrieval.calls == [original]

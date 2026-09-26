@@ -28,6 +28,16 @@ KNOWLEDGE_TOOL = AgentToolSpec(
     requires_confirmation=False,
     input_schema={"query": {"type": "string", "maxLength": 4000}},
 )
+READ_CHUNK_TOOL = AgentToolSpec(
+    name="read_knowledge_chunk",
+    title="Read knowledge chunk",
+    description="Read one located knowledge chunk.",
+    category="knowledge",
+    effect="read",
+    requires_reading_context=False,
+    requires_confirmation=False,
+    input_schema={"chunk_id": {"type": "string", "maxLength": 256}},
+)
 
 
 def _evidence(chunk_id: str, excerpt: str) -> AgentEvidenceItem:
@@ -48,11 +58,12 @@ class ComplexKnowledgeService:
     def __init__(self, evidence_by_query: dict[str, tuple[AgentEvidenceItem, ...]]) -> None:
         self.evidence_by_query = evidence_by_query
         self.executed_queries: list[str] = []
+        self.read_chunk_ids: list[str] = []
         self.synthesis_calls = 0
         self.synthesis_tool_results: list[dict] = []
 
     def list_tools(self):
-        return (KNOWLEDGE_TOOL,)
+        return (KNOWLEDGE_TOOL, READ_CHUNK_TOOL)
 
     def resolve_route(self, *, control=None, **_payload):
         return (
@@ -73,29 +84,62 @@ class ComplexKnowledgeService:
 
     def run(self, *, event_sink=None, **payload):
         route = AgentRouteDecision.model_validate(payload["_resolved_route"])
-        query = str(route.arguments.get("query", "") or "")
-        self.executed_queries.append(query)
-        evidence = tuple(self.evidence_by_query.get(query, ()))
-        citations = tuple(build_evidence_citations(evidence))
-        data = {
-            "query": query,
-            "retrieval_strategy": "hybrid",
-            "results": [
-                {"chunk_id": item.evidence_id.removeprefix("evidence:")}
-                for item in evidence
-            ],
-            "elapsed_ms": 2.0,
-            "fallback_reason": "" if evidence else "no_matching_evidence",
-            "evidence": [item.model_dump(mode="json") for item in evidence],
-            "citations": [item.model_dump(mode="json") for item in citations],
-        }
-        result = AgentToolExecutionResult(
-            tool_name=KNOWLEDGE_TOOL.name,
-            output_text=(
-                "Knowledge evidence found."
-                if evidence
+        tool_name = route.tool_name
+        if tool_name == KNOWLEDGE_TOOL.name:
+            query = str(route.arguments.get("query", "") or "")
+            self.executed_queries.append(query)
+            candidates = tuple(self.evidence_by_query.get(query, ()))
+            evidence: tuple[AgentEvidenceItem, ...] = ()
+            citations = ()
+            results = [
+                {
+                    "chunk_id": item.evidence_id.removeprefix("evidence:"),
+                    "snippet": item.excerpt[:320],
+                }
+                for item in candidates
+            ]
+            data = {
+                "query": query,
+                "retrieval_strategy": "hybrid",
+                "results": results,
+                "elapsed_ms": 2.0,
+                "fallback_reason": "" if candidates else "no_matching_evidence",
+                "evidence": [],
+                "citations": [],
+            }
+            output_text = (
+                "Knowledge search candidates found."
+                if candidates
                 else "No matching knowledge found."
-            ),
+            )
+        else:
+            chunk_id = str(route.arguments.get("chunk_id", "") or "")
+            self.read_chunk_ids.append(chunk_id)
+            evidence = tuple(
+                item
+                for chunks in self.evidence_by_query.values()
+                for item in chunks
+                if item.evidence_id == f"evidence:{chunk_id}"
+            )
+            citations = tuple(build_evidence_citations(evidence))
+            data = {
+                "anchor_chunk_id": chunk_id,
+                "neighbor_radius": 0,
+                "chunks": [
+                    {
+                        "chunk_id": chunk_id,
+                        "document_id": evidence[0].source_id if evidence else "doc",
+                        "text": evidence[0].excerpt if evidence else "",
+                        "chunk_index": 0,
+                    }
+                ],
+                "evidence": [item.model_dump(mode="json") for item in evidence],
+                "citations": [item.model_dump(mode="json") for item in citations],
+            }
+            output_text = "\n\n".join(item.excerpt for item in evidence)
+        result = AgentToolExecutionResult(
+            tool_name=tool_name,
+            output_text=output_text,
             effect="read",
             request_id=max(0, int(payload.get("request_id", 0) or 0)),
             data=data,
@@ -104,7 +148,7 @@ class ComplexKnowledgeService:
             event_sink(
                 "tool_call",
                 {
-                    "name": KNOWLEDGE_TOOL.name,
+                    "name": tool_name,
                     "effect": "read",
                     "requires_confirmation": False,
                     "request_id": result.request_id,
@@ -113,7 +157,7 @@ class ComplexKnowledgeService:
             event_sink(
                 "tool_result",
                 {
-                    "tool_name": KNOWLEDGE_TOOL.name,
+                    "tool_name": tool_name,
                     "effect": "read",
                     "request_id": result.request_id,
                     "data": {},
@@ -183,6 +227,14 @@ class SequenceDecisionService:
                 arguments={"query": value},
                 action_summary="Search for the missing evidence.",
             )
+        if kind == "read":
+            return AgentReActDecision(
+                iteration=iteration,
+                kind="tool",
+                tool_name=READ_CHUNK_TOOL.name,
+                arguments={"chunk_id": value},
+                action_summary="Read a relevant candidate chunk.",
+            )
         return AgentReActDecision(
             iteration=iteration,
             kind="final",
@@ -248,8 +300,10 @@ def test_agentic_rag_reformulates_query_and_gate_stops_when_evidence_is_sufficie
     decisions = SequenceDecisionService(
         (
             ("search", first_query),
+            ("read", "gp"),
             ("search", second_query),
-            ("final", "This third LLM decision should not be called."),
+            ("read", "llm"),
+            ("final", "The evidence gate should finish before this decision."),
         )
     )
     runtime = _runtime(service, decisions)
@@ -257,23 +311,32 @@ def test_agentic_rag_reformulates_query_and_gate_stops_when_evidence_is_sufficie
     result = runtime.execute(_state())
 
     assert service.executed_queries == [first_query, second_query]
+    assert service.read_chunk_ids == ["gp", "llm"]
     assert service.synthesis_calls == 1
-    assert len(decisions.calls) == 2
+    assert len(decisions.calls) == 4
     assert result.react.status == "completed"
-    assert len(result.react.observations) == 2
+    assert len(result.react.observations) == 4
     first = result.react.observations[0].retrieval
-    second = result.react.observations[1].retrieval
-    assert first is not None and second is not None
+    first_read = result.react.observations[1].retrieval
+    second_search = result.react.observations[2].retrieval
+    second_read = result.react.observations[3].retrieval
+    assert first is not None and first_read is not None
+    assert second_search is not None and second_read is not None
     assert first.query == first_query
-    assert second.query == second_query
-    assert first.novel_evidence_count == 1
-    assert second.novel_evidence_count == 1
-    assert first.gate is not None and first.gate.action == "refine"
-    assert second.gate is not None and second.gate.action == "stop"
-    assert second.gate.evidence_count == 2
-    assert "evidence_sufficient" in second.gate.reason_codes
+    assert second_search.query == second_query
+    assert first.evidence_count == 0
+    assert first.novel_evidence_count == 0
+    assert first.gate is not None and first.gate.action == "retrieve"
+    assert first_read.novel_evidence_count == 1
+    assert first_read.gate is not None and first_read.gate.action == "refine"
+    assert second_search.gate is not None and second_search.gate.action == "refine"
+    assert second_read.novel_evidence_count == 1
+    assert second_read.gate is not None and second_read.gate.action == "stop"
+    assert second_read.gate.evidence_count == 2
+    assert "evidence_sufficient" in second_read.gate.reason_codes
     assert decisions.calls[1]["observations"][0].retrieval.query == first_query
-    assert decisions.calls[1]["remaining_knowledge_searches"] == 2
+    assert decisions.calls[2]["remaining_knowledge_searches"] == 2
+    assert decisions.calls[2]["remaining_knowledge_reads"] == 3
     assert {item.evidence_id for item in result.evidence} == {
         "evidence:gp",
         "evidence:llm",
@@ -283,11 +346,16 @@ def test_agentic_rag_reformulates_query_and_gate_stops_when_evidence_is_sufficie
         for event in runtime.events
         if event.event_type == AgentEventType.EVIDENCE_GATE_EVALUATED
     ]
-    assert [event.payload["action"] for event in gate_events] == ["refine", "stop"]
+    assert [event.payload["action"] for event in gate_events] == [
+        "retrieve",
+        "refine",
+        "refine",
+        "stop",
+    ]
     assert gate_events[-1].payload["evidence_count"] == 2
 
 
-def test_agentic_rag_gate_stops_search_that_adds_no_new_evidence() -> None:
+def test_agentic_rag_blocks_repeated_read_after_reformulated_search() -> None:
     first_query = "GP search behavior"
     second_query = "GP statistical exploration behavior"
     same = _evidence("gp", "The GP performs broad statistical search.")
@@ -300,20 +368,22 @@ def test_agentic_rag_gate_stops_search_that_adds_no_new_evidence() -> None:
     decisions = SequenceDecisionService(
         (
             ("search", first_query),
+            ("read", "gp"),
             ("search", second_query),
+            ("read", "gp"),
             ("final", "This should be bypassed by the gate."),
         )
     )
 
     result = _runtime(service, decisions).execute(_state())
 
-    assert len(decisions.calls) == 2
-    second = result.react.observations[1].retrieval
-    assert second is not None and second.gate is not None
-    assert second.evidence_count == 1
-    assert second.novel_evidence_count == 0
-    assert second.gate.action == "stop"
-    assert "no_novel_evidence_after_refinement" in second.gate.reason_codes
+    assert len(decisions.calls) == 4
+    assert len(result.react.observations) == 3
+    assert service.read_chunk_ids == ["gp"]
+    assert result.react.last_decision is not None
+    assert result.react.last_decision.tool_name == READ_CHUNK_TOOL.name
+    assert result.react.status == "limit_reached"
+    assert [item.evidence_id for item in result.evidence] == ["evidence:gp"]
 
 
 def test_agentic_rag_search_budget_still_blocks_third_retrieval() -> None:
@@ -367,6 +437,7 @@ def test_agentic_rag_trace_persists_gate_metrics_without_raw_query(tmp_path) -> 
     decisions = SequenceDecisionService(
         (
             ("search", private_query),
+            ("read", "private"),
             ("final", "Answer from evidence."),
         )
     )
@@ -392,14 +463,68 @@ def test_agentic_rag_trace_persists_gate_metrics_without_raw_query(tmp_path) -> 
         and event.payload.get("tool_name") == KNOWLEDGE_TOOL.name
     )
     assert observation_payload["query_fingerprint"]
-    assert observation_payload["novel_evidence_count"] == 1
+    assert observation_payload["novel_evidence_count"] == 0
     assert observation_payload["knowledge_search_count"] == 1
-    assert observation_payload["gate_action"] == "refine"
+    read_observation = next(
+        event.payload
+        for event in persisted
+        if event.event_type == "observation_ready"
+        and event.payload.get("tool_name") == READ_CHUNK_TOOL.name
+    )
+    assert read_observation["knowledge_read_count"] == 1
+    assert read_observation["novel_evidence_count"] == 1
+    assert read_observation["gate_action"] == "refine"
     gate_payload = next(
         event.payload
         for event in persisted
         if event.event_type == "evidence_gate_evaluated"
+        and event.payload.get("knowledge_read_count") == 1
     )
     assert gate_payload["action"] == "refine"
     assert gate_payload["evidence_count"] == 1
     assert "insufficient_evidence_count" in gate_payload["reason_codes"]
+
+
+def test_jit_fixture_searches_once_reads_four_relevant_chunks_and_skips_noise() -> None:
+    query = "Compare method A and method B."
+    relevant_ids = ("a-method", "a-results", "b-method", "b-results")
+    noise_ids = tuple(f"noise-{index}" for index in range(8))
+    evidence_by_query = {
+        query: tuple(
+            _evidence(chunk_id, f"Full supporting text for {chunk_id}.")
+            for chunk_id in (*relevant_ids, *noise_ids)
+        )
+    }
+    decisions = SequenceDecisionService(
+        (
+            ("search", query),
+            *(('read', chunk_id) for chunk_id in relevant_ids),
+            ("final", "Compare the four read sources."),
+        )
+    )
+    service = ComplexKnowledgeService(evidence_by_query)
+    runtime = _runtime(
+        service,
+        decisions,
+        evidence_gate_service=AlwaysRetrieveGate(),
+    )
+
+    result = runtime.execute(
+        _state(),
+        control=AgentRunControl(
+            policy=AgentExecutionPolicy(
+                max_tool_calls=8,
+                max_knowledge_searches=3,
+                max_knowledge_reads=6,
+            )
+        ),
+    )
+
+    assert service.executed_queries == [query]
+    assert service.read_chunk_ids == list(relevant_ids)
+    assert not set(service.read_chunk_ids).intersection(noise_ids)
+    assert result.knowledge_search_count == 1
+    assert result.knowledge_read_count == 4
+    assert {item.evidence_id for item in result.evidence} == {
+        f"evidence:{chunk_id}" for chunk_id in relevant_ids
+    }

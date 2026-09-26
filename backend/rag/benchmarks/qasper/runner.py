@@ -911,6 +911,49 @@ def _candidate_trace(candidate: Any) -> dict[str, Any]:
     }
 
 
+def _reranked_candidate_pool(
+    *,
+    index: Any,
+    retrieval: RetrievalResult,
+    scope_document_id: str,
+) -> list[RetrievalCandidate]:
+    """Restore the complete post-rerank pool for metrics after final TopK truncation."""
+    chunk_ids = retrieval.metadata.get("post_rerank_chunk_ids")
+    if not isinstance(chunk_ids, list) or not chunk_ids:
+        return list(retrieval.candidates)
+
+    returned_by_id = {
+        item.chunk.chunk_id: item for item in retrieval.candidates
+    }
+    get_chunk = getattr(index.runtime.sparse_retriever, "get_chunk", None)
+    pool: list[RetrievalCandidate] = []
+    for rank, raw_chunk_id in enumerate(chunk_ids, start=1):
+        chunk_id = str(raw_chunk_id or "").strip()
+        if not chunk_id:
+            continue
+        candidate = returned_by_id.get(chunk_id)
+        if candidate is not None:
+            chunk = candidate.chunk
+        elif callable(get_chunk):
+            chunk = get_chunk(chunk_id)
+        else:
+            return list(retrieval.candidates)
+        if chunk is None:
+            raise RuntimeError(
+                f"reranked QASPER candidate {chunk_id!r} is missing from the chunk store"
+            )
+        if chunk.document_id != scope_document_id:
+            raise RuntimeError(
+                "known-paper reranked candidate pool escaped its paper scope"
+            )
+        pool.append(
+            candidate.model_copy(update={"rank": rank})
+            if candidate is not None
+            else RetrievalCandidate(chunk=chunk, rank=rank)
+        )
+    return pool or list(retrieval.candidates)
+
+
 _RETRIEVAL_COMPONENTS = (
     "query_planning_ms",
     "embedding_ms",
@@ -1421,7 +1464,7 @@ def _retrieve_variant_question(
             retrieval_query,
             filters=VectorSearchFilter(document_ids=[document_id]),
             section_hints=section_hints,
-            final_top_k=BENCHMARK_FINAL_TOP_K,
+            final_top_k=index.runtime.config.retrieval.final_top_k,
             dense_enabled=variant.dense,
             sparse_enabled=variant.sparse,
             structural_enabled=variant.structural,
@@ -2904,7 +2947,20 @@ def run_qasper_benchmark(
                                 query_planner=query_planner,
                             )
                     if retrieval_result is not None and not retrieval_candidate_pool:
-                        retrieval_candidate_pool = list(retrieval_result.candidates)
+                        if (
+                            normalized_evidence_selection_variant is None
+                            and normalized_adaptive_variant is None
+                            and normalized_raptor_variant is None
+                            and not selected_variant.multi_query
+                            and not selected_variant.evidence_gate
+                        ):
+                            retrieval_candidate_pool = _reranked_candidate_pool(
+                                index=index,
+                                retrieval=retrieval_result,
+                                scope_document_id=document_id,
+                            )
+                        else:
+                            retrieval_candidate_pool = list(retrieval_result.candidates)
                     retrieval_result.metadata["query_planning_ms"] = query_planning_ms
                     retrieval_ms = (perf_counter() - retrieval_started) * 1000
                     if (

@@ -85,7 +85,7 @@ def test_agentic_rag_case_stops_on_evidence_gate_and_verifies_grounding() -> Non
         event.payload.get("name")
         for event in execution.events
         if event.event_type == "tool_call"
-    ] == ["search_knowledge_base", "search_knowledge_base"]
+    ] == ["search_knowledge_base", "read_knowledge_chunk"]
     gate_actions = [
         event.payload.get("action")
         for event in execution.events

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from backend.knowledge.service import KnowledgeWorkspaceService
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.rag.citation_service import build_evidence_citations
 from backend.rag.evidence_builder import build_agent_evidence
-from backend.rag.models import RetrievalCandidate
+from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.observability import RagTraceEventData, build_rag_trace_events
 from backend.rag.query_planner import RagQueryPlan, merge_query_results
 from backend.rag.stores.base import VectorSearchFilter
@@ -31,6 +31,15 @@ class KnowledgeSearchArgs(AgentToolModel):
     top_k: int | None = Field(default=None, ge=1, le=50)
 
 
+class KnowledgeReadChunkArgs(AgentToolModel):
+    chunk_id: str = Field(min_length=1, max_length=256)
+
+
+class KnowledgeReadSectionArgs(AgentToolModel):
+    chunk_id: str = Field(min_length=1, max_length=256)
+    neighbor_radius: int = Field(default=1, ge=0, le=2)
+
+
 class KnowledgeSearchPlannerArgs(AgentToolModel):
     query: str = Field(min_length=1, max_length=4_000)
     document_scope: str = Field(default="", max_length=8_000)
@@ -39,17 +48,18 @@ class KnowledgeSearchPlannerArgs(AgentToolModel):
 class KnowledgeSearchResultItem(AgentToolModel):
     chunk_id: str
     document_id: str
-    text: str
     title: str = ""
-    source_uri: str = ""
     section_heading: str = ""
     page_number: int | None = Field(default=None, ge=1)
     rank: int | None = Field(default=None, ge=1)
+    snippet: str | None = None
+    text: str | None = None
+    source_uri: str | None = None
+    metadata: dict[str, Any] | None = None
     dense_score: float | None = None
     sparse_score: float | None = None
     fusion_score: float | None = None
     rerank_score: float | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class KnowledgeSearchResultData(AgentToolModel):
@@ -62,6 +72,39 @@ class KnowledgeSearchResultData(AgentToolModel):
     citations: list[AgentCitationRef] = Field(default_factory=list)
     query_plan: RagQueryPlan | None = None
     observability: list[RagTraceEventData] = Field(default_factory=list)
+
+
+class KnowledgeReadResultItem(AgentToolModel):
+    chunk_id: str
+    document_id: str
+    text: str
+    title: str = ""
+    section_heading: str = ""
+    section_path: list[str] = Field(default_factory=list)
+    page_number: int | None = Field(default=None, ge=1)
+    chunk_index: int = Field(ge=0)
+
+
+class KnowledgeReadResultData(AgentToolModel):
+    anchor_chunk_id: str
+    neighbor_radius: int = Field(default=0, ge=0, le=2)
+    chunks: list[KnowledgeReadResultItem] = Field(default_factory=list)
+    evidence: list[AgentEvidenceItem] = Field(default_factory=list)
+    citations: list[AgentCitationRef] = Field(default_factory=list)
+    duplicate_read: bool = False
+    duplicate_evidence_count: int = Field(default=0, ge=0)
+
+
+class KnowledgeChunkStore(Protocol):
+    """Minimal public read interface implemented by the sparse chunk catalogue."""
+
+    def get_chunk(self, chunk_id: str) -> DocumentChunk | None: ...
+
+    def section_neighbors(
+        self,
+        anchor: DocumentChunk,
+        radius: int,
+    ) -> list[DocumentChunk]: ...
 
 
 class KnowledgeSaveResultData(AgentToolModel):
@@ -114,7 +157,32 @@ def _document_ids(args: KnowledgeSearchArgs) -> list[str]:
     return normalized
 
 
+def _candidate_snippet(candidate: RetrievalCandidate, max_chars: int = 320) -> str:
+    """Return a bounded navigational excerpt without modifying stored evidence."""
+
+    limit = max(0, int(max_chars))
+    prefix = candidate.chunk.text[:limit]
+    return " ".join(prefix.split())[:limit]
+
+
 def _result_item(candidate: RetrievalCandidate) -> dict[str, Any]:
+    chunk = candidate.chunk
+    return {
+        "chunk_id": chunk.chunk_id,
+        "document_id": chunk.document_id,
+        "title": chunk.title,
+        "section_heading": chunk.section_heading,
+        "page_number": chunk.page_number,
+        "rank": candidate.rank,
+        "snippet": _candidate_snippet(candidate),
+        "dense_score": candidate.dense_score,
+        "sparse_score": candidate.sparse_score,
+        "fusion_score": candidate.fusion_score,
+        "rerank_score": candidate.rerank_score,
+    }
+
+
+def _legacy_result_item(candidate: RetrievalCandidate) -> dict[str, Any]:
     chunk = candidate.chunk
     return {
         "chunk_id": chunk.chunk_id,
@@ -130,6 +198,36 @@ def _result_item(candidate: RetrievalCandidate) -> dict[str, Any]:
         "fusion_score": candidate.fusion_score,
         "rerank_score": candidate.rerank_score,
         "metadata": dict(candidate.metadata),
+    }
+
+
+def _validate_chunk_scope(
+    chunk: DocumentChunk,
+    context: AgentToolInvocationContext,
+) -> None:
+    allowed_document_ids = {
+        str(item or "").strip()
+        for item in context.knowledge_document_ids
+        if str(item or "").strip()
+    }
+    if allowed_document_ids:
+        if chunk.document_id not in allowed_document_ids:
+            raise PermissionError("Knowledge chunk is outside the allowed document scope.")
+        return
+    if not context.knowledge_scope_allow_global:
+        raise PermissionError("Knowledge access requires an explicit document scope.")
+
+
+def _read_item(chunk: DocumentChunk) -> dict[str, Any]:
+    return {
+        "chunk_id": chunk.chunk_id,
+        "document_id": chunk.document_id,
+        "text": chunk.text,
+        "title": chunk.title,
+        "section_heading": chunk.section_heading,
+        "section_path": list(chunk.section_path),
+        "page_number": chunk.page_number,
+        "chunk_index": chunk.chunk_index,
     }
 
 
@@ -208,10 +306,14 @@ class KnowledgeAgentTools:
         *,
         retrieval_service: Any | None,
         query_planner: Any | None = None,
+        chunk_store: KnowledgeChunkStore | None = None,
+        jit_search_read_enabled: bool = False,
         workspace_service: KnowledgeWorkspaceService | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._query_planner = query_planner
+        self._chunk_store = chunk_store
+        self.jit_search_read_enabled = bool(jit_search_read_enabled)
         self._workspace_service = workspace_service
 
     def search_knowledge_base(
@@ -223,7 +325,28 @@ class KnowledgeAgentTools:
         if self._retrieval_service is None:
             raise RuntimeError("Knowledge retrieval service is unavailable.")
 
-        document_ids = _document_ids(typed)
+        requested_document_ids = _document_ids(typed)
+        allowed_document_ids = list(
+            dict.fromkeys(
+                str(item or "").strip()
+                for item in context.knowledge_document_ids
+                if str(item or "").strip()
+            )
+        )
+        if allowed_document_ids:
+            if requested_document_ids:
+                out_of_scope = set(requested_document_ids) - set(allowed_document_ids)
+                if out_of_scope:
+                    raise PermissionError(
+                        "Knowledge search requested a document outside the allowed scope."
+                    )
+                document_ids = requested_document_ids
+            else:
+                document_ids = allowed_document_ids
+        elif context.knowledge_scope_allow_global:
+            document_ids = requested_document_ids
+        else:
+            raise PermissionError("Knowledge search requires an explicit document scope.")
         filters = (
             VectorSearchFilter(document_ids=document_ids) if document_ids else None
         )
@@ -261,8 +384,13 @@ class KnowledgeAgentTools:
             retrieval.metadata["subquery_errors"] = retrieval_errors
 
         candidates = retrieval.candidates
-        limited_retrieval = retrieval.model_copy(update={"candidates": candidates})
-        evidence = build_agent_evidence(limited_retrieval)
+        for candidate in candidates:
+            _validate_chunk_scope(candidate.chunk, context)
+        evidence = (
+            []
+            if self.jit_search_read_enabled
+            else build_agent_evidence(retrieval)
+        )
         citations = build_evidence_citations(evidence)
         observability = build_rag_trace_events(
             plan=plan,
@@ -270,15 +398,19 @@ class KnowledgeAgentTools:
             merged=retrieval,
             evidence=evidence,
         )
-        results = [_result_item(candidate) for candidate in candidates]
+        result_builder = (
+            _result_item if self.jit_search_read_enabled else _legacy_result_item
+        )
+        results = [result_builder(candidate) for candidate in candidates]
         fallback_reason = str(
             retrieval.metadata.get("fallback_reason")
             or retrieval.metadata.get("reranker_fallback_reason")
             or ""
         )
         if results:
+            text_key = "snippet" if self.jit_search_read_enabled else "text"
             output_text = "Knowledge search results:\n" + "\n".join(
-                f"- {item['title'] or item['document_id']}: {item['text']}"
+                f"- {item['title'] or item['document_id']}: {item[text_key]}"
                 for item in results
             )
         else:
@@ -301,6 +433,119 @@ class KnowledgeAgentTools:
                     event.model_dump(mode="json") for event in observability
                 ],
             },
+        )
+
+    def _read_chunks(
+        self,
+        context: AgentToolInvocationContext,
+        *,
+        tool_name: str,
+        anchor_chunk_id: str,
+        chunks: list[DocumentChunk],
+        neighbor_radius: int,
+    ) -> AgentToolExecutionResult:
+        if not chunks:
+            raise LookupError("Knowledge chunk no longer exists.")
+        candidates: list[RetrievalCandidate] = []
+        seen_chunk_ids: set[str] = set()
+        for rank, chunk in enumerate(chunks, start=1):
+            _validate_chunk_scope(chunk, context)
+            if chunk.chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk.chunk_id)
+            candidates.append(
+                RetrievalCandidate(
+                    chunk=chunk,
+                    rank=rank,
+                    metadata={
+                        "jit_read": True,
+                        "read_anchor_chunk_id": anchor_chunk_id,
+                        "neighbor_radius": neighbor_radius,
+                    },
+                )
+            )
+        if not candidates:
+            raise LookupError("Knowledge chunk no longer exists.")
+
+        retrieval = RetrievalResult(
+            query=f"read:{anchor_chunk_id}",
+            candidates=candidates,
+            retrieval_strategy="jit_read",
+        )
+        evidence = build_agent_evidence(retrieval)
+        citations = build_evidence_citations(evidence)
+        output_text = "\n\n".join(
+            f"[{item.chunk.chunk_id}] {item.chunk.text}" for item in candidates
+        )
+        return AgentToolExecutionResult(
+            tool_name=tool_name,
+            output_text=output_text,
+            effect="read",
+            request_id=context.request_id,
+            data={
+                "anchor_chunk_id": anchor_chunk_id,
+                "neighbor_radius": neighbor_radius,
+                "chunks": [_read_item(item.chunk) for item in candidates],
+                "evidence": [item.model_dump(mode="json") for item in evidence],
+                "citations": [item.model_dump(mode="json") for item in citations],
+                "duplicate_read": False,
+                "duplicate_evidence_count": 0,
+            },
+        )
+
+    def read_knowledge_chunk(
+        self,
+        context: AgentToolInvocationContext,
+        args: BaseModel,
+    ) -> AgentToolExecutionResult:
+        typed = cast(KnowledgeReadChunkArgs, args)
+        if self._chunk_store is None:
+            raise RuntimeError("Knowledge chunk store is unavailable.")
+        chunk = self._chunk_store.get_chunk(typed.chunk_id)
+        if chunk is None:
+            raise LookupError("Knowledge chunk no longer exists.")
+        _validate_chunk_scope(chunk, context)
+        return self._read_chunks(
+            context,
+            tool_name="read_knowledge_chunk",
+            anchor_chunk_id=chunk.chunk_id,
+            chunks=[chunk],
+            neighbor_radius=0,
+        )
+
+    def read_knowledge_section(
+        self,
+        context: AgentToolInvocationContext,
+        args: BaseModel,
+    ) -> AgentToolExecutionResult:
+        typed = cast(KnowledgeReadSectionArgs, args)
+        if self._chunk_store is None:
+            raise RuntimeError("Knowledge chunk store is unavailable.")
+        anchor = self._chunk_store.get_chunk(typed.chunk_id)
+        if anchor is None:
+            raise LookupError("Knowledge chunk no longer exists.")
+        _validate_chunk_scope(anchor, context)
+        neighbors = self._chunk_store.section_neighbors(
+            anchor,
+            typed.neighbor_radius,
+        )
+        if not any(item.chunk_id == anchor.chunk_id for item in neighbors):
+            raise RuntimeError("Knowledge chunk store returned a section without its anchor.")
+        anchor_section = tuple(anchor.section_path)
+        for neighbor in neighbors:
+            if (
+                neighbor.document_id != anchor.document_id
+                or tuple(neighbor.section_path) != anchor_section
+            ):
+                raise RuntimeError(
+                    "Knowledge chunk store returned a chunk outside the anchor section."
+                )
+        return self._read_chunks(
+            context,
+            tool_name="read_knowledge_section",
+            anchor_chunk_id=anchor.chunk_id,
+            chunks=neighbors,
+            neighbor_radius=typed.neighbor_radius,
         )
 
     def save_knowledge_card(
@@ -391,11 +636,17 @@ class KnowledgeAgentTools:
 def build_knowledge_tool_definitions(
     tools: KnowledgeAgentTools,
 ) -> tuple[TypedAgentToolDefinition, ...]:
-    return (
+    search_description = (
+        "Locate relevant indexed document chunks. Returned snippets are navigation hints, "
+        "not evidence; read selected chunks before using them to support an answer."
+        if tools.jit_search_read_enabled
+        else "Search indexed local documents with hybrid dense and sparse retrieval."
+    )
+    definitions = [
         typed_tool_definition(
             name="search_knowledge_base",
             title="Search knowledge base",
-            description="Search indexed local documents with hybrid dense and sparse retrieval.",
+            description=search_description,
             category="knowledge",
             effect="read",
             requires_reading_context=False,
@@ -405,13 +656,52 @@ def build_knowledge_tool_definitions(
             executor=tools.search_knowledge_base,
             planner_args_model=KnowledgeSearchPlannerArgs,
             retry_policy="safe",
-        ),
+        )
+    ]
+    if tools.jit_search_read_enabled:
+        definitions.extend(
+            (
+                typed_tool_definition(
+                    name="read_knowledge_chunk",
+                    title="Read knowledge chunk",
+                    description=(
+                        "Read the full text of one previously located knowledge chunk. "
+                        "Only Read results provide factual evidence and citations."
+                    ),
+                    category="knowledge",
+                    effect="read",
+                    requires_reading_context=False,
+                    requires_confirmation=False,
+                    args_model=KnowledgeReadChunkArgs,
+                    result_model=KnowledgeReadResultData,
+                    executor=tools.read_knowledge_chunk,
+                    retry_policy="safe",
+                ),
+                typed_tool_definition(
+                    name="read_knowledge_section",
+                    title="Read knowledge section",
+                    description=(
+                        "Read one located chunk and bounded neighboring chunks from the same section "
+                        "when local context is needed. Only Read results provide factual evidence and citations."
+                    ),
+                    category="knowledge",
+                    effect="read",
+                    requires_reading_context=False,
+                    requires_confirmation=False,
+                    args_model=KnowledgeReadSectionArgs,
+                    result_model=KnowledgeReadResultData,
+                    executor=tools.read_knowledge_section,
+                    retry_policy="safe",
+                ),
+            )
+        )
+    definitions.append(
         typed_tool_definition(
             name="save_knowledge_card",
             title="Save result to Knowledge",
             description=(
                 "Persist the already-produced Agent result as a derived canonical Knowledge card. "
-                "Use only when the user explicitly asks to save a result to the Knowledge Library; "
+                "Use only when the user's request requires saving a result to the Knowledge Library; "
                 "the runtime supplies the source card, target card type, operation, and relation."
             ),
             category="knowledge",
@@ -423,8 +713,9 @@ def build_knowledge_tool_definitions(
             executor=tools.save_knowledge_card,
             planner_args_model=EmptyToolArgs,
             retry_policy="never",
-        ),
+        )
     )
+    return tuple(definitions)
 
 
 __all__ = [
@@ -434,5 +725,10 @@ __all__ = [
     "KnowledgeSearchPlannerArgs",
     "KnowledgeSearchResultData",
     "KnowledgeSearchResultItem",
+    "KnowledgeChunkStore",
+    "KnowledgeReadChunkArgs",
+    "KnowledgeReadResultData",
+    "KnowledgeReadResultItem",
+    "KnowledgeReadSectionArgs",
     "build_knowledge_tool_definitions",
 ]

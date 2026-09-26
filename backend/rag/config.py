@@ -297,6 +297,7 @@ class RagRerankerConfig(RagConfigModel):
 
 class RagConfig(RagConfigModel):
     enabled: bool = True
+    jit_search_read_enabled: bool = False
     advanced_parsing: RagAdvancedParsingConfig = Field(default_factory=RagAdvancedParsingConfig)
     visual_understanding: RagVisualUnderstandingConfig = Field(default_factory=RagVisualUnderstandingConfig)
     visual_retrieval: RagVisualRetrievalConfig = Field(default_factory=RagVisualRetrievalConfig)

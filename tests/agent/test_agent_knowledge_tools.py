@@ -55,6 +55,7 @@ def _registry(retrieval_service: StubRetrievalService) -> AgentToolRegistry:
         quick_action_service=SimpleNamespace(),
         research_note_service=SimpleNamespace(),
         retrieval_service=retrieval_service,
+        jit_search_read_enabled=True,
     )
 
 
@@ -65,7 +66,12 @@ def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
     search_tool = registry.get_tool("search_knowledge_base")
     save_tool = registry.get_tool("save_knowledge_card")
 
-    assert names[-2:] == ["search_knowledge_base", "save_knowledge_card"]
+    assert names[-4:] == [
+        "search_knowledge_base",
+        "read_knowledge_chunk",
+        "read_knowledge_section",
+        "save_knowledge_card",
+    ]
     assert names[:11] == [
         "inspect_reading_context",
         "translate_selection",
@@ -79,7 +85,7 @@ def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
         "get_research_note",
         "update_research_note",
     ]
-    assert names[11:-2] == [
+    assert names[11:-4] == [
         "define_terms",
         "analyze_equation",
         "summarize_current_section",
@@ -101,6 +107,29 @@ def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
     assert registry.allows_safe_retry(save_tool.name) is False
 
 
+def test_jit_flag_off_preserves_legacy_search_evidence_and_tool_catalog() -> None:
+    retrieval = StubRetrievalService()
+    registry = AgentToolRegistry(
+        translation_service=SimpleNamespace(),
+        quick_action_service=SimpleNamespace(),
+        research_note_service=SimpleNamespace(),
+        retrieval_service=retrieval,
+    )
+
+    assert registry.get_tool("read_knowledge_chunk") is None
+    result = registry.execute(
+        "search_knowledge_base",
+        query="Gaussian processes",
+        knowledge_document_ids=["doc-1", "doc-2"],
+    )
+
+    assert result.data is not None
+    assert result.data["results"][0]["text"] == "Knowledge excerpt 1"
+    assert "snippet" not in result.data["results"][0]
+    assert len(result.data["evidence"]) == 2
+    assert len(result.data["citations"]) == 2
+
+
 def test_search_maps_typed_results_without_embedding_vectors() -> None:
     retrieval = StubRetrievalService()
     registry = _registry(retrieval)
@@ -110,6 +139,7 @@ def test_search_maps_typed_results_without_embedding_vectors() -> None:
         query="Gaussian processes",
         document_ids=["doc-1"],
         document_scope="doc-2, doc-1",
+        knowledge_document_ids=["doc-1", "doc-2"],
         top_k=1,
         request_id=17,
     )
@@ -121,12 +151,10 @@ def test_search_maps_typed_results_without_embedding_vectors() -> None:
     assert len(result.data["results"]) == 1
     assert result.data["results"][0]["chunk_id"] == "chunk-1"
     assert "vector" not in result.data["results"][0]
-    assert result.data["evidence"][0]["evidence_id"] == "evidence:chunk-1"
-    assert result.data["citations"][0] == {
-        "citation_id": "citation-1",
-        "evidence_ids": ["evidence:chunk-1"],
-        "label": "[1]",
-    }
+    assert "text" not in result.data["results"][0]
+    assert len(result.data["results"][0]["snippet"]) <= 320
+    assert result.data["evidence"] == []
+    assert result.data["citations"] == []
     filters = retrieval.calls[0][1]
     assert filters is not None
     assert filters.document_ids == ["doc-1", "doc-2"]
@@ -170,4 +198,8 @@ def test_retrieval_failure_becomes_tool_failure() -> None:
     with pytest.raises(
         RuntimeError, match="Knowledge retrieval failed: index unavailable"
     ):
-        registry.execute("search_knowledge_base", query="control")
+        registry.execute(
+            "search_knowledge_base",
+            query="control",
+            knowledge_scope_allow_global=True,
+        )

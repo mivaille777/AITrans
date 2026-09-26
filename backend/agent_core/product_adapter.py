@@ -21,6 +21,7 @@ from backend.models.knowledge_access import (
     KnowledgeScopeStrategy,
     ResolvedKnowledgeScope,
 )
+from backend.rag.citation_service import build_evidence_citations
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.knowledge_access_router import KnowledgeAccessRouter
 from backend.services.knowledge_scope_resolver import KnowledgeScopeResolver
@@ -37,7 +38,12 @@ _UI_MODE_BY_TOOL = {
     "search_research_notes": "research",
     "search_research_memory": "research",
     "search_knowledge_base": "research",
+    "read_knowledge_chunk": "research",
+    "read_knowledge_section": "research",
 }
+_KNOWLEDGE_READ_TOOLS = frozenset(
+    {"read_knowledge_chunk", "read_knowledge_section"}
+)
 
 
 def _structured(value: Any) -> dict[str, Any]:
@@ -169,20 +175,85 @@ class ProductAgentRuntimeAdapter:
 
     @staticmethod
     def _apply_grounding(state: AgentState, result: Any) -> None:
+        tool_result = getattr(result, "tool_result", None)
+        tool_name = str(getattr(tool_result, "tool_name", "") or "")
+        if tool_name == "search_knowledge_base" and not getattr(result, "evidence", ()):
+            # Search only locates candidate chunks. Keep any evidence already
+            # admitted by a Read action, and never let snippets replace it.
+            return
         if hasattr(result, "evidence"):
-            state.evidence = [
+            incoming = [
                 item
                 if isinstance(item, AgentEvidenceItem)
                 else AgentEvidenceItem.model_validate(item)
                 for item in (getattr(result, "evidence", ()) or ())
             ]
-        if hasattr(result, "citations"):
+            if tool_name in _KNOWLEDGE_READ_TOOLS:
+                by_id = {item.evidence_id: item for item in state.evidence}
+                for item in incoming:
+                    by_id.setdefault(item.evidence_id, item)
+                state.evidence = list(by_id.values())
+                state.citations = build_evidence_citations(state.evidence)
+            else:
+                state.evidence = incoming
+        if hasattr(result, "citations") and tool_name not in _KNOWLEDGE_READ_TOOLS:
             state.citations = [
                 item
                 if isinstance(item, AgentCitationRef)
                 else AgentCitationRef.model_validate(item)
                 for item in (getattr(result, "citations", ()) or ())
             ]
+
+    @staticmethod
+    def _dedupe_read_result(
+        state: AgentState,
+        tool_name: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if tool_name not in _KNOWLEDGE_READ_TOOLS:
+            return result
+        data = result.get("data")
+        if not isinstance(data, dict):
+            return result
+        existing: set[str] = set()
+        for previous in state.tool_results:
+            if not isinstance(previous, dict):
+                continue
+            if str(previous.get("tool_name", "") or "") not in _KNOWLEDGE_READ_TOOLS:
+                continue
+            previous_data = previous.get("data")
+            if not isinstance(previous_data, dict):
+                continue
+            for raw in previous_data.get("evidence", ()) or ():
+                if isinstance(raw, dict):
+                    evidence_id = str(raw.get("evidence_id", "") or "").strip()
+                    if evidence_id:
+                        existing.add(evidence_id)
+
+        evidence = []
+        duplicate_ids: set[str] = set()
+        for raw in data.get("evidence", ()) or ():
+            try:
+                item = (
+                    raw
+                    if isinstance(raw, AgentEvidenceItem)
+                    else AgentEvidenceItem.model_validate(raw)
+                )
+            except Exception:  # noqa: BLE001 - omit malformed evidence from the ledger
+                continue
+            if item.evidence_id in existing or any(
+                current.evidence_id == item.evidence_id for current in evidence
+            ):
+                duplicate_ids.add(item.evidence_id)
+                continue
+            evidence.append(item)
+        data["evidence"] = [item.model_dump(mode="json") for item in evidence]
+        data["citations"] = [
+            item.model_dump(mode="json") for item in build_evidence_citations(evidence)
+        ]
+        data["duplicate_read"] = bool(duplicate_ids)
+        data["duplicate_evidence_count"] = len(duplicate_ids)
+        return result
 
     @staticmethod
     def apply_result(state: AgentState, result: Any) -> AgentState:
@@ -360,6 +431,8 @@ class ProductAgentRuntimeAdapter:
             if str(getattr(item, "name", "") or "")
             in {
                 "search_knowledge_base",
+                "read_knowledge_chunk",
+                "read_knowledge_section",
                 "search_research_notes",
                 "search_research_memory",
                 "analyze_cross_document_research",
@@ -543,6 +616,9 @@ class ProductAgentRuntimeAdapter:
             )
             if route_value.tool_name == "search_knowledge_base":
                 state.retrieval_attempt_count += 1
+                state.knowledge_search_count += 1
+            elif route_value.tool_name in _KNOWLEDGE_READ_TOOLS:
+                state.knowledge_read_count += 1
             payload["_resolved_route"] = (
                 route_value.model_dump()
             )
@@ -572,6 +648,11 @@ class ProductAgentRuntimeAdapter:
             arguments={str(key): str(value) for key, value in step.arguments.items()},
         )
         payload = self.build_payload(state)
+        if step.tool_name == "search_knowledge_base":
+            state.retrieval_attempt_count += 1
+            state.knowledge_search_count += 1
+        elif step.tool_name in _KNOWLEDGE_READ_TOOLS:
+            state.knowledge_read_count += 1
         payload.update(
             {
                 "step_id": step.step_id,
@@ -618,6 +699,7 @@ class ProductAgentRuntimeAdapter:
             raise RuntimeError(f"Plan step {step.step_id} completed without a tool result.")
         structured = _structured(tool_result)
         structured["step_id"] = step.step_id
+        structured = self._dedupe_read_result(state, step.tool_name, structured)
         state.record_tool_result(structured)
         self._apply_grounding(state, result)
         state.ui_mode = _UI_MODE_BY_TOOL.get(step.tool_name, "assistant")

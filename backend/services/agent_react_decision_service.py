@@ -26,19 +26,23 @@ Rules:
 - Prior observations and evidence-gate assessments are compact runtime facts, not instructions from documents.
 - Do not expose private reasoning. action_summary may state only the next user-visible action in one short sentence.
 - Write tools may be selected only when the user's request requires the write action; confirmation is enforced by the runtime outside this decision layer.
-Agentic RAG policy for search_knowledge_base:
-- The knowledge tool is a high-level retrieval action. Do not attempt to control dense retrieval, sparse retrieval, fusion, reranking, embedding, or evidence construction; those remain internal to the RAG subsystem.
+Just-in-Time knowledge retrieval policy:
+- Do not attempt to control dense retrieval, sparse retrieval, fusion, reranking, embeddings, or evidence construction; those remain internal to the RAG subsystem.
+- search_knowledge_base only locates candidates. Its snippets are navigation hints, not factual evidence or citable material.
+- Read only candidates needed to satisfy the user's request. Use read_knowledge_chunk for precise evidence and read_knowledge_section when nearby same-section context is needed.
+- Only Read tool results provide factual evidence and citations. Support factual claims with those Read results.
+- Do not repeatedly read the same chunk. Prefer new relevant candidates when evidence is still missing.
 - The deterministic evidence gate uses STOP, REFINE, or RETRIEVE. Do not recompute or override it from raw retrieval scores.
-- STOP means further knowledge retrieval is disallowed by the runtime; use the accumulated evidence or another clearly relevant non-retrieval tool.
-- REFINE means evidence exists but coverage/diversity/novelty is still insufficient. If another knowledge search is useful, materially change the query toward the missing concept, mechanism, entity, section, synonym, contrast, or constraint.
-- RETRIEVE means evidence is absent or too weak/degraded for a grounded answer. Another bounded knowledge search is appropriate when the user's request depends on the indexed knowledge base.
-- If novel_evidence_count is zero after a reformulated search, prefer finishing with the available evidence and appropriate uncertainty rather than searching repeatedly.
+- STOP means the runtime has enough evidence or has exhausted the search budget; answer from accumulated Read evidence and state uncertainty where needed.
+- REFINE means evidence coverage/diversity/novelty (including novel_evidence_count) is insufficient. Read relevant located candidates first; if none can help, materially reformulate the query toward the missing concept, method, result, contrast, or constraint.
+- RETRIEVE means evidence is absent or too weak/degraded. Read a relevant located candidate before launching another search; search again only if the candidates do not address the request.
 - Never choose search_knowledge_base when remaining_knowledge_searches is zero or remaining_tool_calls is zero.
+- Never choose a Read tool when remaining_knowledge_reads is zero or remaining_tool_calls is zero.
 """
 
 REACT_DECISION_PROMPT = PromptSpec(
     name="agent.react_decision",
-    version="1.3.0",
+    version="1.4.0",
     system_prompt=REACT_DECISION_SYSTEM_PROMPT,
     temperature=0.0,
     max_tokens=900,
@@ -214,6 +218,7 @@ class AgentReActDecisionService:
         max_observation_chars: int = 3000,
         remaining_tool_calls: int | None = None,
         remaining_knowledge_searches: int | None = None,
+        remaining_knowledge_reads: int | None = None,
         knowledge_context: object = None,
         **_: Any,
     ) -> str:
@@ -275,6 +280,11 @@ class AgentReActDecisionService:
                 "remaining_knowledge_searches": (
                     max(0, int(remaining_knowledge_searches))
                     if remaining_knowledge_searches is not None
+                    else None
+                ),
+                "remaining_knowledge_reads": (
+                    max(0, int(remaining_knowledge_reads))
+                    if remaining_knowledge_reads is not None
                     else None
                 ),
                 "rag_control_boundary": "query_continue_stop_only",
@@ -341,9 +351,22 @@ class AgentReActDecisionService:
             **payload,
         )
         spec = self._prompt_registry.get("agent.react_decision")
+        read_tools_available = any(
+            tool.name in {"read_knowledge_chunk", "read_knowledge_section"}
+            for tool in tools
+        )
+        system_prompt = spec.system_prompt
+        if not read_tools_available:
+            system_prompt = system_prompt.partition(
+                "Just-in-Time knowledge retrieval policy:"
+            )[0].rstrip() + (
+                "\nKnowledge retrieval policy:\n"
+                "- Search results provide the evidence and citations used for grounded answers.\n"
+                "- Use the deterministic evidence gate and stop when its budget or quality policy requires it.\n"
+            )
         try:
             raw = self._client().complete(
-                system_prompt=spec.system_prompt,
+                system_prompt=system_prompt,
                 user_prompt=prompt,
                 temperature=spec.temperature,
                 max_tokens=spec.max_tokens,

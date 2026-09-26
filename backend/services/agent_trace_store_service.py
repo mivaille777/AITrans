@@ -186,7 +186,13 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "react_started": frozenset(
-        {"max_iterations", "max_tool_calls", "max_knowledge_searches", "request_id"}
+        {
+            "max_iterations",
+            "max_tool_calls",
+            "max_knowledge_searches",
+            "max_knowledge_reads",
+            "request_id",
+        }
     ),
     "decision_ready": frozenset(
         {
@@ -207,6 +213,8 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "tool_result": frozenset(
         {
             "tool_name",
+            "output_chars",
+            "candidate_count",
             "effect",
             "provider",
             "model",
@@ -224,6 +232,7 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
             "evidence_count",
             "citation_count",
             "knowledge_search_count",
+            "knowledge_read_count",
             "query_fingerprint",
             "retrieval_strategy",
             "result_count",
@@ -246,16 +255,31 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
             "unique_location_count",
             "novel_evidence_count",
             "search_count",
+            "knowledge_search_count",
+            "knowledge_read_count",
             "remaining_searches",
             "retrieval_fallback",
             "reason_codes",
         }
     ),
     "evidence_sufficiency": frozenset(
-        {"sufficient", "reason", "missing_information", "search_count"}
+        {
+            "sufficient",
+            "reason",
+            "missing_information",
+            "search_count",
+            "knowledge_search_count",
+            "knowledge_read_count",
+        }
     ),
     "react_limit_reached": frozenset(
-        {"iteration", "tool_call_count", "knowledge_search_count", "reason"}
+        {
+            "iteration",
+            "tool_call_count",
+            "knowledge_search_count",
+            "knowledge_read_count",
+            "reason",
+        }
     ),
     "rag_query_started": frozenset({"query_id", "retrieval_strategy"}),
     "rag_query_rewritten": frozenset(

@@ -117,6 +117,7 @@ def test_registry_uses_dedicated_writing_owner_and_preserves_catalog_order() -> 
         translation_service=StubTranslationService(),
         quick_action_service=quick_action,
         research_note_service=StubResearchNoteService(),
+        jit_search_read_enabled=True,
     )
 
     assert [tool.name for tool in registry.list_tools()] == [
@@ -133,9 +134,11 @@ def test_registry_uses_dedicated_writing_owner_and_preserves_catalog_order() -> 
         "update_research_note",
         "define_terms",
         "analyze_equation",
-        "summarize_current_section",
-        "search_knowledge_base",
-        "save_knowledge_card",
+            "summarize_current_section",
+            "search_knowledge_base",
+            "read_knowledge_chunk",
+            "read_knowledge_section",
+            "save_knowledge_card",
     ]
 
     definition = registry.get_definition("polish_selection")
