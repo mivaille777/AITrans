@@ -150,19 +150,41 @@ function Test-HttpEndpoint {
 }
 
 function Get-SandboxRuntimeHealth {
-    try {
-        return Invoke-RestMethod -Uri $SandboxHealthUrl -TimeoutSec 3 -ErrorAction Stop
+    $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
+    $lastError = "No response was received."
+    $requestTimeoutSeconds = [Math]::Min(10, [Math]::Max(3, $StartupTimeoutSeconds))
+
+    while ((Get-Date) -lt $deadline) {
+        try {
+            return Invoke-RestMethod -Uri $SandboxHealthUrl -TimeoutSec $requestTimeoutSeconds -ErrorAction Stop
+        }
+        catch {
+            $statusCode = 0
+            if ($null -ne $_.Exception.Response) {
+                try {
+                    $statusCode = [int]$_.Exception.Response.StatusCode
+                }
+                catch {
+                    $statusCode = 0
+                }
+            }
+
+            if ($statusCode -eq 404) {
+                throw "The API at $ApiBaseUrl returned 404 for $SandboxHealthUrl. It is an older/different backend. Stop it or rerun with -ApiPort set to a free port (for example 8767)."
+            }
+
+            $lastError = $_.Exception.Message
+            if ((Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 500
+            }
+        }
     }
-    catch {
-        return $null
-    }
+
+    throw "Sandbox health check did not respond within $StartupTimeoutSeconds seconds at $SandboxHealthUrl. Last error: $lastError"
 }
 
 function Assert-SandboxBackendReady {
     $sandboxHealth = Get-SandboxRuntimeHealth
-    if ($null -eq $sandboxHealth) {
-        throw "Sandbox was requested, but the API at $ApiBaseUrl does not expose $SandboxHealthUrl. It is an older/different backend. Stop it or rerun with -ApiPort set to a free port (for example 8767)."
-    }
 
     if (-not $sandboxHealth.available) {
         $reason = if ($sandboxHealth.error_code) { $sandboxHealth.error_code } else { "runtime_unavailable" }
