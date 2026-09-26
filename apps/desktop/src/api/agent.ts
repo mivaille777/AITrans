@@ -191,6 +191,7 @@ export interface AgentRunRequest extends ReadingContextFields {
   style?: string
   conversation_id?: string
   workspace_id?: string
+  filesystem_workspace_id?: string
   confirmed_write_tools?: string[]
   enabled_tools?: string[]
   knowledge_document_ids?: string[]

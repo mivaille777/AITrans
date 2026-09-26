@@ -8,6 +8,8 @@ import type {
 export interface HealthResponse {
   status: "ok"
   service: string
+  /** Optional backend runtime override. Older backends may omit it. */
+  sandbox_enabled?: boolean
 }
 
 export interface TranslationRequest {

@@ -16,6 +16,7 @@ export interface BuildAgentRunRequestInput {
   targetLanguage: string
   conversationId: string
   workspaceId?: string
+  filesystemWorkspaceId?: string
   confirmedWriteTools?: string[]
   enabledTools?: string[]
   knowledgeDocumentIds?: string[]
@@ -42,6 +43,7 @@ export function buildAgentRunRequest({
   targetLanguage,
   conversationId,
   workspaceId = "",
+  filesystemWorkspaceId = "",
   confirmedWriteTools = [],
   enabledTools = [],
   knowledgeDocumentIds = [],
@@ -69,6 +71,7 @@ export function buildAgentRunRequest({
     style: "academic",
     conversation_id: conversationId,
     workspace_id: workspaceId,
+    filesystem_workspace_id: filesystemWorkspaceId,
     confirmed_write_tools: confirmedWriteTools,
     enabled_tools: enabledTools,
     knowledge_document_ids: knowledgeDocumentIds,

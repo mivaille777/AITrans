@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleHelp,
+  Box,
   Cpu,
   Database,
   ExternalLink,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useLocation, useNavigate } from "react-router-dom"
 
 import {
   getAvailableLlmModels,
@@ -39,6 +41,7 @@ import type { TranslationWorkspaceController } from "../translation/useTranslati
 import { LocalModelManager } from "./LocalModelManager"
 import { LlmProviderSettings } from "./LlmProviderSettings"
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
+import SandboxDebugStudio from "./SandboxDebugStudio"
 import { useLocalModels } from "./useLocalModels"
 
 import "./SettingsWorkspace.css"
@@ -53,6 +56,12 @@ type SettingsSectionId =
   | "advanced"
 
 type SettingsDrawer = "llm" | "browser" | "research-data" | "advanced" | null
+type SettingsStudio = "rag" | "sandbox" | null
+
+interface SettingsNavigationState {
+  studio?: "rag" | "sandbox"
+  sandboxId?: string
+}
 
 const settingsSections: Array<{
   id: SettingsSectionId
@@ -77,12 +86,15 @@ export default function SettingsWorkspace({
   workspace: TranslationWorkspaceController
 }) {
   const queryClient = useQueryClient()
+  const location = useLocation()
+  const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
   const sectionRefs = useRef<Partial<Record<SettingsSectionId, HTMLElement | null>>>({})
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general")
   const [drawer, setDrawer] = useState<SettingsDrawer>(null)
   const [notice, setNotice] = useState("")
-  const [showRagDebug, setShowRagDebug] = useState(false)
+  const [activeStudio, setActiveStudio] = useState<SettingsStudio>(null)
+  const [sandboxIntentId, setSandboxIntentId] = useState("")
   const [, setOverlayPreferences] = useState(readOverlayPreferences)
 
   const llmSettingsQuery = useQuery({
@@ -116,6 +128,39 @@ export default function SettingsWorkspace({
   })
 
   useEffect(() => subscribeOverlayPreferences(setOverlayPreferences), [])
+
+  /* oxlint-disable react-hooks/set-state-in-effect -- router state intentionally selects a debug studio */
+  useEffect(() => {
+    const navigationState = (location.state ?? null) as SettingsNavigationState | null
+    if (!navigationState?.studio) return
+
+    if (navigationState.studio === "rag") {
+      setActiveStudio("rag")
+    } else if (workspace.sandboxEnabled) {
+      setActiveStudio("sandbox")
+      setSandboxIntentId(navigationState.sandboxId?.trim() ?? "")
+    } else {
+      setActiveStudio(null)
+      setSandboxIntentId("")
+    }
+
+    navigate(
+      {
+        pathname: location.pathname,
+        search: location.search,
+        hash: location.hash,
+      },
+      { replace: true, state: null },
+    )
+  }, [
+    location.hash,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+    workspace.sandboxEnabled,
+  ])
+  /* oxlint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     const root = scrollRef.current
@@ -192,7 +237,7 @@ export default function SettingsWorkspace({
   const llmError = llmSettingsQuery.error ?? llmModelsQuery.error ?? modelMutation.error
 
   function scrollToSection(id: SettingsSectionId) {
-    setShowRagDebug(false)
+    setActiveStudio(null)
     sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" })
     setActiveSection(id)
   }
@@ -218,8 +263,8 @@ export default function SettingsWorkspace({
             <button
               key={id}
               type="button"
-               className={`ait-settings-nav-item${activeSection === id && !showRagDebug ? " is-active" : ""}`}
-               aria-current={activeSection === id && !showRagDebug ? "page" : undefined}
+               className={`ait-settings-nav-item${activeSection === id && activeStudio === null ? " is-active" : ""}`}
+               aria-current={activeSection === id && activeStudio === null ? "page" : undefined}
                onClick={() => scrollToSection(id)}
             >
               <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
@@ -232,14 +277,29 @@ export default function SettingsWorkspace({
            ))}
           <button
             type="button"
-            className={`ait-settings-nav-item${showRagDebug ? " is-active" : ""}`}
-            aria-current={showRagDebug ? "page" : undefined}
-            onClick={() => setShowRagDebug(true)}
+            className={`ait-settings-nav-item${activeStudio === "rag" ? " is-active" : ""}`}
+            aria-current={activeStudio === "rag" ? "page" : undefined}
+            onClick={() => setActiveStudio("rag")}
           >
             <FlaskConical size={18} strokeWidth={1.8} aria-hidden="true" />
             <span className="ait-settings-nav-item-copy">
               <strong>RAG Debug Studio</strong>
               <small>Trace retrieval runs</small>
+            </span>
+            <ChevronRight className="ait-settings-nav-item-arrow" size={15} strokeWidth={1.7} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`ait-settings-nav-item${activeStudio === "sandbox" ? " is-active" : ""}`}
+            aria-current={activeStudio === "sandbox" ? "page" : undefined}
+            disabled={!workspace.sandboxEnabled}
+            aria-disabled={!workspace.sandboxEnabled}
+            onClick={() => workspace.sandboxEnabled && setActiveStudio("sandbox")}
+          >
+            <Box size={18} strokeWidth={1.8} aria-hidden="true" />
+            <span className="ait-settings-nav-item-copy">
+              <strong>Sandbox Debug Studio</strong>
+              <small>{workspace.sandboxEnabled ? "Inspect isolated execution" : "Disabled by feature flag"}</small>
             </span>
             <ChevronRight className="ait-settings-nav-item-arrow" size={15} strokeWidth={1.7} aria-hidden="true" />
           </button>
@@ -256,7 +316,7 @@ export default function SettingsWorkspace({
           <span className="ait-settings-mantra">Your ideas stay with you.</span>
         </header>
 
-        <div className={showRagDebug ? "hidden" : "block"}>
+        <div className={activeStudio === null ? "block" : "hidden"}>
           <main className="ait-settings-content-body">
           <SettingsSection
             id="general"
@@ -399,9 +459,14 @@ export default function SettingsWorkspace({
           </SettingsSection>
           </main>
         </div>
-        <div className={showRagDebug ? "block h-full min-h-0" : "hidden"}>
+        <div className={activeStudio === "rag" ? "block h-full min-h-0" : "hidden"}>
           <RagDebugStudioTrace />
         </div>
+        {workspace.sandboxEnabled ? (
+          <div className={activeStudio === "sandbox" ? "block h-full min-h-0" : "hidden"}>
+            <SandboxDebugStudio initialSandboxId={sandboxIntentId} />
+          </div>
+        ) : null}
 
         <footer className="ait-settings-actions">
           <button type="button" className="ait-settings-secondary-button" onClick={resetDefaults}><RotateCcw size={14} /> Reset to defaults</button>

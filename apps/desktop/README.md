@@ -81,3 +81,17 @@ Browser selection
 Research Notes remain persisted by the existing SQLite `ResearchNoteStore`.
 
 The migration intentionally reuses established normalization, cache, provider, reading-context and research-note behavior under `app/` instead of duplicating those rules in the web client.
+
+
+## Sandbox feature flag
+
+Sandbox UI is enabled by default during frontend development.
+
+To disable the Sandbox Debug Studio and Agent filesystem workspace control at build time:
+
+```powershell
+$env:VITE_AITRANS_SANDBOX_ENABLED="false"
+npm run dev
+```
+
+The frontend build flag mirrors the backend `AITRANS_SANDBOX_ENABLED` switch from the Sandbox design. If the backend health response supplies `sandbox_enabled`, that runtime value takes precedence over the frontend build default. When disabled, Agent requests always use an empty `filesystem_workspace_id`.
