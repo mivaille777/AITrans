@@ -11,6 +11,7 @@ from backend.sandbox.errors import (
     SandboxImageMissingError,
 )
 from backend.sandbox.models import SandboxExecutionRequest
+from backend.sandbox.network_policy import NetworkPolicy
 from backend.sandbox.policy import SandboxPolicy
 from backend.sandbox.workspace import SandboxWorkspaceManager
 
@@ -132,6 +133,88 @@ def test_runtime_uses_no_network_and_removes_completed_container(tmp_path) -> No
         "sb_" + "1" * 32
     )
     assert container.removed is True
+
+
+def test_restricted_network_uses_internal_proxy_and_cleans_up(tmp_path) -> None:
+    class FakeNetwork:
+        name = "aitrans-egress-sb_test"
+
+        def __init__(self) -> None:
+            self.options = {}
+            self.removed = False
+
+        def connect(self, container) -> None:
+            container.attrs["NetworkSettings"] = {
+                "Networks": {self.name: {"IPAddress": "172.30.0.2"}}
+            }
+
+        def remove(self) -> None:
+            self.removed = True
+
+    class FakeProxyContainer(FakeContainer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attrs = {
+                "NetworkSettings": {"Networks": {}},
+                "State": {"Status": "created", "ExitCode": None, "OOMKilled": False},
+            }
+
+        def reload(self) -> None:
+            self.attrs["State"]["Status"] = "running"
+
+    class RestrictedClient(FakeDockerClient):
+        def __init__(self) -> None:
+            super().__init__(FakeContainer(timeout_after_polls=1))
+            self.proxy = FakeProxyContainer()
+            self.main_create_kwargs = None
+            self.proxy_create_kwargs = None
+            self.network = FakeNetwork()
+            self.networks = SimpleNamespace(create=self.create_network)
+            self.containers = SimpleNamespace(create=self.create_restricted)
+
+        def create_network(self, **kwargs):
+            self.network.options = kwargs
+            self.network.name = kwargs["name"]
+            return self.network
+
+        def create_restricted(self, **kwargs):
+            if kwargs["name"].startswith("aitrans-proxy-"):
+                self.proxy_create_kwargs = kwargs
+                return self.proxy
+            self.main_create_kwargs = kwargs
+            return self.container
+
+    client = RestrictedClient()
+    runtime = DockerSandboxRuntime(client=client)
+    request = SandboxExecutionRequest(
+        sandbox_id="sb_" + "e" * 32,
+        code="print('ok')",
+        network_policy=NetworkPolicy(
+            mode="restricted",
+            allowed_hosts=("pypi.org",),
+        ),
+    )
+
+    result = _execute(runtime, request, tmp_path)
+
+    assert result.status == "succeeded"
+    assert client.network.options["internal"] is True
+    assert client.proxy_create_kwargs["network_mode"] == "bridge"
+    assert client.proxy_create_kwargs["read_only"] is True
+    assert client.main_create_kwargs["network_mode"] == client.network.name
+    assert client.main_create_kwargs["environment"] == [
+        "HTTP_PROXY=http://172.30.0.2:8888",
+        "HTTPS_PROXY=http://172.30.0.2:8888",
+        "http_proxy=http://172.30.0.2:8888",
+        "https_proxy=http://172.30.0.2:8888",
+        "ALL_PROXY=",
+        "all_proxy=",
+        "NO_PROXY=",
+        "no_proxy=",
+    ]
+    assert client.proxy.removed is True
+    assert client.container.removed is True
+    assert client.network.removed is True
 
 
 def test_runtime_kills_timed_out_container_and_removes_it(tmp_path) -> None:

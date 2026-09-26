@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.sandbox.network_policy import DEFAULT_NETWORK_POLICY, NetworkPolicy
 from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
 
 
@@ -16,6 +17,9 @@ class SandboxModel(BaseModel):
 class SandboxExecutionRequest(SandboxModel):
     sandbox_id: str = Field(min_length=1, max_length=80)
     code: str = Field(min_length=1, max_length=50_000)
+    network_policy: NetworkPolicy = Field(
+        default_factory=lambda: DEFAULT_NETWORK_POLICY
+    )
 
 
 class SandboxOutputFile(SandboxModel):

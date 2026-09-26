@@ -15,6 +15,7 @@ from backend.sandbox.errors import (
     SandboxInvalidInputError,
 )
 from backend.sandbox.models import SandboxExecutionRequest, SandboxExecutionResult
+from backend.sandbox.network_policy import DEFAULT_NETWORK_POLICY, NetworkPolicy
 from backend.sandbox.runtime import SandboxRuntime
 from backend.sandbox.workspace import (
     MAX_SANDBOX_INPUT_FILES,
@@ -71,6 +72,7 @@ class SandboxManager:
         input_files: tuple[SandboxInputFile, ...] = (),
         workspace_write: bool = False,
         workspace_id: str = "",
+        network_policy: NetworkPolicy | None = None,
         sandbox_id: str | None = None,
         on_stage: Callable[[str, str, str], None] | None = None,
         cancel_event: Event | None = None,
@@ -85,6 +87,7 @@ class SandboxManager:
         request = SandboxExecutionRequest(
             sandbox_id=sandbox_id or f"sb_{uuid4().hex}",
             code=code,
+            network_policy=network_policy or DEFAULT_NETWORK_POLICY,
         )
         workspace = self._workspace_manager.create(request.sandbox_id)
         base_snapshot = None
@@ -120,9 +123,7 @@ class SandboxManager:
                     workspace_id,
                     modes=modes,
                 )
-                self._workspace_manager.copy_inputs_to_workspace(
-                    workspace, input_files
-                )
+                self._workspace_manager.copy_inputs_to_workspace(workspace, input_files)
             self._emit_stage(
                 on_stage,
                 "staging",
@@ -152,7 +153,11 @@ class SandboxManager:
                 raise SandboxExecutionError(
                     "Sandbox runtime returned a mismatched execution result."
                 )
-            if cancel_event is not None and cancel_event.is_set() and result.status != "cancelled":
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+                and result.status != "cancelled"
+            ):
                 result = result.model_copy(update={"status": "cancelled"})
             if base_snapshot is not None:
                 original_modes = {
@@ -171,29 +176,42 @@ class SandboxManager:
                 self._workspace_manager.store_workspace_changes(workspace, changeset)
                 result = result.model_copy(update={"workspace_changeset": changeset})
             if result.status == "cancelled":
-                self._emit_stage(on_stage, "collect", "skipped", "Run cancelled before output collection.")
+                self._emit_stage(
+                    on_stage,
+                    "collect",
+                    "skipped",
+                    "Run cancelled before output collection.",
+                )
                 return result
-            self._emit_stage(on_stage, "collect", "running", "Collecting bounded outputs.")
+            self._emit_stage(
+                on_stage, "collect", "running", "Collecting bounded outputs."
+            )
             output_files = self._workspace_manager.collect_outputs(workspace)
-            self._emit_stage(on_stage, "collect", "complete", "Outputs collected safely.")
+            self._emit_stage(
+                on_stage, "collect", "complete", "Outputs collected safely."
+            )
             return result.model_copy(update={"output_files": output_files})
         except SandboxError:
             raise
         except ValidationError as exc:
             raise SandboxInvalidInputError("Sandbox request is invalid.") from exc
         except Exception as exc:
-            raise SandboxExecutionError(
-                "Python sandbox execution failed."
-            ) from exc
+            raise SandboxExecutionError("Python sandbox execution failed.") from exc
         finally:
-            self._emit_stage(on_stage, "cleanup", "running", "Removing temporary host workspace.")
+            self._emit_stage(
+                on_stage, "cleanup", "running", "Removing temporary host workspace."
+            )
             try:
                 self._workspace_manager.cleanup(workspace)
             except Exception:
-                self._emit_stage(on_stage, "cleanup", "failed", "Temporary workspace cleanup failed.")
+                self._emit_stage(
+                    on_stage, "cleanup", "failed", "Temporary workspace cleanup failed."
+                )
                 raise
             else:
-                self._emit_stage(on_stage, "cleanup", "complete", "Temporary workspace removed.")
+                self._emit_stage(
+                    on_stage, "cleanup", "complete", "Temporary workspace removed."
+                )
 
     def _execute_runtime(
         self,
@@ -210,8 +228,7 @@ class SandboxManager:
         except (TypeError, ValueError):
             parameters = {}
         supports_kwargs = any(
-            item.kind is inspect.Parameter.VAR_KEYWORD
-            for item in parameters.values()
+            item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()
         )
         if "on_stage" in parameters or supports_kwargs:
             kwargs["on_stage"] = on_stage
@@ -223,11 +240,15 @@ class SandboxManager:
             result = execute(request, **kwargs)
         except Exception:
             if on_stage is not None and "on_stage" not in kwargs:
-                self._emit_stage(on_stage, "create", "failed", "Sandbox runtime failed.")
+                self._emit_stage(
+                    on_stage, "create", "failed", "Sandbox runtime failed."
+                )
             raise
         if on_stage is not None and "on_stage" not in kwargs:
             for key in ("create", "start", "execute"):
-                self._emit_stage(on_stage, key, "complete", "Runtime completed this stage.")
+                self._emit_stage(
+                    on_stage, key, "complete", "Runtime completed this stage."
+                )
         return result
 
     @staticmethod

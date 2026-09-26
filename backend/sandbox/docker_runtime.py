@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import queue
 import re
 import threading
@@ -30,6 +31,7 @@ from backend.sandbox.models import (
     SandboxExecutionResult,
     SandboxRuntimeHealth,
 )
+from backend.sandbox.network_proxy import build_proxy_server_code
 from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY, SandboxPolicy
 from backend.sandbox.workspace import SandboxWorkspace, docker_volume_bindings
 
@@ -186,6 +188,9 @@ class DockerSandboxRuntime:
         client = self._get_client()
         container_name = f"aitrans-sb-{request.sandbox_id}"
         container = None
+        proxy_container = None
+        proxy_network = None
+        proxy_address = ""
         output_client = None
         owns_output_client = False
         output_stream = None
@@ -205,7 +210,25 @@ class DockerSandboxRuntime:
         active_stage = ""
 
         try:
-            self._emit_stage(on_stage, "create", "running", "Creating isolated Docker container.")
+            if request.network_policy.mode == "restricted":
+                self._emit_stage(
+                    on_stage,
+                    "proxy",
+                    "running",
+                    "Starting an isolated exact-host egress proxy.",
+                )
+                proxy_network, proxy_container, proxy_address = (
+                    self._start_restricted_proxy(client, request)
+                )
+                self._emit_stage(
+                    on_stage,
+                    "proxy",
+                    "complete",
+                    "Restricted egress proxy is ready.",
+                )
+            self._emit_stage(
+                on_stage, "create", "running", "Creating isolated Docker container."
+            )
             active_stage = "create"
             try:
                 container = client.containers.create(
@@ -217,7 +240,16 @@ class DockerSandboxRuntime:
                         SANDBOX_ID_LABEL: request.sandbox_id,
                         RUNTIME_LABEL: "python",
                     },
-                    network_mode=self.policy.network_mode,
+                    network_mode=(
+                        str(proxy_network.name)
+                        if proxy_network is not None
+                        else self.policy.network_mode
+                    ),
+                    environment=(
+                        self._proxy_environment(proxy_address)
+                        if proxy_address
+                        else None
+                    ),
                     working_dir="/workspace",
                     volumes=docker_volume_bindings(workspace),
                     user=self.policy.user,
@@ -246,17 +278,31 @@ class DockerSandboxRuntime:
                     tty=False,
                 )
             except DockerException as exc:
-                self._emit_stage(on_stage, "create", "failed", "Docker container creation failed.")
+                self._emit_stage(
+                    on_stage, "create", "failed", "Docker container creation failed."
+                )
                 active_stage = ""
                 raise SandboxCreateError(
                     "Failed to create the Python sandbox container."
                 ) from exc
-            self._emit_stage(on_stage, "create", "complete", "Isolated Docker container created.")
+            self._emit_stage(
+                on_stage, "create", "complete", "Isolated Docker container created."
+            )
             active_stage = ""
 
             if cancel_event is not None and cancel_event.is_set():
-                self._emit_stage(on_stage, "start", "skipped", "Run cancelled before container start.")
-                self._emit_stage(on_stage, "execute", "skipped", "Run cancelled before Python execution.")
+                self._emit_stage(
+                    on_stage,
+                    "start",
+                    "skipped",
+                    "Run cancelled before container start.",
+                )
+                self._emit_stage(
+                    on_stage,
+                    "execute",
+                    "skipped",
+                    "Run cancelled before Python execution.",
+                )
                 return self._result_cancelled(request)
 
             try:
@@ -291,11 +337,23 @@ class DockerSandboxRuntime:
 
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
-                self._emit_stage(on_stage, "start", "skipped", "Run cancelled before container start.")
-                self._emit_stage(on_stage, "execute", "skipped", "Run cancelled before Python execution.")
+                self._emit_stage(
+                    on_stage,
+                    "start",
+                    "skipped",
+                    "Run cancelled before container start.",
+                )
+                self._emit_stage(
+                    on_stage,
+                    "execute",
+                    "skipped",
+                    "Run cancelled before Python execution.",
+                )
                 return self._result_cancelled(request)
 
-            self._emit_stage(on_stage, "start", "running", "Starting isolated container.")
+            self._emit_stage(
+                on_stage, "start", "running", "Starting isolated container."
+            )
             active_stage = "start"
             try:
                 container.start()
@@ -307,7 +365,12 @@ class DockerSandboxRuntime:
                 ) from exc
             self._emit_stage(on_stage, "start", "complete", "Container started.")
             active_stage = ""
-            self._emit_stage(on_stage, "execute", "running", "Running Python in the isolated container.")
+            self._emit_stage(
+                on_stage,
+                "execute",
+                "running",
+                "Running Python in the isolated container.",
+            )
             active_stage = "execute"
 
             deadline = time.monotonic() + self.timeout_seconds
@@ -436,7 +499,9 @@ class DockerSandboxRuntime:
                 on_stage,
                 "execute",
                 "complete",
-                "Python execution stopped after cancellation." if cancelled else "Python execution finished.",
+                "Python execution stopped after cancellation."
+                if cancelled
+                else "Python execution finished.",
             )
             active_stage = ""
 
@@ -469,9 +534,13 @@ class DockerSandboxRuntime:
         except BaseException as exc:
             primary_error = exc
             if active_stage:
-                self._emit_stage(on_stage, active_stage, "failed", "Sandbox runtime stage failed.")
+                self._emit_stage(
+                    on_stage, active_stage, "failed", "Sandbox runtime stage failed."
+                )
             raise
         finally:
+            cleanup_error: SandboxCleanupError | None = None
+            cleanup_cause: DockerException | None = None
             stop_reader.set()
             self._close_output_stream(output_stream)
             if reader_thread is not None:
@@ -488,11 +557,145 @@ class DockerSandboxRuntime:
                     cleanup_error = SandboxCleanupError(
                         "Failed to remove the Python sandbox container."
                     )
-                    if primary_error is not None:
-                        cleanup_error.add_note(
-                            f"Original sandbox failure: {type(primary_error).__name__}."
+                    cleanup_cause = exc
+            if proxy_container is not None:
+                try:
+                    proxy_container.remove(force=True)
+                except NotFound:
+                    pass
+                except DockerException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = SandboxCleanupError(
+                            "Failed to remove the sandbox egress proxy."
                         )
-                    raise cleanup_error from exc
+                        cleanup_cause = exc
+            if proxy_network is not None:
+                try:
+                    proxy_network.remove()
+                except NotFound:
+                    pass
+                except DockerException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = SandboxCleanupError(
+                            "Failed to remove the sandbox egress network."
+                        )
+                        cleanup_cause = exc
+            if cleanup_error is not None:
+                if primary_error is not None:
+                    cleanup_error.add_note(
+                        f"Original sandbox failure: {type(primary_error).__name__}."
+                    )
+                raise cleanup_error from cleanup_cause
+
+    def _start_restricted_proxy(
+        self,
+        client: Any,
+        request: SandboxExecutionRequest,
+    ) -> tuple[Any, Any, str]:
+        network = None
+        proxy = None
+        network_name = f"aitrans-egress-{request.sandbox_id}"
+        proxy_name = f"aitrans-proxy-{request.sandbox_id}"
+        try:
+            network = client.networks.create(
+                name=network_name,
+                driver="bridge",
+                internal=True,
+                labels={
+                    SANDBOX_LABEL: "true",
+                    SANDBOX_ID_LABEL: request.sandbox_id,
+                    RUNTIME_LABEL: "egress_network",
+                },
+            )
+            proxy = client.containers.create(
+                image=self.image,
+                command=[
+                    "python",
+                    "-c",
+                    build_proxy_server_code(request.network_policy),
+                ],
+                name=proxy_name,
+                labels={
+                    SANDBOX_LABEL: "true",
+                    SANDBOX_ID_LABEL: request.sandbox_id,
+                    RUNTIME_LABEL: "egress_proxy",
+                },
+                network_mode="bridge",
+                user=self.policy.user,
+                read_only=self.policy.read_only_rootfs,
+                cap_drop=list(self.policy.cap_drop),
+                security_opt=["no-new-privileges"],
+                privileged=False,
+                nano_cpus=min(self.policy.nano_cpus, 250_000_000),
+                mem_limit=min(self.policy.memory_limit_bytes, 128 * 1024 * 1024),
+                memswap_limit=min(self.policy.memory_limit_bytes, 128 * 1024 * 1024),
+                pids_limit=min(self.policy.pids_limit, 32),
+                ulimits=[
+                    Ulimit(
+                        name="nofile",
+                        soft=min(self.policy.nofile_limit, 128),
+                        hard=min(self.policy.nofile_limit, 128),
+                    )
+                ],
+                tmpfs={"/tmp": self.policy.tmpfs_options},
+                log_config=LogConfig(
+                    type="json-file",
+                    config={"max-size": "1m", "max-file": "1"},
+                ),
+                detach=True,
+                stdin_open=False,
+                tty=False,
+            )
+            proxy.start()
+            network.connect(proxy)
+            proxy.reload()
+            networks = (
+                (proxy.attrs or {}).get("NetworkSettings", {}).get("Networks", {})
+            )
+            details = networks.get(network_name, {})
+            address = str(details.get("IPAddress", "") or "")
+            parsed_address = ipaddress.ip_address(address)
+            if parsed_address.is_global:
+                raise SandboxCreateError(
+                    "Restricted proxy received an invalid internal network address."
+                )
+            return network, proxy, address
+        except SandboxCreateError:
+            raise
+        except DockerException as exc:
+            if proxy is not None:
+                with suppress(DockerException):
+                    proxy.remove(force=True)
+            if network is not None:
+                with suppress(DockerException):
+                    network.remove()
+            raise SandboxCreateError(
+                "Failed to start the restricted sandbox egress proxy."
+            ) from exc
+        except (AttributeError, KeyError, ValueError) as exc:
+            if proxy is not None:
+                with suppress(DockerException):
+                    proxy.remove(force=True)
+            if network is not None:
+                with suppress(DockerException):
+                    network.remove()
+            raise SandboxCreateError(
+                "Restricted sandbox egress proxy could not be configured safely."
+            ) from exc
+
+    @staticmethod
+    def _proxy_environment(address: str) -> list[str]:
+        endpoint = f"http://{address}:8888"
+        return [
+            f"HTTP_PROXY={endpoint}",
+            f"HTTPS_PROXY={endpoint}",
+            f"http_proxy={endpoint}",
+            f"https_proxy={endpoint}",
+            "ALL_PROXY=",
+            "all_proxy=",
+            "NO_PROXY=",
+            "no_proxy=",
+        ]
 
     @staticmethod
     def _result_cancelled(request: SandboxExecutionRequest) -> SandboxExecutionResult:
