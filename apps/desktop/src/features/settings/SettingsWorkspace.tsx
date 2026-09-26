@@ -22,7 +22,7 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useLocation } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 
 import {
   getAvailableLlmModels,
@@ -87,6 +87,7 @@ export default function SettingsWorkspace({
 }) {
   const queryClient = useQueryClient()
   const location = useLocation()
+  const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
   const sectionRefs = useRef<Partial<Record<SettingsSectionId, HTMLElement | null>>>({})
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general")
@@ -131,20 +132,34 @@ export default function SettingsWorkspace({
   /* oxlint-disable react-hooks/set-state-in-effect -- router state intentionally selects a debug studio */
   useEffect(() => {
     const navigationState = (location.state ?? null) as SettingsNavigationState | null
-    if (navigationState?.studio === "rag") {
+    if (!navigationState?.studio) return
+
+    if (navigationState.studio === "rag") {
       setActiveStudio("rag")
-      return
-    }
-    if (navigationState?.studio === "sandbox" && workspace.sandboxEnabled) {
+    } else if (workspace.sandboxEnabled) {
       setActiveStudio("sandbox")
       setSandboxIntentId(navigationState.sandboxId?.trim() ?? "")
-      return
-    }
-    if (navigationState?.studio === "sandbox" && !workspace.sandboxEnabled) {
+    } else {
       setActiveStudio(null)
       setSandboxIntentId("")
     }
-  }, [location.state, workspace.sandboxEnabled])
+
+    navigate(
+      {
+        pathname: location.pathname,
+        search: location.search,
+        hash: location.hash,
+      },
+      { replace: true, state: null },
+    )
+  }, [
+    location.hash,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+    workspace.sandboxEnabled,
+  ])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
