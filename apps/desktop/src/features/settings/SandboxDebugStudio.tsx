@@ -37,12 +37,14 @@ export default function SandboxDebugStudio() {
   const [activeTab, setActiveTab] = useState<SandboxDebugTab>("trace")
   const [visitedTabs, setVisitedTabs] = useState<Set<SandboxDebugTab>>(() => new Set(["trace"]))
 
+  /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
   useEffect(() => {
     setVisitedTabs((current) => {
       if (current.has(activeTab)) return current
       return new Set(current).add(activeTab)
     })
   }, [activeTab])
+  /* oxlint-enable react/set-state-in-effect */
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
