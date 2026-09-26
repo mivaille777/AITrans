@@ -28,6 +28,7 @@ const trace = {
     { sequence: 1, timestamp: "2026-09-26T10:24:01Z", kind: "file" as const, action: "read", target: "/input/data.csv", decision: "allowed" as const, reason: "" },
     { sequence: 2, timestamp: "2026-09-26T10:24:02Z", kind: "network" as const, action: "connect", target: "example.com:443", decision: "denied" as const, reason: "NETWORK_DISABLED" },
     { sequence: 3, timestamp: "2026-09-26T10:24:03Z", kind: "file" as const, action: "read", target: "C:\\Users\\someone\\.ssh\\id_rsa", decision: "denied" as const, reason: "PATH_OUTSIDE_WORKSPACE" },
+    { sequence: 4, timestamp: "2026-09-26T10:24:04Z", kind: "process" as const, action: "spawn", target: "python3", decision: "observed" as const, reason: "" },
   ],
   resources: [],
   policy: {
@@ -71,6 +72,14 @@ describe("SandboxDebugFilesystem", () => {
 
     expect(screen.queryByText("/input/data.csv")).toBeNull()
     expect(screen.getByText("example.com:443")).toBeTruthy()
+  })
+
+  it("filters process activity", () => {
+    render(<SandboxDebugFilesystem trace={trace} />)
+    fireEvent.click(screen.getByRole("button", { name: "Process" }))
+
+    expect(screen.getByText("python3")).toBeTruthy()
+    expect(screen.queryByText("/input/data.csv")).toBeNull()
   })
 
   it("never displays a Windows host path verbatim", () => {

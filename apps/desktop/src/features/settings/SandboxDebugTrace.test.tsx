@@ -144,6 +144,28 @@ describe("SandboxDebugTrace", () => {
     }))
   })
 
+  it("copies the Agent run id for reverse trace lookup", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({
+      sandbox_id: "sb-1",
+      run_id: "run-1",
+      status: "pending",
+    })
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace())
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    })
+
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", { name: "Run" }))
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy Run ID" })).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: "Copy Run ID" }))
+
+    expect(writeText).toHaveBeenCalledWith("run-1")
+  })
+
   it("renders runtime errors from a terminal trace", async () => {
     vi.mocked(startSandboxDebugRun).mockResolvedValue({
       sandbox_id: "sb-1",

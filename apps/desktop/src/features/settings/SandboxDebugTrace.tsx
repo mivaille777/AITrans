@@ -1,4 +1,4 @@
-import { AlertCircle, LoaderCircle, Play, Square } from "lucide-react"
+import { AlertCircle, Copy, LoaderCircle, Play, Square } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { listFilesystemWorkspaces, type FilesystemWorkspace } from "../../api/filesystem-workspaces"
@@ -280,7 +280,19 @@ export default function SandboxDebugTrace({
           {summaryItems.map(([label, value]) => (
             <div key={label} className="rounded-[10px] border border-slate-200 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
               <p className="text-[10px] font-medium uppercase tracking-[0.11em] text-slate-400">{label}</p>
-              <p className="mt-1 truncate text-[12px] font-medium text-slate-800" title={value}>{value}</p>
+              <div className="mt-1 flex min-w-0 items-center gap-2">
+                <p className="min-w-0 flex-1 truncate text-[12px] font-medium text-slate-800" title={value}>{value}</p>
+                {value !== "—" && (label === "Agent Run" || label === "Tool Call") ? (
+                  <button
+                    type="button"
+                    aria-label={label === "Agent Run" ? "Copy Run ID" : "Copy Tool Call ID"}
+                    onClick={() => void copyText(value)}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+                  >
+                    <Copy size={10} />
+                  </button>
+                ) : null}
+              </div>
             </div>
           ))}
         </section>
@@ -398,4 +410,9 @@ function createPendingTrace(
     output_files: [],
     error: "",
   }
+}
+
+async function copyText(value: string): Promise<void> {
+  if (typeof navigator === "undefined" || !navigator.clipboard) return
+  await navigator.clipboard.writeText(value)
 }

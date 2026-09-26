@@ -63,12 +63,20 @@ describe("SandboxDebugResources", () => {
     expect(screen.getByText("1.2 s / 30.0 s")).toBeTruthy()
   })
 
-  it("shows a warning surface near a resource limit", () => {
+  it("shows an amber warning near a resource limit", () => {
     render(<SandboxDebugResources trace={makeTrace({
       resources: [{ timestamp_ms: 0, cpu_percent: 85, memory_bytes: 480 * 1024 * 1024, pids: 60, stdout_bytes: 0, stderr_bytes: 0, output_bytes: 0 }],
     })} />)
 
-    expect(screen.getAllByText(/%|MB|\/ 64/).length).toBeGreaterThan(0)
+    expect(screen.getByText("480.0 MB / 512.0 MB").parentElement?.className).toContain("border-amber-200")
+  })
+
+  it("warns when stdout approaches its limit", () => {
+    render(<SandboxDebugResources trace={makeTrace({
+      resources: [{ timestamp_ms: 0, cpu_percent: 10, memory_bytes: 32 * 1024 * 1024, pids: 2, stdout_bytes: 900 * 1024, stderr_bytes: 0, output_bytes: 900 * 1024 }],
+    })} />)
+
+    expect(screen.getByText("900.0 KB / 1.0 MB").parentElement?.className).toContain("border-amber-200")
   })
 
   it("shows OOM termination explicitly", () => {
