@@ -39,6 +39,7 @@ from backend.services.research_workspace_service import ResearchWorkspaceService
 from backend.services.sandbox_approval_service import SandboxApprovalService
 from backend.services.sandbox_debug_service import SandboxDebugService
 from backend.services.translation_service import TranslationService
+from backend.services.workspace_apply_service import WorkspaceApplyService
 
 _translation_service: TranslationService | None = None
 _translation_service_lock = Lock()
@@ -72,6 +73,8 @@ _sandbox_debug_service: SandboxDebugService | None = None
 _sandbox_debug_service_lock = Lock()
 _sandbox_approval_service: SandboxApprovalService | None = None
 _sandbox_approval_service_lock = Lock()
+_workspace_apply_service: WorkspaceApplyService | None = None
+_workspace_apply_service_lock = Lock()
 _product_agent_service: ProductAgentService | None = None
 _product_agent_service_lock = Lock()
 _rag_debug_store_service: RagDebugStoreService | None = None
@@ -370,6 +373,25 @@ def close_sandbox_approval_service() -> None:
         _sandbox_approval_service = None
     if service is not None:
         service.close()
+
+
+def get_workspace_apply_service() -> WorkspaceApplyService:
+    global _workspace_apply_service
+    if _workspace_apply_service is not None:
+        return _workspace_apply_service
+    with _workspace_apply_service_lock:
+        if _workspace_apply_service is None:
+            _workspace_apply_service = WorkspaceApplyService(
+                get_filesystem_workspace_service(),
+                get_sandbox_approval_service(),
+            )
+        return _workspace_apply_service
+
+
+def close_workspace_apply_service() -> None:
+    global _workspace_apply_service
+    with _workspace_apply_service_lock:
+        _workspace_apply_service = None
 
 
 def get_sandbox_runtime_health() -> SandboxRuntimeHealth:

@@ -40,6 +40,7 @@ from backend.api.dependencies import (
     close_sandbox_approval_service,
     close_sandbox_debug_service,
     close_sandbox_manager,
+    close_workspace_apply_service,
 )
 from backend.api.evidence_ledger import router as evidence_ledger_router
 from backend.api.evidence_review import router as evidence_review_router
@@ -70,6 +71,7 @@ from backend.api.sandbox_approvals import router as sandbox_approvals_router
 from backend.api.sandbox_debug import router as sandbox_debug_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
+from backend.api.workspace_apply import router as workspace_apply_router
 from backend.api.writing import router as writing_router
 from backend.core.middleware import RequestLoggingMiddleware
 from backend.services.agent_run_worker import AgentRunWorker
@@ -141,6 +143,7 @@ async def lifespan(_: FastAPI):
         close_product_agent_service()
         close_agent_tool_registry()
         close_sandbox_debug_service()
+        close_workspace_apply_service()
         close_sandbox_approval_service()
         close_filesystem_workspace_service()
         close_sandbox_manager()
@@ -173,6 +176,7 @@ def create_app():
         agent_runtime_jobs_router,
         agent_runtime_canonical_router,
         filesystem_workspaces_router,
+        workspace_apply_router,
         sandbox_debug_router,
         sandbox_approvals_router,
         memory_router,
