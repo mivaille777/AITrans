@@ -7,15 +7,16 @@ function read(relativePath: string): string {
 }
 
 describe("overlay clear material contract", () => {
-  it("does not mutate the WebView2 background at runtime", () => {
+  it("keeps the runtime-agnostic overlay bridge free of Tauri APIs", () => {
     const source = read("./overlay-native-theme.ts")
 
-    expect(source).not.toContain("@tauri-apps/api/webview")
+    expect(source).not.toContain("@tauri-apps/")
     expect(source).not.toContain(".setBackgroundColor(")
+    expect(source).toContain("desktop.overlay.setVisualTheme(theme)")
   })
 
-  it("keeps the light DOM theme while disabling the opaque system backdrop", () => {
-    const source = read("./overlay-native-theme.ts")
+  it("keeps the Tauri light DOM theme while disabling the opaque system backdrop", () => {
+    const source = read("./tauri/tauri-adapter.ts")
 
     expect(source).toContain('const nativeTheme = "dark"')
     expect(source).toContain('{ theme: nativeTheme }')
