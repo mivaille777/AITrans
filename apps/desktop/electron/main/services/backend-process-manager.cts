@@ -2,9 +2,10 @@ import { app } from "electron"
 import {
   spawn,
   spawnSync,
-  type ChildProcessWithoutNullStreams,
+  type ChildProcessByStdio,
 } from "node:child_process"
 import path from "node:path"
+import type { Readable } from "node:stream"
 import { setTimeout as delay } from "node:timers/promises"
 
 export type BackendRuntimeState =
@@ -73,7 +74,7 @@ function developmentBackendLaunch(): {
 }
 
 export class BackendProcessManager {
-  private child: ChildProcessWithoutNullStreams | null = null
+  private child: ChildProcessByStdio<null, Readable, Readable> | null = null
   private owned = false
   private stopping = false
   private state: BackendRuntimeState = "stopped"
