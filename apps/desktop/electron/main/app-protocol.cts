@@ -70,7 +70,7 @@ function resolveRendererAsset(requestUrl: string): string | null {
 }
 
 export async function installAppProtocol(): Promise<void> {
-  await protocol.handle(APP_SCHEME, (request) => {
+  await protocol.handle(APP_SCHEME, async (request) => {
     const asset = resolveRendererAsset(request.url)
     if (!asset) {
       return new Response("Not Found", { status: 404 })
