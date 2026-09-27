@@ -1,5 +1,6 @@
 import { app, type BrowserWindow } from "electron"
 
+import { registerFileIpc } from "./ipc/file-ipc.cjs"
 import { registerMainWindowIpc } from "./ipc/window-ipc.cjs"
 import { createMainWindow } from "./window-manager.cjs"
 
@@ -18,6 +19,7 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
 }
 
 registerMainWindowIpc(() => mainWindow)
+registerFileIpc(() => mainWindow)
 
 void app.whenReady()
   .then(async () => {
