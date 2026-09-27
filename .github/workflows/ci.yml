@@ -278,6 +278,9 @@ jobs:
       - name: Compile Electron main and preload
         run: npm run electron:compile
 
+      - name: Smoke test Electron credential vault
+        run: node scripts/electron-credential-smoke.mjs
+
   tauri_shell:
     name: Tauri shell build
     runs-on: windows-latest
