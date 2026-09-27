@@ -20,6 +20,7 @@
 }
 
 .window-titlebar {
+  -webkit-app-region: drag;
   height: 44px;
   min-height: 44px;
   display:flex;
@@ -60,12 +61,14 @@
 .window-drag-space { flex:1; }
 
 .window-controls {
+  -webkit-app-region: no-drag;
   display:flex;
   align-items:center;
   gap:3px;
 }
 
 .window-controls button {
+  -webkit-app-region: no-drag;
   width:24px;
   height:24px;
   display:grid;
@@ -101,6 +104,7 @@
 }
 
 .window-content {
+  -webkit-app-region: no-drag;
   min-height:0;
   min-width:0;
   overflow:hidden;
