@@ -278,6 +278,9 @@ jobs:
       - name: Compile Electron main and preload
         run: npm run electron:compile
 
+      - name: Run Electron runtime and security contracts
+        run: npm run test:electron-contracts
+
       - name: Smoke test Electron credential vault
         run: node scripts/electron-credential-smoke.mjs
 
