@@ -6,6 +6,20 @@ export const APP_SCHEME = "aitrans"
 export const APP_HOST = "app"
 export const APP_ORIGIN = APP_SCHEME + "://" + APP_HOST
 
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "form-action 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "worker-src 'self' blob:",
+  "connect-src 'self' http://127.0.0.1:8765 http://localhost:8765 http://127.0.0.1:8766 http://localhost:8766",
+].join("; ")
+
 export function registerAppSchemePrivileges(): void {
   protocol.registerSchemesAsPrivileged([
     {
@@ -61,6 +75,15 @@ export async function installAppProtocol(): Promise<void> {
     if (!asset) {
       return new Response("Not Found", { status: 404 })
     }
-    return net.fetch(pathToFileURL(asset).toString())
+    const response = await net.fetch(pathToFileURL(asset).toString())
+    const headers = new Headers(response.headers)
+    headers.set("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    headers.set("X-Content-Type-Options", "nosniff")
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    })
   })
 }
