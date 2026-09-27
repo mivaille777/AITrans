@@ -252,6 +252,32 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+  electron_shell:
+    name: Electron shell compile
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci --no-audit --prefer-offline
+
+      - name: Compile Electron main and preload
+        run: npm run electron:compile
+
   tauri_shell:
     name: Tauri shell build
     runs-on: windows-latest
@@ -292,6 +318,7 @@ jobs:
       - python_compatibility
       - runtime_acceptance
       - web_frontend
+      - electron_shell
       - tauri_shell
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -306,6 +333,7 @@ jobs:
             ["Python compatibility (3.12)"]="${{ needs.python_compatibility.result }}"
             ["Agent Runtime v1 acceptance"]="${{ needs.runtime_acceptance.result }}"
             ["React lint, tests, and build"]="${{ needs.web_frontend.result }}"
+            ["Electron shell compile"]="${{ needs.electron_shell.result }}"
             ["Tauri shell build"]="${{ needs.tauri_shell.result }}"
           )
 
