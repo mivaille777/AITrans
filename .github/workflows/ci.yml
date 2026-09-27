@@ -6,10 +6,12 @@ on:
     branches:
       - main
       - WebReBuild
+      - electronrebuild
   push:
     branches:
       - main
       - WebReBuild
+      - electronrebuild
 
 permissions:
   contents: read
