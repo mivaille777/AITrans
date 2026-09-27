@@ -4,6 +4,23 @@ let browserWindowMaximized = false
 
 export const browserDesktopAdapter: DesktopAdapter = {
   runtime: "browser",
+  credentials: {
+    isAvailable() {
+      return false
+    },
+    async getStatus() {
+      return { configured: false }
+    },
+    async getPreview() {
+      return { configured: false, masked: "" }
+    },
+    async save() {
+      throw new Error("Credential storage requires the desktop app.")
+    },
+    async delete() {
+      throw new Error("Credential storage requires the desktop app.")
+    },
+  },
   files: {
     async pickKnowledgeDocument() {
       const path = window.prompt("Enter an absolute path to a local knowledge document:")
@@ -65,6 +82,15 @@ export const browserDesktopAdapter: DesktopAdapter = {
     },
     async setClickThrough() {
       // No-op outside a desktop runtime.
+    },
+    async startDragging() {
+      // Browser development mode cannot initiate a native window drag.
+    },
+    async setVisualTheme() {
+      // DOM theme handling remains available in browser development mode.
+    },
+    async onVisualThemeChanged() {
+      return () => undefined
     },
     async onMoved() {
       return () => undefined
