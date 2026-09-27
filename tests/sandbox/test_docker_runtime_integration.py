@@ -284,6 +284,9 @@ def test_memory_limit_is_reported_as_oom(
             memory_swap_limit_bytes=memory_limit,
         )
     )
+    health = memory_runtime.health()
+    if not health.available:
+        pytest.skip(f"Docker sandbox unavailable: {health.error_code}")
     code = "blocks = []\nwhile True:\n    blocks.append(bytearray(20 * 1024 * 1024))\n"
     result = _execute(memory_runtime, tmp_path, code)
 
