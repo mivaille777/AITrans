@@ -10,9 +10,9 @@ describe("Electron desktop window contract", () => {
   it("marks only the titlebar as draggable and keeps controls interactive", () => {
     const css = read("../../components/WindowFrame.css")
 
-    expect(css).toContain(".window-titlebar {\n  -webkit-app-region: drag;")
-    expect(css).toContain(".window-controls {\n  -webkit-app-region: no-drag;")
-    expect(css).toContain(".window-controls button {\n  -webkit-app-region: no-drag;")
+    expect(css).toMatch(/\.window-titlebar\s*\{\s*-webkit-app-region:\s*drag;/)
+    expect(css).toMatch(/\.window-controls\s*\{\s*-webkit-app-region:\s*no-drag;/)
+    expect(css).toMatch(/\.window-controls button\s*\{\s*-webkit-app-region:\s*no-drag;/)
   })
 
   it("keeps the Tauri drag-region attributes during the dual-runtime phase", () => {
