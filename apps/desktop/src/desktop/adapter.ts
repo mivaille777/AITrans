@@ -1,5 +1,7 @@
 export type DesktopRuntime = "browser" | "tauri" | "electron"
 
+export type DesktopOverlayTheme = "light" | "dark"
+
 export type OverlayPositionMode =
   | "mouse_follow"
   | "desktop_lyrics_bottom"
@@ -50,6 +52,22 @@ export interface DesktopFilesAdapter {
   openEvidenceSource(resourceUrl: string): Promise<void>
 }
 
+export interface DesktopCredentialStatus {
+  configured: boolean
+}
+
+export interface DesktopCredentialPreview extends DesktopCredentialStatus {
+  masked: string
+}
+
+export interface DesktopCredentialAdapter {
+  isAvailable(): boolean
+  getStatus(provider: string): Promise<DesktopCredentialStatus>
+  getPreview(provider: string): Promise<DesktopCredentialPreview>
+  save(provider: string, apiKey: string): Promise<void>
+  delete(provider: string): Promise<void>
+}
+
 export interface OverlayWindowAdapter extends WindowAdapter {
   place(
     mode: OverlayPositionMode,
@@ -59,6 +77,11 @@ export interface OverlayWindowAdapter extends WindowAdapter {
   getPosition(): Promise<DesktopPoint | null>
   setAlwaysOnTop(enabled: boolean): Promise<void>
   setClickThrough(enabled: boolean): Promise<void>
+  startDragging(): Promise<void>
+  setVisualTheme(theme: DesktopOverlayTheme): Promise<void>
+  onVisualThemeChanged(
+    callback: (theme: DesktopOverlayTheme) => void,
+  ): Promise<() => void>
   onMoved(callback: (position: DesktopPoint) => void): Promise<() => void>
   notifyStateChanged(contextId?: string): Promise<void>
   onStateChanged(callback: (contextId: string) => void): Promise<() => void>
@@ -79,4 +102,5 @@ export interface DesktopAdapter {
   readonly window: DesktopWindowAdapter
   readonly overlay: OverlayWindowAdapter
   readonly files: DesktopFilesAdapter
+  readonly credentials: DesktopCredentialAdapter
 }
