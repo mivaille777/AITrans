@@ -1,0 +1,52 @@
+name: Electron dependency bootstrap
+
+on:
+  push:
+    branches:
+      - electronrebuild
+    paths:
+      - docs/electron-migration/bootstrap-electron.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out electron rebuild branch
+        uses: actions/checkout@v6
+        with:
+          ref: electronrebuild
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Generate Electron dependency lockfile
+        working-directory: apps/desktop
+        shell: pwsh
+        run: >-
+          npm install
+          --save-dev
+          --package-lock-only
+          --ignore-scripts
+          --no-audit
+          --no-fund
+          electron@44.4.5
+          @electron-forge/cli@7.11.2
+
+      - name: Commit dependency metadata
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/package.json apps/desktop/package-lock.json
+          if (git diff --cached --quiet) {
+            Write-Host "Dependency metadata already matches the requested versions."
+            exit 0
+          }
+          git commit -m "build(electron): add electron and forge dependencies"
+          git push origin HEAD:electronrebuild
