@@ -30,13 +30,7 @@ import {
   type LlmProviderOption,
   type LlmSettings,
 } from "../../api/llm-settings"
-import {
-  deleteLlmCredential,
-  getLlmCredentialPreview,
-  getLlmCredentialStatus,
-  hasTauriCredentialVault,
-  saveLlmCredential,
-} from "../../desktop/tauri/llm-credential-vault"
+import { desktop } from "../../desktop"
 
 import "./LlmProviderSettings.css"
 
@@ -116,16 +110,16 @@ function LlmProviderSettingsForm({ settings, onClose }: { settings: LlmSettings;
   const [connectionTested, setConnectionTested] = useState(false)
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null)
   const [isTesting, setIsTesting] = useState(false)
-  const desktopVaultAvailable = hasTauriCredentialVault()
+  const desktopVaultAvailable = desktop.credentials.isAvailable()
 
   const credentialQuery = useQuery({
     queryKey: ["settings", "llm", "credential", draft.provider],
-    queryFn: () => getLlmCredentialStatus(draft.provider),
+    queryFn: () => desktop.credentials.getStatus(draft.provider),
     enabled: desktopVaultAvailable,
   })
   const credentialPreviewQuery = useQuery({
     queryKey: ["settings", "llm", "credential-preview", draft.provider],
-    queryFn: () => getLlmCredentialPreview(draft.provider),
+    queryFn: () => desktop.credentials.getPreview(draft.provider),
     enabled: desktopVaultAvailable,
   })
 
@@ -146,11 +140,11 @@ function LlmProviderSettingsForm({ settings, onClose }: { settings: LlmSettings;
       })
 
       if (clearApiKey) {
-        if (!desktopVaultAvailable) throw new Error("API key can only be managed in the Tauri desktop app.")
-        await deleteLlmCredential(current.provider)
+        if (!desktopVaultAvailable) throw new Error("API key can only be managed in the desktop app.")
+        await desktop.credentials.delete(current.provider)
       } else if (current.apiKey.trim()) {
         if (!desktopVaultAvailable) throw new Error("API key can only be managed in the Tauri desktop app.")
-        await saveLlmCredential(current.provider, current.apiKey.trim())
+        await desktop.credentials.save(current.provider, current.apiKey.trim())
       }
 
       return nextSettings
@@ -177,11 +171,11 @@ function LlmProviderSettingsForm({ settings, onClose }: { settings: LlmSettings;
   const savedDraft = draft.provider === settings.provider && draft.baseUrl.trim() === settings.base_url.trim()
   const error = errorMessage(mutation.error) ?? errorMessage(credentialQuery.error)
   const storageLabel = !desktopVaultAvailable
-    ? "Open the Tauri desktop app to manage API keys"
+    ? "Open the desktop app to manage API keys"
     : credentialQuery.isPending
-      ? "Checking Windows Credential Manager…"
+      ? "Checking Desktop Credential Vault…"
       : configured
-        ? "Saved in Windows Credential Manager"
+        ? "Saved in Desktop Credential Vault"
         : "No API key saved"
 
   const modelOptions = useMemo(() => {
