@@ -1,26 +1,13 @@
 import {
   ipcMain,
   type BrowserWindow,
-  type IpcMainInvokeEvent,
 } from "electron"
 
 import { IPC_CHANNELS } from "../../shared/channels.cjs"
-
-type MainWindowResolver = () => BrowserWindow | null
-
-function authorizedMainWindow(
-  event: IpcMainInvokeEvent,
-  resolveMainWindow: MainWindowResolver,
-): BrowserWindow {
-  const mainWindow = resolveMainWindow()
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    throw new Error("AITrans main window is unavailable.")
-  }
-  if (event.sender !== mainWindow.webContents) {
-    throw new Error("Unauthorized desktop IPC sender.")
-  }
-  return mainWindow
-}
+import {
+  authorizedMainWindow,
+  type MainWindowResolver,
+} from "./ipc-auth.cjs"
 
 export function registerMainWindowIpc(
   resolveMainWindow: MainWindowResolver,
