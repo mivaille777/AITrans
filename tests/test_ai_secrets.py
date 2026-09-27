@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from app.ai.errors import AIConfigurationError
-from app.ai.secrets import ProviderCredentialStore, get_provider_api_key
+from app.ai.secrets import (
+    ProviderCredentialStore,
+    _decode_credential_blob,
+    get_provider_api_key,
+)
 
 
 class NotFoundError(Exception):
@@ -91,3 +95,12 @@ def test_missing_provider_credential_raises_configuration_error() -> None:
             "openai_compatible",
             credential_store=store,
         )
+
+
+def test_credential_blob_decodes_tauri_utf8_bytes() -> None:
+    assert _decode_credential_blob(b"sk-tauri-utf8") == "sk-tauri-utf8"
+
+
+def test_credential_blob_decodes_windows_utf16_bytes() -> None:
+    value = "sk-windows-utf16".encode("utf-16-le")
+    assert _decode_credential_blob(value) == "sk-windows-utf16"

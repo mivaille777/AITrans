@@ -2,10 +2,6 @@ import { contextBridge, ipcRenderer } from "electron"
 
 import { IPC_CHANNELS } from "../shared/channels.cjs"
 
-function unavailable(capability: string): never {
-  throw new Error(`${capability} is not available in the Stage 2 Electron shell yet.`)
-}
-
 const api = {
   window: {
     show: () => ipcRenderer.invoke(IPC_CHANNELS.windowShow),
@@ -27,10 +23,14 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.filesOpenEvidenceSource, resourceUrl),
   },
   credentials: {
-    getStatus: async () => ({ configured: false }),
-    getPreview: async () => ({ configured: false, masked: "" }),
-    save: async () => unavailable("Credential storage"),
-    delete: async () => unavailable("Credential storage"),
+    getStatus: (provider: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.credentialsStatus, provider) as Promise<{ configured: boolean }>,
+    getPreview: (provider: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.credentialsPreview, provider) as Promise<{ configured: boolean; masked: string }>,
+    save: (provider: string, apiKey: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.credentialsSave, provider, apiKey),
+    delete: (provider: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.credentialsDelete, provider),
   },
   overlay: {
     show: async () => undefined,

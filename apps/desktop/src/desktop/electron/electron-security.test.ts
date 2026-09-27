@@ -32,6 +32,8 @@ describe("Electron security baseline", () => {
     expect(source).toContain('"aitrans:window:toggle-maximize"')
     expect(source).toContain('"aitrans:files:pick-agent-workspace"')
     expect(source).toContain('"aitrans:files:open-evidence-source"')
+    expect(source).toContain('"aitrans:credentials:save"')
+    expect(source).toContain('"aitrans:credentials:delete"')
     expect(source).not.toContain("aitrans:exec")
     expect(source).not.toContain("aitrans:fs")
     expect(source).not.toContain("aitrans:shell")

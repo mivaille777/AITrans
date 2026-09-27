@@ -52,13 +52,13 @@ def _decode_credential_blob(value: object) -> str:
         if not value:
             return ""
         try:
-            decoded = value.decode("utf-16-le")
+            decoded = value.decode("utf-8")
             if "\x00" not in decoded:
                 return decoded.rstrip("\x00")
         except UnicodeDecodeError:
             pass
         try:
-            return value.decode("utf-8").rstrip("\x00")
+            return value.decode("utf-16-le").rstrip("\x00")
         except UnicodeDecodeError as exc:
             raise AIConfigurationError(
                 "Stored AI credential could not be decoded."
