@@ -18,6 +18,17 @@ describe("Electron production protocol contract", () => {
     expect(source).not.toContain("bypassCSP: true")
   })
 
+  it("enforces a production CSP for local renderer assets", () => {
+    const source = read("../../../electron/main/app-protocol.cts")
+
+    expect(source).toContain("Content-Security-Policy")
+    expect(source).toContain("default-src 'self'")
+    expect(source).toContain("object-src 'none'")
+    expect(source).toContain("script-src 'self'")
+    expect(source).toContain("http://127.0.0.1:8766")
+    expect(source).toContain("X-Content-Type-Options")
+  })
+
   it("guards renderer assets against path traversal", () => {
     const source = read("../../../electron/main/app-protocol.cts")
 
