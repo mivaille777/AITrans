@@ -24,7 +24,6 @@ $source = @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 
 public static class AITransCredentialManager
@@ -38,7 +37,7 @@ public static class AITransCredentialManager
         public string TargetName;
         [MarshalAs(UnmanagedType.LPWStr)]
         public string Comment;
-        public FILETIME LastWritten;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
         public UInt32 CredentialBlobSize;
         public IntPtr CredentialBlob;
         public UInt32 Persist;
