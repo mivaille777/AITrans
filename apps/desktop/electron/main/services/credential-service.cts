@@ -17,7 +17,7 @@ const SUPPORTED_PROVIDERS = new Set([
   "openai_compatible",
 ])
 
-const WINDOWS_CREDENTIAL_SCRIPT = String.raw\`
+const WINDOWS_CREDENTIAL_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
 
 $source = @'
@@ -202,7 +202,7 @@ catch {
     [Console]::Out.Write((@{ ok = $false; error = $message } | ConvertTo-Json -Compress))
     exit 1
 }
-\`
+`
 
 type CredentialAction = "status" | "read" | "save" | "delete"
 
@@ -237,7 +237,7 @@ export function normalizeCredentialProvider(provider: string): string {
 }
 
 function credentialTarget(provider: string): string {
-  return \`\${CREDENTIAL_TARGET_PREFIX}/\${normalizeCredentialProvider(provider)}\`
+  return `${CREDENTIAL_TARGET_PREFIX}/${normalizeCredentialProvider(provider)}`
 }
 
 export function decodeCredentialBlob(blob: string): string {
@@ -262,7 +262,7 @@ function maskCredential(secret: string): string {
 
   const suffix = characters.slice(-4).join("")
   const hiddenCount = Math.min(12, Math.max(4, characters.length - suffix.length))
-  return \`\${"•".repeat(hiddenCount)}\${suffix} · \${characters.length} chars\`
+  return `${"•".repeat(hiddenCount)}${suffix} · ${characters.length} chars`
 }
 
 function runWindowsCredentialHelper(
