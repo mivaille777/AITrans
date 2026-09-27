@@ -18,7 +18,11 @@
     "backend:dev": "cd ../.. && python -m backend",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "electron:compile": "tsc -p tsconfig.electron.json",
+    "electron:dev": "node scripts/electron-dev.mjs",
+    "electron:build": "npm run build && npm run electron:compile",
+    "electron:start": "electron ."
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -49,5 +53,6 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.11"
-  }
+  },
+  "main": "dist-electron/main/index.cjs"
 }
