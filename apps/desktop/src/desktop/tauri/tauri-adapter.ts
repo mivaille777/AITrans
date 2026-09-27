@@ -337,7 +337,8 @@ export const tauriDesktopAdapter: DesktopAdapter = {
     },
     async setVisualTheme(theme) {
       await enforceOverlayBorderlessNativeFrame()
-      await invoke("set_overlay_visual_theme", { theme: "dark" })
+      const nativeTheme = "dark"
+      await invoke("set_overlay_visual_theme", { theme: nativeTheme })
       await recoverOverlayTransparentSurface()
       await emitTo("overlay", OVERLAY_VISUAL_THEME_CHANGED_EVENT, { theme })
     },
