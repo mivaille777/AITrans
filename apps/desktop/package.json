@@ -22,7 +22,8 @@
     "electron:compile": "tsc -p tsconfig.electron.json",
     "electron:dev": "node scripts/electron-dev.mjs",
     "electron:build": "npm run build && npm run electron:compile",
-    "electron:start": "electron ."
+    "electron:start": "electron .",
+    "test:electron-contracts": "vitest run src/desktop/electron src/desktop/runtime-selection.test.ts && npm run typecheck:test"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
