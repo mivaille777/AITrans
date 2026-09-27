@@ -1,3 +1,4 @@
+import { PhysicalSize } from "@tauri-apps/api/dpi"
 import { invoke } from "@tauri-apps/api/core"
 import { emitTo, listen } from "@tauri-apps/api/event"
 import {
@@ -21,6 +22,7 @@ import type {
 import { computeOverlayPosition } from "../overlay-positioning"
 
 const OVERLAY_STATE_CHANGED_EVENT = "aitrans-overlay-state-changed"
+const OVERLAY_VISUAL_THEME_CHANGED_EVENT = "aitrans-overlay-visual-theme-changed"
 const COMPANION_NAVIGATION_EVENT = "aitrans-companion-navigation"
 const COMPANION_CONVERSATION_CHANGED_EVENT = "aitrans-companion-conversation-changed"
 const OVERLAY_INTERACTIVE_DATASET_KEY = "aitOverlayInteractive"
@@ -73,6 +75,25 @@ async function updateOverlayWindowShape(): Promise<void> {
   } catch {
     // The browser adapter and a reloading Tauri shell can briefly lack the native window.
   }
+}
+
+async function enforceOverlayBorderlessNativeFrame(): Promise<void> {
+  await invoke("enforce_overlay_borderless")
+}
+
+async function refreshOverlayTransparentComposition(): Promise<void> {
+  const currentWindow = getCurrentWindow()
+  const size = await currentWindow.outerSize()
+  if (size.width < 1 || size.height < 1) return
+
+  await currentWindow.setSize(new PhysicalSize(size.width, size.height + 1))
+  await currentWindow.setSize(new PhysicalSize(size.width, size.height))
+}
+
+async function recoverOverlayTransparentSurface(): Promise<void> {
+  await enforceOverlayBorderlessNativeFrame()
+  await refreshOverlayTransparentComposition()
+  await enforceOverlayBorderlessNativeFrame()
 }
 
 async function keepOverlayInsideWorkArea(overlay: TauriWindow): Promise<void> {
@@ -219,6 +240,25 @@ async function invokeWindowControl<T>(command: string): Promise<T> {
 
 export const tauriDesktopAdapter: DesktopAdapter = {
   runtime: "tauri",
+  credentials: {
+    isAvailable() {
+      return true
+    },
+    async getStatus(provider) {
+      const configured = await invoke<boolean>("get_llm_credential_status", { provider })
+      return { configured }
+    },
+    async getPreview(provider) {
+      const masked = await invoke<string>("get_llm_credential_preview", { provider })
+      return { configured: Boolean(masked), masked }
+    },
+    async save(provider, apiKey) {
+      await invoke("save_llm_credential", { provider, apiKey })
+    },
+    async delete(provider) {
+      await invoke("delete_llm_credential", { provider })
+    },
+  },
   files: {
     async pickKnowledgeDocument() {
       return invoke<string | null>("pick_knowledge_document")
@@ -289,6 +329,23 @@ export const tauriDesktopAdapter: DesktopAdapter = {
       const overlay = await getOverlayWindow()
       const effectiveClickThrough = enabled && !overlayRequiresPointerInteraction()
       await overlay?.setIgnoreCursorEvents(effectiveClickThrough)
+    },
+    async startDragging() {
+      await enforceOverlayBorderlessNativeFrame()
+      await getCurrentWindow().startDragging()
+      await recoverOverlayTransparentSurface()
+    },
+    async setVisualTheme(theme) {
+      await enforceOverlayBorderlessNativeFrame()
+      await invoke("set_overlay_visual_theme", { theme: "dark" })
+      await recoverOverlayTransparentSurface()
+      await emitTo("overlay", OVERLAY_VISUAL_THEME_CHANGED_EVENT, { theme })
+    },
+    async onVisualThemeChanged(callback) {
+      return listen<{ theme?: string }>(OVERLAY_VISUAL_THEME_CHANGED_EVENT, (event) => {
+        const theme = event.payload?.theme
+        if (theme === "light" || theme === "dark") callback(theme)
+      })
     },
     async onMoved(callback) {
       const overlay = await getOverlayWindow()
