@@ -20,7 +20,7 @@ export default function WindowFrame({ children }: { children: ReactNode }) {
         if (mounted) setIsMaximized(maximized)
       })
       .catch(() => {
-        // The browser adapter and a reloading Tauri shell may not expose native state.
+        // Browser development and a reloading desktop shell may not expose native state.
       })
 
     return () => {
