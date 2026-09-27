@@ -1,4 +1,6 @@
-import { app, BrowserWindow } from "electron"
+import { BrowserWindow } from "electron"
+
+import { APP_ORIGIN } from "./app-protocol.cjs"
 import path from "node:path"
 
 const DEVELOPMENT_RENDERER_URL_ENV = "AITRANS_RENDERER_URL"
@@ -16,7 +18,7 @@ function isAllowedNavigation(targetUrl: string, developmentUrl: string | null): 
       return false
     }
   }
-  return targetUrl.startsWith("file:")
+  return targetUrl.startsWith(APP_ORIGIN + "/")
 }
 
 export async function createMainWindow(): Promise<BrowserWindow> {
@@ -60,7 +62,7 @@ export async function createMainWindow(): Promise<BrowserWindow> {
   if (developmentUrl) {
     await window.loadURL(developmentUrl)
   } else {
-    await window.loadFile(path.join(app.getAppPath(), "dist", "index.html"))
+    await window.loadURL(APP_ORIGIN + "/index.html")
   }
 
   return window

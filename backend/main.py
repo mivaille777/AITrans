@@ -82,6 +82,7 @@ DEV_ORIGINS = [
     "tauri://localhost",
     "http://tauri.localhost",
     "https://tauri.localhost",
+    "aitrans://app",
 ]
 
 DEFAULT_API_HOST = "127.0.0.1"

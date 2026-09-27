@@ -14,6 +14,7 @@ describe("Electron security baseline", () => {
     expect(source).toContain("contextIsolation: true")
     expect(source).toContain("sandbox: true")
     expect(source).toContain("webSecurity: true")
+    expect(source).toContain('APP_ORIGIN + "/index.html"')
   })
 
   it("exposes a named preload API instead of raw ipcRenderer", () => {

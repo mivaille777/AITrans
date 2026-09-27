@@ -1,4 +1,6 @@
-import { app, BrowserWindow, screen } from "electron"
+import { BrowserWindow, screen } from "electron"
+
+import { APP_ORIGIN } from "./app-protocol.cjs"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 
@@ -34,7 +36,7 @@ function isAllowedNavigation(targetUrl: string, developmentUrl: string | null): 
       return false
     }
   }
-  return targetUrl.startsWith("file:")
+  return targetUrl.startsWith(APP_ORIGIN + "/")
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -107,7 +109,7 @@ export class OverlayManager {
       const base = developmentUrl.endsWith("/") ? developmentUrl : developmentUrl + "/"
       await window.loadURL(new URL("overlay.html", base).toString())
     } else {
-      await window.loadFile(path.join(app.getAppPath(), "dist", "overlay.html"))
+      await window.loadURL(APP_ORIGIN + "/overlay.html")
     }
 
     this.window = window

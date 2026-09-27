@@ -1,5 +1,6 @@
 import { app, type BrowserWindow } from "electron"
 
+import { registerAppSchemePrivileges, installAppProtocol } from "./app-protocol.cjs"
 import { registerCredentialIpc } from "./ipc/credential-ipc.cjs"
 import { registerFileIpc } from "./ipc/file-ipc.cjs"
 import { registerMainWindowIpc } from "./ipc/window-ipc.cjs"
@@ -7,6 +8,8 @@ import { registerOverlayIpc } from "./ipc/overlay-ipc.cjs"
 import { OverlayManager } from "./overlay-manager.cjs"
 import { BackendProcessManager } from "./services/backend-process-manager.cjs"
 import { createMainWindow } from "./window-manager.cjs"
+
+registerAppSchemePrivileges()
 
 let mainWindow: BrowserWindow | null = null
 const overlayManager = new OverlayManager()
@@ -36,6 +39,8 @@ registerOverlayIpc(
 
 void app.whenReady()
   .then(async () => {
+    await installAppProtocol()
+
     void backendManager.start().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : "Unknown backend startup error."
       console.error("AITrans backend startup failed:", message)
