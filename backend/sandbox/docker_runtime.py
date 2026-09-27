@@ -14,7 +14,7 @@ from threading import Event
 from typing import Any
 
 import docker
-from docker.errors import DockerException, ImageNotFound, NotFound
+from docker.errors import APIError, DockerException, ImageNotFound, NotFound
 from docker.types import LogConfig, Ulimit
 
 from backend.sandbox.environment import build_sandbox_environment
@@ -714,6 +714,15 @@ class DockerSandboxRuntime:
             container.kill()
         except NotFound:
             return
+        except APIError as exc:
+            if (
+                exc.status_code == 409
+                and "is not running" in str(exc.explanation or "").lower()
+            ):
+                return
+            raise SandboxExecutionError(
+                "Failed to stop the Python sandbox container."
+            ) from exc
         except DockerException as exc:
             raise SandboxExecutionError(
                 "Failed to stop the Python sandbox container."

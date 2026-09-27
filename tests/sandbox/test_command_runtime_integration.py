@@ -26,6 +26,17 @@ def runtime() -> DockerSandboxRuntime:
     return candidate
 
 
+_sandbox_container_baseline: set[str] = set()
+
+
+@pytest.fixture(autouse=True)
+def track_sandbox_container_cleanup(runtime: DockerSandboxRuntime):
+    global _sandbox_container_baseline
+    _sandbox_container_baseline = _sandbox_container_ids(runtime)
+    yield
+    _assert_no_sandbox_containers(runtime)
+
+
 def _execute(
     runtime: DockerSandboxRuntime, tmp_path: Path, request: SandboxCommandRequest
 ):
@@ -106,8 +117,13 @@ def test_command_output_flood_is_bounded(runtime: DockerSandboxRuntime, tmp_path
 
 
 def _assert_no_sandbox_containers(runtime: DockerSandboxRuntime) -> None:
+    leaked = _sandbox_container_ids(runtime) - _sandbox_container_baseline
+    assert not leaked, f"Sandbox containers created by this test were not removed: {sorted(leaked)}"
+
+
+def _sandbox_container_ids(runtime: DockerSandboxRuntime) -> set[str]:
     containers = runtime._get_client().containers.list(
         all=True,
         filters={"label": f"{SANDBOX_LABEL}=true"},
     )
-    assert containers == []
+    return {container.id for container in containers}

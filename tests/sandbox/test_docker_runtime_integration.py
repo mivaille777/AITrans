@@ -25,6 +25,17 @@ def runtime() -> DockerSandboxRuntime:
     return candidate
 
 
+_sandbox_container_baseline: set[str] = set()
+
+
+@pytest.fixture(autouse=True)
+def track_sandbox_container_cleanup(runtime: DockerSandboxRuntime):
+    global _sandbox_container_baseline
+    _sandbox_container_baseline = _sandbox_container_ids(runtime)
+    yield
+    _assert_no_sandbox_containers(runtime)
+
+
 def test_executes_python_and_removes_container(
     runtime: DockerSandboxRuntime,
     tmp_path,
@@ -296,11 +307,16 @@ def test_memory_limit_is_reported_as_oom(
 
 
 def _assert_no_sandbox_containers(runtime: DockerSandboxRuntime) -> None:
+    leaked = _sandbox_container_ids(runtime) - _sandbox_container_baseline
+    assert not leaked, f"Sandbox containers created by this test were not removed: {sorted(leaked)}"
+
+
+def _sandbox_container_ids(runtime: DockerSandboxRuntime) -> set[str]:
     containers = runtime._get_client().containers.list(
         all=True,
         filters={"label": f"{SANDBOX_LABEL}=true"},
     )
-    assert containers == []
+    return {container.id for container in containers}
 
 
 def _execute(

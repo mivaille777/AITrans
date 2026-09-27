@@ -3,12 +3,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from docker.errors import APIError
 
 from backend.sandbox.docker_runtime import DockerSandboxRuntime
 from backend.sandbox.environment import build_sandbox_environment
 from backend.sandbox.errors import (
     DockerNotLinuxError,
     DockerUnavailableError,
+    SandboxExecutionError,
     SandboxImageMissingError,
 )
 from backend.sandbox.models import SandboxExecutionRequest
@@ -269,6 +271,31 @@ def test_runtime_stops_when_stdout_limit_is_exceeded(tmp_path) -> None:
     assert result.stdout == "1234"
     assert container.killed is True
     assert container.removed is True
+
+
+def test_runtime_kill_accepts_container_that_already_exited() -> None:
+    class AlreadyExitedContainer:
+        def kill(self) -> None:
+            raise APIError(
+                "container is not running",
+                response=SimpleNamespace(status_code=409),
+                explanation="container abc is not running",
+            )
+
+    DockerSandboxRuntime(client=FakeDockerClient())._kill(AlreadyExitedContainer())
+
+
+def test_runtime_kill_still_reports_other_api_conflicts() -> None:
+    class ConflictingContainer:
+        def kill(self) -> None:
+            raise APIError(
+                "container conflict",
+                response=SimpleNamespace(status_code=409),
+                explanation="another operation is in progress",
+            )
+
+    with pytest.raises(SandboxExecutionError, match="Failed to stop"):
+        DockerSandboxRuntime(client=FakeDockerClient())._kill(ConflictingContainer())
 
 
 def test_health_reports_missing_image_with_stable_code() -> None:
