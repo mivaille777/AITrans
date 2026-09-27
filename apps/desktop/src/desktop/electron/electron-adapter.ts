@@ -1,5 +1,12 @@
 import type { DesktopAdapter } from "../adapter"
+import { computeOverlayPosition } from "../overlay-positioning"
 import type { ElectronDesktopApi } from "./electron-api"
+
+const OVERLAY_INTERACTIVE_DATASET_KEY = "aitOverlayInteractive"
+
+function overlayRequiresPointerInteraction(): boolean {
+  return document.documentElement.dataset[OVERLAY_INTERACTIVE_DATASET_KEY] === "true"
+}
 
 function bridge(): ElectronDesktopApi {
   const api = window.aiTransDesktop
@@ -72,8 +79,24 @@ export const electronDesktopAdapter: DesktopAdapter = {
     focus() {
       return bridge().overlay.focus()
     },
-    place(mode, customPosition) {
-      return bridge().overlay.place(mode, customPosition)
+    async place(mode, customPosition) {
+      const reference =
+        mode === "custom_fixed_position" && customPosition
+          ? customPosition
+          : null
+      const context = await bridge().overlay.getPlacementContext(reference)
+      const position = computeOverlayPosition({
+        mode,
+        cursor: context.cursor,
+        windowSize: context.windowSize,
+        workArea: context.workArea,
+        customPosition,
+      })
+      await bridge().overlay.setPosition(
+        position,
+        mode === "mouse_follow" && context.visible,
+      )
+      return position
     },
     resize(size) {
       return bridge().overlay.resize(size)
@@ -85,10 +108,12 @@ export const electronDesktopAdapter: DesktopAdapter = {
       return bridge().overlay.setAlwaysOnTop(enabled)
     },
     setClickThrough(enabled) {
-      return bridge().overlay.setClickThrough(enabled)
+      const effectiveClickThrough =
+        enabled && !overlayRequiresPointerInteraction()
+      return bridge().overlay.setClickThrough(effectiveClickThrough)
     },
-    startDragging() {
-      return bridge().overlay.startDragging()
+    async startDragging() {
+      // Electron uses CSS app-region dragging for frameless windows.
     },
     setVisualTheme(theme) {
       return bridge().overlay.setVisualTheme(theme)

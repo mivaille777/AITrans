@@ -6,8 +6,14 @@ import type {
   DesktopOverlayTheme,
   DesktopPoint,
   DesktopSize,
-  OverlayPositionMode,
 } from "../adapter"
+
+export interface ElectronOverlayPlacementContext {
+  cursor: DesktopPoint
+  windowSize: DesktopSize
+  workArea: DesktopPoint & DesktopSize
+  visible: boolean
+}
 
 export interface ElectronDesktopApi {
   window: {
@@ -34,10 +40,10 @@ export interface ElectronDesktopApi {
     show(): Promise<void>
     hide(): Promise<void>
     focus(): Promise<void>
-    place(
-      mode: OverlayPositionMode,
-      customPosition?: DesktopPoint | null,
-    ): Promise<DesktopPoint | null>
+    getPlacementContext(
+      reference?: DesktopPoint | null,
+    ): Promise<ElectronOverlayPlacementContext>
+    setPosition(position: DesktopPoint, animate: boolean): Promise<void>
     resize(size: DesktopSize): Promise<void>
     getPosition(): Promise<DesktopPoint | null>
     setAlwaysOnTop(enabled: boolean): Promise<void>

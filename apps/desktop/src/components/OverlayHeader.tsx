@@ -1,5 +1,6 @@
 import type { PointerEvent as ReactPointerEvent } from "react"
 
+import { desktop } from "../desktop"
 import { startOverlayWindowDrag } from "../desktop/overlay-native-theme"
 
 type OverlayHeaderProps = {
@@ -27,6 +28,8 @@ export default function OverlayHeader({
       return
     }
 
+    if (desktop.runtime === "electron") return
+
     event.preventDefault()
     void startOverlayWindowDrag().catch(() => undefined)
   }
@@ -34,7 +37,9 @@ export default function OverlayHeader({
   return (
     <header
       className={`flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 ${
-        dragEnabled ? "cursor-move" : "cursor-default"
+        dragEnabled
+          ? "ait-overlay-native-drag cursor-move"
+          : "cursor-default"
       }`}
       data-tauri-drag-region="false"
       onPointerDown={handlePointerDown}
