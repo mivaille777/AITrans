@@ -149,7 +149,14 @@ try {
     Write-Host ""
 
     npm run electron:dev
-    Assert-LastExitCode "Electron development runtime exited with an error."
+    if ($LASTEXITCODE -ne 0) {
+        $ElectronExitCode = $LASTEXITCODE
+        Write-Host ""
+        Write-Host "Electron development runtime failed with exit code $ElectronExitCode." -ForegroundColor Red
+        Write-Host "The root cause is in the npm / Vite / Electron output immediately above this message." -ForegroundColor Yellow
+        Write-Host "For an isolated compile check run: cd apps\desktop; npm run electron:compile" -ForegroundColor DarkCyan
+        exit $ElectronExitCode
+    }
 }
 finally {
     if ($null -eq $PreviousRepoRoot) {
