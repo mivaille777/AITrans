@@ -19,9 +19,12 @@ const api = {
     close: () => ipcRenderer.invoke(IPC_CHANNELS.windowClose),
   },
   files: {
-    pickKnowledgeDocument: async () => null,
-    pickAgentWorkspace: async () => null,
-    openEvidenceSource: async () => unavailable("Evidence source opening"),
+    pickKnowledgeDocument: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.filesPickKnowledgeDocument) as Promise<string | null>,
+    pickAgentWorkspace: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.filesPickAgentWorkspace) as Promise<string | null>,
+    openEvidenceSource: (resourceUrl: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.filesOpenEvidenceSource, resourceUrl),
   },
   credentials: {
     getStatus: async () => ({ configured: false }),
