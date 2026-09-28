@@ -9,8 +9,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.infrastructure.paths import data_root, is_frozen_application, logs_dir
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ROOT_DIR = data_root() if is_frozen_application() else PROJECT_ROOT
 
 
 @dataclass(frozen=True)
@@ -25,7 +28,7 @@ class Settings:
 
     ROOT_DIR: Path = ROOT_DIR
     RUNTIME_DIR: Path = ROOT_DIR / "runtime"
-    LOG_DIR: Path = ROOT_DIR / "logs"
+    LOG_DIR: Path = logs_dir()
 
     DATABASE_PATH: str = os.getenv(
         "DATABASE_PATH",

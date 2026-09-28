@@ -9,67 +9,91 @@ import { OverlayManager } from "./overlay-manager.cjs"
 import { BackendProcessManager } from "./services/backend-process-manager.cjs"
 import { createMainWindow } from "./window-manager.cjs"
 
-registerAppSchemePrivileges()
+const SQUIRREL_LIFECYCLE_ARGUMENTS = new Set([
+  "--squirrel-install",
+  "--squirrel-updated",
+  "--squirrel-uninstall",
+  "--squirrel-obsolete",
+])
 
-let mainWindow: BrowserWindow | null = null
-const overlayManager = new OverlayManager()
-const backendManager = new BackendProcessManager()
+function isSquirrelLifecycleLaunch(): boolean {
+  return process.platform === "win32" &&
+    process.argv.some((argument) => SQUIRREL_LIFECYCLE_ARGUMENTS.has(argument))
+}
 
-async function ensureMainWindow(): Promise<BrowserWindow> {
-  if (mainWindow && !mainWindow.isDestroyed()) {
+function startApplication(): void {
+  registerAppSchemePrivileges()
+
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.squirrel.AITrans.AITrans")
+  }
+
+  let mainWindow: BrowserWindow | null = null
+  const overlayManager = new OverlayManager()
+  const backendManager = new BackendProcessManager()
+
+  async function ensureMainWindow(): Promise<BrowserWindow> {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      return mainWindow
+    }
+
+    mainWindow = await createMainWindow()
+    mainWindow.on("closed", () => {
+      mainWindow = null
+      void overlayManager.destroy()
+    })
     return mainWindow
   }
 
-  mainWindow = await createMainWindow()
-  mainWindow.on("closed", () => {
-    mainWindow = null
-    void overlayManager.destroy()
-  })
-  return mainWindow
-}
+  registerMainWindowIpc(() => mainWindow)
+  registerFileIpc(() => mainWindow)
+  registerCredentialIpc(() => mainWindow)
+  registerOverlayIpc(
+    () => mainWindow,
+    () => overlayManager.getWindow(),
+    overlayManager,
+  )
 
-registerMainWindowIpc(() => mainWindow)
-registerFileIpc(() => mainWindow)
-registerCredentialIpc(() => mainWindow)
-registerOverlayIpc(
-  () => mainWindow,
-  () => overlayManager.getWindow(),
-  overlayManager,
-)
+  void app.whenReady()
+    .then(async () => {
+      await installAppProtocol()
 
-void app.whenReady()
-  .then(async () => {
-    await installAppProtocol()
+      void backendManager.start().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Unknown backend startup error."
+        console.error("AITrans backend startup failed:", message)
+      })
 
-    void backendManager.start().catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : "Unknown backend startup error."
-      console.error("AITrans backend startup failed:", message)
-    })
+      await ensureMainWindow()
+      await overlayManager.ensureWindow()
 
-    await ensureMainWindow()
-    await overlayManager.ensureWindow()
-
-    app.on("activate", () => {
-      void Promise.all([
-        ensureMainWindow(),
-        overlayManager.ensureWindow(),
-      ]).then(([window]) => {
-        window.show()
-        window.focus()
+      app.on("activate", () => {
+        void Promise.all([
+          ensureMainWindow(),
+          overlayManager.ensureWindow(),
+        ]).then(([window]) => {
+          window.show()
+          window.focus()
+        })
       })
     })
-  })
-  .catch((error: unknown) => {
-    console.error("AITrans Electron startup failed.", error)
-    app.exit(1)
+    .catch((error: unknown) => {
+      console.error("AITrans Electron startup failed.", error)
+      app.exit(1)
+    })
+
+  app.on("before-quit", () => {
+    backendManager.stopNow()
   })
 
-app.on("before-quit", () => {
-  backendManager.stopNow()
-})
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit()
+    }
+  })
+}
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit()
-  }
-})
+if (isSquirrelLifecycleLaunch()) {
+  app.quit()
+} else {
+  startApplication()
+}

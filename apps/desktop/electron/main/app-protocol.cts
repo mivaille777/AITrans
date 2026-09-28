@@ -36,6 +36,9 @@ export function registerAppSchemePrivileges(): void {
 }
 
 function rendererRoot(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "app.asar.unpacked", "dist")
+  }
   return path.resolve(app.getAppPath(), "dist")
 }
 
