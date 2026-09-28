@@ -26,33 +26,19 @@ describe("Batch 5 desktop entry isolation", () => {
     expect(source).not.toContain("HashRouter")
   })
 
-  it("builds main and overlay HTML as separate Vite inputs and routes Tauri overlay to its own document", () => {
+  it("builds main and overlay HTML as separate Vite inputs and routes Electron overlay to its own document", () => {
     const viteConfig = read("../../vite.config.ts")
-    const tauriConfig = JSON.parse(read("../../src-tauri/tauri.conf.json")) as {
-      app: {
-        windows: Array<{
-          label: string
-          url?: string
-          decorations?: boolean
-          transparent?: boolean
-          shadow?: boolean
-          backgroundColor?: string
-        }>
-      }
-    }
+    const overlayManager = read("../../electron/main/overlay-manager.cts")
     const overlayHtml = read("../../overlay.html")
-    const overlayWindow = tauriConfig.app.windows.find((window) => window.label === "overlay")
 
     expect(viteConfig).toContain('main: fileURLToPath(new URL("./index.html"')
     expect(viteConfig).toContain('overlay: fileURLToPath(new URL("./overlay.html"')
     expect(overlayHtml).toContain('/src/overlay-main.tsx')
-    expect(overlayWindow?.url).toBe("overlay.html")
-    expect(overlayWindow).toMatchObject({
-      decorations: false,
-      transparent: true,
-      shadow: false,
-    })
-    expect(overlayWindow).not.toHaveProperty("backgroundColor")
+    expect(overlayManager).toContain('new URL("overlay.html", base)')
+    expect(overlayManager).toContain('APP_ORIGIN + "/overlay.html"')
+    expect(overlayManager).toContain("frame: false")
+    expect(overlayManager).toContain("transparent: true")
+    expect(overlayManager).toContain("hasShadow: false")
   })
 
   it("lazy-loads non-default main workspaces instead of importing them into translation startup", () => {

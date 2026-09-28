@@ -49,20 +49,14 @@ describe("overlay theme material contract", () => {
     expect(readability).toContain("--ait-overlay-readable-muted")
   })
 
-  it("strips Win32 caption styles directly and keeps one DPI-aware native clip", () => {
-    const source = read("../src-tauri/src/main.rs")
+  it("keeps the Electron overlay borderless, transparent and shadow-free", () => {
+    const source = read("../electron/main/overlay-manager.cts")
 
-    expect(source).toContain("GetWindowLongPtrW")
-    expect(source).toContain("SetWindowLongPtrW")
-    expect(source).toContain("WS_CAPTION")
-    expect(source).toContain("WS_THICKFRAME")
-    expect(source).toContain("WS_SYSMENU")
-    expect(source).toContain("WS_POPUP")
-    expect(source).toContain("SWP_FRAMECHANGED")
-    expect(source).toContain("WindowEvent::Focused(_)")
-    expect(source).toContain("DWMWCP_DONOTROUND")
-    expect(source).toContain("DWMWA_BORDER_COLOR")
-    expect(source).toContain("DWMWA_COLOR_NONE")
-    expect(source).toContain("SetWindowRgn")
+    expect(source).toContain("frame: false")
+    expect(source).toContain("transparent: true")
+    expect(source).toContain('backgroundColor: "#00000000"')
+    expect(source).toContain("hasShadow: false")
+    expect(source).toContain("alwaysOnTop: true")
+    expect(source).toContain("skipTaskbar: true")
   })
 })

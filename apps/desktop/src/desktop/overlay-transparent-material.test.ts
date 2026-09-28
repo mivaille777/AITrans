@@ -7,26 +7,27 @@ function read(relativePath: string): string {
 }
 
 describe("overlay clear material contract", () => {
-  it("keeps the runtime-agnostic overlay bridge free of Tauri APIs", () => {
+  it("keeps the runtime-agnostic overlay theme bridge on DesktopAdapter", () => {
     const source = read("./overlay-native-theme.ts")
 
-    expect(source).not.toContain("@tauri-apps/")
-    expect(source).not.toContain(".setBackgroundColor(")
     expect(source).toContain("desktop.overlay.setVisualTheme(theme)")
+    expect(source).not.toContain("ipcRenderer")
+    expect(source).not.toContain("BrowserWindow")
   })
 
-  it("keeps the Tauri light DOM theme while disabling the opaque system backdrop", () => {
-    const source = read("./tauri/tauri-adapter.ts")
+  it("keeps the Electron overlay transparent without an opaque native backdrop", () => {
+    const source = read("../../electron/main/overlay-manager.cts")
 
-    expect(source).toContain('const nativeTheme = "dark"')
-    expect(source).toContain('{ theme: nativeTheme }')
-    expect(source).toContain('{ theme }')
+    expect(source).toContain("transparent: true")
+    expect(source).toContain('backgroundColor: "#00000000"')
+    expect(source).toContain("hasShadow: false")
+    expect(source).toContain("frame: false")
   })
 
-  it("grants only the native window permissions required to reassert borderless chrome", () => {
-    const capability = read("../../src-tauri/capabilities/default.json")
+  it("supports click-through through the bounded Electron overlay manager API", () => {
+    const source = read("../../electron/main/overlay-manager.cts")
 
-    expect(capability).toContain('"core:window:allow-set-decorations"')
-    expect(capability).toContain('"core:window:allow-set-resizable"')
+    expect(source).toContain("setIgnoreMouseEvents(true, { forward: true })")
+    expect(source).toContain("setIgnoreMouseEvents(false)")
   })
 })
