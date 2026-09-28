@@ -9,6 +9,8 @@ import { OverlayManager } from "./overlay-manager.cjs"
 import { BackendProcessManager } from "./services/backend-process-manager.cjs"
 import { createMainWindow } from "./window-manager.cjs"
 
+const ELECTRON_RUNTIME_SMOKE_ARGUMENT = "--electron-runtime-smoke-test"
+
 const SQUIRREL_LIFECYCLE_ARGUMENTS = new Set([
   "--squirrel-install",
   "--squirrel-updated",
@@ -19,6 +21,24 @@ const SQUIRREL_LIFECYCLE_ARGUMENTS = new Set([
 function isSquirrelLifecycleLaunch(): boolean {
   return process.platform === "win32" &&
     process.argv.some((argument) => SQUIRREL_LIFECYCLE_ARGUMENTS.has(argument))
+}
+
+async function runPackagedRuntimeSmoke(): Promise<void> {
+  const backendManager = new BackendProcessManager()
+  try {
+    await backendManager.start()
+    const status = backendManager.status()
+    if (status.state !== "ready") {
+      throw new Error("Packaged Electron backend did not reach owned ready state.")
+    }
+    console.log("AITrans packaged Electron runtime smoke test passed.")
+    backendManager.stopNow()
+    app.exit(0)
+  } catch (error: unknown) {
+    backendManager.stopNow()
+    console.error("AITrans packaged Electron runtime smoke test failed.", error)
+    app.exit(1)
+  }
 }
 
 function startApplication(): void {
@@ -94,6 +114,8 @@ function startApplication(): void {
 
 if (isSquirrelLifecycleLaunch()) {
   app.quit()
+} else if (process.argv.includes(ELECTRON_RUNTIME_SMOKE_ARGUMENT)) {
+  void app.whenReady().then(runPackagedRuntimeSmoke)
 } else {
   startApplication()
 }

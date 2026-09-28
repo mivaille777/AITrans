@@ -29,6 +29,13 @@ describe("Electron Stage 12 full regression contract", () => {
     expect(source).toContain("test_sandbox_debug_service.py")
   })
 
+  it("keeps packaged Electron-to-sidecar lifecycle verification in the package gate", () => {
+    const verifier = read("../../../scripts/verify-electron-package.mjs")
+    const main = read("../../../electron/main/index.cts")
+    expect(verifier).toContain("--electron-runtime-smoke-test")
+    expect(main).toContain("AITrans packaged Electron runtime smoke test passed.")
+  })
+
   it("writes a machine-readable report without claiming GUI or packaged runtime acceptance", () => {
     const source = read("../../../scripts/electron-regression.mjs")
     expect(source).toContain("electron-regression.json")

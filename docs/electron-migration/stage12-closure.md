@@ -19,3 +19,18 @@ Use `docs/electron-migration/stage12-manual-acceptance.md` for Main Window, Over
 `Electron Regression >= Tauri Baseline`
 
 A source-level PASS alone is insufficient.
+
+## Packaged runtime automation
+
+The Stage 10 package verifier also runs a headless packaged-runtime lifecycle smoke:
+
+```text
+AITrans.exe --electron-runtime-smoke-test
+  -> packaged Electron BackendProcessManager
+  -> resources/backend/AITransBackend/AITransBackend.exe
+  -> dedicated FastAPI port 18766
+  -> health ready
+  -> backend process cleanup
+```
+
+This validates the installed resource path and Electron-owned backend lifecycle without claiming GUI interaction coverage.
