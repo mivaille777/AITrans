@@ -57,7 +57,6 @@ function handleSquirrelLifecycle(argument: string): void {
 
 async function runPackagedRuntimeSmoke(): Promise<void> {
   const backendManager = new BackendProcessManager()
-  const updateManager = new UpdateManager(() => backendManager.stopNow())
   try {
     await backendManager.start()
     const status = backendManager.status()
@@ -84,6 +83,7 @@ function startApplication(): void {
   let mainWindow: BrowserWindow | null = null
   const overlayManager = new OverlayManager()
   const backendManager = new BackendProcessManager()
+  const updateManager = new UpdateManager(() => backendManager.stopNow())
 
   async function ensureMainWindow(): Promise<BrowserWindow> {
     if (mainWindow && !mainWindow.isDestroyed()) {
