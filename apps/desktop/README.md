@@ -227,3 +227,17 @@ The production renderer is unpacked to
 RAG model weights are intentionally excluded. Managed models stay in the
 user-local AITrans models directory and are downloaded/managed independently
 from the application installer.
+
+
+## Stage 11 CI
+
+Electron source contracts continue to run in the main CI through
+`npm run electron:check`.
+
+A separate `Electron Deliverable CI` workflow builds the real Windows package
+for relevant changes on `electronrebuild` and uploads the unpacked application
+as a GitHub Actions artifact. Squirrel installer creation is available through
+manual workflow dispatch with `build_installer=true`.
+
+This keeps fast runtime contracts separate from the heavier PyInstaller +
+Electron Forge deliverable build.

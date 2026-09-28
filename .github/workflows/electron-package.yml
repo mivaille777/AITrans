@@ -1,0 +1,148 @@
+name: Electron Deliverable CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_installer:
+        description: Build Squirrel.Windows installer artifacts instead of only the unpacked package
+        required: true
+        type: boolean
+        default: false
+  pull_request:
+    branches:
+      - electronrebuild
+    paths:
+      - ".github/workflows/electron-package.yml"
+      - "apps/desktop/**"
+      - "app/**"
+      - "backend/**"
+      - "config/default.toml"
+      - "aitrans_backend.spec"
+      - "aitranslator-rag-requirements.txt"
+      - "pyproject.toml"
+  push:
+    branches:
+      - electronrebuild
+    paths:
+      - ".github/workflows/electron-package.yml"
+      - "apps/desktop/**"
+      - "app/**"
+      - "backend/**"
+      - "config/default.toml"
+      - "aitrans_backend.spec"
+      - "aitranslator-rag-requirements.txt"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: electron-deliverable-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Electron Windows package
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_installer != true }}
+    runs-on: windows-latest
+    timeout-minutes: 75
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            aitranslator-rag-requirements.txt
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Python packaging dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[build]" -r aitranslator-rag-requirements.txt
+          python -m pip check
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci --no-audit --prefer-offline
+
+      - name: Build and verify Electron Windows package
+        working-directory: apps/desktop
+        run: npm run electron:package
+
+      - name: Upload unpacked Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          name: aitrans-electron-win32-x64-${{ github.sha }}
+          path: apps/desktop/out/*-win32-x64/
+          if-no-files-found: error
+          retention-days: 14
+
+  installer:
+    name: Electron Squirrel installer
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer == true }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            aitranslator-rag-requirements.txt
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Python packaging dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[build]" -r aitranslator-rag-requirements.txt
+          python -m pip check
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci --no-audit --prefer-offline
+
+      - name: Build and verify Squirrel.Windows installer
+        working-directory: apps/desktop
+        run: npm run electron:make
+
+      - name: Upload Squirrel.Windows installer artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: aitrans-electron-squirrel-${{ github.sha }}
+          path: apps/desktop/out/make/squirrel.windows/x64/
+          if-no-files-found: error
+          retention-days: 14
