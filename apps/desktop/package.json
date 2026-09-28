@@ -32,7 +32,8 @@
     "electron:verify": "npm run electron:check && npm run lint && npm run test && npm run build && node scripts/electron-credential-smoke.mjs",
     "electron:preview": "npm run electron:build && electron .",
     "electron:package": "npm run electron:build && npm run backend:package && electron-forge package --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs",
-    "electron:make": "npm run electron:build && npm run backend:package && electron-forge make --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs --require-installer"
+    "electron:make": "npm run electron:build && npm run backend:package && electron-forge make --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs --require-installer",
+    "electron:regression": "node scripts/electron-regression.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

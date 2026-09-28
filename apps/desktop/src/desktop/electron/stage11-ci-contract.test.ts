@@ -37,8 +37,9 @@ describe("Electron Stage 11 CI contract", () => {
   it("uploads deliverables with bounded retention instead of committing binaries", () => {
     const workflow = read("../../../../../.github/workflows/electron-package.yml")
 
-    expect(workflow.match(/actions\/upload-artifact@v7/g)?.length).toBe(2)
-    expect(workflow.match(/retention-days: 14/g)?.length).toBe(2)
+    expect(workflow.match(/actions\/upload-artifact@v7/g)?.length).toBe(3)
+    expect(workflow.match(/retention-days: 14/g)?.length).toBe(3)
     expect(workflow.match(/if-no-files-found: error/g)?.length).toBe(2)
+    expect(workflow).toContain("electron-regression.json")
   })
 })
