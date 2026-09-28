@@ -10,6 +10,7 @@ import { registerMainWindowIpc } from "./ipc/window-ipc.cjs"
 import { registerOverlayIpc } from "./ipc/overlay-ipc.cjs"
 import { OverlayManager } from "./overlay-manager.cjs"
 import { BackendProcessManager } from "./services/backend-process-manager.cjs"
+import { UpdateManager } from "./services/update-manager.cjs"
 import { createMainWindow } from "./window-manager.cjs"
 
 const ELECTRON_RUNTIME_SMOKE_ARGUMENT = "--electron-runtime-smoke-test"
@@ -56,6 +57,7 @@ function handleSquirrelLifecycle(argument: string): void {
 
 async function runPackagedRuntimeSmoke(): Promise<void> {
   const backendManager = new BackendProcessManager()
+  const updateManager = new UpdateManager(() => backendManager.stopNow())
   try {
     await backendManager.start()
     const status = backendManager.status()
@@ -116,6 +118,7 @@ function startApplication(): void {
 
       await ensureMainWindow()
       await overlayManager.ensureWindow()
+      updateManager.start()
 
       app.on("activate", () => {
         void Promise.all([
@@ -133,6 +136,7 @@ function startApplication(): void {
     })
 
   app.on("before-quit", () => {
+    updateManager.stop()
     backendManager.stopNow()
   })
 
