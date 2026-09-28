@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "baseline": "WebReBuild/Tauri",
+  "target": "electronrebuild/Electron",
+  "rule": "Electron Regression >= Tauri Baseline",
+  "stage13_ready": false,
+  "gates": {
+    "electron_check": {
+      "required": true,
+      "status": "automated"
+    },
+    "electron_regression": {
+      "required": true,
+      "status": "automated"
+    },
+    "electron_package": {
+      "required": true,
+      "status": "automated"
+    },
+    "built_runtime_manual": {
+      "required": true,
+      "status": "manual_pending"
+    },
+    "packaged_runtime_manual": {
+      "required": true,
+      "status": "manual_pending"
+    },
+    "main_window_manual": {
+      "required": true,
+      "status": "manual_pending"
+    },
+    "overlay_manual": {
+      "required": true,
+      "status": "manual_pending"
+    },
+    "dpi_multi_monitor_manual": {
+      "required": true,
+      "status": "manual_pending"
+    }
+  },
+  "capabilities": [
+    {
+      "id": "main_window",
+      "baseline": "pass",
+      "implementation": "implemented",
+      "automatic": "contract",
+      "manual": "pending"
+    },
+    {
+      "id": "overlay",
+      "baseline": "pass",
+      "implementation": "implemented",
+      "automatic": "contract",
+      "manual": "pending"
+    },
+    {
+      "id": "credentials",
+      "baseline": "pass",
+      "implementation": "implemented",
+      "automatic": "contract_smoke",
+      "manual": "pending"
+    },
+    {
+      "id": "files_workspace",
+      "baseline": "pass",
+      "implementation": "implemented",
+      "automatic": "contract_regression",
+      "manual": "pending"
+    },
+    {
+      "id": "backend_lifecycle",
+      "baseline": "pass",
+      "implementation": "implemented",
+      "automatic": "packaged_lifecycle_smoke",
+      "manual": "pending"
+    },
+    {
+      "id": "agent",
+      "baseline": "pass",
+      "implementation": "preserved",
+      "automatic": "regression",
+      "manual": "pending"
+    },
+    {
+      "id": "rag",
+      "baseline": "pass",
+      "implementation": "preserved",
+      "automatic": "regression",
+      "manual": "pending"
+    },
+    {
+      "id": "sandbox",
+      "baseline": "pass",
+      "implementation": "preserved",
+      "automatic": "regression",
+      "manual": "pending"
+    },
+    {
+      "id": "production_renderer",
+      "baseline": "not_applicable",
+      "implementation": "implemented",
+      "automatic": "package_verify",
+      "manual": "pending"
+    }
+  ]
+}
