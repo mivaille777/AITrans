@@ -92,3 +92,17 @@ npm run desktop:release-candidate
 `desktop:release-candidate` builds the Squirrel.Windows installer and writes
 `out/release-manifest.json` with SHA-256 checksums. The root `VERSION` file
 is the release version authority.
+
+## Installer lifecycle
+
+Real Squirrel.Windows lifecycle acceptance is explicit because it installs and
+uninstalls AITrans for the current Windows user.
+
+```powershell
+.\scripts\electron-installer-lifecycle.ps1 -AcknowledgeInstallMutation
+```
+
+The script refuses to run over an existing `%LOCALAPPDATA%\AITrans` installation.
+It validates fresh install, runtime smoke, same-version reinstall, uninstall,
+shortcut cleanup, user-data retention and Backend process cleanup. Pass
+`-PreviousSetupPath` to include a true previous-to-current upgrade test.

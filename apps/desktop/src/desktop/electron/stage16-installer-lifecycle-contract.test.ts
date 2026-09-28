@@ -30,6 +30,18 @@ describe("Electron Stage 16 installer lifecycle contract", () => {
     expect(lifecycle).toContain("electron-installer-lifecycle.json")
   })
 
+  it("keeps destructive installer acceptance in an explicit manual workflow", () => {
+    const workflow = read("../../../../../.github/workflows/electron-installer-lifecycle.yml")
+
+    expect(workflow).toContain("name: Electron Installer Lifecycle")
+    expect(workflow).toContain("workflow_dispatch:")
+    expect(workflow).toContain("previous_setup_url:")
+    expect(workflow).toContain("desktop:release-candidate")
+    expect(workflow).toContain("electron-installer-lifecycle.ps1")
+    expect(workflow).toContain("AcknowledgeInstallMutation")
+    expect(workflow).toContain("electron-installer-lifecycle.json")
+  })
+
   it("requires user-data retention and backend process cleanup after uninstall", () => {
     const lifecycle = read("../../../../../scripts/electron-installer-lifecycle.ps1")
 

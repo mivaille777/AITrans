@@ -135,5 +135,19 @@
     "integrity_manifest": "apps/desktop/out/release-manifest.json",
     "auto_publish": false,
     "manual_parity_complete": false
+  },
+  "stage16": {
+    "status": "lifecycle_acceptance_ready",
+    "installer": "squirrel.windows",
+    "automatic_on_push": false,
+    "manual_workflow": ".github/workflows/electron-installer-lifecycle.yml",
+    "fresh_install": "implemented",
+    "same_version_reinstall": "implemented",
+    "upgrade_with_previous_setup": "implemented_optional",
+    "uninstall": "implemented",
+    "user_data_retention": "implemented",
+    "shortcut_lifecycle": "implemented",
+    "backend_orphan_check": "implemented",
+    "clean_machine_acceptance": "pending_execution"
   }
 }

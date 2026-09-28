@@ -1,0 +1,106 @@
+name: Electron Installer Lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous_setup_url:
+        description: Optional previous AITrans Setup.exe URL for an upgrade-path test
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: electron-installer-lifecycle-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    name: Windows install lifecycle
+    runs-on: windows-latest
+    timeout-minutes: 150
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            aitranslator-rag-requirements.txt
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Python release dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,build]" -r aitranslator-rag-requirements.txt
+          python -m pip check
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci --no-audit --prefer-offline
+
+      - name: Build current installer candidate
+        working-directory: apps/desktop
+        run: npm run desktop:release-candidate
+
+      - name: Download optional previous installer
+        if: ${{ inputs.previous_setup_url != '' }}
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP "AITrans-Previous-Setup.exe"
+          Invoke-WebRequest -Uri "${{ inputs.previous_setup_url }}" -OutFile $target
+          "AITRANS_PREVIOUS_SETUP=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run installer lifecycle acceptance
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem apps\desktop\out\make\squirrel.windows\x64 -Filter "*Setup.exe" -File |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          if (-not $setup) { throw "Current Setup.exe was not found." }
+          $arguments = @{
+            SetupPath = $setup.FullName
+            AcknowledgeInstallMutation = $true
+          }
+          if ($env:AITRANS_PREVIOUS_SETUP) {
+            $arguments.PreviousSetupPath = $env:AITRANS_PREVIOUS_SETUP
+          }
+          .\scripts\electron-installer-lifecycle.ps1 @arguments
+
+      - name: Collect Squirrel diagnostic log
+        if: always()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:LOCALAPPDATA "SquirrelTemp\SquirrelSetup.log"
+          if (Test-Path -LiteralPath $log) {
+            New-Item -ItemType Directory -Force test-results | Out-Null
+            Copy-Item -LiteralPath $log -Destination test-results\SquirrelSetup.log -Force
+          }
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aitrans-installer-lifecycle-${{ github.sha }}
+          path: |
+            test-results/electron-installer-lifecycle.json
+            test-results/SquirrelSetup.log
+          if-no-files-found: warn
+          retention-days: 30
