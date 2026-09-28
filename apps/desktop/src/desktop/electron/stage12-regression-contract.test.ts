@@ -17,6 +17,8 @@ describe("Electron Stage 12 full regression contract", () => {
     expect(source).toContain('"electron:check"')
     expect(source).toContain('"frontend-regression"')
     expect(source).toContain('"frontend-build"')
+    expect(source).toContain("npm_execpath")
+    expect(source).toContain("process.execPath")
     expect(source).toContain("tests/test_backend_health.py")
     expect(source).toContain("test_llm_settings_api.py")
     expect(source).toContain("test_workspace_apply_api.py")

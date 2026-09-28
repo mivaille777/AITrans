@@ -10,12 +10,21 @@ const repoRoot = path.resolve(desktopRoot, "../..")
 const reportDir = path.join(repoRoot, "test-results")
 const reportPath = path.join(reportDir, "electron-regression.json")
 const python = process.env.AITRANS_PYTHON_EXECUTABLE?.trim() || "python"
-const npm = process.platform === "win32" ? "npm.cmd" : "npm"
+const npmCliPath = process.env.npm_execpath
+const npmCommand = process.platform === "win32" ? process.execPath : "npm"
+
+function npmArgs(args) {
+  if (process.platform !== "win32") return args
+  if (!npmCliPath) {
+    throw new Error("Windows Electron regression must be started through npm run.")
+  }
+  return [npmCliPath, ...args]
+}
 
 const steps = [
-  { name: "electron-contracts", cwd: desktopRoot, command: npm, args: ["run", "electron:check"] },
-  { name: "frontend-regression", cwd: desktopRoot, command: npm, args: ["run", "test"] },
-  { name: "frontend-build", cwd: desktopRoot, command: npm, args: ["run", "build"] },
+  { name: "electron-contracts", cwd: desktopRoot, command: npmCommand, args: npmArgs(["run", "electron:check"]) },
+  { name: "frontend-regression", cwd: desktopRoot, command: npmCommand, args: npmArgs(["run", "test"]) },
+  { name: "frontend-build", cwd: desktopRoot, command: npmCommand, args: npmArgs(["run", "build"]) },
   {
     name: "backend-electron-integration",
     cwd: repoRoot,
