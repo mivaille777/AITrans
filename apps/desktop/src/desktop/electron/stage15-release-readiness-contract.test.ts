@@ -13,7 +13,7 @@ describe("Electron Stage 15 release readiness contract", () => {
     const pyproject = read("../../../../../pyproject.toml")
     const backend = read("../../../../../backend/main.py")
 
-    expect(version).toMatch(/^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$/)
+    expect(version).toMatch(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/)
     expect(packageJson.version).toBe(version)
     expect(pyproject).toContain(`version = "${version}"`)
     expect(backend).toContain("version=get_app_version()")
