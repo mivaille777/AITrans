@@ -69,7 +69,7 @@ const builder = await text(path.join(desktopRoot, "scripts", "build-backend-side
 if (!builder.includes("version: appVersion")) fail("Sidecar manifest does not include app version")
 
 const forge = await text(path.join(desktopRoot, "forge.config.cjs"))
-for (const expected of ["@electron-forge/maker-squirrel", "extraResource", "win32metadata", "appVersion: releaseVersion", "buildVersion: releaseVersion"]) {
+for (const expected of ["@electron-forge/maker-squirrel", "extraResource", "win32metadata", "appVersion: releaseVersion", "buildVersion: releaseVersion", "AITRANS_WINDOWS_CERTIFICATE_FILE", "windowsSign"]) {
   if (!forge.includes(expected)) fail("Forge configuration is missing " + expected)
 }
 

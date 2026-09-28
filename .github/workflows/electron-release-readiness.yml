@@ -2,6 +2,20 @@ name: Electron Release Readiness
 
 on:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Release/update channel
+        required: true
+        type: choice
+        options:
+          - stable
+          - beta
+        default: stable
+      update_base_url:
+        description: Optional HTTPS update root; defaults to repository variable AITRANS_UPDATE_BASE_URL
+        required: false
+        type: string
+        default: ""
   push:
     tags:
       - "v*"
@@ -22,6 +36,8 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      AITRANS_WINDOWS_CERT_PFX_BASE64: ${{ secrets.AITRANS_WINDOWS_CERT_PFX_BASE64 }}
+      AITRANS_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.AITRANS_WINDOWS_CERT_PASSWORD }}
 
     steps:
       - name: Check out repository
@@ -53,6 +69,61 @@ jobs:
             throw "Git tag '${{ github.ref_name }}' does not match VERSION '$expected'."
           }
 
+      - name: Resolve release channel and update source
+        shell: pwsh
+        env:
+          REQUESTED_CHANNEL: ${{ inputs.channel }}
+          REQUESTED_UPDATE_BASE_URL: ${{ inputs.update_base_url }}
+          DEFAULT_UPDATE_BASE_URL: ${{ vars.AITRANS_UPDATE_BASE_URL }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $channel = $env:REQUESTED_CHANNEL
+          if ([string]::IsNullOrWhiteSpace($channel)) {
+            $channel = if ($version.Contains("-")) { "beta" } else { "stable" }
+          }
+          if ($channel -notin @("stable", "beta")) {
+            throw "Release channel must be stable or beta."
+          }
+
+          $baseUrl = $env:REQUESTED_UPDATE_BASE_URL
+          if ([string]::IsNullOrWhiteSpace($baseUrl)) {
+            $baseUrl = $env:DEFAULT_UPDATE_BASE_URL
+          }
+          $isTag = "${{ startsWith(github.ref, 'refs/tags/') }}" -eq "true"
+          if ($isTag -and [string]::IsNullOrWhiteSpace($baseUrl)) {
+            throw "Tag releases require repository variable AITRANS_UPDATE_BASE_URL or a configured update source."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($baseUrl) -and -not $baseUrl.StartsWith("https://")) {
+            throw "Update base URL must use HTTPS."
+          }
+
+          "AITRANS_RELEASE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AITRANS_UPDATE_BASE_URL=$baseUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AITRANS_ENABLE_AUTO_UPDATE=$(if ($baseUrl) { '1' } else { '0' })" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure Windows code signing
+        shell: pwsh
+        run: |
+          $isTag = "${{ startsWith(github.ref, 'refs/tags/') }}" -eq "true"
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:AITRANS_WINDOWS_CERT_PFX_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:AITRANS_WINDOWS_CERTIFICATE_PASSWORD)
+
+          if (-not ($hasCertificate -and $hasPassword)) {
+            if ($isTag) {
+              throw "Tag releases require AITRANS_WINDOWS_CERT_PFX_BASE64 and AITRANS_WINDOWS_CERT_PASSWORD secrets."
+            }
+            "AITRANS_REQUIRE_WINDOWS_SIGNING=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Signing secrets are absent; manual release candidate will remain unsigned."
+            exit 0
+          }
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP "aitrans-code-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String($env:AITRANS_WINDOWS_CERT_PFX_BASE64)
+          )
+          "AITRANS_WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AITRANS_REQUIRE_WINDOWS_SIGNING=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Python release dependencies
         shell: pwsh
         run: |
@@ -74,6 +145,8 @@ jobs:
           name: aitrans-windows-release-candidate-${{ github.ref_name }}-${{ github.sha }}
           path: |
             apps/desktop/out/make/squirrel.windows/x64/
+            apps/desktop/out/update-feed/
             apps/desktop/out/release-manifest.json
+            apps/desktop/out/signing-report.json
           if-no-files-found: error
           retention-days: 30

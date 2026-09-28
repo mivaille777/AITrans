@@ -55,6 +55,18 @@ describe("Electron Stage 17 signing and update contract", () => {
     expect(updater).not.toContain("quitAndInstall")
   })
 
+  it("requires signing secrets and an update source for production tag releases", () => {
+    const workflow = read("../../../../../.github/workflows/electron-release-readiness.yml")
+
+    expect(workflow).toContain("AITRANS_WINDOWS_CERT_PFX_BASE64")
+    expect(workflow).toContain("AITRANS_WINDOWS_CERT_PASSWORD")
+    expect(workflow).toContain("AITRANS_UPDATE_BASE_URL")
+    expect(workflow).toContain("Tag releases require AITRANS_WINDOWS_CERT_PFX_BASE64")
+    expect(workflow).toContain("Tag releases require repository variable AITRANS_UPDATE_BASE_URL")
+    expect(workflow).toContain("apps/desktop/out/update-feed/")
+    expect(workflow).toContain("apps/desktop/out/signing-report.json")
+  })
+
   it("verifies Authenticode signatures when production signing is required", () => {
     const signing = read("../../../scripts/verify-windows-signing.mjs")
     const packageJson = JSON.parse(read("../../../package.json"))

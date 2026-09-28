@@ -9,6 +9,7 @@ const desktopRoot = path.resolve(scriptDir, "..")
 const repoRoot = path.resolve(desktopRoot, "../..")
 const makerRoot = path.join(desktopRoot, "out", "make", "squirrel.windows", "x64")
 const output = path.join(desktopRoot, "out", "release-manifest.json")
+const signingReportPath = path.join(desktopRoot, "out", "signing-report.json")
 
 async function sha256(file) {
   const data = await readFile(file)
@@ -16,6 +17,11 @@ async function sha256(file) {
 }
 
 const version = (await readFile(path.join(repoRoot, "VERSION"), "utf8")).trim()
+const requestedChannel = process.env.AITRANS_RELEASE_CHANNEL?.trim().toLowerCase()
+const channel = requestedChannel || (version.includes("-") ? "beta" : "stable")
+const signing = await readFile(signingReportPath, "utf8")
+  .then((value) => JSON.parse(value))
+  .catch(() => ({ required: false, valid: false, files: [] }))
 const entries = await readdir(makerRoot)
 const names = entries.filter((name) => /Setup\.exe$/i.test(name) || /-full\.nupkg$/i.test(name) || name === "RELEASES")
 if (!names.some((name) => /Setup\.exe$/i.test(name))) throw new Error("Release manifest requires Setup.exe")
@@ -35,7 +41,9 @@ const manifest = {
   version,
   commit: process.env.GITHUB_SHA || process.env.AITRANS_GIT_SHA || "local",
   platform: "win32-x64",
+  channel,
   generated_at: new Date().toISOString(),
+  signing,
   artifacts,
 }
 await writeFile(output, JSON.stringify(manifest, null, 2) + "\n", "utf8")

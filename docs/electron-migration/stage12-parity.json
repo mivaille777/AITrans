@@ -149,5 +149,20 @@
     "shortcut_lifecycle": "implemented",
     "backend_orphan_check": "implemented",
     "clean_machine_acceptance": "pending_execution"
+  },
+  "stage17": {
+    "status": "signing_update_infrastructure_ready",
+    "signing_backend": "pfx_via_windowsSign",
+    "signing_required_for_tag_release": true,
+    "channels": [
+      "stable",
+      "beta"
+    ],
+    "update_transport": "https_static_squirrel_feed",
+    "runtime_updater": "electron_autoUpdater",
+    "auto_update_default": "disabled",
+    "force_restart_on_download": false,
+    "signed_release_execution": "pending_credentials",
+    "real_cross_version_update": "pending_two_published_versions"
   }
 }
