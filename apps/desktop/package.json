@@ -28,8 +28,8 @@
     "electron:check": "npm run electron:compile && npm run test:electron-contracts",
     "electron:verify": "npm run electron:check && npm run lint && npm run test && npm run build && node scripts/electron-credential-smoke.mjs",
     "electron:preview": "npm run electron:build && electron .",
-    "electron:package": "npm run electron:build && npm run backend:package && electron-forge package --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs",
-    "electron:make": "npm run electron:build && npm run backend:package && electron-forge make --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs --require-installer",
+    "electron:package": "npm run electron:build && npm run backend:package && npm run prepare:update-config && electron-forge package --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs",
+    "electron:make": "npm run electron:build && npm run backend:package && npm run prepare:update-config && electron-forge make --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs --require-installer",
     "electron:regression": "node scripts/electron-regression.mjs",
     "desktop:dev": "npm run electron:dev",
     "desktop:check": "npm run electron:check",
@@ -43,8 +43,11 @@
     "desktop:release-check": "npm run release:static && npm run desktop:regression && npm run desktop:build",
     "desktop:release-package": "npm run desktop:release-check && npm run desktop:package",
     "release:manifest": "node scripts/create-release-manifest.mjs",
-    "desktop:release-candidate": "npm run desktop:release-check && npm run desktop:make && npm run release:manifest",
-    "desktop:lifecycle-test": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/electron-installer-lifecycle.ps1 -AcknowledgeInstallMutation"
+    "desktop:release-candidate": "npm run desktop:release-check && npm run desktop:make && npm run release:verify-signing && npm run release:manifest && npm run release:update-feed",
+    "desktop:lifecycle-test": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/electron-installer-lifecycle.ps1 -AcknowledgeInstallMutation",
+    "prepare:update-config": "node scripts/prepare-update-config.mjs",
+    "release:verify-signing": "node scripts/verify-windows-signing.mjs",
+    "release:update-feed": "node scripts/create-update-feed.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

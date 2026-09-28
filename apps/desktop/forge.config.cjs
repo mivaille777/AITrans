@@ -5,6 +5,21 @@ const desktopRoot = __dirname
 const repoRoot = path.resolve(desktopRoot, "../..")
 const stagedBackend = path.join(repoRoot, "build", "electron-resources", "backend")
 const releaseVersion = fs.readFileSync(path.join(repoRoot, "VERSION"), "utf8").trim()
+const updateConfigPath = path.join(repoRoot, "build", "electron-resources", "update-config.json")
+
+const certificateFile = process.env.AITRANS_WINDOWS_CERTIFICATE_FILE?.trim()
+const certificatePassword = process.env.AITRANS_WINDOWS_CERTIFICATE_PASSWORD ?? ""
+const signingConfigured = Boolean(certificateFile && certificatePassword)
+const windowsSign = signingConfigured
+  ? {
+      certificateFile,
+      certificatePassword,
+      timestampServer:
+        process.env.AITRANS_WINDOWS_TIMESTAMP_SERVER?.trim() ||
+        "http://timestamp.digicert.com",
+      description: "AITrans",
+    }
+  : undefined
 
 module.exports = {
   outDir: "out",
@@ -19,7 +34,8 @@ module.exports = {
     },
     overwrite: true,
     prune: false,
-    extraResource: [stagedBackend],
+    extraResource: [stagedBackend, updateConfigPath],
+    ...(windowsSign ? { windowsSign } : {}),
     ignore: [
       /^\/src(?:\/|$)/,
       /^\/electron(?:\/|$)/,
@@ -53,6 +69,7 @@ module.exports = {
           "Local-first AI Agent workspace for research, knowledge, RAG, and multi-agent workflows.",
         setupIcon: path.join(desktopRoot, "resources", "icon.ico"),
         noMsi: true,
+        ...(windowsSign ? { windowsSign } : {}),
       },
     },
   ],

@@ -63,3 +63,9 @@ config/rag/
 
 runtime/diagnose/*
 !runtime/diagnose/.gitkeep
+
+# Windows code-signing material must never be committed.
+*.pfx
+*.p12
+*.pvk
+*.spc
