@@ -44,7 +44,15 @@
       "baseline": "pass",
       "implementation": "implemented",
       "automatic": "contract",
-      "manual": "pending"
+      "manual": "partial",
+      "manual_evidence": {
+        "minimize": "pass",
+        "maximize": "pass",
+        "restore": "pass",
+        "close": "pass",
+        "titlebar_drag": "pending",
+        "startup_layout": "pending"
+      }
     },
     {
       "id": "overlay",

@@ -24,10 +24,10 @@ Start with `./start-electronrebuild.ps1` from the repository root.
 ### Main Window
 - [ ] application starts
 - [ ] titlebar drag works
-- [ ] minimize works
-- [ ] maximize works
-- [ ] restore works
-- [ ] close works
+- [x] minimize works — user-verified on Electron development runtime
+- [x] maximize works — user-verified on Electron development runtime
+- [x] restore works — user-verified on Electron development runtime
+- [x] close works — user-verified on Electron development runtime
 - [ ] no unexpected native menu/frame appears
 
 ### Credential / Files / Workspace
