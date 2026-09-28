@@ -38,7 +38,10 @@
     "desktop:build": "npm run electron:build",
     "desktop:preview": "npm run electron:preview",
     "desktop:package": "npm run electron:package",
-    "desktop:make": "npm run electron:make"
+    "desktop:make": "npm run electron:make",
+    "release:static": "node scripts/release-readiness.mjs",
+    "desktop:release-check": "npm run release:static && npm run desktop:regression && npm run desktop:build",
+    "desktop:release-package": "npm run desktop:release-check && npm run desktop:package"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
