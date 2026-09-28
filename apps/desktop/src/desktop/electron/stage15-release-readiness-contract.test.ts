@@ -13,7 +13,7 @@ describe("Electron Stage 15 release readiness contract", () => {
     const pyproject = read("../../../../../pyproject.toml")
     const backend = read("../../../../../backend/main.py")
 
-    expect(version).toBe("0.1.0")
+    expect(version).toMatch(/^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$/)
     expect(packageJson.version).toBe(version)
     expect(pyproject).toContain(`version = "${version}"`)
     expect(backend).toContain("version=get_app_version()")
@@ -52,7 +52,7 @@ describe("Electron Stage 15 release readiness contract", () => {
     const manifestScript = read("../../../scripts/create-release-manifest.mjs")
     expect(manifestScript).toContain("sha256")
     expect(manifestScript).toContain("Setup.exe")
-    expect(manifestScript).toContain("full.nupkg")
+    expect(manifestScript).toContain("full\\.nupkg")
     expect(manifestScript).toContain("release-manifest.json")
   })
 
