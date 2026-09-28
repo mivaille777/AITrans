@@ -181,7 +181,7 @@ try {
         Write-Host "Vite             : managed by scripts/electron-dev.mjs" -ForegroundColor DarkCyan
         Write-Host "FastAPI backend  : managed by Electron BackendProcessManager" -ForegroundColor DarkCyan
         Write-Host "Backend health   : http://127.0.0.1:8766/health" -ForegroundColor DarkCyan
-        Write-Host "Cargo / Tauri    : not required by this launcher" -ForegroundColor DarkCyan
+        Write-Host "Legacy shell     : removed in Stage 14" -ForegroundColor DarkCyan
         Write-Host ""
 
         npm run electron:dev
