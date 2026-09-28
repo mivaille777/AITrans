@@ -16,6 +16,7 @@ describe("Electron Stage 10 packaging contract", () => {
     expect(packageJson.scripts["electron:make"]).toContain("electron-forge make")
     expect(packageJson.devDependencies["@electron-forge/maker-squirrel"]).toBe("7.11.2")
     expect(packageJson.devDependencies["electron-winstaller"]).toBe("5.4.4")
+    expect(packageJson.allowScripts?.["electron-winstaller@5.4.4"]).toBe(true)
   })
 
   it("keeps the renderer unpacked and the Python sidecar outside ASAR", () => {

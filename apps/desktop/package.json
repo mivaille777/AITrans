@@ -66,5 +66,8 @@
     "vite": "^8.2.0",
     "vitest": "^4.1.11"
   },
-  "main": "dist-electron/main/index.cjs"
+  "main": "dist-electron/main/index.cjs",
+  "allowScripts": {
+    "electron-winstaller@5.4.4": true
+  }
 }
