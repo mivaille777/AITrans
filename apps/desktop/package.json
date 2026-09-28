@@ -33,7 +33,17 @@
     "electron:preview": "npm run electron:build && electron .",
     "electron:package": "npm run electron:build && npm run backend:package && electron-forge package --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs",
     "electron:make": "npm run electron:build && npm run backend:package && electron-forge make --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs --require-installer",
-    "electron:regression": "node scripts/electron-regression.mjs"
+    "electron:regression": "node scripts/electron-regression.mjs",
+    "desktop:dev": "npm run electron:dev",
+    "desktop:check": "npm run electron:check",
+    "desktop:verify": "npm run electron:verify",
+    "desktop:regression": "npm run electron:regression",
+    "desktop:build": "npm run electron:build",
+    "desktop:preview": "npm run electron:preview",
+    "desktop:package": "npm run electron:package",
+    "desktop:make": "npm run electron:make",
+    "legacy:tauri:dev": "npm run tauri:dev",
+    "legacy:tauri:build": "npm run tauri:build"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

@@ -282,9 +282,10 @@ jobs:
         run: node scripts/electron-credential-smoke.mjs
 
   tauri_shell:
-    name: Tauri shell build
+    name: Tauri shell build (legacy fallback)
     runs-on: windows-latest
     timeout-minutes: 30
+    continue-on-error: true
 
     steps:
       - name: Check out repository
@@ -322,7 +323,6 @@ jobs:
       - runtime_acceptance
       - web_frontend
       - electron_shell
-      - tauri_shell
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -337,7 +337,6 @@ jobs:
             ["Agent Runtime v1 acceptance"]="${{ needs.runtime_acceptance.result }}"
             ["React lint, tests, and build"]="${{ needs.web_frontend.result }}"
             ["Electron shell compile"]="${{ needs.electron_shell.result }}"
-            ["Tauri shell build"]="${{ needs.tauri_shell.result }}"
           )
 
           failed=0

@@ -110,5 +110,13 @@
       "automatic": "package_verify",
       "manual": "pending"
     }
-  ]
+  ],
+  "stage13": {
+    "status": "cutover_active",
+    "default_runtime": "electron",
+    "canonical_launcher": "start-electron.ps1",
+    "canonical_npm_prefix": "desktop:",
+    "tauri_fallback": "legacy_non_blocking",
+    "manual_parity_complete": false
+  }
 }

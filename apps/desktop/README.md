@@ -2,8 +2,8 @@
 
 This directory contains the React + TypeScript desktop client for AITrans.
 
-The active desktop migration target is Electron. Tauri is still retained as a
-temporary fallback until the Electron manual acceptance matrix is complete.
+Electron is the default desktop runtime. Tauri is retained only as a legacy
+fallback until the final migration cleanup stage.
 
 ## Runtime boundaries
 
@@ -56,27 +56,27 @@ Sandbox business logic.
 From the repository root:
 
 ```powershell
-.\start-electronrebuild.ps1
+.\start-electron.ps1
 ```
 
 First run or after dependency changes:
 
 ```powershell
-.\start-electronrebuild.ps1 -InstallDependencies
+.\start-electron.ps1 -InstallDependencies
 ```
 
 Useful Stage 9 modes:
 
 ```powershell
 # Run the full local Electron verification gate, then start dev runtime.
-.\start-electronrebuild.ps1 -Verify
+.\start-electron.ps1 -Verify
 
 # Run only FastAPI in the selected Conda environment.
-.\start-electronrebuild.ps1 -BackendOnly
+.\start-electron.ps1 -BackendOnly
 
 # Build the renderer/Electron main process and launch the built renderer
 # through aitrans://app. This is not a packaged installer.
-.\start-electronrebuild.ps1 -BuiltRuntime
+.\start-electron.ps1 -BuiltRuntime
 ```
 
 The normal Electron launcher starts Vite and lets `BackendProcessManager` own
@@ -84,9 +84,10 @@ the FastAPI development process. Cargo is not required by this launcher.
 
 ### Legacy Tauri fallback
 
-The repository-level `start.ps1` is intentionally retained for the existing
-WebReBuild/Tauri workflow while migration acceptance is still open. Do not
-remove it as part of routine Electron cleanup.
+The repository-level `start.ps1` is intentionally retained unchanged as the
+legacy WebReBuild/Tauri launcher. The canonical Electron launcher is
+`start-electron.ps1`. The branch-specific `start-electronrebuild.ps1` remains
+available for migration debugging.
 
 ### Browser-only frontend development
 
@@ -241,3 +242,34 @@ manual workflow dispatch with `build_installer=true`.
 
 This keeps fast runtime contracts separate from the heavier PyInstaller +
 Electron Forge deliverable build.
+
+
+## Stage 13 default runtime
+
+Electron is now the canonical desktop runtime for development, verification,
+regression, build and packaging.
+
+From `apps/desktop`, the runtime-neutral aliases are:
+
+```powershell
+npm run desktop:dev
+npm run desktop:check
+npm run desktop:verify
+npm run desktop:regression
+npm run desktop:build
+npm run desktop:package
+npm run desktop:make
+```
+
+All of these currently resolve to Electron.
+
+Tauri remains available only through legacy paths:
+
+```powershell
+npm run legacy:tauri:dev
+npm run legacy:tauri:build
+.\start.ps1
+```
+
+The Tauri CI job still runs as migration evidence but is non-blocking. The main
+CI quality gate now treats Electron as the required desktop shell.
