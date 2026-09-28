@@ -25,9 +25,14 @@ async function findPackagedApp() {
   throw new Error("Unable to find packaged AITrans win32-x64 directory under apps/desktop/out.")
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, env = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit", windowsHide: false })
+    const child = spawn(command, args, {
+      cwd,
+      stdio: "inherit",
+      windowsHide: false,
+      env,
+    })
     child.once("error", reject)
     child.once("exit", (code) => {
       if (code === 0) resolve()
@@ -79,6 +84,18 @@ if (forbidden) throw new Error(`Packaged backend contains a forbidden model arti
 
 console.log("Running packaged sidecar smoke test...")
 await run(path.join(sidecarDir, "AITransBackend.exe"), ["--runtime-smoke-test"], sidecarDir)
+
+console.log("Running packaged Electron -> backend lifecycle smoke test...")
+await run(
+  path.join(packageDir, "AITrans.exe"),
+  ["--electron-runtime-smoke-test"],
+  packageDir,
+  {
+    ...process.env,
+    AITRANS_API_PORT: "18766",
+    AITRANS_BACKEND_HEALTH_URL: "http://127.0.0.1:18766/health",
+  },
+)
 
 if (requireInstaller) {
   const makerRoot = path.join(outRoot, "make", "squirrel.windows", "x64")

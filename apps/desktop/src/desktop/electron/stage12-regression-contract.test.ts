@@ -35,6 +35,7 @@ describe("Electron Stage 12 full regression contract", () => {
     const verifier = read("../../../scripts/verify-electron-package.mjs")
     const main = read("../../../electron/main/index.cts")
     expect(verifier).toContain("--electron-runtime-smoke-test")
+    expect(verifier).toContain("AITRANS_API_PORT")
     expect(main).toContain("AITrans packaged Electron runtime smoke test passed.")
   })
 

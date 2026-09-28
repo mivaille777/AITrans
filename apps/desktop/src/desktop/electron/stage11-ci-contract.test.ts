@@ -11,7 +11,7 @@ describe("Electron Stage 11 CI contract", () => {
     const workflow = read("../../../../../.github/workflows/electron-package.yml")
 
     expect(workflow).toContain("name: Electron Deliverable CI")
-    expect(workflow).toContain("branches:\n      - electronrebuild")
+    expect(workflow).toMatch(/branches:\r?\n\s+- electronrebuild/)
     expect(workflow).toContain("build_installer:")
     expect(workflow).toContain("cancel-in-progress: true")
   })
@@ -22,7 +22,7 @@ describe("Electron Stage 11 CI contract", () => {
     expect(workflow).toContain("npm run electron:package")
     expect(workflow).toContain("aitrans-electron-win32-x64-")
     expect(workflow).toContain("apps/desktop/out/*-win32-x64/")
-    expect(workflow).toContain('python -m pip install -e ".[build]" -r aitranslator-rag-requirements.txt')
+    expect(workflow).toContain('python -m pip install -e ".[dev,build]" -r aitranslator-rag-requirements.txt')
   })
 
   it("reserves installer creation for an explicit manual workflow run", () => {

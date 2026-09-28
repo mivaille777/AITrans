@@ -59,6 +59,7 @@ describe("Electron Stage 10 packaging contract", () => {
     expect(verifier).toContain('"app.asar.unpacked", "dist", "index.html"')
     expect(verifier).toContain("Squirrel.Windows")
     expect(verifier).toContain("--electron-runtime-smoke-test")
+    expect(verifier).toContain("AITRANS_API_PORT")
     expect(verifier).toContain("AITRANS_BACKEND_HEALTH_URL")
   })
 })
