@@ -90,6 +90,23 @@ function Invoke-Setup {
     }
 }
 
+function Get-InstalledBackendVersion {
+    param([string]$ElectronExecutable)
+
+    $appDirectory = Split-Path -Parent $ElectronExecutable
+    $backendExecutable = Join-Path $appDirectory "resources\backend\AITransBackend\AITransBackend.exe"
+    if (-not (Test-Path -LiteralPath $backendExecutable -PathType Leaf)) {
+        throw "Installed backend sidecar was not found: $backendExecutable"
+    }
+
+    $output = & $backendExecutable --runtime-smoke-test
+    if ($LASTEXITCODE -ne 0) {
+        throw "Installed backend sidecar smoke failed with exit code $LASTEXITCODE."
+    }
+    $payload = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    return [string]$payload.version
+}
+
 function Invoke-InstalledRuntimeSmoke {
     param([string]$Executable, [int]$Port)
     $oldApiPort = $env:AITRANS_API_PORT
@@ -144,6 +161,9 @@ try {
         $installedByTest = $true
         $previousExe = Get-LatestInstalledExecutable
         $previousVersionFolder = Split-Path -Leaf (Split-Path -Parent $previousExe)
+        if ($previousVersionFolder -eq "app-$CanonicalVersion") {
+            throw "PreviousSetupPath resolved to the current VERSION; a true upgrade test requires an older installer."
+        }
         Invoke-InstalledRuntimeSmoke -Executable $previousExe -Port 18768
         $phases.Add([pscustomobject]@{ name = "previous-install"; status = "passed"; app_folder = $previousVersionFolder })
     }
@@ -156,6 +176,10 @@ try {
         throw "Installed app folder $currentVersionFolder does not match VERSION $CanonicalVersion."
     }
     Invoke-InstalledRuntimeSmoke -Executable $currentExe -Port 18769
+    $installedBackendVersion = Get-InstalledBackendVersion -ElectronExecutable $currentExe
+    if ($installedBackendVersion -ne $CanonicalVersion) {
+        throw "Installed backend version $installedBackendVersion does not match VERSION $CanonicalVersion."
+    }
     $shortcutsAfterInstall = @(Find-AITransShortcuts)
     if ($shortcutsAfterInstall.Count -eq 0) { throw "No AITrans desktop/start-menu shortcut was created." }
     $phases.Add([pscustomobject]@{
@@ -169,7 +193,11 @@ try {
         Invoke-Setup -Path $SetupPath -Label "same-version-reinstall"
         $reinstallExe = Get-LatestInstalledExecutable
         Invoke-InstalledRuntimeSmoke -Executable $reinstallExe -Port 18770
-        $phases.Add([pscustomobject]@{ name = "same-version-reinstall"; status = "passed" })
+        $reinstallBackendVersion = Get-InstalledBackendVersion -ElectronExecutable $reinstallExe
+        if ($reinstallBackendVersion -ne $CanonicalVersion) {
+            throw "Reinstalled backend version $reinstallBackendVersion does not match VERSION $CanonicalVersion."
+        }
+        $phases.Add([pscustomobject]@{ name = "same-version-reinstall"; status = "passed"; backend_version = $reinstallBackendVersion })
     }
 
     if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
@@ -203,6 +231,7 @@ try {
         current_setup = $SetupPath
         previous_app_folder = $previousVersionFolder
         current_app_folder = $currentVersionFolder
+        installed_backend_version = $installedBackendVersion
         phases = $phases
     }
     $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ReportPath -Encoding utf8
