@@ -65,8 +65,22 @@ First run or after dependency changes:
 .\start-electronrebuild.ps1 -InstallDependencies
 ```
 
-The Electron launcher starts Vite and lets `BackendProcessManager` own the
-FastAPI development process. Cargo is not required by this launcher.
+Useful Stage 9 modes:
+
+```powershell
+# Run the full local Electron verification gate, then start dev runtime.
+.\start-electronrebuild.ps1 -Verify
+
+# Run only FastAPI in the selected Conda environment.
+.\start-electronrebuild.ps1 -BackendOnly
+
+# Build the renderer/Electron main process and launch the built renderer
+# through aitrans://app. This is not a packaged installer.
+.\start-electronrebuild.ps1 -BuiltRuntime
+```
+
+The normal Electron launcher starts Vite and lets `BackendProcessManager` own
+the FastAPI development process. Cargo is not required by this launcher.
 
 ### Legacy Tauri fallback
 
@@ -87,6 +101,13 @@ npm run dev
 From `apps/desktop`:
 
 ```powershell
+# Fast Electron-specific gate used by CI and local development.
+npm run electron:check
+
+# Full Stage 9 local verification.
+npm run electron:verify
+
+# Individual lower-level checks remain available.
 npm run electron:compile
 npm run test:electron-contracts
 npm run lint

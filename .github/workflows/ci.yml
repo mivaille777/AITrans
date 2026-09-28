@@ -275,11 +275,8 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci --no-audit --prefer-offline
 
-      - name: Compile Electron main and preload
-        run: npm run electron:compile
-
-      - name: Run Electron runtime and security contracts
-        run: npm run test:electron-contracts
+      - name: Run Electron local contract gate
+        run: npm run electron:check
 
       - name: Smoke test Electron credential vault
         run: node scripts/electron-credential-smoke.mjs

@@ -23,7 +23,10 @@
     "electron:dev": "node scripts/electron-dev.mjs",
     "electron:build": "npm run build && npm run electron:compile",
     "electron:start": "electron .",
-    "test:electron-contracts": "vitest run src/desktop/electron src/desktop/runtime-selection.test.ts && npm run typecheck:test"
+    "test:electron-contracts": "vitest run src/desktop/electron src/desktop/runtime-selection.test.ts && npm run typecheck:test",
+    "electron:check": "npm run electron:compile && npm run test:electron-contracts",
+    "electron:verify": "npm run electron:check && npm run lint && npm run test && npm run build && node scripts/electron-credential-smoke.mjs",
+    "electron:preview": "npm run electron:build && electron ."
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

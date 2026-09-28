@@ -1,7 +1,10 @@
 param(
     [string]$CondaEnvironment = "aitrans",
     [switch]$InstallDependencies,
-    [switch]$SkipRagProbe
+    [switch]$SkipRagProbe,
+    [switch]$Verify,
+    [switch]$BackendOnly,
+    [switch]$BuiltRuntime
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +55,10 @@ function Resolve-CondaExecutable {
     throw "Conda executable was not found. Install Conda or add it to PATH."
 }
 
+if ($BackendOnly -and $BuiltRuntime) {
+    throw "-BackendOnly and -BuiltRuntime cannot be used together."
+}
+
 if (-not (Test-Path (Join-Path $DesktopDir "package.json"))) {
     throw "Desktop package.json was not found at '$DesktopDir'."
 }
@@ -92,7 +99,7 @@ Write-Host " AITrans ElectronRebuild development launcher" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "Repository        : $RepoRoot"
 Write-Host "Branch            : $CurrentBranch"
-Write-Host "Git HEAD           : $CurrentCommit"
+Write-Host "Git HEAD          : $CurrentCommit"
 Write-Host "Desktop directory : $DesktopDir"
 Write-Host "Conda environment : $CondaEnvironment"
 Write-Host "Python executable : $PythonExecutable"
@@ -131,30 +138,61 @@ else:
     Assert-LastExitCode "Unable to inspect local RAG Python dependencies."
 }
 
+if ($Verify) {
+    Write-Host ""
+    Write-Host "Running Electron Stage 9 verification..." -ForegroundColor Yellow
+    npm run electron:verify
+    Assert-LastExitCode "Electron verification failed."
+    Write-Host "Electron verification passed." -ForegroundColor Green
+}
+
+if ($BackendOnly) {
+    Write-Host ""
+    Write-Host "Starting FastAPI backend only..." -ForegroundColor Green
+    Write-Host "Backend health: http://127.0.0.1:8766/health" -ForegroundColor DarkCyan
+    Set-Location $RepoRoot
+    python -m backend
+    Assert-LastExitCode "Backend-only runtime exited with an error."
+    exit 0
+}
+
 $PreviousRepoRoot = $env:AITRANS_REPO_ROOT
 $PreviousPythonExecutable = $env:AITRANS_PYTHON_EXECUTABLE
+$PreviousRendererUrl = $env:AITRANS_RENDERER_URL
 
 try {
-    # Electron owns the FastAPI lifecycle in this branch. Passing explicit
-    # absolute values avoids PATH/cwd ambiguity when Electron spawns Python.
     $env:AITRANS_REPO_ROOT = $RepoRoot
     $env:AITRANS_PYTHON_EXECUTABLE = $PythonExecutable
 
     Write-Host ""
-    Write-Host "Starting Electron development runtime..." -ForegroundColor Green
-    Write-Host "Vite             : managed by scripts/electron-dev.mjs" -ForegroundColor DarkCyan
-    Write-Host "FastAPI backend  : managed by Electron BackendProcessManager" -ForegroundColor DarkCyan
-    Write-Host "Backend health   : http://127.0.0.1:8766/health" -ForegroundColor DarkCyan
-    Write-Host "Cargo / Tauri    : not required by this launcher" -ForegroundColor DarkCyan
-    Write-Host ""
+    if ($BuiltRuntime) {
+        Remove-Item Env:AITRANS_RENDERER_URL -ErrorAction SilentlyContinue
+        Write-Host "Starting Electron built-runtime preview..." -ForegroundColor Green
+        Write-Host "Renderer         : dist/ via aitrans://app" -ForegroundColor DarkCyan
+        Write-Host "FastAPI backend  : managed by Electron BackendProcessManager" -ForegroundColor DarkCyan
+        Write-Host "Backend health   : http://127.0.0.1:8766/health" -ForegroundColor DarkCyan
+        Write-Host "Packaging        : not included; Stage 10 owns Forge/package/make" -ForegroundColor DarkCyan
+        Write-Host ""
 
-    npm run electron:dev
+        npm run electron:preview
+    }
+    else {
+        Write-Host "Starting Electron development runtime..." -ForegroundColor Green
+        Write-Host "Vite             : managed by scripts/electron-dev.mjs" -ForegroundColor DarkCyan
+        Write-Host "FastAPI backend  : managed by Electron BackendProcessManager" -ForegroundColor DarkCyan
+        Write-Host "Backend health   : http://127.0.0.1:8766/health" -ForegroundColor DarkCyan
+        Write-Host "Cargo / Tauri    : not required by this launcher" -ForegroundColor DarkCyan
+        Write-Host ""
+
+        npm run electron:dev
+    }
+
     if ($LASTEXITCODE -ne 0) {
         $ElectronExitCode = $LASTEXITCODE
         Write-Host ""
-        Write-Host "Electron development runtime failed with exit code $ElectronExitCode." -ForegroundColor Red
+        Write-Host "Electron runtime failed with exit code $ElectronExitCode." -ForegroundColor Red
         Write-Host "The root cause is in the npm / Vite / Electron output immediately above this message." -ForegroundColor Yellow
-        Write-Host "For an isolated compile check run: cd apps\desktop; npm run electron:compile" -ForegroundColor DarkCyan
+        Write-Host "Quick gate: cd apps\desktop; npm run electron:check" -ForegroundColor DarkCyan
         exit $ElectronExitCode
     }
 }
@@ -171,6 +209,13 @@ finally {
     }
     else {
         $env:AITRANS_PYTHON_EXECUTABLE = $PreviousPythonExecutable
+    }
+
+    if ($null -eq $PreviousRendererUrl) {
+        Remove-Item Env:AITRANS_RENDERER_URL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AITRANS_RENDERER_URL = $PreviousRendererUrl
     }
 
     Set-Location $RepoRoot
