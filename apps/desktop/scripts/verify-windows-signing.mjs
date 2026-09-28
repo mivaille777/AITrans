@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
+import { mkdir, readdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
 import { fileURLToPath } from "node:url"
@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url"
 if (process.platform !== "win32") throw new Error("Windows signing verification requires Windows.")
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(scriptDir, "..")
-const repoRoot = path.resolve(desktopRoot, "../..")
 const makerRoot = path.join(desktopRoot, "out", "make", "squirrel.windows", "x64")
 const packageExe = path.join(desktopRoot, "out", "AITrans-win32-x64", "AITrans.exe")
 const reportPath = path.join(desktopRoot, "out", "signing-report.json")
