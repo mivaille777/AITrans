@@ -27,6 +27,17 @@ describe("Electron desktop window contract", () => {
     expect(source).not.toContain('<header className="window-titlebar" data-tauri-drag-region>')
   })
 
+  it("keeps the main BrowserWindow on the native Windows window-state path", () => {
+    const source = read("../../../electron/main/window-manager.cts")
+
+    expect(source).toContain("frame: false")
+    expect(source).toContain("transparent: false")
+    expect(source).toContain("minimizable: true")
+    expect(source).toContain("maximizable: true")
+    expect(source).toContain("closable: true")
+    expect(source).toContain("thickFrame: true")
+  })
+
   it("routes all three caption controls through the desktop adapter", () => {
     const source = read("../../components/WindowFrame.tsx")
 

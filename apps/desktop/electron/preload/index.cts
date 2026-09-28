@@ -1,6 +1,42 @@
 import { contextBridge, ipcRenderer } from "electron"
 
-import { IPC_CHANNELS } from "../shared/channels.cjs"
+// Sandboxed Electron preload scripts cannot require local CommonJS modules.
+// Keep this allowlist self-contained so the bridge can load with sandbox:true.
+// The canonical values are contract-tested against electron/shared/channels.cts.
+const IPC_CHANNELS = {
+  windowShow: "aitrans:window:show",
+  windowHide: "aitrans:window:hide",
+  windowFocus: "aitrans:window:focus",
+  windowMinimize: "aitrans:window:minimize",
+  windowToggleMaximize: "aitrans:window:toggle-maximize",
+  windowIsMaximized: "aitrans:window:is-maximized",
+  windowClose: "aitrans:window:close",
+  filesPickKnowledgeDocument: "aitrans:files:pick-knowledge-document",
+  filesPickAgentWorkspace: "aitrans:files:pick-agent-workspace",
+  filesOpenEvidenceSource: "aitrans:files:open-evidence-source",
+  credentialsStatus: "aitrans:credentials:status",
+  credentialsPreview: "aitrans:credentials:preview",
+  credentialsSave: "aitrans:credentials:save",
+  credentialsDelete: "aitrans:credentials:delete",
+  overlayShow: "aitrans:overlay:show",
+  overlayHide: "aitrans:overlay:hide",
+  overlayFocus: "aitrans:overlay:focus",
+  overlayPlacementContext: "aitrans:overlay:placement-context",
+  overlaySetPosition: "aitrans:overlay:set-position",
+  overlayResize: "aitrans:overlay:resize",
+  overlayGetPosition: "aitrans:overlay:get-position",
+  overlaySetAlwaysOnTop: "aitrans:overlay:set-always-on-top",
+  overlaySetClickThrough: "aitrans:overlay:set-click-through",
+  overlaySetVisualTheme: "aitrans:overlay:set-visual-theme",
+  overlayNotifyStateChanged: "aitrans:overlay:notify-state-changed",
+  overlayNotifyCompanionNavigation: "aitrans:overlay:notify-companion-navigation",
+  overlayNotifyCompanionConversationChanged: "aitrans:overlay:notify-companion-conversation-changed",
+  eventOverlayMoved: "aitrans:event:overlay-moved",
+  eventOverlayVisualThemeChanged: "aitrans:event:overlay-visual-theme-changed",
+  eventOverlayStateChanged: "aitrans:event:overlay-state-changed",
+  eventCompanionNavigation: "aitrans:event:companion-navigation",
+  eventCompanionConversationChanged: "aitrans:event:companion-conversation-changed",
+} as const
 
 const api = {
   window: {

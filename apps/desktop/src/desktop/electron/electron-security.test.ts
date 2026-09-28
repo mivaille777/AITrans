@@ -14,6 +14,12 @@ describe("Electron security baseline", () => {
     expect(source).toContain("contextIsolation: true")
     expect(source).toContain("sandbox: true")
     expect(source).toContain("webSecurity: true")
+    expect(source).toContain("transparent: false")
+    expect(source).toContain("minimizable: true")
+    expect(source).toContain("maximizable: true")
+    expect(source).toContain("closable: true")
+    expect(source).toContain("roundedCorners: true")
+    expect(source).toContain("thickFrame: true")
     expect(source).toContain('APP_ORIGIN + "/index.html"')
     expect(source).toContain("setWindowOpenHandler(() => ({ action: \"deny\" }))")
     expect(source).toContain('webContents.on("will-navigate"')
@@ -40,6 +46,18 @@ describe("Electron security baseline", () => {
     expect(source).not.toContain("ipcRenderer,")
     expect(source).not.toContain("child_process")
     expect(source).not.toContain("node:fs")
+    expect(source).not.toContain('from "../shared/channels.cjs"')
+    expect(source).not.toContain('require("../shared/channels.cjs")')
+  })
+
+  it("keeps the sandboxed preload self-contained while matching the canonical IPC allowlist", () => {
+    const preload = read("../../../electron/preload/index.cts")
+    const canonical = read("../../../electron/shared/channels.cts")
+    const channelPattern = /"(aitrans:[^"]+)"/g
+    const values = (source: string) =>
+      [...source.matchAll(channelPattern)].map((match) => match[1]).sort()
+
+    expect(values(preload)).toEqual(values(canonical))
   })
 
   it("uses a fixed IPC channel allowlist", () => {
