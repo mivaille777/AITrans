@@ -5,6 +5,8 @@ import json
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 
+from backend.version import get_app_version
+
 
 def _package_version(distribution: str) -> str:
     try:
@@ -28,6 +30,7 @@ def runtime_smoke_test() -> int:
             {
                 "status": "ok",
                 "app": app.title,
+                "version": get_app_version(),
                 "models_root": str(manager.models_root),
                 "runtime": {
                     "qdrant-client": _package_version("qdrant-client"),

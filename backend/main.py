@@ -77,6 +77,7 @@ from backend.api.workspace_apply import router as workspace_apply_router
 from backend.api.writing import router as writing_router
 from backend.core.middleware import RequestLoggingMiddleware
 from backend.services.agent_run_worker import AgentRunWorker
+from backend.version import get_app_version
 
 DEV_ORIGINS = [
     "http://localhost:5173",
@@ -152,7 +153,7 @@ async def lifespan(_: FastAPI):
 
 def create_app():
     app = AITranslatorFastAPI(
-        title="AITranslator API", version="0.18.0", lifespan=lifespan
+        title="AITranslator API", version=get_app_version(), lifespan=lifespan
     )
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(

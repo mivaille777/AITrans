@@ -8,10 +8,11 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 project_root = Path(SPECPATH).resolve()
 default_config = project_root / "config" / "default.toml"
+version_file = project_root / "VERSION"
 
 # Package only runtime metadata/configuration. Managed Qwen weights always live
 # below %LOCALAPPDATA%\AITrans\models and must never be added to this list.
-datas = [(str(default_config), "config")]
+datas = [(str(default_config), "config"), (str(version_file), ".")]
 for package in ("sentence_transformers", "transformers"):
     datas.extend(
         collect_data_files(

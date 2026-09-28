@@ -15,6 +15,7 @@ const sidecarExe = path.join(sourceSidecar, "AITransBackend.exe")
 const stagedBackendRoot = path.join(buildRoot, "electron-resources", "backend")
 const stagedSidecar = path.join(stagedBackendRoot, "AITransBackend")
 const specPath = path.join(repoRoot, "aitrans_backend.spec")
+const versionPath = path.join(repoRoot, "VERSION")
 const python = process.env.AITRANS_PYTHON_EXECUTABLE?.trim() || "python"
 
 if (process.platform !== "win32") {
@@ -79,6 +80,9 @@ async function findForbiddenModelArtifact(root) {
   return walk(root)
 }
 
+const appVersion = (await (await import("node:fs/promises")).readFile(versionPath, "utf8")).trim()
+if (!appVersion) throw new Error("VERSION must not be empty.")
+
 await assertBuildEnvironment()
 await rm(pyinstallerDist, { recursive: true, force: true })
 await rm(pyinstallerWork, { recursive: true, force: true })
@@ -110,6 +114,7 @@ await writeFile(
   JSON.stringify({
     schema_version: 1,
     executable: "AITransBackend/AITransBackend.exe",
+    version: appVersion,
     models: "external-user-data",
     models_root: "%LOCALAPPDATA%/AITrans/models",
   }, null, 2) + "\n",

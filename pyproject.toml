@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "desktop-translator"
 version = "0.1.0"
-description = "Local business backend for the AITranslator React/Tauri desktop application."
+description = "Local business backend for the AITrans Electron desktop application."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
