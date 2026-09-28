@@ -10,6 +10,7 @@ describe("Electron Stage 10 packaging contract", () => {
   it("defines package and Windows installer commands", () => {
     const packageJson = JSON.parse(read("../../../package.json"))
     expect(packageJson.productName).toBe("AITrans")
+    expect(packageJson.config?.forge).toBe("./forge.config.cjs")
     expect(packageJson.version).toBe("0.1.0")
     expect(packageJson.scripts["backend:package"]).toContain("build-backend-sidecar.mjs")
     expect(packageJson.scripts["electron:package"]).toContain("electron-forge package")

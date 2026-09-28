@@ -69,5 +69,8 @@
   "main": "dist-electron/main/index.cjs",
   "allowScripts": {
     "electron-winstaller@5.4.4": true
+  },
+  "config": {
+    "forge": "./forge.config.cjs"
   }
 }
