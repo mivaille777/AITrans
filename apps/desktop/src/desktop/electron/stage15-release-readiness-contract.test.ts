@@ -51,6 +51,18 @@ describe("Electron Stage 15 release readiness contract", () => {
     expect(manifestScript).toContain("release-manifest.json")
   })
 
+  it("keeps release readiness explicit and non-publishing", () => {
+    const workflow = read("../../../../../.github/workflows/electron-release-readiness.yml")
+    expect(workflow).toContain("name: Electron Release Readiness")
+    expect(workflow).toContain("tags:")
+    expect(workflow).toContain('"v*"')
+    expect(workflow).toContain("Verify tag matches VERSION")
+    expect(workflow).toContain("npm run desktop:release-candidate")
+    expect(workflow).toContain("release-manifest.json")
+    expect(workflow).not.toContain("gh release create")
+    expect(workflow).not.toContain("softprops/action-gh-release")
+  })
+
   it("prevents active legacy runtime references from returning", () => {
     const releaseScript = read("../../../scripts/release-readiness.mjs")
     expect(releaseScript).toContain("legacy runtime references remain in active files")

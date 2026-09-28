@@ -278,6 +278,9 @@ jobs:
       - name: Run Electron local contract gate
         run: npm run electron:check
 
+      - name: Run release static gate
+        run: npm run release:static
+
       - name: Smoke test Electron credential vault
         run: node scripts/electron-credential-smoke.mjs
 

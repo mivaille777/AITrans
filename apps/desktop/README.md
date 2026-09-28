@@ -79,3 +79,16 @@ Do not expose generic renderer `fs`, `exec`, `child_process`, or raw `ipcRendere
 ## Migration history
 
 Previous desktop launcher scripts are retained only under `docs/archive/legacy/` for historical reference.
+
+## Release readiness
+
+```powershell
+npm run release:static
+npm run desktop:release-check
+npm run desktop:release-package
+npm run desktop:release-candidate
+```
+
+`desktop:release-candidate` builds the Squirrel.Windows installer and writes
+`out/release-manifest.json` with SHA-256 checksums. The root `VERSION` file
+is the release version authority.
