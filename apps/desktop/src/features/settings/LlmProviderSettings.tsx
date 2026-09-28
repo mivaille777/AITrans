@@ -143,7 +143,7 @@ function LlmProviderSettingsForm({ settings, onClose }: { settings: LlmSettings;
         if (!desktopVaultAvailable) throw new Error("API key can only be managed in the desktop app.")
         await desktop.credentials.delete(current.provider)
       } else if (current.apiKey.trim()) {
-        if (!desktopVaultAvailable) throw new Error("API key can only be managed in the Tauri desktop app.")
+        if (!desktopVaultAvailable) throw new Error("API key can only be managed in the desktop app.")
         await desktop.credentials.save(current.provider, current.apiKey.trim())
       }
 

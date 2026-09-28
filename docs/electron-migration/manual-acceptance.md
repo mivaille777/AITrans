@@ -1,5 +1,27 @@
 # Electron Migration Manual Acceptance
 
+Automated Electron contract tests are a prerequisite, not a replacement for
+this checklist.
+
+Before manual testing:
+
+```powershell
+cd apps/desktop
+npm run electron:compile
+npm run test:electron-contracts
+npm run lint
+npm run test
+npm run build
+```
+
+Then start the Electron branch from the repository root:
+
+```powershell
+.\start-electronrebuild.ps1
+```
+
+Only check an item after observing it on the local Windows runtime.
+
 ## Main window
 
 - [ ] application launches into the expected React route
@@ -31,6 +53,16 @@
 - [ ] main/overlay state synchronization works
 - [ ] companion navigation handoff works
 
+### Display matrix
+
+- [ ] Windows 11 at 100% DPI
+- [ ] Windows 11 at 125% DPI
+- [ ] Windows 11 at 150% DPI
+- [ ] dual monitor layout
+- [ ] secondary monitor to the left of primary
+- [ ] secondary monitor to the right of primary
+- [ ] mixed DPI monitors, when available
+
 ## Native file operations
 
 - [ ] knowledge file picker allows pdf/docx/txt/md/html/htm
@@ -58,6 +90,12 @@
 - [ ] unexpected backend exit is observable
 - [ ] Electron exit does not leave an orphan backend process
 
+Backend health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8766/health
+```
+
 ## Security
 
 - [ ] renderer has no Node `require`
@@ -66,3 +104,8 @@
 - [ ] renderer has no generic command execution API
 - [ ] navigation to unexpected remote origins is blocked
 - [ ] workspace and sandbox policy remain authoritative
+
+## Exit rule
+
+Tauri cleanup may proceed only after the required Electron manual items above
+are accepted and the repository regression gate is green.

@@ -1,97 +1,167 @@
-# AITranslator WebReBuild Desktop
+# AITrans Desktop
 
-This directory contains the React + TypeScript desktop client used by the WebReBuild migration.
+This directory contains the React + TypeScript desktop client for AITrans.
+
+The active desktop migration target is Electron. Tauri is still retained as a
+temporary fallback until the Electron manual acceptance matrix is complete.
 
 ## Runtime boundaries
 
-- React owns presentation and interaction.
-- FastAPI on `127.0.0.1:8766` owns the WebReBuild business API.
-- `127.0.0.1:8765` remains reserved for the existing Browser Selection Bridge.
-- `DesktopAdapter` isolates React from Tauri/Electron-specific APIs.
-- Normal translation stays deterministic and does not run through LangGraph.
-- AI Quick Actions and Companion Chat reuse the existing provider-independent Python AI services.
-
-## Stage 3 frontend boundaries
-
-The main React workspace is split by feature instead of accumulating business orchestration in `App.tsx`:
-
 ```text
-src/
-├── App.tsx                         # composition only
-├── features/
-│   ├── reading/                    # browser reading-context presentation
-│   ├── system/                     # runtime/backend/provider status
-│   └── translation/                # translation state, behavior and workspace UI
-├── components/                     # cross-feature overlay/companion surfaces
-├── shared/components/              # small reusable UI primitives
-├── api/                            # FastAPI client contracts
-└── desktop/                        # Tauri/browser native capability adapters
+React / Vite Renderer
+        |
+        v
+DesktopAdapter
+        |
+        +-- Electron Adapter
+        |       |
+        |       v
+        |   preload + typed IPC
+        |       |
+        |       v
+        |   Electron Main
+        |
+        +-- Browser Adapter
+                |
+                v
+          browser-only development
+
+Electron Main
+    |
+    +-- Main / Overlay BrowserWindow
+    +-- file and workspace dialogs
+    +-- credential vault
+    +-- FastAPI process lifecycle
+    |
+    v
+FastAPI :8766
+    |
+    +-- Agent Runtime
+    +-- RAG / Research / Memory
+    +-- Sandbox / Workspace policy
+
+Browser Selection Bridge remains on :8765.
 ```
 
-`useTranslationWorkspace()` owns the translation workspace state and browser-selection synchronization. UI components consume the controller it returns; they do not call Tauri or translation providers directly.
+The renderer must not use Node APIs directly. Native capabilities go through
+`DesktopAdapter -> preload -> allowlisted IPC -> Electron Main`.
+
+The Python backend remains authoritative for Agent, RAG, Research, Memory and
+Sandbox business logic.
 
 ## Development
 
-From the repository root, the preferred launcher is:
+### Electron development
+
+From the repository root:
 
 ```powershell
-.\scripts\webrebuild-dev.ps1
+.\start-electronrebuild.ps1
 ```
 
-It runs frontend lint, Vitest, and the production build before starting FastAPI and Tauri.
-
-From `apps/desktop`, individual checks remain available:
+First run or after dependency changes:
 
 ```powershell
-npm run lint
-npm run test
-npm run build
+.\start-electronrebuild.ps1 -InstallDependencies
 ```
 
-Browser-only frontend development remains available with:
+The Electron launcher starts Vite and lets `BackendProcessManager` own the
+FastAPI development process. Cargo is not required by this launcher.
+
+### Legacy Tauri fallback
+
+The repository-level `start.ps1` is intentionally retained for the existing
+WebReBuild/Tauri workflow while migration acceptance is still open. Do not
+remove it as part of routine Electron cleanup.
+
+### Browser-only frontend development
+
+From `apps/desktop`:
 
 ```powershell
 npm run dev
 ```
 
-## Migrated application paths
+## Verification
 
-Deterministic translation:
+From `apps/desktop`:
 
-```text
-React
-  -> POST /api/translation
-  -> FastAPI
-  -> TranslationService
-  -> existing TranslationManager
-  -> TranslationProvider
+```powershell
+npm run electron:compile
+npm run test:electron-contracts
+npm run lint
+npm run test
+npm run build
 ```
 
-Reading Companion:
+Windows credential smoke test:
 
-```text
-Browser selection
-  -> BrowserReadingBridge :8765
-  -> FastAPI :8766
-  -> React / Tauri Overlay
-  -> Quick Actions or Companion Handoff
-  -> existing AIChatService / AITextService
+```powershell
+node scripts/electron-credential-smoke.mjs
 ```
 
-Research Notes remain persisted by the existing SQLite `ResearchNoteStore`.
+Manual migration acceptance is tracked in:
 
-The migration intentionally reuses established normalization, cache, provider, reading-context and research-note behavior under `app/` instead of duplicating those rules in the web client.
+```text
+docs/electron-migration/manual-acceptance.md
+docs/electron-migration/runtime-capability-matrix.md
+```
 
+## Frontend structure
+
+```text
+apps/desktop/
+├── electron/
+│   ├── main/                 # privileged Electron host
+│   ├── preload/              # contextBridge surface
+│   └── shared/               # IPC channel contracts
+├── src/
+│   ├── api/                  # FastAPI client contracts
+│   ├── components/
+│   ├── desktop/
+│   │   ├── browser/
+│   │   ├── electron/
+│   │   ├── tauri/            # temporary fallback until final migration cleanup
+│   │   ├── adapter.ts
+│   │   └── index.ts
+│   ├── features/
+│   └── shared/
+└── scripts/
+```
+
+## Sandbox boundary
+
+Electron's Node.js privileges do not make Electron a direct Agent execution
+surface. Agent file and command execution must continue through the existing
+workspace and sandbox policy:
+
+```text
+LLM / Agent
+    |
+    v
+Tool contract
+    |
+    v
+Workspace + Sandbox policy
+    |
+    v
+Sandbox runtime
+```
+
+Do not add generic renderer APIs such as `fs`, `exec`, `child_process` or
+raw `ipcRenderer`.
 
 ## Sandbox feature flag
 
 Sandbox UI is enabled by default during frontend development.
 
-To disable the Sandbox Debug Studio and Agent filesystem workspace control at build time:
+To disable the Sandbox Debug Studio and Agent filesystem workspace control at
+build time:
 
 ```powershell
 $env:VITE_AITRANS_SANDBOX_ENABLED="false"
 npm run dev
 ```
 
-The frontend build flag mirrors the backend `AITRANS_SANDBOX_ENABLED` switch from the Sandbox design. If the backend health response supplies `sandbox_enabled`, that runtime value takes precedence over the frontend build default. When disabled, Agent requests always use an empty `filesystem_workspace_id`.
+If backend health supplies `sandbox_enabled`, the runtime value takes
+precedence over the frontend build default.

@@ -37,12 +37,10 @@ subscribeOverlayPreferences((preferences) => {
   applyOverlayVisualTheme(preferences.theme)
 })
 
-// Tauri events provide immediate main-window -> overlay synchronization. The
-// persisted preference subscription above remains the recovery/source-of-truth
-// path after reloads and non-Tauri browser development. Native material state
-// is already changed by the sender, so this listener only updates the DOM
-// theme. WebView2 background transparency stays static from Tauri config to
-// avoid Windows caption artifacts during focus/drag transitions.
+// The DesktopAdapter event bridge provides immediate main-window -> overlay
+// theme synchronization. Persisted preferences remain the recovery/source-of-
+// truth path after reloads and browser-only development, while the native
+// runtime owns platform-specific window material and transparency behavior.
 void subscribeOverlayVisualThemeEvents((theme) => {
   applyOverlayThemeToDocument(theme)
 })
