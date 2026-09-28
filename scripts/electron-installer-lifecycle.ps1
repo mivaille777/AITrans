@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if (-not $IsWindows) { throw "Electron installer lifecycle testing requires Windows." }
+if ($env:OS -ne "Windows_NT") { throw "Electron installer lifecycle testing requires Windows." }
 if (-not $AcknowledgeInstallMutation) {
     throw "This test installs and uninstalls AITrans for the current Windows user. Re-run with -AcknowledgeInstallMutation."
 }
