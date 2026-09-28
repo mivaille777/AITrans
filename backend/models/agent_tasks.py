@@ -6,7 +6,14 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from backend.models.agent_artifacts import ArtifactKind, ArtifactRef, EvidenceRef
 
@@ -208,7 +215,8 @@ class TaskInputRef(TaskModel):
 
 class TaskSpec(TaskModel):
     task_id: str = Field(min_length=1, max_length=256)
-    role: TaskRole
+    role: TaskRole | None = None
+    agent_id: str = Field(default="", max_length=128)
     objective: str = Field(min_length=1, max_length=20_000)
     depends_on: list[str] = Field(default_factory=list, max_length=MAX_TASKS_PER_PLAN)
     required: bool
@@ -232,11 +240,47 @@ class TaskSpec(TaskModel):
     def normalize_list_fields(cls, value: Any) -> list[str]:
         return _dedupe_strings(list(value or []))
 
+    @field_validator("agent_id", mode="before")
+    @classmethod
+    def normalize_agent_id(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_legacy_agent_id(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        agent_id = str(payload.get("agent_id", "") or "").strip()
+        role = payload.get("role")
+        if not agent_id and role is not None:
+            try:
+                payload["agent_id"] = (
+                    role.value if isinstance(role, TaskRole) else TaskRole(str(role)).value
+                )
+            except ValueError:
+                # The normal enum validator will report unknown legacy roles.
+                pass
+        return payload
+
     @model_validator(mode="after")
     def validate_self_dependency(self) -> TaskSpec:
         if self.task_id in self.depends_on:
             raise ValueError("task cannot depend on itself")
+        if not self.agent_id:
+            if self.role is None:
+                raise ValueError("agent_id is required when role is not provided")
+            object.__setattr__(self, "agent_id", self.role.value)
+        if self.role is not None and self.agent_id != self.role.value:
+            raise ValueError("role and agent_id must identify the same Agent")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy_role_contract(self, handler):
+        payload = handler(self)
+        if self.role is not None and payload.get("agent_id") == self.role.value:
+            payload.pop("agent_id", None)
+        return payload
 
 
 class ValidatedTaskPlan(TaskModel):

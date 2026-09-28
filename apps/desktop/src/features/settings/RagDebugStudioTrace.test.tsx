@@ -166,6 +166,7 @@ describe("RagDebugStudio", () => {
     render(<RagDebugStudioTrace />)
 
     expect(screen.getByText("RAG Debug Studio")).toBeTruthy()
+    expect(screen.queryByText("Open associated Agent Run")).toBeNull()
     for (const label of ["Trace", "Retrieval", "Chunks", "Evaluation", "Compare", "Datasets"]) {
       expect((screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled).toBe(false)
     }

@@ -20,6 +20,10 @@ class CoordinatorMemoryPort:
         self.coordinator = coordinator
         self.artifact_store = artifact_store
 
+    def policy_revision(self, profile_id: str) -> str:
+        reader = getattr(self.coordinator, "policy_revision", None)
+        return str(reader(profile_id)) if callable(reader) else ""
+
     def load_snapshot(
         self,
         *,

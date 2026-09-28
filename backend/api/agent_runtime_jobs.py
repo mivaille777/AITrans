@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from threading import Lock
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from pydantic import BaseModel
 
 from backend.agent_core.events import AgentEvent
-from backend.agent_core.exceptions import AgentPauseRequestedError, AgentRuntimeError
+from backend.agent_core.exceptions import (
+    AgentCancelledError,
+    AgentPauseRequestedError,
+    AgentRuntimeError,
+)
 from backend.agent_core.reliability import AgentRunControl
 from backend.api.agent import (
     _apply_resume_request_context,
@@ -77,6 +89,7 @@ class AgentRuntimeJobRequest(BaseModel):
 
 class AgentRuntimeConfirmationRequest(BaseModel):
     tool_name: str
+    approved: bool = True
 
 
 @router.post("/tasks", response_model=AgentRunRecord, status_code=status.HTTP_202_ACCEPTED)
@@ -189,7 +202,11 @@ def confirm_canonical_runtime_run(
     store: StoreDependency,
 ) -> AgentRunRecord:
     try:
-        return AgentRunScheduler(store).confirm(run_id, tool_name=payload.tool_name)
+        return AgentRunScheduler(store).confirm(
+            run_id,
+            tool_name=payload.tool_name,
+            approved=payload.approved,
+        )
     except AgentRunStoreNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     except (AgentRunStoreConflictError, ValueError) as exc:
@@ -297,7 +314,7 @@ async def stream_canonical_runtime_run(
         return
 
 
-def _build_runtime():
+def _build_runtime(engine: str | None = None):
     research_workspace = get_research_workspace_service()
     research_notes = get_research_note_service()
     return get_agent_runtime(
@@ -313,6 +330,7 @@ def _build_runtime():
         research_workspace=research_workspace,
         knowledge_workspace=get_knowledge_workspace_service(),
         knowledge_boards=get_knowledge_board_service(),
+        graph_engine=engine,
     )
 
 
@@ -341,7 +359,18 @@ async def execute_persisted_agent_run(
                         "tool_call_ids": list(blocked),
                     },
                 )
-        runtime = _build_runtime()
+        runtime_builder = _build_runtime
+        if "engine" in inspect.signature(runtime_builder).parameters:
+            runtime = runtime_builder(engine=run.engine)
+        else:
+            runtime = runtime_builder()
+        select_graph_version = getattr(runtime, "select_graph_version", None)
+        if run.graph_version and callable(select_graph_version):
+            select_graph_version(
+                run.graph_version,
+                state_schema_version=(run.state_schema_version or None),
+                engine=run.engine,
+            )
         research_workspace = get_research_workspace_service()
         try:
             state = (
@@ -360,6 +389,16 @@ async def execute_persisted_agent_run(
                         run.run_id,
                         lease_owner=lease_owner,
                     )
+                decision = store.consume_write_confirmation(
+                    run.run_id,
+                    lease_owner=lease_owner,
+                )
+                if decision is not None:
+                    state.browser_context = {
+                        **state.browser_context,
+                        "write_confirmation_decision": decision,
+                    }
+                    state.sync_contract()
         except AgentRuntimeError as exc:
             return AgentRunOutcome(
                 status=(
@@ -409,12 +448,20 @@ async def execute_persisted_agent_run(
             )
 
             with bind_tool_run_store(store):
-                result = runtime.execute(
-                    state,
-                    control=control,
-                    resume=recovering,
-                    event_sink=lambda event: store.append_event(event, lease_owner=lease_owner),
-                )
+                try:
+                    result = runtime.execute(
+                        state,
+                        control=control,
+                        resume=recovering,
+                        event_sink=lambda event: store.append_event(
+                            event, lease_owner=lease_owner
+                        ),
+                    )
+                except AgentCancelledError as exc:
+                    return AgentRunOutcome(
+                        status=AgentRunStatus.CANCELLED,
+                        result={"code": "cancelled", "message": str(exc)},
+                    )
         except AgentPauseRequestedError:
             record_checkpoint()
             raise

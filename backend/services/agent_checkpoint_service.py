@@ -8,8 +8,96 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app.infrastructure.paths import writable_config_dir
+from backend.models.agent_artifacts import (
+    Artifact,
+    ArtifactKind,
+    ArtifactRef,
+    ClaimRecord,
+    ComparisonArtifact,
+    ComparisonCell,
+    DocumentAnalysisArtifact,
+    EvidenceRef,
+    KnowledgeDraftArtifact,
+    KnowledgeItemDraft,
+    KnowledgeRelationDraft,
+    ManuscriptSectionArtifact,
+    NoteDraft,
+    OutlineArtifact,
+    OutlineSection,
+    ReferenceRecord,
+    RelationProposal,
+    ResearchHypothesis,
+    RevisionArtifact,
+    RevisionChange,
+    SourceCoverage,
+    VerificationIssue,
+    VerificationReport,
+    VerificationStatus,
+)
+from backend.models.agent_evidence import (
+    EvidenceLocator,
+    EvidencePacket,
+    EvidenceSourceCategory,
+    EvidenceSourceStatus,
+)
+from backend.models.agent_tasks import (
+    ResourceUsage,
+    ScopeContext,
+    ScopeKind,
+    ScopeMode,
+    TaskInputRef,
+    TaskResult,
+    TaskRole,
+    TaskSpec,
+    TaskStatus,
+    ValidatedTaskPlan,
+)
 
 DEFAULT_AGENT_CHECKPOINT_FILENAME = "agent_checkpoints.sqlite3"
+
+# Root state remains JSON-only. Specialist subgraphs use these DTOs and enums
+# in their own channels; allow only these application-owned value types so a
+# strict serializer can restore typed state without importing arbitrary classes.
+_AGENT_CHECKPOINT_MSGPACK_TYPES = (
+    Artifact,
+    ArtifactKind,
+    ArtifactRef,
+    ClaimRecord,
+    ComparisonArtifact,
+    ComparisonCell,
+    DocumentAnalysisArtifact,
+    EvidenceRef,
+    KnowledgeDraftArtifact,
+    KnowledgeItemDraft,
+    KnowledgeRelationDraft,
+    ManuscriptSectionArtifact,
+    NoteDraft,
+    OutlineArtifact,
+    OutlineSection,
+    ReferenceRecord,
+    RelationProposal,
+    RevisionArtifact,
+    RevisionChange,
+    ResearchHypothesis,
+    SourceCoverage,
+    VerificationIssue,
+    VerificationReport,
+    VerificationStatus,
+    EvidenceLocator,
+    EvidencePacket,
+    EvidenceSourceCategory,
+    EvidenceSourceStatus,
+    ResourceUsage,
+    ScopeContext,
+    ScopeKind,
+    ScopeMode,
+    TaskInputRef,
+    TaskResult,
+    TaskRole,
+    TaskSpec,
+    TaskStatus,
+    ValidatedTaskPlan,
+)
 
 
 class AgentCheckpointService:
@@ -40,7 +128,9 @@ class AgentCheckpointService:
         self._connection.execute("PRAGMA synchronous = NORMAL")
         self.checkpointer = SqliteSaver(
             self._connection,
-            serde=JsonPlusSerializer(allowed_msgpack_modules=()),
+            serde=JsonPlusSerializer(
+                allowed_msgpack_modules=_AGENT_CHECKPOINT_MSGPACK_TYPES
+            ),
         )
         self.checkpointer.setup()
 

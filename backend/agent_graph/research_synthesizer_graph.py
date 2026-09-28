@@ -5,9 +5,14 @@ from collections.abc import Mapping
 from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
+from backend.agent_core.orchestration.specialist_adapter import (
+    commit_specialist_effect,
+    specialist_memory_snapshot,
+)
 from backend.models.agent_artifacts import (
     ComparisonArtifact,
     ComparisonCell,
@@ -234,11 +239,11 @@ class ResearchSynthesizerGraph:
         return {"documents": documents, "input_issues": issues}
 
     def _load_authorized_memory(
-        self, state: ResearchSynthesizerState
+        self, state: ResearchSynthesizerState, runtime: Runtime[Any]
     ) -> dict[str, Any]:
         return {
             "memory_context": _bounded_memory_context(
-                state.get("memory_snapshot", {})
+                specialist_memory_snapshot(runtime, state)
             )
         }
 
@@ -255,10 +260,11 @@ class ResearchSynthesizerGraph:
         return {"draft": draft}
 
     def _verify_comparison(
-        self, state: ResearchSynthesizerState
+        self, state: ResearchSynthesizerState, runtime: Runtime[Any]
     ) -> dict[str, Any]:
         task = state["task"]
         scope = state["scope"]
+        memory_snapshot = specialist_memory_snapshot(runtime, state)
         documents = list(state.get("documents", []))
         draft = dict(state.get("draft", {}))
         available_evidence = {
@@ -468,7 +474,7 @@ class ResearchSynthesizerGraph:
                 "input_artifact_ids": [document.artifact_id for document in documents],
                 "formal_review_gate_required": formal_review,
                 "memory_snapshot_ref": str(
-                    state.get("memory_snapshot", {}).get("snapshot_id", "") or ""
+                    memory_snapshot.get("snapshot_id", "") or ""
                 ),
                 "memory_context_ids": [
                     item["item_id"] for item in state.get("memory_context", [])
@@ -491,7 +497,11 @@ class ResearchSynthesizerGraph:
             verification_status=status,
             verification_report=report,
         )
-        stored = self._artifacts.put(artifact)
+        stored = commit_specialist_effect(
+            runtime,
+            f"artifact_commit:{task.task_id}",
+            lambda: self._artifacts.put(artifact),
+        )
         task_status = (
             TaskStatus.SUCCEEDED
             if status is VerificationStatus.PASSED

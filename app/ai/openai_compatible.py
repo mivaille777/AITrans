@@ -189,7 +189,8 @@ class OpenAICompatibleClient:
                     "OpenAI-compatible API request failed."
                 ) from exc
             raise AIResponseError(
-                f"OpenAI-compatible API request failed with HTTP status {status_code}."
+                f"OpenAI-compatible API request failed with HTTP status {status_code}.",
+                status_code=int(status_code),
             ) from exc
         except AIError:
             raise

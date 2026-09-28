@@ -62,7 +62,9 @@ class LegacySpecialistExecutor:
         dependency_results: Mapping[str, TaskResult],
         memory_snapshot: Mapping[str, Any],
     ) -> SpecialistExecution:
-        legacy_name = self._LEGACY_NAMES.get(task.role)
+        legacy_name = (
+            self._LEGACY_NAMES.get(task.role) if task.role is not None else None
+        )
         agent = self._registry.get(legacy_name) if legacy_name else None
         if agent is None:
             return SpecialistExecution(
@@ -71,7 +73,7 @@ class LegacySpecialistExecutor:
                     attempt_id=f"{task.task_id}:1",
                     status=TaskStatus.BLOCKED,
                     error_code="specialist_not_implemented",
-                    unmet_requirements=[f"{task.role.value}_specialist"],
+                    unmet_requirements=[f"{task.agent_id}_specialist"],
                 )
             )
         context = SharedAgentContext(
@@ -151,7 +153,11 @@ class SerialTaskGraphExecutor:
                         )
                     )
                 else:
-                    executor = self._executors.get(task.role)
+                    executor = (
+                        self._executors.get(task.role)
+                        if task.role is not None
+                        else None
+                    )
                     if executor is None:
                         execution = SpecialistExecution(
                             result=TaskResult(

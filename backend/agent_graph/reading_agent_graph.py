@@ -7,18 +7,39 @@ from types import SimpleNamespace
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import END, START, StateGraph
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
+from langgraph.types import Command, Overwrite, Send
 
 from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEventType
 from backend.agent_core.exceptions import AgentRuntimeError
+from backend.agent_core.orchestration.graph_state import (
+    RootOrchestrationState,
+    checkpoint_engine,
+    checkpoint_graph_version,
+    checkpoint_state_schema_version,
+    import_legacy_orchestration_state,
+    initial_orchestration_state,
+    project_orchestration_state,
+)
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.reliability import (
     AgentRunControl,
+    run_node_operation_with_timeout,
     run_react_decision_with_timeout,
 )
-from backend.agent_core.state import AgentState, migrate_agent_state_payload
+from backend.agent_core.state import (
+    CURRENT_AGENT_GRAPH_VERSION,
+    CURRENT_AGENT_STATE_SCHEMA_VERSION,
+    LEGACY_AGENT_GRAPH_VERSION,
+    PREVIOUS_AGENT_GRAPH_VERSION,
+    PREVIOUS_NATIVE_AGENT_GRAPH_VERSION,
+    SUPPORTED_AGENT_GRAPH_VERSIONS,
+    AgentState,
+    migrate_agent_state_payload,
+)
+from backend.agent_graph.factory import build_root_graph
 from backend.models.agent_react import (
     AgentEvidenceGateAssessment,
     AgentObservation,
@@ -39,9 +60,31 @@ _KNOWLEDGE_SEARCH_TOOL = "search_knowledge_base"
 _KNOWLEDGE_READ_TOOLS = frozenset(
     {"read_knowledge_chunk", "read_knowledge_section"}
 )
+from backend.agent_core.orchestration.agent_registry import AgentRegistry
+from backend.agent_core.orchestration.frontier import (
+    dependency_results,
+    ready_tasks,
+)
+from backend.agent_core.orchestration.migration import resolve_agent_graph_engine
+from backend.agent_core.orchestration.parallel_executor import ParallelExecutionPolicy
+from backend.agent_core.orchestration.resource_manager import AgentResourceManager
+from backend.agent_core.orchestration.specialist_adapter import (
+    create_specialist_node,
+    resolve_compiled_graph,
+    resolve_per_invocation_graph,
+    specialist_node_name,
+)
+from backend.models.agent_orchestration import OrchestrationLane, OrchestrationRoute
+from backend.models.agent_tasks import (
+    TERMINAL_TASK_STATUSES,
+    ScopeContext,
+    TaskResult,
+    TaskStatus,
+    ValidatedTaskPlan,
+)
 
 
-class ReadingAgentGraphState(TypedDict, total=False):
+class ReadingAgentGraphState(RootOrchestrationState, total=False):
     """Serializable public state for production and LangSmith Studio."""
 
     agent_state: dict[str, Any]
@@ -49,6 +92,7 @@ class ReadingAgentGraphState(TypedDict, total=False):
     route: dict[str, Any]
     route_metadata: dict[str, Any]
     emitted_event_types: list[str]
+    proposed_task_plan: dict[str, Any]
 
 
 class ReadingAgentRuntimeContext(TypedDict, total=False):
@@ -56,6 +100,12 @@ class ReadingAgentRuntimeContext(TypedDict, total=False):
 
     event_sink: GraphEventSink | None
     control: AgentRunControl
+    memory_snapshot: dict[str, Any]
+    parallel_policy: Any
+    resource_manager: AgentResourceManager
+    resuming: bool
+    durable_write_interrupt: bool
+    write_confirmation_decision: dict[str, Any]
 
 
 def _coerce_agent_state(value: AgentState | dict[str, Any]) -> AgentState:
@@ -290,6 +340,14 @@ class ReadingAgentGraph:
         "finalize_react",
         "finalize_conversation",
     )
+    native_node_names = (
+        "route_orchestration",
+        "resolve_scope",
+        "load_memory_snapshot",
+        "plan_tasks",
+        "validate_plan",
+        "block_orchestration",
+    )
 
     def __init__(
         self,
@@ -299,6 +357,11 @@ class ReadingAgentGraph:
         checkpointer: BaseCheckpointSaver[str] | None = None,
         context_provider: Callable[[AgentState], dict[str, Any]] | None = None,
         collaboration_adapter: Any | None = None,
+        graph_version: str = CURRENT_AGENT_GRAPH_VERSION,
+        state_schema_version: int = CURRENT_AGENT_STATE_SCHEMA_VERSION,
+        engine: str | None = None,
+        orchestration_service: Any | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._adapter = adapter
         self._react_decision_service = (
@@ -310,64 +373,192 @@ class ReadingAgentGraph:
         self._checkpointer = checkpointer
         self._context_provider = context_provider
         self._collaboration_adapter = collaboration_adapter
-        builder = StateGraph(
-            ReadingAgentGraphState,
-            context_schema=ReadingAgentRuntimeContext,
+        self._orchestration_service = orchestration_service or getattr(
+            collaboration_adapter, "orchestrator", None
         )
-        builder.add_node("resolve_context", self._pausable_node("resolve_context", self._resolve_context))
-        builder.add_node("run_collaboration", self._pausable_node("run_collaboration", self._run_collaboration))
-        builder.add_node("prepare_conversation", self._pausable_node("prepare_conversation", self._prepare_conversation, simple=True))
-        builder.add_node("knowledge_access", self._pausable_node("knowledge_access", self._knowledge_access))
-        builder.add_node("knowledge_scope", self._pausable_node("knowledge_scope", self._knowledge_scope))
-        builder.add_node("route_request", self._pausable_node("route_request", self._route_request))
-        builder.add_node("execute_direct", self._pausable_node("execute_direct", self._execute_direct))
-        builder.add_node("start_react", self._pausable_node("start_react", self._start_react))
-        builder.add_node("decide_react", self._pausable_node("decide_react", self._decide_react))
-        builder.add_node("execute_react_tool", self._pausable_node("execute_react_tool", self._execute_react_tool))
-        builder.add_node("finalize_react", self._pausable_node("finalize_react", self._finalize_react))
-        builder.add_node("finalize_conversation", self._pausable_node("finalize_conversation", self._finalize_conversation, simple=True))
+        planner = getattr(self._orchestration_service, "planner", None)
+        self._agent_registry = agent_registry or getattr(
+            planner, "agent_registry", None
+        )
+        self._specialist_graph_cache: dict[str, Any] = {}
+        self._specialist_checkpoint_graph_cache: dict[str, Any] = {}
+        self._specialist_temporary_graph_cache: dict[str, Any] = {}
+        self._specialist_node_names: dict[str, str] = {}
+        self._send_dispatch_enabled = False
+        self._graph_version = str(graph_version or "").strip()
+        self._state_schema_version = int(state_schema_version)
+        self._engine = str(
+            engine if engine is not None else resolve_agent_graph_engine()
+        ).strip().lower()
+        if self._engine not in {"native", "compat"}:
+            raise ValueError(f"unsupported Agent engine: {self._engine}")
+        self._graph_version_pinned = False
+        self._engine_pinned = False
+        self._nodes: dict[str, Callable[..., Any]] = {
+            "resolve_context": self._pausable_node(
+                "resolve_context", self._resolve_context
+            ),
+            "run_collaboration": self._pausable_node(
+                "run_collaboration", self._run_collaboration
+            ),
+            "prepare_conversation": self._pausable_node(
+                "prepare_conversation", self._prepare_conversation, simple=True
+            ),
+            "route_orchestration": self._pausable_node(
+                "route_orchestration", self._route_orchestration
+            ),
+            "resolve_scope": self._pausable_node("resolve_scope", self._resolve_scope),
+            "load_memory_snapshot": self._pausable_node(
+                "load_memory_snapshot", self._load_memory_snapshot
+            ),
+            "plan_tasks": self._pausable_node("plan_tasks", self._plan_tasks),
+            "validate_plan": self._pausable_node("validate_plan", self._validate_plan),
+            "dispatch_frontier": self._pausable_node(
+                "dispatch_frontier", self._dispatch_frontier
+            ),
+            "advance_frontier": self._pausable_node(
+                "advance_frontier", self._advance_frontier
+            ),
+            "finalize_task_graph": self._pausable_node(
+                "finalize_task_graph", self._finalize_task_graph
+            ),
+            "block_orchestration": self._pausable_node(
+                "block_orchestration", self._block_orchestration
+            ),
+            "knowledge_access": self._pausable_node(
+                "knowledge_access", self._knowledge_access
+            ),
+            "knowledge_scope": self._pausable_node(
+                "knowledge_scope", self._knowledge_scope
+            ),
+            "route_request": self._pausable_node(
+                "route_request", self._route_request
+            ),
+            "execute_direct": self._pausable_node(
+                "execute_direct", self._execute_direct
+            ),
+            "start_react": self._pausable_node("start_react", self._start_react),
+            "decide_react": self._pausable_node(
+                "decide_react", self._decide_react
+            ),
+            "execute_react_tool": self._pausable_node(
+                "execute_react_tool", self._execute_react_tool
+            ),
+            "finalize_react": self._pausable_node(
+                "finalize_react", self._finalize_react
+            ),
+            "finalize_conversation": self._pausable_node(
+                "finalize_conversation", self._finalize_conversation, simple=True
+            ),
+        }
+        self._compile_graphs()
 
-        builder.add_edge(START, "resolve_context")
-        # Acquire durable conversation ownership before specialists read scope or
-        # memory, so two windows cannot launch competing task graphs.
-        builder.add_edge("resolve_context", "prepare_conversation")
-        builder.add_edge("prepare_conversation", "run_collaboration")
-        builder.add_edge("run_collaboration", "knowledge_access")
-        builder.add_edge("knowledge_access", "knowledge_scope")
-        builder.add_edge("knowledge_scope", "route_request")
-        builder.add_conditional_edges(
-            "route_request",
-            self._route_branch,
-            {
-                "complex": "start_react",
-                "direct": "execute_direct",
-                "completed": "finalize_conversation",
-            },
+    def _compile_graphs(self) -> None:
+        nodes = {
+            name: handler
+            for name, handler in self._nodes.items()
+            if not name.startswith("specialist_")
+        }
+        self._specialist_node_names = {}
+        self._send_dispatch_enabled = False
+        if self._uses_native_send_dispatch and self._agent_registry is not None:
+            for spec in self._agent_registry.list_agents():
+                if not callable(spec.graph_factory):
+                    continue
+                node_name = specialist_node_name(spec.agent_id)
+                compiled = self._specialist_graph_cache.get(spec.agent_id)
+                if compiled is None:
+                    compiled = resolve_compiled_graph(
+                        spec.agent_id, spec.graph_factory
+                    )
+                    self._specialist_graph_cache[spec.agent_id] = compiled
+                checkpointed = self._specialist_checkpoint_graph_cache.get(
+                    spec.agent_id
+                )
+                if checkpointed is None:
+                    checkpointed = resolve_per_invocation_graph(
+                        spec.agent_id, compiled
+                    )
+                    self._specialist_checkpoint_graph_cache[spec.agent_id] = (
+                        checkpointed
+                    )
+                temporary_graph = None
+                if callable(spec.temporary_graph_factory):
+                    temporary_graph = self._specialist_temporary_graph_cache.get(
+                        spec.agent_id
+                    )
+                    if temporary_graph is None:
+                        temporary_graph = resolve_compiled_graph(
+                            spec.agent_id, spec.temporary_graph_factory
+                        )
+                        self._specialist_temporary_graph_cache[spec.agent_id] = (
+                            temporary_graph
+                        )
+                nodes[node_name] = create_specialist_node(
+                    spec,
+                    compiled,
+                    checkpointed_graph=checkpointed,
+                    temporary_graph=temporary_graph,
+                )
+                self._specialist_node_names[spec.agent_id] = node_name
+            self._send_dispatch_enabled = bool(self._specialist_node_names)
+        self._compiled, self._temporary_compiled = build_root_graph(
+            state_schema=ReadingAgentGraphState,
+            context_schema=ReadingAgentRuntimeContext,
+            nodes=nodes,
+            route_branch=self._route_branch,
+            orchestration_branch=self._orchestration_branch,
+            decision_branch=self._decision_branch,
+            observation_branch=self._observation_branch,
+            dispatch_branch=(
+                self._dispatch_branch if self._send_dispatch_enabled else None
+            ),
+            checkpointer=self._checkpointer,
+            graph_version=self._graph_version,
+            engine=self._engine,
+            native_send_dispatch=self._send_dispatch_enabled,
         )
-        builder.add_edge("execute_direct", "finalize_conversation")
-        builder.add_edge("start_react", "decide_react")
-        builder.add_conditional_edges(
-            "decide_react",
-            self._decision_branch,
-            {
-                "tool": "execute_react_tool",
-                "final": "finalize_react",
-                "limit": "finalize_react",
-            },
-        )
-        builder.add_conditional_edges(
-            "execute_react_tool",
-            self._observation_branch,
-            {
-                "continue": "decide_react",
-                "finalize": "finalize_react",
-                "confirmation": "finalize_conversation",
-            },
-        )
-        builder.add_edge("finalize_react", "finalize_conversation")
-        builder.add_edge("finalize_conversation", END)
-        self._compiled = builder.compile(checkpointer=checkpointer)
-        self._temporary_compiled = builder.compile()
+
+    def select_graph_version(
+        self,
+        graph_version: str,
+        *,
+        state_schema_version: int | None = None,
+        pin: bool = False,
+        engine: str | None = None,
+    ) -> None:
+        """Select the checkpoint's builder before any state migration occurs."""
+
+        selected = str(graph_version or "").strip()
+        if selected not in SUPPORTED_AGENT_GRAPH_VERSIONS:
+            raise AgentRuntimeError(
+                f"unsupported Agent graph_version: {selected}",
+                stage="checkpoint",
+                fallback_reason="checkpoint_graph_version_unsupported",
+            )
+        schema_version = state_schema_version
+        if schema_version is None:
+            schema_version = {
+                LEGACY_AGENT_GRAPH_VERSION: 1,
+                "reading-agent-ma03-v1": 2,
+                PREVIOUS_AGENT_GRAPH_VERSION: 3,
+                PREVIOUS_NATIVE_AGENT_GRAPH_VERSION: 4,
+                CURRENT_AGENT_GRAPH_VERSION: CURRENT_AGENT_STATE_SCHEMA_VERSION,
+            }[selected]
+        self._graph_version = selected
+        self._state_schema_version = int(schema_version)
+        self._graph_version_pinned = self._graph_version_pinned or pin
+        if engine is not None:
+            normalized_engine = str(engine or "").strip().lower()
+            if normalized_engine not in {"native", "compat"}:
+                raise AgentRuntimeError(
+                    f"unsupported Agent engine: {normalized_engine}",
+                    stage="checkpoint",
+                    fallback_reason="checkpoint_engine_unsupported",
+                )
+            self._engine = normalized_engine
+            self._engine_pinned = self._engine_pinned or pin
+        self._compile_graphs()
 
     @property
     def compiled_graph(self):
@@ -389,6 +580,11 @@ class ReadingAgentGraph:
             self._context_provider = context_provider
         if collaboration_adapter is not None:
             self._collaboration_adapter = collaboration_adapter
+            self._orchestration_service = getattr(
+                collaboration_adapter,
+                "orchestrator",
+                self._orchestration_service,
+            )
 
     @staticmethod
     def _checkpoint_config(run_id: str) -> dict[str, dict[str, str]]:
@@ -401,7 +597,26 @@ class ReadingAgentGraph:
         ) -> dict[str, Any]:
             _, control = self._runtime(runtime)
             control.pause_at_boundary(name)
-            return handler(graph_state) if simple else handler(graph_state, runtime)
+            try:
+                result = handler(graph_state) if simple else handler(graph_state, runtime)
+            except Exception as exc:
+                if name in {
+                    "route_orchestration",
+                    "resolve_scope",
+                    "load_memory_snapshot",
+                    "plan_tasks",
+                    "validate_plan",
+                    "dispatch_frontier",
+                    "advance_frontier",
+                    "finalize_task_graph",
+                }:
+                    self._abort(graph_state, exc)
+                raise
+            return {
+                **result,
+                "graph_version": self._graph_version,
+                "state_schema_version": self._state_schema_version,
+            }
 
         return guarded
 
@@ -410,7 +625,50 @@ class ReadingAgentGraph:
         if self._checkpointer is None or not normalized:
             return None
         snapshot = self._compiled.get_state(self._checkpoint_config(normalized))
-        unknown_nodes = sorted(set(snapshot.next) - set(self.node_names))
+        if snapshot.values:
+            try:
+                raw_graph_version = checkpoint_graph_version(snapshot.values)
+                raw_schema_version = checkpoint_state_schema_version(snapshot.values)
+                raw_engine = checkpoint_engine(snapshot.values)
+            except (TypeError, ValueError) as exc:
+                reason = (
+                    "checkpoint_schema_unsupported"
+                    if "schema" in str(exc)
+                    else "checkpoint_graph_version_unsupported"
+                )
+                raise AgentRuntimeError(
+                    str(exc), stage="checkpoint", fallback_reason=reason
+                ) from exc
+            if (
+                raw_graph_version != self._graph_version
+                or raw_schema_version != self._state_schema_version
+                or (
+                    raw_graph_version == CURRENT_AGENT_GRAPH_VERSION
+                    and raw_engine != self._engine
+                )
+            ):
+                if self._graph_version_pinned or self._engine_pinned:
+                    raise AgentRuntimeError(
+                        "Persisted run version does not match checkpoint metadata.",
+                        stage="checkpoint",
+                        fallback_reason="checkpoint_graph_version_mismatch",
+                    )
+                self.select_graph_version(
+                    raw_graph_version,
+                    state_schema_version=raw_schema_version,
+                    engine=(
+                        raw_engine
+                        if raw_graph_version == CURRENT_AGENT_GRAPH_VERSION
+                        else self._engine
+                    ),
+                )
+                snapshot = self._compiled.get_state(self._checkpoint_config(normalized))
+        known_nodes = (
+            set(self.node_names)
+            | set(self.native_node_names)
+            | set(self._specialist_node_names.values())
+        )
+        unknown_nodes = sorted(set(snapshot.next) - known_nodes)
         if unknown_nodes:
             raise AgentRuntimeError(
                 f"Checkpoint references unsupported graph nodes: {unknown_nodes}",
@@ -431,6 +689,16 @@ class ReadingAgentGraph:
             raise AgentRuntimeError(
                 str(exc), stage="checkpoint", fallback_reason=reason
             ) from exc
+        if any(
+            key in snapshot.values
+            for key in ("scope", "task_plan", "task_results", "orchestration_status")
+        ):
+            projected = project_orchestration_state(
+                snapshot.values,
+                legacy=state.model_dump(mode="json"),
+            )
+            for field, value in projected.items():
+                setattr(state, field, value)
         if state.run_id != normalized:
             raise AgentRuntimeError(
                 f"Checkpoint run identity does not match {normalized!r}.",
@@ -447,7 +715,9 @@ class ReadingAgentGraph:
             return None
         snapshot, state = resolved
         pending_write = self._pending_checkpoint_write_tool(state, snapshot.next)
-        if pending_write:
+        if pending_write and not self._checkpoint_has_write_interrupt(
+            snapshot, pending_write, state.run_id
+        ):
             raise AgentRuntimeError(
                 (
                     f"Checkpoint for run {run_id!r} is waiting to execute "
@@ -458,19 +728,108 @@ class ReadingAgentGraph:
             )
         return state
 
-    def checkpoint_metadata(self, run_id: str) -> dict[str, str | int] | None:
+    @staticmethod
+    def _checkpoint_has_write_interrupt(
+        snapshot: Any, tool_name: str, run_id: str
+    ) -> bool:
+        """Allow resume only for a persisted, exact write-authorization interrupt."""
+
+        for task in getattr(snapshot, "tasks", ()) or ():
+            for item in getattr(task, "interrupts", ()) or ():
+                value = getattr(item, "value", None)
+                if not isinstance(value, dict):
+                    continue
+                if (
+                    value.get("tool_name") == tool_name
+                    and value.get("run_id") == run_id
+                    and value.get("intent_id")
+                    and value.get("arguments_hash")
+                    and value.get("target_hash")
+                    and value.get("step_id")
+                ):
+                    return True
+        return False
+
+    def _restore_memory_snapshot_context(
+        self, state: AgentState, runtime_context: dict[str, Any]
+    ) -> None:
+        """Rehydrate frozen memory outside checkpoint channels before resume."""
+
+        if self._orchestration_service is None:
+            return
+        snapshot_ref = str(state.memory_snapshot_ref or "").strip()
+        scope_payload = state.orchestration_scope
+        if not snapshot_ref or not isinstance(scope_payload, dict) or not scope_payload:
+            return
+        scope = ScopeContext.model_validate(scope_payload)
+        request_context = self._orchestration_runtime_context(state)
+        snapshot = self._orchestration_service.load_memory_snapshot(
+            profile_id=str(request_context.get("profile_id", "local-default") or "local-default"),
+            scope=scope,
+            run_id=state.run_id,
+            runtime_context=request_context,
+        )
+        if str(snapshot.get("snapshot_id", "") or "") != snapshot_ref:
+            raise AgentRuntimeError(
+                "The frozen memory snapshot no longer matches this checkpoint.",
+                stage="memory",
+                fallback_reason="memory_snapshot_invalidated",
+            )
+        runtime_context["memory_snapshot"] = snapshot
+
+    def prepare_checkpoint_resume(self, run_id: str) -> None:
+        """Read raw versions and select a compatible graph before migration."""
+
+        self._checkpoint_snapshot(run_id)
+
+    def checkpoint_orchestration_state(self, run_id: str) -> dict[str, Any] | None:
         resolved = self._checkpoint_snapshot(run_id)
         if resolved is None:
             return None
         snapshot, state = resolved
+        values = snapshot.values or {}
+        canonical_keys = (
+            "graph_version",
+            "engine",
+            "state_schema_version",
+            "orchestration_route",
+            "scope",
+            "plan_revision",
+            "memory_policy_revision",
+            "memory_snapshot_ref",
+            "task_plan",
+            "task_results",
+            "task_status_by_id",
+            "frontier_task_ids",
+            "active_frontier_task_ids",
+            "artifact_refs",
+            "evidence_refs",
+            "event_ids",
+            "event_fingerprints",
+            "orchestration_status",
+        )
+        if any(key in values for key in canonical_keys[2:]):
+            return {key: values[key] for key in canonical_keys if key in values}
+        return import_legacy_orchestration_state(state.model_dump(mode="json"))
+
+    def checkpoint_metadata(self, run_id: str) -> dict[str, str | int] | None:
+        resolved = self._checkpoint_snapshot(run_id)
+        if resolved is None:
+            return None
+        snapshot, _state = resolved
         configurable = (snapshot.config or {}).get("configurable", {})
         return {
-            "graph_version": state.graph_version,
-            "state_schema_version": state.state_schema_version,
+            "graph_version": checkpoint_graph_version(snapshot.values or {}),
+            "engine": checkpoint_engine(snapshot.values or {}),
+            "state_schema_version": checkpoint_state_schema_version(
+                snapshot.values or {}
+            ),
             "checkpoint_id": str(configurable.get("checkpoint_id", "") or ""),
         }
 
     def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
+        if self._uses_native_send_dispatch:
+            return self._prepare_native_task_retry(state, task_id)
         adapter = self._collaboration_adapter
         prepare = getattr(adapter, "prepare_task_retry", None)
         if not callable(prepare):
@@ -480,6 +839,200 @@ class ReadingAgentGraph:
                 fallback_reason="task_retry_unavailable",
             )
         return tuple(prepare(state, task_id))
+
+    def _prepare_native_task_retry(
+        self, state: AgentState, task_id: str
+    ) -> tuple[str, ...]:
+        if self._checkpointer is None or self._agent_registry is None:
+            raise AgentRuntimeError(
+                "Native task retry requires a durable Root checkpoint and Agent registry.",
+                stage="checkpoint",
+                fallback_reason="task_retry_unavailable",
+            )
+        resolved = self._checkpoint_snapshot(state.run_id)
+        if resolved is None:
+            raise AgentRuntimeError(
+                "No Root checkpoint is available for this retry.",
+                stage="checkpoint",
+                fallback_reason="checkpoint_not_found",
+            )
+        snapshot, _checkpoint_state = resolved
+        values = dict(snapshot.values or {})
+        plan = ValidatedTaskPlan.model_validate(values.get("task_plan", {}))
+        scope = ScopeContext.model_validate(values.get("scope", {}))
+        target_id = str(task_id or "").strip()
+        task_map = plan.task_map()
+        if target_id not in task_map:
+            raise ValueError(f"unknown retry task: {target_id}")
+        target = task_map[target_id]
+        results = [
+            TaskResult.model_validate(item)
+            for item in values.get("task_results", ())
+        ]
+        latest: dict[str, TaskResult] = {}
+        for result in results:
+            if result.task_id not in latest or (
+                result.attempt_ordinal,
+                result.result_version,
+            ) > (
+                latest[result.task_id].attempt_ordinal,
+                latest[result.task_id].result_version,
+            ):
+                latest[result.task_id] = result
+        current = latest.get(target_id)
+        retryable_statuses = {
+            TaskStatus.FAILED,
+            TaskStatus.PARTIAL,
+            TaskStatus.CANCELLED,
+            TaskStatus.SKIPPED,
+            TaskStatus.BLOCKED,
+        }
+        if current is None or current.status not in retryable_statuses:
+            raise ValueError("only a completed failed or partial task can be retried")
+
+        affected = {target_id}
+        changed = True
+        while changed:
+            changed = False
+            for task in plan.tasks:
+                if task.task_id not in affected and affected.intersection(task.depends_on):
+                    affected.add(task.task_id)
+                    changed = True
+        successful_statuses = {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL}
+        unresolved_dependencies = sorted(
+            dependency
+            for dependency in target.depends_on
+            if dependency not in latest
+            or latest[dependency].status not in successful_statuses
+        )
+        if unresolved_dependencies:
+            raise ValueError(
+                "task retry requires successful dependencies: "
+                + ", ".join(unresolved_dependencies)
+            )
+
+        attempts: dict[str, int] = {
+            str(key): max(1, int(value))
+            for key, value in dict(values.get("task_attempt_ordinals", {})).items()
+        }
+        for result in results:
+            attempts[result.task_id] = max(
+                attempts.get(result.task_id, 1), result.attempt_ordinal
+            )
+        next_attempts: dict[str, int] = {}
+        for retry_id in sorted(affected):
+            retry_task = task_map[retry_id]
+            spec = self._agent_registry.get(retry_task.agent_id)
+            next_attempt = attempts.get(retry_id, 1) + 1
+            if next_attempt > spec.retry_policy.max_retries + 1:
+                raise ValueError(
+                    f"task {retry_id} exhausted its retry policy"
+                )
+            next_attempts[retry_id] = next_attempt
+
+        # Refresh scope/source authority, frozen Memory policy and plan contract
+        # before mutating the checkpoint. Reuse the same validator as durable
+        # Root resume, then verify retained ArtifactRefs before preserving them.
+        service = self._orchestration_service
+        revalidate = getattr(service, "revalidate_prepared", None)
+        if not callable(revalidate):
+            raise AgentRuntimeError(
+                "Native task retry cannot revalidate scope and Memory policy.",
+                stage="scope",
+                fallback_reason="retry_revalidation_unavailable",
+            )
+        profile_id = str(
+            self._orchestration_runtime_context(state).get("profile_id", "local-default")
+            or "local-default"
+        )
+        fresh_scope, _fresh_memory = revalidate(
+            profile_id=profile_id,
+            scope=scope,
+            task_plan=plan,
+            run_id=state.run_id,
+            runtime_context=self._orchestration_runtime_context(state),
+        )
+        if fresh_scope.scope_ref != scope.scope_ref:
+            raise AgentRuntimeError(
+                "The prepared scope changed before task retry.",
+                stage="scope",
+                fallback_reason="prepared_scope_changed",
+            )
+
+        remaining_results = [item for item in results if item.task_id not in affected]
+        artifact_refs = [
+            ref
+            for result in remaining_results
+            for ref in result.artifact_refs
+        ]
+        evidence_refs = [
+            ref
+            for result in remaining_results
+            for ref in result.evidence_refs
+        ]
+        executor = getattr(service, "executor", None)
+        artifact_store = getattr(executor, "_artifacts", None) or getattr(
+            service, "artifact_store", None
+        )
+        for result in remaining_results:
+            task = task_map[result.task_id]
+            for ref in result.artifact_refs:
+                artifact = (
+                    artifact_store.get(ref.artifact_id, ref.version)
+                    if artifact_store is not None
+                    else None
+                )
+                if (
+                    artifact is None
+                    or artifact.content_hash != ref.content_hash
+                    or artifact.scope_ref != fresh_scope.scope_ref
+                    or artifact.producer_task_id != task.task_id
+                    or artifact.kind is not ref.kind
+                    or ref.kind is not task.expected_output_kind
+                ):
+                    raise AgentRuntimeError(
+                        "A retained ArtifactRef failed retry revalidation.",
+                        stage="artifact",
+                        fallback_reason="retry_artifact_invalid",
+                    )
+
+        # The reducer channels use Overwrite so stale failed results and their
+        # references cannot win the Root dispatch projection on replay.
+        root_config = self._checkpoint_config(state.run_id)
+        update: dict[str, Any] = {
+            "task_results": Overwrite(
+                [item.model_dump(mode="json") for item in remaining_results]
+            ),
+            "task_status_by_id": {
+                **dict(values.get("task_status_by_id", {})),
+                **{retry_id: TaskStatus.PENDING.value for retry_id in affected},
+            },
+            "task_attempt_ordinals": {
+                **attempts,
+                **next_attempts,
+            },
+            "retry_task_ids": sorted(affected),
+            "active_frontier_task_ids": [],
+            "frontier_task_ids": [],
+            "artifact_refs": Overwrite(
+                [ref.model_dump(mode="json") for ref in artifact_refs]
+            ),
+            "evidence_refs": Overwrite(
+                [ref.model_dump(mode="json") for ref in evidence_refs]
+            ),
+            "orchestration_status": "retrying",
+        }
+        self._compiled.update_state(root_config, update, as_node="validate_plan")
+        context = dict(state.browser_context)
+        context["native_task_retry_resume"] = True
+        context["retry_task_id"] = target_id
+        state.browser_context = context
+        state.orchestration_results = [
+            item.model_dump(mode="json") for item in remaining_results
+        ]
+        state.orchestration_status = "retrying"
+        state.sync_contract()
+        return tuple(sorted(affected))
 
     def _pending_checkpoint_write_tool(
         self,
@@ -544,6 +1097,13 @@ class ReadingAgentGraph:
             state.apply_reading_context(self._context_provider(state))
         else:
             state.sync_contract()
+        canonical = import_legacy_orchestration_state(
+            _dump_agent_state(state), prior=graph_state
+        )
+        for field, value in project_orchestration_state(
+            canonical, legacy=_dump_agent_state(state)
+        ).items():
+            setattr(state, field, value)
         control.checkpoint("context_ready")
 
         emitted: set[AgentEventType] = set()
@@ -566,6 +1126,7 @@ class ReadingAgentGraph:
                 emitted.add(AgentEventType.KNOWLEDGE_CONTEXT_READY)
         return {
             "agent_state": _dump_agent_state(state),
+            **canonical,
             "emitted_event_types": _merge_emitted(
                 graph_state.get("emitted_event_types", ()), emitted
             ),
@@ -582,6 +1143,61 @@ class ReadingAgentGraph:
             return {"agent_state": _dump_agent_state(state)}
 
         emit, control = self._runtime(runtime)
+        if self._uses_native_topology:
+            route = OrchestrationRoute.model_validate(
+                graph_state.get("orchestration_route", {})
+            )
+            scope = ScopeContext.model_validate(graph_state.get("scope", {}))
+            raw_plan = graph_state.get("task_plan", {})
+            task_plan = (
+                ValidatedTaskPlan.model_validate(raw_plan) if raw_plan else None
+            )
+            prepared_runner = getattr(adapter, "run_prepared", None)
+            if not callable(prepared_runner):
+                raise AgentRuntimeError(
+                    "Native Root execution requires a prepared-plan bridge.",
+                    stage="orchestration",
+                    fallback_reason="prepared_executor_unavailable",
+                )
+            try:
+                state = prepared_runner(
+                    state,
+                    route=route,
+                    scope=scope,
+                    memory_snapshot=dict(
+                        (runtime.context or {}).get("memory_snapshot", {}) or {}
+                    ),
+                    task_plan=task_plan,
+                    precomputed_results=(
+                        [
+                            TaskResult.model_validate(item)
+                            for item in graph_state.get("task_results", ())
+                        ]
+                        if self._send_dispatch_enabled
+                        else None
+                    ),
+                    emit=lambda event_type, payload: (
+                        emit(event_type, payload) if emit is not None else None
+                    ),
+                    control=control,
+                    resuming=bool((runtime.context or {}).get("resuming", False)),
+                )
+            except Exception as exc:
+                self._abort(graph_state, exc)
+                raise
+            state.sync_contract()
+            canonical = import_legacy_orchestration_state(
+                _dump_agent_state(state), prior=graph_state
+            )
+            for field, value in project_orchestration_state(
+                canonical, legacy=_dump_agent_state(state)
+            ).items():
+                setattr(state, field, value)
+            return {
+                "agent_state": _dump_agent_state(state),
+                **canonical,
+                "orchestration_status": state.orchestration_status,
+            }
         prepare_state = getattr(adapter, "prepare_state", None)
         if callable(prepare_state):
             state = prepare_state(state)
@@ -602,8 +1218,16 @@ class ReadingAgentGraph:
         elif callable(adapter):
             state = adapter(state)
         state.sync_contract()
+        canonical = import_legacy_orchestration_state(
+            _dump_agent_state(state), prior=graph_state
+        )
+        for field, value in project_orchestration_state(
+            canonical, legacy=_dump_agent_state(state)
+        ).items():
+            setattr(state, field, value)
         return {
             "agent_state": _dump_agent_state(state),
+            **canonical,
             "emitted_event_types": _merge_emitted(
                 graph_state.get("emitted_event_types", ()), emitted
             ),
@@ -663,6 +1287,580 @@ class ReadingAgentGraph:
                 graph_state.get("emitted_event_types", ()), emitted
             ),
         }
+
+    @property
+    def _uses_native_topology(self) -> bool:
+        return (
+            self._graph_version
+            in {PREVIOUS_NATIVE_AGENT_GRAPH_VERSION, CURRENT_AGENT_GRAPH_VERSION}
+            and self._engine == "native"
+        )
+
+    @property
+    def _uses_native_send_dispatch(self) -> bool:
+        return (
+            self._graph_version == CURRENT_AGENT_GRAPH_VERSION
+            and self._engine == "native"
+        )
+
+    @staticmethod
+    def _emit_root_event(
+        runtime: Runtime[ReadingAgentRuntimeContext],
+        event_type: AgentEventType,
+        payload: dict[str, Any],
+    ) -> None:
+        context = runtime.context if isinstance(runtime.context, dict) else {}
+        emit = context.get("event_sink")
+        if callable(emit):
+            emit(event_type, payload)
+
+    def _resource_manager(
+        self, runtime: Runtime[ReadingAgentRuntimeContext]
+    ) -> AgentResourceManager:
+        context = runtime.context if isinstance(runtime.context, dict) else {}
+        manager = context.get("resource_manager")
+        if isinstance(manager, AgentResourceManager):
+            return manager
+        policy = context.get("parallel_policy")
+        if policy is None:
+            executor = getattr(self._orchestration_service, "executor", None)
+            policy = getattr(executor, "policy", None) or ParallelExecutionPolicy()
+        manager = AgentResourceManager(policy)
+        if isinstance(runtime.context, dict):
+            runtime.context["resource_manager"] = manager
+        return manager
+
+    def _dispatch_frontier(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        raw_plan = graph_state.get("task_plan", {})
+        if not raw_plan:
+            raise AgentRuntimeError(
+                "Native dispatch has no validated task plan.",
+                stage="orchestration",
+                fallback_reason="prepared_plan_missing",
+            )
+        plan = ValidatedTaskPlan.model_validate(raw_plan)
+        results = [
+            TaskResult.model_validate(item)
+            for item in graph_state.get("task_results", ())
+        ]
+        statuses = {
+            str(key): TaskStatus(value)
+            for key, value in graph_state.get("task_status_by_id", {}).items()
+        }
+        attempt_ordinals = {
+            str(key): max(1, int(value))
+            for key, value in graph_state.get("task_attempt_ordinals", {}).items()
+        }
+        manager = self._resource_manager(runtime)
+        new_results: list[dict[str, Any]] = []
+        new_statuses: dict[str, str] = {}
+        active_ids: list[str] = []
+        task_map = plan.task_map()
+
+        # Resolve failed dependency and exhausted-budget tasks locally before
+        # returning Sends. Recompute until every newly terminal descendant has
+        # propagated through the DAG.
+        while True:
+            ready_ids = ready_tasks(plan, results, statuses)
+            if not ready_ids:
+                break
+            made_progress = False
+            for task_id in ready_ids:
+                task = task_map[task_id]
+                projection = dependency_results(task, results)
+                if projection.failed_task_ids:
+                    result = projection.failure_result(task)
+                    results.append(result)
+                    new_results.append(result.model_dump(mode="json"))
+                    statuses[task_id] = result.status
+                    new_statuses[task_id] = result.status.value
+                    event_type = (
+                        AgentEventType.TASK_BLOCKED
+                        if result.status is TaskStatus.BLOCKED
+                        else AgentEventType.TASK_SKIPPED
+                    )
+                    self._emit_root_event(
+                        runtime,
+                        event_type,
+                        {
+                            "task_id": task_id,
+                            "agent_id": task.agent_id,
+                            "status": result.status.value,
+                            "reason_code": result.error_code,
+                        },
+                    )
+                    made_progress = True
+                    continue
+                if not manager.budget.reserve("model_calls", 1):
+                    status = TaskStatus.BLOCKED if task.required else TaskStatus.SKIPPED
+                    result = TaskResult(
+                        task_id=task_id,
+                        attempt_id=f"{task_id}:{attempt_ordinals.get(task_id, 1)}",
+                        attempt_ordinal=attempt_ordinals.get(task_id, 1),
+                        status=status,
+                        error_code="budget_exhausted",
+                    )
+                    results.append(result)
+                    new_results.append(result.model_dump(mode="json"))
+                    statuses[task_id] = status
+                    new_statuses[task_id] = status.value
+                    self._emit_root_event(
+                        runtime,
+                        AgentEventType.BUDGET_EXHAUSTED,
+                        {"task_id": task_id, "agent_id": task.agent_id},
+                    )
+                    self._emit_root_event(
+                        runtime,
+                        AgentEventType.TASK_BLOCKED
+                        if status is TaskStatus.BLOCKED
+                        else AgentEventType.TASK_SKIPPED,
+                        {
+                            "task_id": task_id,
+                            "agent_id": task.agent_id,
+                            "status": status.value,
+                            "reason_code": "budget_exhausted",
+                        },
+                    )
+                    made_progress = True
+                    continue
+                statuses[task_id] = TaskStatus.RUNNING
+                new_statuses[task_id] = TaskStatus.RUNNING.value
+                active_ids.append(task_id)
+                self._emit_root_event(
+                    runtime,
+                    AgentEventType.TASK_READY,
+                    {
+                        "task_id": task_id,
+                        "agent_id": task.agent_id,
+                        "status": "ready",
+                    },
+                )
+                made_progress = True
+            if active_ids or not made_progress:
+                break
+
+        return {
+            "task_results": new_results,
+            "task_status_by_id": new_statuses,
+            "active_frontier_task_ids": active_ids,
+            "frontier_task_ids": active_ids,
+            "orchestration_status": "running",
+        }
+
+    def _dispatch_branch(self, graph_state: ReadingAgentGraphState) -> Any:
+        plan = ValidatedTaskPlan.model_validate(graph_state.get("task_plan", {}))
+        active_ids = tuple(
+            sorted(
+                {
+                    str(item).strip()
+                    for item in graph_state.get("active_frontier_task_ids", ())
+                    if str(item).strip()
+                }
+            )
+        )
+        result_map = {
+            item.task_id: item
+            for item in (
+                TaskResult.model_validate(raw)
+                for raw in graph_state.get("task_results", ())
+            )
+        }
+        attempt_ordinals = {
+            str(key): max(1, int(value))
+            for key, value in graph_state.get("task_attempt_ordinals", {}).items()
+        }
+        if not active_ids:
+            if set(result_map) == set(plan.task_map()) and all(
+                item.status in TERMINAL_TASK_STATUSES for item in result_map.values()
+            ):
+                return "finalize"
+            raise AgentRuntimeError(
+                "The validated task graph has no executable frontier.",
+                stage="orchestration",
+                fallback_reason="frontier_stalled",
+            )
+        scope = ScopeContext.model_validate(graph_state.get("scope", {}))
+        task_map = plan.task_map()
+        sends: list[Send] = []
+        for task_id in active_ids:
+            task = task_map.get(task_id)
+            node_name = self._specialist_node_names.get(task.agent_id) if task else None
+            if task is None or not node_name:
+                raise AgentRuntimeError(
+                    f"No registered specialist node for task {task_id}.",
+                    stage="orchestration",
+                    fallback_reason="specialist_graph_unavailable",
+                )
+            projected = dependency_results(task, result_map)
+            if projected.failed_task_ids or projected.missing_task_ids:
+                raise AgentRuntimeError(
+                    f"Task {task_id} dependencies changed after frontier selection.",
+                    stage="orchestration",
+                    fallback_reason="frontier_dependency_conflict",
+                )
+            sends.append(
+                Send(
+                    node_name,
+                    {
+                        "task": task,
+                        "scope": scope,
+                        "dependency_results": dict(projected.results),
+                        "attempt_ordinal": attempt_ordinals.get(task_id, 1),
+                    },
+                )
+            )
+        return sends
+
+    def _advance_frontier(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        del runtime
+        results = {
+            item.task_id: item
+            for item in (
+                TaskResult.model_validate(raw)
+                for raw in graph_state.get("task_results", ())
+            )
+        }
+        active_ids = tuple(graph_state.get("active_frontier_task_ids", ()))
+        missing = sorted(
+            task_id
+            for task_id in active_ids
+            if task_id not in results
+            or results[task_id].status not in TERMINAL_TASK_STATUSES
+        )
+        if missing:
+            raise AgentRuntimeError(
+                "The specialist frontier returned without terminal results: "
+                + ", ".join(missing),
+                stage="orchestration",
+                fallback_reason="specialist_result_missing",
+            )
+        return {"active_frontier_task_ids": []}
+
+    def _finalize_task_graph(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        del runtime
+        plan = ValidatedTaskPlan.model_validate(graph_state.get("task_plan", {}))
+        results = {
+            item.task_id: item
+            for item in (
+                TaskResult.model_validate(raw)
+                for raw in graph_state.get("task_results", ())
+            )
+        }
+        missing = sorted(set(plan.task_map()) - set(results))
+        if missing or any(
+            result.status not in TERMINAL_TASK_STATUSES
+            for result in results.values()
+        ):
+            raise AgentRuntimeError(
+                "Cannot finalize a task graph with nonterminal results.",
+                stage="orchestration",
+                fallback_reason="task_graph_incomplete",
+            )
+        complete = all(
+            item.status in {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL, TaskStatus.SKIPPED}
+            for item in results.values()
+        )
+        return {
+            "active_frontier_task_ids": [],
+            "orchestration_status": "completed" if complete else "partial",
+        }
+
+    def _orchestration_runtime_context(
+        self, state: AgentState
+    ) -> dict[str, Any]:
+        adapter_context = getattr(self._collaboration_adapter, "_runtime_context", None)
+        if callable(adapter_context):
+            return dict(adapter_context(state))
+        context = state.browser_context
+        return {
+            "profile_id": str(context.get("profile_id", "local-default") or "local-default"),
+            "multi_agent_mode": str(context.get("multi_agent_mode", "auto") or "auto"),
+            "source_text": state.selected_text,
+            "workspace_id": str(context.get("workspace_id", "") or ""),
+            "knowledge_board_id": str(context.get("knowledge_board_id", "") or ""),
+            "knowledge_collection_id": str(context.get("knowledge_collection_id", "") or ""),
+            "research_source_ids": list(context.get("research_source_ids", ()) or ()),
+            "research_note_ids": list(context.get("research_note_ids", ()) or ()),
+            "knowledge_document_ids": list(context.get("knowledge_document_ids", ()) or ()),
+            "knowledge_item_ids": list(context.get("knowledge_item_ids", ()) or ()),
+            "temporary": bool(context.get("temporary", False)),
+            "workflow_action": str(context.get("workflow_action", "") or ""),
+        }
+
+    def _route_orchestration(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        service = self._orchestration_service
+        _, control = self._runtime(runtime)
+        if service is None or self._collaboration_adapter is None:
+            route = OrchestrationRoute(
+                lane=OrchestrationLane.FAST,
+                reason_code="orchestration_unavailable",
+                user_visible_reason="The canonical Agent path is sufficient.",
+            )
+        else:
+            context = self._orchestration_runtime_context(state)
+            mode = str(context.get("multi_agent_mode", "auto") or "auto")
+            route = run_node_operation_with_timeout(
+                lambda: service.route(state.user_input, context, mode=mode),
+                control=control,
+                node_timeout_seconds=control.policy.node_timeout_seconds,
+                stage="route_orchestration",
+            )
+            maximum_lane = getattr(
+                self._collaboration_adapter, "maximum_lane", OrchestrationLane.WORKFLOW
+            )
+            if (
+                maximum_lane is OrchestrationLane.SINGLE
+                and route.lane is OrchestrationLane.WORKFLOW
+            ):
+                route = OrchestrationRoute(
+                    lane=OrchestrationLane.FAST,
+                    reason_code="rollout_lane_limit",
+                    user_visible_reason="The current rollout uses the canonical Agent path.",
+                )
+        return {"orchestration_route": route.model_dump(mode="json")}
+
+    @staticmethod
+    def _orchestration_branch(graph_state: ReadingAgentGraphState) -> str:
+        route = OrchestrationRoute.model_validate(
+            graph_state.get("orchestration_route", {})
+        )
+        if route.missing_information:
+            return "blocked"
+        return "fast" if route.lane is OrchestrationLane.FAST else "plan"
+
+    def _resolve_scope(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        del runtime
+        if self._orchestration_service is None:
+            raise AgentRuntimeError(
+                "Native orchestration has no scope resolver.",
+                stage="scope",
+                fallback_reason="scope_resolver_unavailable",
+            )
+        state = _coerce_agent_state(graph_state["agent_state"])
+        context = self._orchestration_runtime_context(state)
+        scope = self._orchestration_service.resolve_scope(
+            profile_id=str(context.get("profile_id", "local-default") or "local-default"),
+            runtime_context=context,
+        )
+        return {
+            "scope": scope.model_dump(mode="json"),
+            "memory_policy_revision": scope.memory_policy_revision,
+        }
+
+    def _load_memory_snapshot(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        if self._orchestration_service is None:
+            raise AgentRuntimeError(
+                "Native orchestration has no memory boundary.",
+                stage="memory",
+                fallback_reason="memory_port_unavailable",
+            )
+        state = _coerce_agent_state(graph_state["agent_state"])
+        context = self._orchestration_runtime_context(state)
+        scope = ScopeContext.model_validate(graph_state.get("scope", {}))
+        snapshot = self._orchestration_service.load_memory_snapshot(
+            profile_id=str(context.get("profile_id", "local-default") or "local-default"),
+            scope=scope,
+            run_id=state.run_id,
+            runtime_context=context,
+        )
+        invocation_context = runtime.context
+        if isinstance(invocation_context, dict):
+            # Snapshot bodies stay in invocation context; checkpoints retain only IDs.
+            invocation_context["memory_snapshot"] = snapshot
+        return {"memory_snapshot_ref": str(snapshot.get("snapshot_id", "") or "")}
+
+    def _plan_tasks(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        if self._orchestration_service is None:
+            raise AgentRuntimeError(
+                "Native orchestration has no planner.",
+                stage="planning",
+                fallback_reason="planner_unavailable",
+            )
+        state = _coerce_agent_state(graph_state["agent_state"])
+        route = OrchestrationRoute.model_validate(
+            graph_state.get("orchestration_route", {})
+        )
+        scope = ScopeContext.model_validate(graph_state.get("scope", {}))
+        plan_revision = max(1, int(graph_state.get("plan_revision", 0) or 1))
+        _, control = self._runtime(runtime)
+        plan = run_node_operation_with_timeout(
+            lambda: self._orchestration_service.plan_tasks(
+                route=route,
+                objective=state.user_input,
+                scope=scope,
+                plan_revision=plan_revision,
+            ),
+            control=control,
+            node_timeout_seconds=control.policy.node_timeout_seconds,
+            stage="plan_tasks",
+        )
+        if plan is None and not route.missing_information:
+            raise AgentRuntimeError(
+                "The Root planner did not produce a plan for a specialist route.",
+                stage="planning",
+                fallback_reason="prepared_plan_missing",
+            )
+        return {
+            "proposed_task_plan": (
+                plan.model_dump(mode="json") if plan is not None else {}
+            )
+        }
+
+    def _validate_plan(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        if self._orchestration_service is None:
+            raise AgentRuntimeError(
+                "Native orchestration has no plan validator.",
+                stage="planning",
+                fallback_reason="plan_validator_unavailable",
+            )
+        scope = ScopeContext.model_validate(graph_state.get("scope", {}))
+        proposed = graph_state.get("proposed_task_plan", {})
+        plan = ValidatedTaskPlan.model_validate(proposed) if proposed else None
+        validated = self._orchestration_service.validate_plan(
+            plan,
+            scope=scope,
+            require_graphs=self._send_dispatch_enabled,
+        )
+        if validated is None:
+            raise AgentRuntimeError(
+                "The prepared specialist plan is empty.",
+                stage="planning",
+                fallback_reason="prepared_plan_missing",
+            )
+        statuses = {task.task_id: "pending" for task in validated.tasks}
+        self._emit_root_event(
+            runtime,
+            AgentEventType.MULTI_AGENT_STARTED,
+            {"lane": "workflow", "scope_ref": scope.scope_ref},
+        )
+        self._emit_root_event(
+            runtime,
+            AgentEventType.MULTI_AGENT_PLAN_READY,
+            {
+                "plan_revision": validated.plan_revision,
+                "task_count": len(validated.tasks),
+                "agents": [task.agent_id for task in validated.tasks],
+            },
+        )
+        for task in validated.tasks:
+            self._emit_root_event(
+                runtime,
+                AgentEventType.TASK_PLANNED,
+                {
+                    "task_id": task.task_id,
+                    "agent_id": task.agent_id,
+                    "role": task.agent_id,
+                    "depends_on": list(task.depends_on),
+                    "required": task.required,
+                    "output_kind": task.expected_output_kind.value,
+                    "attempt": 0,
+                    "plan_revision": task.plan_revision,
+                    "status": "pending",
+                },
+            )
+        checkpoint_delta = {
+            "task_plan": validated.model_dump(mode="json"),
+            "plan_revision": validated.plan_revision,
+            "task_status_by_id": statuses,
+            "orchestration_status": "planned",
+            "proposed_task_plan": {},
+        }
+        if self._checkpointer is not None and self._uses_native_topology:
+            config = get_config()
+            thread_id = str(
+                config.get("configurable", {}).get("thread_id", "") or ""
+            )
+            if thread_id:
+                # LangGraph persists the completed step at the superstep boundary.
+                # Write the validated plan now as well, before the executor can
+                # perform any specialist side effects.
+                root_config: dict[str, Any] = {
+                    "configurable": {"thread_id": thread_id, "checkpoint_ns": ""}
+                }
+                parent_id = str(config.get("checkpoint_map", {}).get("", "") or "")
+                if parent_id:
+                    root_config["configurable"]["checkpoint_id"] = parent_id
+                self._compiled.update_state(
+                    root_config, checkpoint_delta, as_node="validate_plan"
+                )
+        return checkpoint_delta
+
+    def _block_orchestration(
+        self,
+        graph_state: ReadingAgentGraphState,
+        runtime: Runtime[ReadingAgentRuntimeContext],
+    ) -> dict[str, Any]:
+        state = _coerce_agent_state(graph_state["agent_state"])
+        route = OrchestrationRoute.model_validate(
+            graph_state.get("orchestration_route", {})
+        )
+        details = ", ".join(route.missing_information)
+        message = (
+            "This research action needs additional scoped input before it can run: "
+            + details
+        )
+        state.apply_response(
+            {
+                "status": "completed",
+                "output_text": message,
+                "provider": "orchestration-router",
+                "model": "",
+                "request_id": state.execution.request_id,
+            }
+        )
+        state.apply_orchestration(
+            lane=route.lane.value,
+            status="blocked",
+            scope=dict(graph_state.get("scope", {}) or {}),
+            plan=None,
+            results=[],
+            memory_snapshot_ref=str(graph_state.get("memory_snapshot_ref", "") or ""),
+        )
+        emit, _ = self._runtime(runtime)
+        if emit is not None:
+            emit(
+                AgentEventType.MULTI_AGENT_COMPLETED,
+                {
+                    "actor": "supervisor",
+                    "status": "blocked",
+                    "reason_code": "missing_information",
+                    "missing_information": list(route.missing_information),
+                },
+            )
+        return {"agent_state": _dump_agent_state(state), "orchestration_status": "blocked"}
 
     def _knowledge_scope(
         self,
@@ -729,7 +1927,20 @@ class ReadingAgentGraph:
                 "route_metadata": {"direct_delivery": True},
             }
         try:
-            route, metadata = self._adapter.resolve_route(state, control=control)
+            working_state = state.model_copy(deep=True)
+
+            def resolve_route() -> tuple[AgentRouteDecision, dict[str, Any], AgentState]:
+                route_value, metadata_value = self._adapter.resolve_route(
+                    working_state, control=control
+                )
+                return route_value, metadata_value, working_state
+
+            route, metadata, state = run_node_operation_with_timeout(
+                resolve_route,
+                control=control,
+                node_timeout_seconds=control.policy.node_timeout_seconds,
+                stage="route_request",
+            )
         except Exception as exc:
             self._abort(graph_state, exc)
             raise
@@ -765,6 +1976,9 @@ class ReadingAgentGraph:
                 control=control,
                 resolved_route=route,
                 route_metadata=dict(graph_state.get("route_metadata", {}) or {}),
+                durable_write_interrupt=bool(
+                    (runtime.context or {}).get("durable_write_interrupt", False)
+                ),
             )
         except Exception as exc:
             self._abort(graph_state, exc)
@@ -1050,6 +2264,9 @@ class ReadingAgentGraph:
                 step,
                 emit,
                 control=control,
+                durable_write_interrupt=bool(
+                    (runtime.context or {}).get("durable_write_interrupt", False)
+                ),
             )
         except Exception as exc:
             if decision.tool_name == _KNOWLEDGE_SEARCH_TOOL:
@@ -1445,6 +2662,18 @@ class ReadingAgentGraph:
             "route_metadata": {},
             "emitted_event_types": [],
         }
+        initial.update(
+            initial_orchestration_state(
+                scope=state.orchestration_scope,
+                task_plan=state.orchestration_plan,
+                task_results=state.orchestration_results,
+                orchestration_status=state.orchestration_status,
+                memory_snapshot_ref=state.memory_snapshot_ref,
+                graph_version=self._graph_version,
+                state_schema_version=self._state_schema_version,
+                engine=self._engine,
+            )
+        )
         temporary = bool(state.browser_context.get("temporary", False))
         if resume and temporary:
             raise AgentRuntimeError(
@@ -1459,21 +2688,81 @@ class ReadingAgentGraph:
                 fallback_reason="checkpoint_unavailable",
             )
         graph = self._temporary_compiled if temporary else self._compiled
+        runtime_context: dict[str, Any] = {
+            "event_sink": emit,
+            "control": control or AgentRunControl(),
+            "resuming": bool(resume),
+            "temporary": temporary,
+            "persistent_checkpoints": self._checkpointer is not None and not temporary,
+            "durable_write_interrupt": bool(
+                self._uses_native_topology
+                and self._checkpointer is not None
+                and not temporary
+            ),
+            "write_confirmation_decision": dict(
+                state.browser_context.get("write_confirmation_decision", {}) or {}
+            ),
+        }
+        if self._send_dispatch_enabled:
+            executor = getattr(self._orchestration_service, "executor", None)
+            policy = getattr(executor, "policy", None) or ParallelExecutionPolicy()
+            runtime_context.update(
+                {
+                    "parallel_policy": policy,
+                    "resource_manager": AgentResourceManager(policy),
+                    "memory_snapshot": {},
+                }
+            )
+            if resume and not temporary:
+                self._restore_memory_snapshot_context(state, runtime_context)
+        resume_decision = runtime_context.get("write_confirmation_decision")
+        graph_input = (
+            Command(resume=resume_decision)
+            if resume and resume_decision
+            else None
+            if resume
+            else initial
+        )
         result = graph.invoke(
-            None if resume else initial,
+            graph_input,
             config=(
                 self._checkpoint_config(state.run_id)
                 if self._checkpointer is not None and not temporary
                 else None
             ),
-            context={
-                "event_sink": emit,
-                "control": control or AgentRunControl(),
-            },
+            context=runtime_context,
+            durability=(
+                "sync"
+                if self._checkpointer is not None and not temporary
+                else None
+            ),
         )
         final_state = _coerce_agent_state(
             result.get("agent_state", initial["agent_state"])
         )
+        interrupts = result.get("__interrupt__", ())
+        if interrupts:
+            first = interrupts[0] if isinstance(interrupts, (tuple, list)) else interrupts
+            pending = getattr(first, "value", first)
+            if isinstance(pending, dict) and pending.get("intent_id"):
+                final_state.apply_response(
+                    {
+                        "status": "confirmation_required",
+                        "output_text": "A write action is waiting for confirmation.",
+                        "provider": "",
+                        "model": "",
+                        "request_id": final_state.execution.request_id,
+                    }
+                )
+                final_state.browser_context = {
+                    **final_state.browser_context,
+                    "pending_write_confirmation": pending,
+                }
+                self._adapter.complete_conversation(
+                    _load_conversation_run(result.get("conversation_run")),
+                    final_state,
+                )
+                final_state.sync_contract()
         emitted = {
             AgentEventType(item) for item in result.get("emitted_event_types", ())
         }

@@ -611,6 +611,7 @@ class CompanionChatService:
         tool_name: str = "",
         tool_context: str = "",
         knowledge_context: dict[str, Any] | None = None,
+        filesystem_workspace_files: object = (),
     ) -> ChatRequest:
         _ = (source_language, target_language)
 
@@ -654,6 +655,28 @@ class CompanionChatService:
                 source_kind=source_kind if grounded else "",
             ),
         )
+        workspace_files: list[dict[str, str | int]] = []
+        if isinstance(filesystem_workspace_files, (list, tuple)):
+            for item in filesystem_workspace_files[:64]:
+                if not isinstance(item, dict):
+                    continue
+                relative_path = str(item.get("relative_path", "") or "").strip().replace("\\", "/")
+                parts = relative_path.split("/")
+                if (
+                    not relative_path
+                    or len(relative_path) > 512
+                    or relative_path.startswith("/")
+                    or ":" in parts[0]
+                    or any(part in {"", ".", ".."} for part in parts)
+                ):
+                    continue
+                try:
+                    size_bytes = max(0, int(item.get("size_bytes", 0) or 0))
+                except (TypeError, ValueError):
+                    continue
+                workspace_files.append(
+                    {"relative_path": relative_path, "size_bytes": size_bytes}
+                )
         return ChatRequest(
             session_id=session_id,
             user_message=user_message,
@@ -663,6 +686,7 @@ class CompanionChatService:
             tool_name=str(tool_name or "").strip(),
             tool_context=str(tool_context or ""),
             knowledge_context=dict(knowledge_context or {}),
+            filesystem_workspace_files=tuple(workspace_files),
         )
 
     def send(self, **kwargs: Any) -> CompanionChatResult:

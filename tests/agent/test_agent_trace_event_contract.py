@@ -41,11 +41,19 @@ def test_each_runtime_event_serializes_through_trace_response_model(
     )
 
     assert event.model_dump(mode="json") == {
+        "event_id": "",
         "sequence": 7,
         "event_type": event_type.value,
         "timestamp": "2026-09-15T00:00:00+00:00",
         "run_id": "run-contract",
         "trace_id": "trace-contract",
+        "task_id": "",
+        "step_id": "",
+        "tool_call_id": "",
+        "agent_id": None,
+        "agent_version": None,
+        "node_name": None,
+        "subgraph_path": None,
         "elapsed_ms": 21,
         "payload": {"contract_test": event_type.value},
     }
@@ -67,11 +75,19 @@ def test_each_runtime_event_converts_to_api_trace_event(
     trace_event = _trace_event(7, runtime_event)
 
     assert trace_event.model_dump(mode="json") == {
+        "event_id": runtime_event.event_id,
         "sequence": 7,
         "event_type": event_type.value,
         "timestamp": "2026-09-15T00:00:00+00:00",
         "run_id": "run-contract",
         "trace_id": "trace-contract",
+        "task_id": "",
+        "step_id": "",
+        "tool_call_id": "",
+        "agent_id": None,
+        "agent_version": None,
+        "node_name": None,
+        "subgraph_path": None,
         "elapsed_ms": 21,
         "payload": {"contract_test": event_type.value},
     }

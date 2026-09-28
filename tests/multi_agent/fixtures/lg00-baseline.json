@@ -1,0 +1,150 @@
+{
+  "baseline_commit": "75fad6ed75ea794d2f0489e001bf5be4b3cfac83",
+  "checkpoint_resume": {
+    "completed_task_attempts": {
+      "a": 1
+    },
+    "expected_events": [
+      "workflow_resumed",
+      "task_retrying"
+    ],
+    "expected_executor_calls_after_resume": [
+      "b"
+    ],
+    "expected_result_attempts": {
+      "a": 1,
+      "b": 2
+    },
+    "interrupted_task": "b",
+    "run_id": "resume-run",
+    "source_test": "tests/multi_agent/test_subgraph_checkpoint.py::test_resume_reuses_completed_task_and_retries_only_interrupted_task"
+  },
+  "event_contract": [
+    {
+      "actor": "document",
+      "event_type": "task_planned",
+      "payload": {
+        "attempt": 0,
+        "event_id": "lg00-run:0",
+        "parent_task_id": "",
+        "plan_revision": 1,
+        "reason_code": "",
+        "run_id": "lg00-run",
+        "sequence": 0,
+        "status": "pending",
+        "task_id": "a",
+        "trace_id": "lg00-trace",
+        "usage": {}
+      },
+      "sequence": 0,
+      "status": "pending"
+    },
+    {
+      "actor": "document",
+      "event_type": "task_started",
+      "payload": {
+        "attempt": 1,
+        "event_id": "lg00-run:1",
+        "parent_task_id": "",
+        "plan_revision": 1,
+        "reason_code": "",
+        "run_id": "lg00-run",
+        "sequence": 1,
+        "status": "running",
+        "task_id": "a",
+        "trace_id": "lg00-trace",
+        "usage": {}
+      },
+      "sequence": 1,
+      "status": "running"
+    },
+    {
+      "actor": "document",
+      "event_type": "task_completed",
+      "payload": {
+        "attempt": 1,
+        "event_id": "lg00-run:2",
+        "parent_task_id": "",
+        "plan_revision": 1,
+        "reason_code": "",
+        "run_id": "lg00-run",
+        "sequence": 2,
+        "status": "succeeded",
+        "task_id": "a",
+        "trace_id": "lg00-trace",
+        "usage": {}
+      },
+      "sequence": 2,
+      "status": "succeeded"
+    }
+  ],
+  "migration_defaults": {
+    "engine": "typed",
+    "native": false,
+    "rollout": "single"
+  },
+  "task_plan": {
+    "budget_ref": "",
+    "plan_id": "plan-scheduler",
+    "plan_revision": 1,
+    "scope_ref": "scope:3dac8a2570f1a692ba7b36067b6b0eca4d7953a5547c0907860efd71200b5281",
+    "tasks": [
+      {
+        "acceptance_criteria": [],
+        "allowed_tools": [
+          "search_knowledge_base"
+        ],
+        "budget_ref": "",
+        "depends_on": [],
+        "expected_output_kind": "document_analysis",
+        "input_refs": [],
+        "objective": "Analyze a",
+        "plan_revision": 1,
+        "required": true,
+        "role": "document",
+        "scope_ref": "scope:3dac8a2570f1a692ba7b36067b6b0eca4d7953a5547c0907860efd71200b5281",
+        "target_source_ids": [],
+        "task_id": "a"
+      },
+      {
+        "acceptance_criteria": [],
+        "allowed_tools": [
+          "search_knowledge_base"
+        ],
+        "budget_ref": "",
+        "depends_on": [],
+        "expected_output_kind": "document_analysis",
+        "input_refs": [],
+        "objective": "Analyze b",
+        "plan_revision": 1,
+        "required": true,
+        "role": "document",
+        "scope_ref": "scope:3dac8a2570f1a692ba7b36067b6b0eca4d7953a5547c0907860efd71200b5281",
+        "target_source_ids": [],
+        "task_id": "b"
+      }
+    ]
+  },
+  "task_result": {
+    "artifact_refs": [],
+    "attempt_id": "a:1",
+    "attempt_ordinal": 1,
+    "content_hash": "533af3dee24ecfa758f8e2ecb32058cbbd9e6ab03bb762126c8aab1f4d0358b2",
+    "coverage": null,
+    "error_code": "",
+    "evidence_refs": [],
+    "result_version": 1,
+    "source_versions": {},
+    "status": "succeeded",
+    "task_id": "a",
+    "unmet_requirements": [],
+    "usage": {
+      "elapsed_ms": null,
+      "input_tokens": null,
+      "model_calls": 0,
+      "output_tokens": null,
+      "tool_calls": 0
+    },
+    "warnings": []
+  }
+}

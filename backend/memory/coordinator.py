@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import defaultdict
 from typing import Any
 
@@ -30,6 +32,13 @@ class MemoryCoordinator:
 
     def __init__(self, repository: SQLiteMemoryRepository) -> None:
         self.repository = repository
+
+    def policy_revision(self, profile_id: str) -> str:
+        policy = self.repository.profile_policy(profile_id)
+        canonical = json.dumps(
+            {"schema": 1, **policy}, sort_keys=True, separators=(",", ":")
+        )
+        return "memory-policy:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def remember(
         self,
@@ -173,6 +182,7 @@ class MemoryCoordinator:
             profile_id=profile_id,
             scope_ref=scope.scope_ref,
             workspace_id=scope.workspace_id,
+            policy_revision=scope.memory_policy_revision,
             references=references,
             role_projections=dict(projections),
             invalidated_item_ids=invalidated,
@@ -195,7 +205,18 @@ class MemoryCoordinator:
                 profile_id=profile_id,
                 scope_ref=scope.scope_ref,
                 workspace_id=scope.workspace_id,
+                policy_revision=scope.memory_policy_revision,
                 reason_code="temporary_memory_disabled",
+            ).model_dump(mode="json")
+        policy = self.repository.profile_policy(profile_id)
+        if not policy["read_enabled"]:
+            return MemoryPacket(
+                status="unavailable",
+                profile_id=profile_id,
+                scope_ref=scope.scope_ref,
+                workspace_id=scope.workspace_id,
+                policy_revision=self.policy_revision(profile_id),
+                reason_code="memory_read_disabled",
             ).model_dump(mode="json")
         stable_run_id = str(run_id).strip() or f"snapshot:{scope.scope_ref}"
         try:
@@ -211,6 +232,7 @@ class MemoryCoordinator:
                 profile_id=profile_id,
                 scope_ref=scope.scope_ref,
                 workspace_id=scope.workspace_id,
+                policy_revision=scope.memory_policy_revision,
                 reason_code="snapshot_scope_changed",
             ).model_dump(mode="json")
         # Snapshot versions remain frozen across ordinary updates, but a current
@@ -241,6 +263,8 @@ class MemoryCoordinator:
         temporary: bool = False,
     ) -> tuple[MemoryItem, ...]:
         if temporary:
+            return ()
+        if not self.repository.profile_policy(profile_id)["write_enabled"]:
             return ()
         saved: list[MemoryItem] = []
         for artifact in artifacts:

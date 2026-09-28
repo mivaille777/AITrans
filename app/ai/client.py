@@ -195,7 +195,8 @@ class DeepSeekClient:
             if status_code is None:
                 raise AIResponseError("DeepSeek API request failed.") from exc
             raise AIResponseError(
-                f"DeepSeek API request failed with HTTP status {status_code}."
+                f"DeepSeek API request failed with HTTP status {status_code}.",
+                status_code=int(status_code),
             ) from exc
         except AIError:
             raise

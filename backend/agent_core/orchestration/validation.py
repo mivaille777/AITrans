@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from backend.agent_core.orchestration.agent_registry import AgentRegistry
 from backend.agent_core.orchestration.roles import RoleRegistry
 from backend.models.agent_tasks import (
     ScopeContext,
@@ -18,8 +19,15 @@ def validate_task_plan(
     *,
     scope: ScopeContext,
     role_registry: RoleRegistry | None = None,
+    agent_registry: AgentRegistry | None = None,
+    tool_registry: object | None = None,
+    require_graphs: bool = False,
 ) -> ValidatedTaskPlan:
-    registry = role_registry or RoleRegistry()
+    registry = (
+        agent_registry
+        or (role_registry.agent_registry if role_registry is not None else None)
+        or RoleRegistry().agent_registry
+    )
     if plan.scope_ref != scope.scope_ref:
         raise TaskPlanValidationError(
             "plan scope_ref does not match the authoritative server ScopeContext"
@@ -28,9 +36,42 @@ def validate_task_plan(
     tasks = plan.task_map()
     for task in plan.tasks:
         try:
-            registry.require_tools(task.role, task.allowed_tools)
+            agent = registry.get(task.agent_id)
+            registry.require_tools(task.agent_id, task.allowed_tools)
         except (KeyError, ValueError) as exc:
             raise TaskPlanValidationError(str(exc)) from exc
+        if task.role is not None and task.agent_id != task.role.value:
+            raise TaskPlanValidationError(
+                f"task {task.task_id} role and agent_id do not match"
+            )
+        if task.expected_output_kind not in agent.output_kinds:
+            raise TaskPlanValidationError(
+                f"task {task.task_id} expects unsupported output kind "
+                f"{task.expected_output_kind.value} from Agent {agent.agent_id}"
+            )
+        unsupported_inputs = sorted(
+            ref.kind.value
+            for ref in task.input_refs
+            if ref.kind not in agent.accepted_input_kinds
+        )
+        if unsupported_inputs:
+            raise TaskPlanValidationError(
+                f"task {task.task_id} uses unsupported input kinds: {unsupported_inputs}"
+            )
+        if require_graphs and not callable(agent.graph_factory):
+            raise TaskPlanValidationError(
+                f"Agent {agent.agent_id} has no registered graph factory"
+            )
+        if tool_registry is not None:
+            get_tool = getattr(tool_registry, "get_tool", None)
+            if not callable(get_tool):
+                raise TypeError("tool_registry must expose get_tool")
+            unknown_tools = [name for name in task.allowed_tools if get_tool(name) is None]
+            if unknown_tools:
+                raise TaskPlanValidationError(
+                    f"task {task.task_id} references tools not configured on the server: "
+                    f"{sorted(unknown_tools)}"
+                )
         unknown_sources = set(task.target_source_ids) - (
             set(scope.allowed_document_ids)
             | set(scope.allowed_note_ids)

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from typing import Any
+
+from pydantic import BaseModel
 
 from backend.agent_tools.base import (
     AgentToolExecutionResult,
@@ -81,6 +84,56 @@ _CONTEXT_FIELDS = (
 )
 
 
+def _validate_external_definition(definition: TypedAgentToolDefinition) -> None:
+    if not isinstance(definition, TypedAgentToolDefinition):
+        raise TypeError("external agent tools must be TypedAgentToolDefinition values")
+    spec = definition.spec
+    name = str(spec.name or "")
+    if not name.strip() or name != name.strip():
+        raise ValueError("external agent tool name must be nonempty and trimmed")
+    if not callable(definition.executor):
+        raise TypeError(f"external agent tool {name} requires an executor")
+    if (
+        not isinstance(definition.args_model, type)
+        or not issubclass(definition.args_model, BaseModel)
+        or not isinstance(definition.result_model, type)
+        or not issubclass(definition.result_model, BaseModel)
+    ):
+        raise TypeError(f"external agent tool {name} requires typed input and result models")
+    if not isinstance(spec.input_schema, dict):
+        raise TypeError(f"external agent tool {name} has an invalid input schema")
+    try:
+        json.dumps(spec.input_schema, ensure_ascii=False, allow_nan=False)
+        definition.args_model.model_json_schema()
+        definition.result_model.model_json_schema()
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"external agent tool {name} has an invalid schema") from exc
+    for argument, schema in spec.input_schema.items():
+        if (
+            not isinstance(argument, str)
+            or not argument.strip()
+            or argument != argument.strip()
+            or argument not in definition.args_model.model_fields
+            or not isinstance(schema, dict)
+        ):
+            raise ValueError(f"external agent tool {name} has an invalid schema")
+        value_type = schema.get("type")
+        if value_type is not None and not (
+            isinstance(value_type, str)
+            and value_type
+            in {"array", "boolean", "integer", "number", "object", "string"}
+            or isinstance(value_type, list)
+            and all(
+                item
+                in {"array", "boolean", "integer", "number", "object", "string"}
+                for item in value_type
+            )
+        ):
+            raise ValueError(f"external agent tool {name} has an invalid schema")
+    if spec.effect == "write" and not spec.requires_confirmation:
+        raise ValueError(f"external write tool {name} requires confirmation")
+
+
 class AgentToolRegistry:
     """Typed registry over AITranslator Agent capabilities.
 
@@ -109,6 +162,7 @@ class AgentToolRegistry:
         filesystem_workspace_service: Any | None = None,
         sandbox_debug_service: Any | None = None,
         sandbox_network_permission_service: Any | None = None,
+        external_tool_definitions: Iterable[TypedAgentToolDefinition] = (),
     ) -> None:
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         if translation_fallback_service is not None:
@@ -207,7 +261,7 @@ class AgentToolRegistry:
             else ()
         )
 
-        self._definitions = (
+        built_in_definitions = (
             reading_by_name["inspect_reading_context"],
             translation_definition,
             reading_by_name["explain_selection"],
@@ -224,6 +278,16 @@ class AgentToolRegistry:
             *knowledge_definitions,
             *sandbox_definitions,
         )
+        definitions = list(built_in_definitions)
+        known_names = {item.spec.name for item in definitions}
+        for definition in external_tool_definitions:
+            _validate_external_definition(definition)
+            name = definition.spec.name
+            if name in known_names:
+                raise ValueError(f"Duplicate agent tool definition: {name}")
+            known_names.add(name)
+            definitions.append(definition)
+        self._definitions = tuple(definitions)
         self._definition_by_name = {
             definition.spec.name: definition for definition in self._definitions
         }

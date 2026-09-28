@@ -6,13 +6,14 @@ import pytest
 
 from backend.agent_core.orchestration.task_state import (
     InvalidTaskTransitionError,
+    failure_status_for_required_task,
     finish_attempt,
+    finish_without_attempt,
     prepare_retry,
     start_attempt,
     transition_task,
 )
 from backend.models.agent_tasks import TaskExecutionState, TaskStatus
-
 
 T0 = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 T1 = datetime(2026, 9, 16, 12, 1, tzinfo=UTC)
@@ -98,3 +99,35 @@ def test_blocked_and_skipped_are_explicit_non_success_terminal_states() -> None:
 
     assert blocked.status == TaskStatus.BLOCKED
     assert skipped.status == TaskStatus.SKIPPED
+
+
+def test_required_and_optional_failures_finish_without_attempts() -> None:
+    required = finish_without_attempt(
+        TaskExecutionState(task_id="required"), required=True
+    )
+    optional = finish_without_attempt(
+        TaskExecutionState(task_id="optional"), required=False
+    )
+
+    assert failure_status_for_required_task(True) is TaskStatus.BLOCKED
+    assert failure_status_for_required_task(False) is TaskStatus.SKIPPED
+    assert required.status is TaskStatus.BLOCKED
+    assert optional.status is TaskStatus.SKIPPED
+    assert required.attempts == optional.attempts == []
+
+    with pytest.raises(InvalidTaskTransitionError, match="attempt history"):
+        finish_without_attempt(
+            TaskExecutionState(
+                task_id="retried",
+                status=TaskStatus.READY,
+                attempts=[
+                    {
+                        "task_id": "retried",
+                        "attempt_id": "attempt-1",
+                        "ordinal": 1,
+                        "status": TaskStatus.FAILED,
+                    }
+                ],
+            ),
+            required=True,
+        )

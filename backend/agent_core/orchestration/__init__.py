@@ -1,3 +1,10 @@
+from backend.agent_core.orchestration.agent_registry import (
+    AgentRegistry,
+    AgentRetryPolicy,
+    AgentSpec,
+    AgentTimeoutPolicy,
+    build_default_agent_registry,
+)
 from backend.agent_core.orchestration.artifact_store import (
     ARTIFACT_STORE_SCHEMA_VERSION,
     ArtifactConflictError,
@@ -34,6 +41,11 @@ from backend.agent_core.orchestration.reducer import (
     TaskResultConflictError,
     reduce_task_results,
 )
+from backend.agent_core.orchestration.resource_manager import (
+    GLOBAL_EXPERT_SLOTS,
+    GLOBAL_GPU_SLOTS,
+    AgentResourceManager,
+)
 from backend.agent_core.orchestration.roles import RoleRegistry
 from backend.agent_core.orchestration.router import ResearchTaskRouter
 from backend.agent_core.orchestration.scope_resolver import (
@@ -62,6 +74,13 @@ from backend.agent_core.orchestration.validation import (
 
 __all__ = [
     "ARTIFACT_STORE_SCHEMA_VERSION",
+    "GLOBAL_EXPERT_SLOTS",
+    "GLOBAL_GPU_SLOTS",
+    "AgentRegistry",
+    "AgentResourceManager",
+    "AgentRetryPolicy",
+    "AgentSpec",
+    "AgentTimeoutPolicy",
     "ArtifactConflictError",
     "ArtifactPort",
     "AuthoritativeScopeResolver",
@@ -95,6 +114,7 @@ __all__ = [
     "ToolRuntimePort",
     "ValidatedSupervisorPlanner",
     "build_artifact_store",
+    "build_default_agent_registry",
     "finish_attempt",
     "is_terminal",
     "prepare_retry",

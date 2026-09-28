@@ -114,7 +114,13 @@ const INITIAL_STAGES: RagDebugStage[] = [
   { key: "answer", label: "Answer Generation", status: "pending", elapsed_ms: 0, note: "Optional answer generation from context", summary: {}, candidate_count: 0 },
 ]
 
-export default function RagDebugStudioTrace() {
+export default function RagDebugStudioTrace({
+  trustedAgentRunId,
+  onOpenRuntimeDebug,
+}: {
+  trustedAgentRunId?: string
+  onOpenRuntimeDebug?: (runId: string) => void
+} = {}) {
   const [activeTab, setActiveTab] = useState<RagTab>("trace")
   const [visitedTabs, setVisitedTabs] = useState<Set<RagTab>>(() => new Set(["trace"]))
   const [configs, setConfigs] = useState<RagDebugConfigProfile[]>([])
@@ -196,7 +202,7 @@ export default function RagDebugStudioTrace() {
               className={visible ? "min-h-0 h-full animate-[ragFadeIn_.18s_ease-out]" : "hidden"}
               aria-hidden={!visible}
             >
-              {id === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} trace={latestTrace} onTraceChange={setLatestTrace} />}
+              {id === "trace" && <TraceTab configs={configs} onConfigsChanged={refreshBaseData} trace={latestTrace} onTraceChange={setLatestTrace} trustedAgentRunId={trustedAgentRunId} onOpenRuntimeDebug={onOpenRuntimeDebug} />}
               {id === "retrieval" && <RetrievalTab trace={latestTrace} />}
               {id === "chunks" && <ChunksTab qasperRunId={selectedQasperRun?.run_id ?? ""} />}
               {id === "evaluation" && <EvaluationTab configs={configs} datasets={datasets} qasperRun={selectedQasperRun} />}
@@ -215,11 +221,15 @@ function TraceTab({
   onConfigsChanged,
   trace,
   onTraceChange,
+  trustedAgentRunId,
+  onOpenRuntimeDebug,
 }: {
   configs: RagDebugConfigProfile[]
   onConfigsChanged: () => Promise<void>
   trace: RagDebugTraceResponse | null
   onTraceChange: (trace: RagDebugTraceResponse | null) => void
+  trustedAgentRunId?: string
+  onOpenRuntimeDebug?: (runId: string) => void
 }) {
   const [query, setQuery] = useState("")
   const [configId, setConfigId] = useState("default")
@@ -313,9 +323,12 @@ function TraceTab({
               <h2 className="text-[13px] font-semibold text-slate-900">Live Capability Routing</h2>
               <p className="mt-1 text-[11px] text-slate-500">Recent AI Chat routes, grounding policy, retrieval, and verification decisions.</p>
             </div>
-            <button type="button" onClick={() => void refreshCompanionTraces()} className="rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
-              Refresh routes
-            </button>
+            <div className="flex flex-wrap gap-2">
+              {trustedAgentRunId && onOpenRuntimeDebug ? <button type="button" onClick={() => onOpenRuntimeDebug(trustedAgentRunId)} className="rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">Open associated Agent Run</button> : null}
+              <button type="button" onClick={() => void refreshCompanionTraces()} className="rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
+                Refresh routes
+              </button>
+            </div>
           </div>
           <div className="mt-3 grid gap-2">
             {companionTraces.length === 0 ? (

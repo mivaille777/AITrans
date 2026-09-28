@@ -119,6 +119,29 @@ class MultiAgentRuntimeBridge:
         if core_type is None:
             return
         payload = dict(event.payload or {})
+        agent_id = str(payload.get("agent_id", "") or "").strip()
+        if not agent_id and str(payload.get("task_id", "") or "").strip():
+            # TaskSpec emits its stable Agent ID as role/actor. Supervisor events
+            # have no task_id and must never be shown as a running Agent.
+            agent_id = str(payload.get("role", "") or event.actor or "").strip()
+        if not agent_id and event.event_type in {
+            "agent_started",
+            "agent_completed",
+            "agent_failed",
+        }:
+            # The legacy executor emits these only after resolving the actor
+            # through its AgentRegistry.
+            candidate = str(event.actor or "").strip()
+            if candidate.casefold() not in {
+                "supervisor",
+                "shared_context",
+                "knowledge",
+                "runtime",
+                "unknown",
+            }:
+                agent_id = candidate
+        if agent_id and len(agent_id) <= 128:
+            payload.setdefault("agent_id", agent_id)
         payload.update(
             {
                 "actor": event.actor,
@@ -269,6 +292,8 @@ class MultiAgentRuntimeBridge:
         context = state.browser_context
         return {
             "source_text": state.selected_text,
+            "profile_id": str(context.get("profile_id", "local-default") or "local-default").strip(),
+            "multi_agent_mode": str(context.get("multi_agent_mode", "auto") or "auto"),
             "source_language": str(context.get("source_language", "auto") or "auto"),
             "target_language": str(context.get("target_language", "zh-CN") or "zh-CN"),
             "resource_url": str(context.get("resource_url", "") or ""),
@@ -384,70 +409,15 @@ class MultiAgentRuntimeBridge:
         if self.orchestrator is None:
             self._forward_events(run, emit)
 
+        if self.orchestrator is not None:
+            return self._apply_orchestration_run(
+                state, run, emit=emit, control=control
+            )
+
         collaboration = self._context_payload(run)
         context = dict(state.browser_context)
         context["multi_agent_context"] = collaboration
         context["multi_agent_active"] = True
-
-        if self.orchestrator is not None:
-            memory_snapshot = getattr(run, "memory_snapshot", {})
-            snapshot_id = str(memory_snapshot.get("snapshot_id", "") or "")
-            self._apply_memory_projection(state, memory_snapshot)
-            context = dict(state.browser_context)
-            context["multi_agent_context"] = collaboration
-            context["multi_agent_active"] = True
-            task_plan = (
-                run.task_plan.model_dump(mode="json")
-                if run.task_plan is not None
-                else None
-            )
-            state.apply_orchestration(
-                lane=run.route.lane.value,
-                status=(
-                    "blocked"
-                    if run.route.missing_information
-                    else "completed"
-                    if all(
-                        item.status.value in {"succeeded", "partial", "skipped"}
-                        for item in run.results
-                    )
-                    else "partial"
-                ),
-                scope=run.scope.model_dump(mode="json"),
-                plan=task_plan,
-                results=[item.model_dump(mode="json") for item in run.results],
-                memory_snapshot_ref=snapshot_id,
-            )
-            context["orchestration_context"] = collaboration
-            language_handoff = self._artifact_language_input(
-                state.user_input, run.direct_output
-            )
-            if language_handoff is not None:
-                language_input, artifact_ref = language_handoff
-                context["derived_language_input"] = language_input
-                context["derived_language_input_artifact"] = artifact_ref
-                context["orchestration_direct_delivery"] = False
-            elif run.direct_delivery and run.direct_output is not None:
-                output_text = (
-                    run.direct_output
-                    if isinstance(run.direct_output, str)
-                    else json.dumps(run.direct_output, ensure_ascii=False, default=str)
-                )
-                state.apply_response(
-                    {
-                        "status": "completed",
-                        "output_text": output_text,
-                        "provider": "orchestration-tool",
-                        "model": "",
-                        "request_id": state.execution.request_id,
-                    }
-                )
-                context["orchestration_direct_delivery"] = True
-            state.browser_context = context
-            state.sync_contract()
-            if control is not None:
-                control.checkpoint("multi_agent_collaboration_ready")
-            return state
 
         advisory = self._advisory_prompt_context(collaboration)
         if advisory:
@@ -459,6 +429,121 @@ class MultiAgentRuntimeBridge:
         state.browser_context = context
         state.sync_contract()
 
+        if control is not None:
+            control.checkpoint("multi_agent_collaboration_ready")
+        return state
+
+    def run_prepared(
+        self,
+        state: AgentState,
+        *,
+        route: Any,
+        scope: Any,
+        memory_snapshot: dict[str, Any] | None,
+        task_plan: Any,
+        precomputed_results: Any | None = None,
+        emit: CoreEventSink,
+        control: AgentRunControl | None = None,
+        resuming: bool = False,
+    ) -> AgentState:
+        """Run the already prepared Root plan without routing or planning again."""
+
+        if self.orchestrator is None:
+            return state
+        if control is not None:
+            control.checkpoint("multi_agent_collaboration")
+        run = self.orchestrator.execute_prepared(
+            route=route,
+            scope=scope,
+            memory_snapshot=memory_snapshot,
+            task_plan=task_plan,
+            precomputed_results=precomputed_results,
+            profile_id=str(
+                state.browser_context.get("profile_id", "local-default")
+                or "local-default"
+            ).strip(),
+            run_id=state.run_id,
+            trace_id=state.trace_id,
+            runtime_context=self._runtime_context(state),
+            event_sink=lambda event: self._forward_event(event, emit),
+            control=control,
+            resuming=resuming,
+        )
+        state = self._apply_orchestration_run(
+            state, run, emit=emit, control=control
+        )
+        return state
+
+    def _apply_orchestration_run(
+        self,
+        state: AgentState,
+        run: Any,
+        *,
+        emit: CoreEventSink,
+        control: AgentRunControl | None,
+    ) -> AgentState:
+        if control is not None:
+            control.checkpoint("multi_agent_result_projection")
+        collaboration = self._context_payload(run)
+        context = dict(state.browser_context)
+        context["multi_agent_context"] = collaboration
+        context["multi_agent_active"] = True
+
+        memory_snapshot = getattr(run, "memory_snapshot", {})
+        snapshot_id = str(memory_snapshot.get("snapshot_id", "") or "")
+        self._apply_memory_projection(state, memory_snapshot)
+        context = dict(state.browser_context)
+        context["multi_agent_context"] = collaboration
+        context["multi_agent_active"] = True
+        task_plan = (
+            run.task_plan.model_dump(mode="json")
+            if run.task_plan is not None
+            else None
+        )
+        state.apply_orchestration(
+            lane=run.route.lane.value,
+            status=(
+                "blocked"
+                if run.route.missing_information
+                else "completed"
+                if all(
+                    item.status.value in {"succeeded", "partial", "skipped"}
+                    for item in run.results
+                )
+                else "partial"
+            ),
+            scope=run.scope.model_dump(mode="json"),
+            plan=task_plan,
+            results=[item.model_dump(mode="json") for item in run.results],
+            memory_snapshot_ref=snapshot_id,
+        )
+        context["orchestration_context"] = collaboration
+        language_handoff = self._artifact_language_input(
+            state.user_input, run.direct_output
+        )
+        if language_handoff is not None:
+            language_input, artifact_ref = language_handoff
+            context["derived_language_input"] = language_input
+            context["derived_language_input_artifact"] = artifact_ref
+            context["orchestration_direct_delivery"] = False
+        elif run.direct_delivery and run.direct_output is not None:
+            output_text = (
+                run.direct_output
+                if isinstance(run.direct_output, str)
+                else json.dumps(run.direct_output, ensure_ascii=False, default=str)
+            )
+            state.apply_response(
+                {
+                    "status": "completed",
+                    "output_text": output_text,
+                    "provider": "orchestration-tool",
+                    "model": "",
+                    "request_id": state.execution.request_id,
+                }
+            )
+            context["orchestration_direct_delivery"] = True
+        state.browser_context = context
+        state.sync_contract()
         if control is not None:
             control.checkpoint("multi_agent_collaboration_ready")
         return state

@@ -8,14 +8,25 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
-from threading import BoundedSemaphore, RLock
+from threading import RLock
 from time import time
 from typing import Any
 from uuid import uuid4
 
 from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
 from backend.agent_core.multi_agent.trace import MultiAgentTraceCollector
+from backend.agent_core.orchestration.frontier import (
+    dependency_results as project_dependency_results,
+)
+from backend.agent_core.orchestration.frontier import (
+    ready_tasks,
+)
 from backend.agent_core.orchestration.reducer import reduce_task_results
+from backend.agent_core.orchestration.resource_manager import (
+    GLOBAL_EXPERT_SLOTS as _GLOBAL_EXPERT_SLOTS,
+    GLOBAL_GPU_SLOTS as _GLOBAL_GPU_SLOTS,
+    SharedRunBudget,
+)
 from backend.agent_core.orchestration.runtime_budget import bind_runtime_budget
 from backend.agent_core.orchestration.serial_executor import (
     SerialExecution,
@@ -34,8 +45,6 @@ from backend.models.agent_tasks import (
     utc_now,
 )
 
-_GLOBAL_EXPERT_SLOTS = BoundedSemaphore(2)
-_GLOBAL_GPU_SLOTS = BoundedSemaphore(1)
 _GPU_TOOL_MARKERS = ("gpu", "image", "vision", "embedding", "rerank", "ocr")
 
 
@@ -62,51 +71,6 @@ class ParallelExecutionPolicy:
             raise ValueError("max_retries must be 0 or 1")
         if self.lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-
-
-class SharedRunBudget:
-    """Thread-safe reservation ledger shared by every task in one run."""
-
-    def __init__(self, policy: ParallelExecutionPolicy) -> None:
-        self._limits = {
-            "model_calls": policy.max_model_calls,
-            "tool_calls": policy.max_tool_calls,
-            "retrievals": policy.max_retrievals,
-        }
-        self._reserved = {key: 0 for key in self._limits}
-        self._usage = ResourceUsage()
-        self._lock = RLock()
-
-    def reserve(self, resource: str, amount: int = 1) -> bool:
-        requested = max(0, int(amount))
-        with self._lock:
-            if resource not in self._limits:
-                raise ValueError(f"unknown budget resource: {resource}")
-            if self._reserved[resource] + requested > self._limits[resource]:
-                return False
-            self._reserved[resource] += requested
-            return True
-
-    def record(self, usage: ResourceUsage) -> None:
-        with self._lock:
-            self._usage = ResourceUsage(
-                input_tokens=_optional_sum(self._usage.input_tokens, usage.input_tokens),
-                output_tokens=_optional_sum(self._usage.output_tokens, usage.output_tokens),
-                tool_calls=self._usage.tool_calls + usage.tool_calls,
-                model_calls=self._usage.model_calls + usage.model_calls,
-                elapsed_ms=_optional_sum(self._usage.elapsed_ms, usage.elapsed_ms),
-            )
-
-    @property
-    def usage(self) -> ResourceUsage:
-        with self._lock:
-            return self._usage.model_copy(deep=True)
-
-
-def _optional_sum(left: int | None, right: int | None) -> int | None:
-    if left is None and right is None:
-        return None
-    return int(left or 0) + int(right or 0)
 
 
 class TaskCheckpointConflictError(RuntimeError):
@@ -415,12 +379,12 @@ class ParallelTaskGraphExecutor:
             return
         collector.emit(
             event_type,
-            actor=task.role.value if task is not None else "supervisor",
+            actor=task.agent_id if task is not None else "supervisor",
             status=status,
             payload={
                 "task_id": task.task_id if task is not None else "",
                 "parent_task_id": "",
-                "role": task.role.value if task is not None else "supervisor",
+                "role": task.agent_id if task is not None else "supervisor",
                 "depends_on": list(task.depends_on) if task is not None else [],
                 "required": bool(task.required) if task is not None else False,
                 "output_kind": (
@@ -492,7 +456,7 @@ class ParallelTaskGraphExecutor:
                 attempt=attempt,
                 reason_code="specialist_invoked",
             )
-            executor = self._executors.get(task.role)
+            executor = self._executors.get(task.role) if task.role is not None else None
             if executor is None:
                 return SpecialistExecution(
                     result=TaskResult(
@@ -675,34 +639,19 @@ class ParallelTaskGraphExecutor:
                     self.checkpoints.heartbeat(
                         active_run_id, owner_id, self.policy.lease_seconds
                     )
-                ready = [
-                    task
-                    for task in pending.values()
-                    if all(dependency in by_id for dependency in task.depends_on)
-                ]
+                ready_ids = ready_tasks(
+                    plan,
+                    by_id,
+                    {task_id: result.status for task_id, result in by_id.items()},
+                )
+                ready = [pending[task_id] for task_id in ready_ids if task_id in pending]
                 for task in sorted(ready, key=lambda item: item.task_id):
                     if len(futures) >= self.policy.max_parallel_experts:
                         break
-                    dependency_results = {
-                        dependency: by_id[dependency] for dependency in task.depends_on
-                    }
-                    failed = [
-                        item
-                        for item in dependency_results.values()
-                        if item.status not in {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL}
-                    ]
-                    if failed:
-                        dependency_status = (
-                            TaskStatus.BLOCKED if task.required else TaskStatus.SKIPPED
-                        )
+                    dependency_projection = project_dependency_results(task, by_id)
+                    if dependency_projection.failed_task_ids:
                         execution = SpecialistExecution(
-                            result=TaskResult(
-                                task_id=task.task_id,
-                                attempt_id=f"{task.task_id}:1",
-                                status=dependency_status,
-                                error_code="dependency_unavailable",
-                                unmet_requirements=sorted(item.task_id for item in failed),
-                            )
+                            result=dependency_projection.failure_result(task)
                         )
                         merge(task, execution)
                         pending.pop(task.task_id)
@@ -771,7 +720,7 @@ class ParallelTaskGraphExecutor:
                         self._execute_one,
                         task,
                         scope=scope,
-                        dependency_results=dependency_results,
+                        dependency_results=dependency_projection.results,
                         memory_snapshot=dict(memory_snapshot or {}),
                         control=active_control,
                         collector=collector,

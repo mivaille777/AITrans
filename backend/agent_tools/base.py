@@ -141,6 +141,50 @@ class AgentToolSpec:
                         )
                 sanitized[key] = list(value)
                 continue
+
+            value_type = schema.get("type") if isinstance(schema, dict) else None
+            if isinstance(value_type, str) and value_type in {
+                "integer", "number", "boolean", "object"
+            }:
+                if value_type == "integer" and (
+                    isinstance(value, bool) or not isinstance(value, int)
+                ):
+                    raise ValueError(
+                        f"Agent planner argument {key} must be an integer for tool {self.name}."
+                    )
+                if value_type == "number" and (
+                    isinstance(value, bool) or not isinstance(value, (int, float))
+                ):
+                    raise ValueError(
+                        f"Agent planner argument {key} must be a number for tool {self.name}."
+                    )
+                if value_type == "boolean" and not isinstance(value, bool):
+                    raise ValueError(
+                        f"Agent planner argument {key} must be a boolean for tool {self.name}."
+                    )
+                if value_type == "object" and not isinstance(value, dict):
+                    raise ValueError(
+                        f"Agent planner argument {key} must be an object for tool {self.name}."
+                    )
+                if isinstance(schema, dict):
+                    if "enum" in schema and value not in schema["enum"]:
+                        raise ValueError(
+                            f"Agent planner argument {key} is outside the allowed values for tool {self.name}."
+                        )
+                    if isinstance(value, (int, float)):
+                        minimum = schema.get("minimum")
+                        maximum = schema.get("maximum")
+                        if minimum is not None and value < minimum:
+                            raise ValueError(
+                                f"Agent planner argument {key} is below the allowed range for tool {self.name}."
+                            )
+                        if maximum is not None and value > maximum:
+                            raise ValueError(
+                                f"Agent planner argument {key} exceeds the allowed range for tool {self.name}."
+                            )
+                sanitized[key] = value
+                continue
+
             text = str(value or "")
             if self.name != "python_execute":
                 text = text.strip()

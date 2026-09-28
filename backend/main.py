@@ -10,11 +10,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.agent import router as agent_router
+from backend.api.agent_catalog import router as agent_catalog_router
 from backend.api.agent_checkpoint_dependencies import close_agent_checkpoint_service
 from backend.api.agent_knowledge import router as agent_knowledge_router
 from backend.api.agent_observability import router as agent_observability_router
 from backend.api.agent_routing import router as agent_routing_router
 from backend.api.agent_runtime_config import router as agent_runtime_config_router
+from backend.api.agent_runtime_debug import router as agent_runtime_debug_router
 from backend.api.agent_runtime_jobs import (
     canonical_router as agent_runtime_canonical_router,
 )
@@ -170,10 +172,12 @@ def create_app():
         knowledge_v2_router,
         knowledge_canvas_router,
         agent_router,
+        agent_catalog_router,
         agent_knowledge_router,
         agent_routing_router,
         agent_observability_router,
         agent_runtime_config_router,
+        agent_runtime_debug_router,
         agent_runtime_jobs_router,
         agent_runtime_canonical_router,
         filesystem_workspaces_router,

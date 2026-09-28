@@ -3,10 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from queue import Empty, Queue
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from time import monotonic
 from typing import TypeVar
 
+from app.ai.errors import (
+    AIConnectionError,
+    AIResponseError,
+    AITimeoutError,
+)
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
     AgentCancelledError,
@@ -16,6 +21,20 @@ from backend.agent_core.exceptions import (
 )
 
 T = TypeVar("T")
+
+
+def is_transient_provider_error(error: Exception) -> bool:
+    """Return true only for known transient provider/network failures.
+
+    Authentication, configuration, rate-limit, malformed-response, runtime,
+    permission, scope, budget and cancellation errors are deliberately excluded.
+    """
+
+    if isinstance(error, (AIConnectionError, AITimeoutError, OSError, TimeoutError)):
+        return True
+    if isinstance(error, AgentDecisionTimeoutError):
+        return True
+    return isinstance(error, AIResponseError) and (error.status_code or 0) >= 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +49,7 @@ class AgentExecutionPolicy:
     """
 
     total_timeout_seconds: float = 45.0
+    node_timeout_seconds: float = 30.0
     tool_timeout_seconds: float = 20.0
     max_safe_retries: int = 1
     max_plan_steps: int = 4
@@ -43,6 +63,8 @@ class AgentExecutionPolicy:
     def __post_init__(self) -> None:
         if self.total_timeout_seconds <= 0:
             raise ValueError("total_timeout_seconds must be positive")
+        if self.node_timeout_seconds <= 0:
+            raise ValueError("node_timeout_seconds must be positive")
         if self.tool_timeout_seconds <= 0:
             raise ValueError("tool_timeout_seconds must be positive")
         if self.max_safe_retries < 0:
@@ -71,6 +93,7 @@ class AgentRunControl:
     started_at: float = field(default_factory=monotonic)
     knowledge_search_count: int = 0
     knowledge_read_count: int = 0
+    _fence_lock: RLock = field(default_factory=RLock, repr=False)
 
     @property
     def elapsed_seconds(self) -> float:
@@ -85,7 +108,15 @@ class AgentRunControl:
         return max(0.0, self.policy.total_timeout_seconds - self.elapsed_seconds)
 
     def cancel(self) -> None:
-        self.cancel_event.set()
+        with self._fence_lock:
+            self.cancel_event.set()
+
+    def commit_if_active(self, stage: str, operation: Callable[[], T]) -> T:
+        """Fence a short irreversible commit against a concurrent cancellation."""
+
+        with self._fence_lock:
+            self.checkpoint(stage)
+            return operation()
 
     def pause(self) -> None:
         self.pause_event.set()
@@ -105,6 +136,11 @@ class AgentRunControl:
 
     def bounded_tool_timeout(self) -> float:
         return min(self.policy.tool_timeout_seconds, self.remaining_seconds)
+
+    def bounded_node_timeout(self, node_timeout_seconds: float) -> float:
+        """Bound a node operation by both its local deadline and the run budget."""
+
+        return min(max(0.0, float(node_timeout_seconds)), self.remaining_seconds)
 
     def bounded_react_decision_timeout(self) -> float:
         return min(
@@ -158,7 +194,7 @@ def _run_bounded_operation(
     def worker() -> None:
         try:
             queue.put((True, operation()))
-        except Exception as exc:  # noqa: BLE001 - propagate provider errors across thread
+        except BaseException as exc:  # noqa: BLE001 - preserve interruptions across the worker boundary
             queue.put((False, exc))
 
     Thread(target=worker, name=thread_name, daemon=True).start()
@@ -175,7 +211,7 @@ def _run_bounded_operation(
             continue
         if ok:
             return value  # type: ignore[return-value]
-        if isinstance(value, Exception):
+        if isinstance(value, BaseException):
             raise value
         raise RuntimeError(f"Agent operation {stage} failed without an exception.")
 
@@ -196,6 +232,28 @@ def run_react_decision_with_timeout(
         thread_name="agent-react-decision",
         timeout_error=lambda value: AgentDecisionTimeoutError(
             f"Agent ReAct decision exceeded {value:.2f}s timeout."
+        ),
+    )
+
+
+def run_node_operation_with_timeout(
+    operation: Callable[[], T],
+    *,
+    control: AgentRunControl,
+    node_timeout_seconds: float,
+    stage: str,
+) -> T:
+    """Run a side-effect-free Root decision within its node and run deadlines."""
+
+    timeout = control.bounded_node_timeout(node_timeout_seconds)
+    return _run_bounded_operation(
+        operation,
+        control=control,
+        timeout=timeout,
+        stage=stage,
+        thread_name=f"agent-node-{stage}",
+        timeout_error=lambda value: AgentDecisionTimeoutError(
+            f"Agent node {stage} exceeded {value:.2f}s timeout."
         ),
     )
 
@@ -232,6 +290,8 @@ def run_safe_tool_with_timeout(
 __all__ = [
     "AgentExecutionPolicy",
     "AgentRunControl",
+    "is_transient_provider_error",
+    "run_node_operation_with_timeout",
     "run_react_decision_with_timeout",
     "run_safe_tool_with_timeout",
 ]

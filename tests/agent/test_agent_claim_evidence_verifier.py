@@ -136,19 +136,19 @@ def test_paragraph_end_citation_produces_supported_paragraph_signal() -> None:
         citations=[_citation("[1]", "e1")],
     )
 
-    # A paragraph-end citation applies to each claim in the same paragraph;
-    # lexical support is still evaluated for each sentence.
+    # The paragraph may be released with a notice, while strict metrics count
+    # only sentences carrying their own citation.
     assert result.passed is True
-    assert result.strict_passed is True
-    assert result.partial_grounding is False
-    assert result.citation_coverage == 1.0
-    assert result.support_rate == 1.0
+    assert result.strict_passed is False
+    assert result.partial_grounding is True
+    assert result.citation_coverage == 0.5
+    assert result.support_rate == 0.5
     assert result.paragraph_count == 1
     assert result.cited_paragraph_count == 1
     assert result.supported_paragraph_count == 1
     assert result.paragraph_citation_coverage == 1.0
     assert result.paragraph_support_rate == 1.0
-    assert "missing_claim_citation" not in result.reason_codes
+    assert "missing_claim_citation" in result.reason_codes
 
 
 def test_unrelated_paragraph_citation_is_not_marked_supported() -> None:

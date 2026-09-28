@@ -5,6 +5,10 @@ from enum import Enum
 
 from pydantic import Field, computed_field
 
+from backend.agent_core.state import (
+    CURRENT_AGENT_GRAPH_VERSION,
+    CURRENT_AGENT_STATE_SCHEMA_VERSION,
+)
 from backend.models.agent_runtime import AgentRuntimeProfile
 from backend.models.agent_tasks import (
     TERMINAL_TASK_STATUSES,
@@ -96,8 +100,11 @@ class AgentRunRecord(TaskModel):
     updated_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    graph_version: str = ""
-    state_schema_version: int = 0
+    engine: str = Field(default="compat", min_length=1, max_length=64)
+    graph_version: str = Field(default=CURRENT_AGENT_GRAPH_VERSION, max_length=128)
+    state_schema_version: int = Field(
+        default=CURRENT_AGENT_STATE_SCHEMA_VERSION, ge=0
+    )
     checkpoint_id: str = ""
     budget_used_ms: int = Field(default=0, ge=0)
 

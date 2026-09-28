@@ -1,6 +1,7 @@
-import { AlertTriangle, CheckCircle2, Circle, Languages, LoaderCircle, RotateCcw, XCircle } from "lucide-react"
+import { AlertTriangle, Bot, CheckCircle2, Circle, FileText, Languages, LoaderCircle, Microscope, Network, PenLine, RotateCcw, XCircle } from "lucide-react"
 
 import type { AgentRunSnapshot, AgentTaskSpec, AgentTraceEvent } from "../../../api/agent"
+import type { AgentCatalogEntry } from "../../../api/agent-runtime-debug"
 import { Button } from "../../../shared/ui/Button"
 import { latestTaskEvent } from "../runtime/agent-event-replay"
 
@@ -9,12 +10,12 @@ const taskEventTypes = new Set([
   "task_partial", "task_failed", "task_blocked", "task_cancelled", "task_skipped", "task_retrying",
 ])
 
-const roleLabels: Record<string, string> = {
-  document: "论文阅读",
-  research: "研究综合",
-  writer: "学术写作",
-  curator: "笔记与图谱",
-}
+const agentIcons = {
+  "file-text": FileText,
+  microscope: Microscope,
+  "pen-line": PenLine,
+  network: Network,
+} as const
 
 function eventTasks(events: AgentTraceEvent[]): AgentTaskSpec[] {
   const tasks = new Map<string, AgentTaskSpec>()
@@ -24,7 +25,8 @@ function eventTasks(events: AgentTraceEvent[]): AgentTaskSpec[] {
     if (!taskId || tasks.has(taskId)) continue
     tasks.set(taskId, {
       task_id: taskId,
-      role: String(event.payload.role ?? event.payload.actor ?? "document") as AgentTaskSpec["role"],
+      role: String(event.payload.role ?? event.agent_id ?? event.payload.agent_id ?? "unknown"),
+      agent_id: String(event.agent_id ?? event.payload.agent_id ?? event.payload.role ?? ""),
       objective: "",
       depends_on: Array.isArray(event.payload.depends_on) ? event.payload.depends_on.map(String) : [],
       required: event.payload.required !== false,
@@ -44,7 +46,7 @@ function taskStatus(taskId: string, events: AgentTraceEvent[], snapshot: AgentRu
 }
 
 function tone(status: string): string {
-  if (["succeeded", "completed"].includes(status)) return "border-emerald-200 bg-emerald-50/60"
+  if (["succeeded", "completed", "recovered"].includes(status)) return "border-emerald-200 bg-emerald-50/60"
   if (["failed", "blocked", "cancelled"].includes(status)) return "border-rose-200 bg-rose-50/60"
   if (status === "partial") return "border-amber-200 bg-amber-50/60"
   if (["running", "ready", "retrying"].includes(status)) return "border-cyan-200 bg-cyan-50/50"
@@ -59,21 +61,62 @@ function StatusIcon({ status }: { status: string }) {
   return <Circle size={12} className="text-slate-300" />
 }
 
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: "待开始",
+    ready: "就绪",
+    running: "执行中",
+    waiting_confirmation: "等待确认",
+    succeeded: "已完成",
+    completed: "已完成",
+    partial: "部分完成",
+    failed: "失败",
+    blocked: "已阻塞",
+    cancelled: "已取消",
+    skipped: "已跳过",
+    retrying: "重试中",
+  }
+  return labels[status] ?? status
+}
+
+function runStatusLabel(status: string | undefined, events: AgentTraceEvent[]): string | null {
+  if (!status) return null
+  if (status === "waiting" && events.some((event) => event.event_type === "write_confirmation_required")) return "等待写入确认"
+  if (["recovering", "recovered"].includes(status) || events.some((event) => event.event_type === "workflow_resumed")) return "恢复运行"
+  if (status === "waiting" || status === "confirmation_required") return "等待处理"
+  if (status === "partial") return "部分完成"
+  if (status === "cancelled") return "已取消"
+  if (status === "paused" || status === "pause_requested") return "已暂停"
+  return null
+}
+
 export function TaskExecutionPanel({
   events,
   snapshot,
   running,
   onRetry,
   allowTaskRetry = true,
+  agents = [],
+  runStatus,
+  trustedRunId,
+  onOpenRuntimeDebug,
 }: {
   events: AgentTraceEvent[]
   snapshot: AgentRunSnapshot | null
   running: boolean
   onRetry: (taskId: string) => void
   allowTaskRetry?: boolean
+  agents?: AgentCatalogEntry[]
+  runStatus?: string
+  trustedRunId?: string
+  onOpenRuntimeDebug?: (runId: string) => void
 }) {
   const tasks = snapshot?.plan.tasks?.length ? snapshot.plan.tasks : eventTasks(events)
   const taskEvents = events.filter((event) => taskEventTypes.has(event.event_type))
+  const agentsById = new Map(agents.map((agent) => [agent.agent_id, agent]))
+  const runStatusText = runStatusLabel(runStatus, events)
+  const recordedAttempt = (taskId: string, resultAttempt: number | undefined) =>
+    resultAttempt ?? _integerAttempt(latestTaskEvent(taskEvents, taskId)?.payload.attempt)
   const languageCalls = events.filter((event) => event.event_type === "tool_call" && /translate|polish|language/i.test(String(event.payload.name ?? event.payload.tool_name ?? "")))
   if (tasks.length === 0) return null
 
@@ -91,18 +134,22 @@ export function TaskExecutionPanel({
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {tasks.map((task) => {
           const status = taskStatus(task.task_id, events, snapshot)
+          const agentId = task.agent_id?.trim() || task.role
+          const catalogEntry = agentsById.get(agentId)
+          const AgentIcon = catalogEntry ? (agentIcons[catalogEntry.icon as keyof typeof agentIcons] ?? Bot) : Bot
           const retryable = allowTaskRetry && (snapshot?.retryable_task_ids.includes(task.task_id) ?? false)
           const result = snapshot?.results.find((item) => item.task_id === task.task_id)
+          const attempt = recordedAttempt(task.task_id, result?.attempt_ordinal)
           return (
             <article key={task.task_id} className={`rounded-[15px] border p-3.5 ${tone(status)}`} data-task-id={task.task_id} data-task-status={status}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400">{roleLabels[task.role] ?? task.role} · expert</p>
+                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-400" data-agent-id={agentId}><AgentIcon size={12} />{catalogEntry?.name ?? agentId}</p>
                   <h3 className="mt-1 text-xs font-semibold text-slate-800">{task.objective || `${task.expected_output_kind.replaceAll("_", " ")} deliverable`}</h3>
                 </div>
                 <StatusIcon status={status} />
               </div>
-              <p className="mt-2 text-[10px] text-slate-500">状态：{status} · 尝试 {result?.attempt_ordinal ?? Number(latestTaskEvent(taskEvents, task.task_id)?.payload.attempt ?? 0)}</p>
+              <p className="mt-2 text-[10px] text-slate-500">状态：{statusLabel(status)} · 尝试 {attempt ?? "未记录"}</p>
               <p className="mt-1 text-[10px] text-slate-500">依赖：{task.depends_on.length ? task.depends_on.join("、") : "无"}</p>
               {result?.error_code ? <p className="mt-2 text-[10px] text-rose-700">{result.error_code}</p> : null}
               {retryable ? <Button className="mt-3" size="xs" onClick={() => onRetry(task.task_id)}><RotateCcw size={11} />重试失败任务</Button> : null}
@@ -111,6 +158,10 @@ export function TaskExecutionPanel({
         })}
       </div>
 
+      {runStatusText ? <p className="mt-3 rounded-[10px] bg-slate-50 px-3 py-2 text-[10px] text-slate-600" role="status">Run 状态：{runStatusText}</p> : null}
+
+      {trustedRunId && onOpenRuntimeDebug ? <button type="button" className="mt-3 text-[10px] font-medium text-slate-600 underline underline-offset-2 hover:text-slate-950" onClick={() => onOpenRuntimeDebug(trustedRunId)}>在 Runtime Debug 中查看该 Run</button> : null}
+
       {languageCalls.length ? (
         <div className="mt-3 flex items-center gap-2 rounded-[12px] border border-violet-100 bg-violet-50/60 px-3 py-2 text-[11px] text-violet-800">
           <Languages size={13} />共享语言工具 · 非独立专家 · {languageCalls.length} 次调用
@@ -118,4 +169,8 @@ export function TaskExecutionPanel({
       ) : null}
     </section>
   )
+}
+
+function _integerAttempt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined
 }

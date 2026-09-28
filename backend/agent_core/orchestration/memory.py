@@ -9,6 +9,10 @@ from backend.models.agent_tasks import ScopeContext
 class NullMemoryPort:
     """Explicit MA03 placeholder; M04 will provide the shared source outbox."""
 
+    def policy_revision(self, profile_id: str) -> str:
+        del profile_id
+        return "memory-policy:unavailable-v1"
+
     def load_snapshot(
         self,
         *,

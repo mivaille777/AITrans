@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
 from backend.models.agent_artifacts import Artifact, EvidenceRef
-from backend.models.agent_tasks import ScopeContext, TaskSpec
+from backend.models.agent_tasks import ScopeContext
 
 
 @runtime_checkable
@@ -37,11 +37,15 @@ class ToolRuntimePort(Protocol):
     def execute(
         self,
         *,
-        task: TaskSpec,
+        run_id: str,
+        task_id: str,
+        agent_id: str,
         tool_name: str,
         arguments: Mapping[str, Any],
-        scope: ScopeContext,
-    ) -> Mapping[str, Any]:
+        scope_ref: str,
+        control: Any | None = None,
+        event_sink: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> Any:
         ...
 
 

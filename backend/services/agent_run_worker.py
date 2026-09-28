@@ -126,6 +126,10 @@ class AgentRunWorker:
             target = AgentRunStatus.FAILED
         except AgentPauseRequestedError:
             target = AgentRunStatus.PAUSED
+        except TimeoutError:
+            control.cancel()
+            target = AgentRunStatus.FAILED
+            result_payload = {"code": "execution_timeout"}
         except Exception:
             _logger.exception("Agent run %s failed", run.run_id)
             target = AgentRunStatus.FAILED

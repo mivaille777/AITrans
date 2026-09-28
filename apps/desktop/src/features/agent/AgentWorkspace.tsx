@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 
 import { runAgentTrace, type AgentRunRequest, type AgentWorkflowAction } from "../../api/agent"
+import { getAgentCatalog, type AgentCatalogEntry } from "../../api/agent-runtime-debug"
 import { Button } from "../../shared/ui/Button"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
 import { AgentHeader } from "../companion/components/AgentHeader"
@@ -85,6 +86,15 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
   const [savingKnowledge, setSavingKnowledge] = useState(false)
   const [knowledgeSaveError, setKnowledgeSaveError] = useState("")
   const [savedKnowledgeItemId, setSavedKnowledgeItemId] = useState("")
+  const [agentCatalog, setAgentCatalog] = useState<AgentCatalogEntry[]>([])
+
+  useEffect(() => {
+    let active = true
+    void getAgentCatalog()
+      .then((response) => { if (active) setAgentCatalog(response.agents) })
+      .catch(() => { if (active) setAgentCatalog([]) })
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (!draftPrompt || appliedDraftRef.current === draftPrompt) return
@@ -269,6 +279,10 @@ export function AgentWorkspace({ workspace }: { workspace: TranslationWorkspaceC
         running={runtimeRunning}
         onRetry={runtime.retryTask}
         allowTaskRetry={!runtime.durableRun}
+        agents={agentCatalog}
+        runStatus={runtime.durableRun?.status ?? runtime.runSnapshot?.status}
+        trustedRunId={runtime.durableRun?.run_id ?? runtime.runSnapshot?.run_id}
+        onOpenRuntimeDebug={(runId) => navigate("/settings", { state: { studio: "runtime-debug", runtimeRunId: runId } })}
       />
 
       <ResearchArtifactPanel snapshot={runtime.runSnapshot} />

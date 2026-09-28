@@ -48,6 +48,9 @@ class AgentEventType(str, Enum):
     REACT_STARTED = "react_started"
     DECISION_READY = "decision_ready"
     TOOL_CALL = "tool_call"
+    WRITE_CONFIRMATION_REQUIRED = "write_confirmation_required"
+    WRITE_CONFIRMED = "write_confirmed"
+    WRITE_REJECTED = "write_rejected"
     RETRY = "retry"
     TOOL_RESULT = "tool_result"
     OBSERVATION_READY = "observation_ready"
@@ -74,6 +77,10 @@ class AgentEvent(BaseModel):
     event_type: AgentEventType
     payload: dict[str, Any] = Field(default_factory=dict)
     task_id: str = ""
+    agent_id: str | None = None
+    agent_version: str | None = None
+    node_name: str | None = None
+    subgraph_path: str | None = None
     run_id: str = ""
     trace_id: str = ""
     step_id: str = ""

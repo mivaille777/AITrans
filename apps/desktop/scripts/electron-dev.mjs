@@ -1,16 +1,25 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import path from "node:path"
 import process from "node:process"
 import { setTimeout as delay } from "node:timers/promises"
 
 const rendererUrl = "http://127.0.0.1:5173"
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm"
-const electronCommand = path.join(
-  process.cwd(),
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "electron.cmd" : "electron",
-)
+const npmCliPath = process.env.npm_execpath
+const npmCommand = process.platform === "win32" ? process.execPath : "npm"
+const electronCommand = process.platform === "win32"
+  ? process.execPath
+  : path.join(process.cwd(), "node_modules", ".bin", "electron")
+const electronArgs = process.platform === "win32"
+  ? [path.join(process.cwd(), "node_modules", "electron", "cli.js"), "."]
+  : ["."]
+
+function npmArgs(args) {
+  if (process.platform !== "win32") return args
+  if (!npmCliPath) {
+    throw new Error("Windows Electron development must be started through npm run.")
+  }
+  return [npmCliPath, ...args]
+}
 
 function spawnProcess(command, args, options = {}) {
   return spawn(command, args, {
@@ -47,14 +56,25 @@ async function waitForRenderer(vite) {
   throw new Error("Vite did not become ready.")
 }
 
-await run(npmCommand, ["run", "electron:compile"])
+await run(npmCommand, npmArgs(["run", "electron:compile"]))
 
-const vite = spawnProcess(npmCommand, ["run", "dev"])
+const vite = spawnProcess(npmCommand, npmArgs(["run", "dev"]))
 let electron = null
 
+function stopProcessTree(child) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return
+
+  if (process.platform === "win32") {
+    // npm and Electron each start child processes that outlive a killed parent.
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" })
+  } else {
+    child.kill()
+  }
+}
+
 function stop() {
-  if (electron && electron.exitCode === null) electron.kill()
-  if (vite.exitCode === null) vite.kill()
+  stopProcessTree(electron)
+  stopProcessTree(vite)
 }
 
 process.once("SIGINT", stop)
@@ -63,7 +83,7 @@ process.once("SIGTERM", stop)
 try {
   await waitForRenderer(vite)
 
-  electron = spawnProcess(electronCommand, ["."], {
+  electron = spawnProcess(electronCommand, electronArgs, {
     env: {
       ...process.env,
       AITRANS_RENDERER_URL: rendererUrl,

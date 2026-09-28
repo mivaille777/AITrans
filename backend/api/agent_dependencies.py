@@ -9,9 +9,14 @@ from backend.agent_core.orchestration import (
     AuthoritativeScopeResolver,
     CoordinatorMemoryPort,
     ScopedEvidenceService,
+    ValidatedSupervisorPlanner,
     build_artifact_store,
+    build_default_agent_registry,
 )
-from backend.agent_core.orchestration.migration import build_migration_bridge
+from backend.agent_core.orchestration.migration import (
+    build_migration_bridge,
+    resolve_agent_graph_engine,
+)
 from backend.agent_core.orchestration.parallel_executor import (
     ParallelTaskGraphExecutor,
     SQLiteTaskCheckpointStore,
@@ -154,6 +159,7 @@ def get_agent_runtime(
     research_workspace: ResearchWorkspaceDependency = None,
     knowledge_workspace: KnowledgeWorkspaceDependency = None,
     knowledge_boards: KnowledgeBoardDependency = None,
+    graph_engine: str | None = None,
 ) -> AgentRuntime:
     """Build one request-scoped canonical Agent Runtime.
 
@@ -211,21 +217,24 @@ def get_agent_runtime(
         provider=writer_provider,
         literature_synthesis_service=_LazyLiteratureSynthesisService(),
     )
+    temporary_document_analyst = DocumentAnalystGraph(
+        evidence_service=evidence_service,
+        artifact_store=temporary_artifact_store,
+    )
+    temporary_research_synthesizer = ResearchSynthesizerGraph(
+        artifact_store=temporary_artifact_store,
+        evidence_review_service=_LazyEvidenceReviewService(),
+    )
+    temporary_curator = KnowledgeCuratorGraph(
+        artifact_store=temporary_artifact_store,
+        knowledge_workspace=knowledge_workspace,
+    )
     temporary_executor = ParallelTaskGraphExecutor(
         {
-            TaskRole.DOCUMENT: DocumentAnalystGraph(
-                evidence_service=evidence_service,
-                artifact_store=temporary_artifact_store,
-            ),
-            TaskRole.RESEARCH: ResearchSynthesizerGraph(
-                artifact_store=temporary_artifact_store,
-                evidence_review_service=_LazyEvidenceReviewService(),
-            ),
+            TaskRole.DOCUMENT: temporary_document_analyst,
+            TaskRole.RESEARCH: temporary_research_synthesizer,
             TaskRole.WRITER: temporary_writer,
-            TaskRole.CURATOR: KnowledgeCuratorGraph(
-                artifact_store=temporary_artifact_store,
-                knowledge_workspace=knowledge_workspace,
-            ),
+            TaskRole.CURATOR: temporary_curator,
         },
         artifact_store=temporary_artifact_store,
     )
@@ -233,8 +242,28 @@ def get_agent_runtime(
         get_memory_coordinator(),
         artifact_store=artifact_store,
     )
+    agent_registry = build_default_agent_registry(
+        graph_factories={
+            "document": lambda: document_analyst,
+            "research": lambda: research_synthesizer,
+            "writer": lambda: writer,
+            "curator": lambda: curator,
+        },
+        temporary_graph_factories={
+            "document": lambda: temporary_document_analyst,
+            "research": lambda: temporary_research_synthesizer,
+            "writer": lambda: temporary_writer,
+            "curator": lambda: temporary_curator,
+        },
+    )
+    selected_graph_engine = graph_engine or resolve_agent_graph_engine()
+    native_multi_agent = selected_graph_engine == "native"
     orchestration_service = ResearchOrchestrationService(
         scope_resolver=scope_resolver,
+        planner=ValidatedSupervisorPlanner(
+            agent_registry=agent_registry,
+            tool_registry=getattr(service, "tool_registry", None),
+        ),
         executor=ParallelTaskGraphExecutor(
             {
                 TaskRole.DOCUMENT: document_analyst,
@@ -244,17 +273,19 @@ def get_agent_runtime(
             },
             checkpoint_store=(
                 SQLiteTaskCheckpointStore(checkpoint_service.storage_path)
-                if checkpoint_service is not None
+                if checkpoint_service is not None and not native_multi_agent
                 else None
             ),
             artifact_store=artifact_store,
         ),
         memory_port=memory_port,
         temporary_executor=temporary_executor,
+        artifact_store=artifact_store,
     )
     collaboration_adapter = build_migration_bridge(
         collaboration_service,
         orchestrator=orchestration_service,
+        engine=("typed" if native_multi_agent else None),
     )
     graph = RootAgentGraph(
         adapter,
@@ -263,6 +294,8 @@ def get_agent_runtime(
         ),
         context_provider=ReadingContextProvider(resolver),
         collaboration_adapter=collaboration_adapter,
+        orchestration_service=orchestration_service,
+        engine=selected_graph_engine,
     )
     return AgentRuntime(
         workflow_adapter=graph,

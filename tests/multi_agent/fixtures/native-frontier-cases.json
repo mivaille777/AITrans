@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "id": "independent-a-b",
+      "tasks": ["a", "b"],
+      "dependencies": {},
+      "fail": [],
+      "expected_statuses": {"a": "succeeded", "b": "succeeded"}
+    },
+    {
+      "id": "a-before-b",
+      "tasks": ["a", "b"],
+      "dependencies": {"b": ["a"]},
+      "fail": [],
+      "expected_statuses": {"a": "succeeded", "b": "succeeded"}
+    },
+    {
+      "id": "failed-b-only-blocks-d",
+      "tasks": ["a", "b", "c", "d"],
+      "dependencies": {"c": ["a"], "d": ["b"]},
+      "fail": ["b"],
+      "expected_statuses": {
+        "a": "succeeded",
+        "b": "failed",
+        "c": "succeeded",
+        "d": "blocked"
+      }
+    },
+    {
+      "id": "same-result-replay",
+      "task_id": "a",
+      "attempt_id": "a:1",
+      "status": "succeeded",
+      "warnings": [],
+      "replay_count": 2,
+      "expected_unique_results": 1
+    },
+    {
+      "id": "conflicting-result-replay",
+      "task_id": "a",
+      "attempt_id": "a:1",
+      "status": "succeeded",
+      "warnings": ["replay changed payload"],
+      "expect_conflict": true
+    }
+  ]
+}

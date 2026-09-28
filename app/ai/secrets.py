@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes
 import importlib
+import os
 from collections.abc import Mapping
+from ctypes import wintypes
 from typing import Any
 
 from app.ai.errors import AIConfigurationError
@@ -23,6 +26,65 @@ SUPPORTED_SECRET_PROVIDERS = frozenset(
     }
 )
 _WINDOWS_CREDENTIAL_NOT_FOUND = 1168
+
+
+class _WindowsCredential(ctypes.Structure):
+    _fields_ = [
+        ("Flags", wintypes.DWORD),
+        ("Type", wintypes.DWORD),
+        ("TargetName", wintypes.LPWSTR),
+        ("Comment", wintypes.LPWSTR),
+        ("LastWritten", wintypes.FILETIME),
+        ("CredentialBlobSize", wintypes.DWORD),
+        ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+        ("Persist", wintypes.DWORD),
+        ("AttributeCount", wintypes.DWORD),
+        ("Attributes", ctypes.c_void_p),
+        ("TargetAlias", wintypes.LPWSTR),
+        ("UserName", wintypes.LPWSTR),
+    ]
+
+
+def _read_windows_credential(target_name: str) -> str | None:
+    """Read the same vault target as the Electron and Tauri shells.
+
+    The standard Windows API avoids a broken pywin32 installation preventing
+    backend access to a credential that the desktop shell successfully saved.
+    """
+
+    try:
+        api = ctypes.WinDLL("advapi32", use_last_error=True)
+    except OSError as exc:
+        raise AIConfigurationError(
+            "Windows Credential Manager is unavailable."
+        ) from exc
+    api.CredReadW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.POINTER(_WindowsCredential)),
+    ]
+    api.CredReadW.restype = wintypes.BOOL
+    api.CredFree.argtypes = [ctypes.c_void_p]
+    api.CredFree.restype = None
+
+    credential = ctypes.POINTER(_WindowsCredential)()
+    if not api.CredReadW(target_name, 1, 0, ctypes.byref(credential)):
+        if ctypes.get_last_error() == _WINDOWS_CREDENTIAL_NOT_FOUND:
+            return None
+        raise AIConfigurationError(
+            "Unable to read the stored AI provider credential."
+        )
+    try:
+        if not credential:
+            return None
+        size = int(credential.contents.CredentialBlobSize)
+        blob = credential.contents.CredentialBlob
+        if not blob or size <= 0:
+            return None
+        return _decode_credential_blob(ctypes.string_at(blob, size)).strip() or None
+    finally:
+        api.CredFree(credential)
 
 
 def normalize_provider_name(provider: object) -> str:
@@ -89,6 +151,8 @@ class ProviderCredentialStore:
 
     def get(self, provider: object) -> str | None:
         normalized = normalize_provider_name(provider)
+        if self._backend is None and os.name == "nt":
+            return _read_windows_credential(self.target_name(normalized))
         backend = self._module()
         try:
             credential = backend.CredRead(

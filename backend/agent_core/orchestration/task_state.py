@@ -65,6 +65,28 @@ def transition_task(
     return state.model_copy(update={"status": target}, deep=True)
 
 
+def failure_status_for_required_task(required: bool) -> TaskStatus:
+    """Preserve scheduler contract for a task that cannot start an attempt."""
+
+    return TaskStatus.BLOCKED if required else TaskStatus.SKIPPED
+
+
+def finish_without_attempt(
+    state: TaskExecutionState, *, required: bool
+) -> TaskExecutionState:
+    """Finish a pending/ready task after a dependency or budget gate."""
+
+    if state.status not in {TaskStatus.PENDING, TaskStatus.READY}:
+        raise InvalidTaskTransitionError(
+            "a task without an attempt must be pending or ready"
+        )
+    if state.attempts or state.current_attempt_id:
+        raise InvalidTaskTransitionError(
+            "a task with attempt history cannot finish without an attempt"
+        )
+    return transition_task(state, failure_status_for_required_task(required))
+
+
 def start_attempt(
     state: TaskExecutionState,
     *,
@@ -169,7 +191,9 @@ def is_terminal(state: TaskExecutionState) -> bool:
 
 __all__ = [
     "InvalidTaskTransitionError",
+    "failure_status_for_required_task",
     "finish_attempt",
+    "finish_without_attempt",
     "is_terminal",
     "prepare_retry",
     "start_attempt",

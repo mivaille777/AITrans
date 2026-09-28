@@ -6,9 +6,14 @@ from collections.abc import Mapping
 from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
+from backend.agent_core.orchestration.specialist_adapter import (
+    commit_specialist_effect,
+    specialist_memory_snapshot,
+)
 from backend.knowledge.domain import AI_SUGGESTIBLE_RELATION_TYPES, KnowledgeItemType
 from backend.models.agent_artifacts import (
     Artifact,
@@ -181,8 +186,11 @@ class KnowledgeCuratorGraph:
         )
         return {"draft": payload}
 
-    def _verify_drafts(self, state: KnowledgeCuratorState) -> dict[str, Any]:
+    def _verify_drafts(
+        self, state: KnowledgeCuratorState, runtime: Runtime[Any]
+    ) -> dict[str, Any]:
         task, scope = state["task"], state["scope"]
+        memory_snapshot = specialist_memory_snapshot(runtime, state)
         workspace_id = scope.workspace_id or scope.scope_id
         source_artifacts = state.get("source_artifacts", [])
         evidence_ids = {
@@ -374,16 +382,14 @@ class KnowledgeCuratorGraph:
                 ],
                 "approval_required": True,
                 "memory_snapshot_ref": str(
-                    state.get("memory_snapshot", {}).get("snapshot_id", "") or ""
+                    memory_snapshot.get("snapshot_id", "") or ""
                 ),
                 "memory_references": list(
-                    state.get("memory_snapshot", {}).get("references", [])
+                    memory_snapshot.get("references", [])
                 ),
                 "curation_preference_ids": [
                     str(item.get("item_id", ""))
-                    for item in role_memory_projection(
-                        state.get("memory_snapshot", {}), "curator"
-                    )
+                    for item in role_memory_projection(memory_snapshot, "curator")
                     if str(item.get("item_id", ""))
                 ],
             },
@@ -419,7 +425,11 @@ class KnowledgeCuratorGraph:
             ),
             warnings=[issue.code for issue in issues],
         )
-        stored = self._artifacts.put(artifact)
+        stored = commit_specialist_effect(
+            runtime,
+            f"artifact_commit:{task.task_id}",
+            lambda: self._artifacts.put(artifact),
+        )
         result = TaskResult(
             task_id=task.task_id,
             attempt_id=f"{task.task_id}:1",

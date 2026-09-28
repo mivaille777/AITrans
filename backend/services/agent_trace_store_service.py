@@ -14,7 +14,7 @@ from backend.agent_core.events import AgentEvent
 from backend.agent_core.state import AgentState
 
 DEFAULT_AGENT_OBSERVABILITY_FILENAME = "agent_observability.sqlite3"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,14 @@ class StoredAgentEvent:
     timestamp: str
     elapsed_ms: int
     payload: dict[str, object]
+    event_id: str = ""
+    task_id: str = ""
+    step_id: str = ""
+    tool_call_id: str = ""
+    agent_id: str | None = None
+    agent_version: str | None = None
+    node_name: str | None = None
+    subgraph_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +110,9 @@ def _percentile_95(values: list[int]) -> int:
 
 _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "agent_start": frozenset({"budget_ms", "resumed"}),
+    "write_confirmation_required": frozenset({"tool_name", "request_id"}),
+    "write_confirmed": frozenset({"tool_name", "request_id"}),
+    "write_rejected": frozenset({"tool_name", "request_id"}),
     **{
         event_type: frozenset(
             {
@@ -207,7 +218,7 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "tool_call": frozenset(
-        {"name", "effect", "requires_confirmation", "request_id"}
+        {"name", "effect", "requires_confirmation", "request_id", "sandbox_id"}
     ),
     "retry": frozenset({"tool_name", "attempt", "max_attempts", "request_id"}),
     "tool_result": frozenset(
@@ -220,6 +231,7 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
             "model",
             "request_id",
             "duration_ms",
+            "sandbox_id",
         }
     ),
     "observation_ready": frozenset(
@@ -406,7 +418,15 @@ class AgentTraceStoreService:
             CREATE TABLE IF NOT EXISTS agent_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT NOT NULL,
+                event_id TEXT NOT NULL DEFAULT '',
                 sequence INTEGER NOT NULL,
+                task_id TEXT NOT NULL DEFAULT '',
+                step_id TEXT NOT NULL DEFAULT '',
+                tool_call_id TEXT NOT NULL DEFAULT '',
+                agent_id TEXT NOT NULL DEFAULT '',
+                agent_version TEXT NOT NULL DEFAULT '',
+                node_name TEXT NOT NULL DEFAULT '',
+                subgraph_path TEXT NOT NULL DEFAULT '',
                 event_type TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 elapsed_ms INTEGER NOT NULL DEFAULT 0,
@@ -418,6 +438,28 @@ class AgentTraceStoreService:
             CREATE INDEX IF NOT EXISTS idx_agent_events_run_sequence
                 ON agent_events(run_id, sequence ASC);
             """
+        )
+        event_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(agent_events)")
+        }
+        for name, declaration in (
+            ("event_id", "TEXT NOT NULL DEFAULT ''"),
+            ("task_id", "TEXT NOT NULL DEFAULT ''"),
+            ("step_id", "TEXT NOT NULL DEFAULT ''"),
+            ("tool_call_id", "TEXT NOT NULL DEFAULT ''"),
+            ("agent_id", "TEXT NOT NULL DEFAULT ''"),
+            ("agent_version", "TEXT NOT NULL DEFAULT ''"),
+            ("node_name", "TEXT NOT NULL DEFAULT ''"),
+            ("subgraph_path", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if name not in event_columns:
+                connection.execute(f"ALTER TABLE agent_events ADD COLUMN {name} {declaration}")
+        connection.execute(
+            "UPDATE agent_events SET event_id = 'legacy:' || run_id || ':' || sequence WHERE event_id = ''"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_events_run_event_id "
+            "ON agent_events(run_id, event_id) WHERE event_id != ''"
         )
         connection.execute(
             "INSERT OR REPLACE INTO app_state(key, value) VALUES('schema_version', ?)",
@@ -560,14 +602,24 @@ class AgentTraceStoreService:
                         connection.executemany(
                             """
                             INSERT INTO agent_events(
-                                run_id, sequence, event_type, timestamp,
+                                run_id, event_id, sequence, task_id, step_id, tool_call_id,
+                                agent_id, agent_version, node_name, subgraph_path,
+                                event_type, timestamp,
                                 elapsed_ms, payload_json
-                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             [
                                 (
                                     run.run_id,
-                                    sequence,
+                                    event.event_id,
+                                    event.sequence if event.sequence >= 0 else sequence,
+                                    event.task_id,
+                                    event.step_id,
+                                    event.tool_call_id,
+                                    event.agent_id or "",
+                                    event.agent_version or "",
+                                    event.node_name or "",
+                                    event.subgraph_path or "",
                                     event.event_type.value,
                                     event.timestamp,
                                     event.elapsed_ms,
@@ -586,7 +638,7 @@ class AgentTraceStoreService:
     ) -> int:
         """Persist one redacted event immediately for crash-safe replay."""
 
-        del sequence  # Database sequence is monotonic across resumed runtime instances.
+        del sequence  # Sequence is allocated once here and passed to later sinks.
         with self._lock, closing(self._connect()) as connection, connection:
             self._ensure_schema(connection)
             connection.execute(
@@ -598,12 +650,18 @@ class AgentTraceStoreService:
                 (
                     state.run_id,
                     state.trace_id,
-                    state.session_id,
+                    str(state.session_id or ""),
                     event.timestamp,
                     str(state.intent or ""),
                     str(state.ui_mode or "assistant"),
                 ),
             )
+            existing = connection.execute(
+                "SELECT sequence FROM agent_events WHERE run_id = ? AND event_id = ?",
+                (state.run_id, event.event_id),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["sequence"])
             next_sequence = int(
                 connection.execute(
                     """
@@ -616,12 +674,22 @@ class AgentTraceStoreService:
             connection.execute(
                 """
                 INSERT INTO agent_events(
-                    run_id, sequence, event_type, timestamp, elapsed_ms, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    run_id, event_id, sequence, task_id, step_id, tool_call_id,
+                    agent_id, agent_version, node_name, subgraph_path,
+                    event_type, timestamp, elapsed_ms, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     state.run_id,
+                    event.event_id,
                     next_sequence,
+                    event.task_id,
+                    event.step_id,
+                    event.tool_call_id,
+                    event.agent_id or "",
+                    event.agent_version or "",
+                    event.node_name or "",
+                    event.subgraph_path or "",
                     event.event_type.value,
                     event.timestamp,
                     event.elapsed_ms,
@@ -731,7 +799,9 @@ class AgentTraceStoreService:
             self._ensure_schema(connection)
             rows = connection.execute(
                 """
-                    SELECT sequence, event_type, timestamp, elapsed_ms, payload_json
+                    SELECT event_id, sequence, event_type, timestamp, elapsed_ms,
+                           task_id, step_id, tool_call_id, agent_id, agent_version,
+                           node_name, subgraph_path, payload_json
                     FROM agent_events
                     WHERE run_id = ?
                     ORDER BY sequence ASC
@@ -740,10 +810,18 @@ class AgentTraceStoreService:
             ).fetchall()
         return tuple(
             StoredAgentEvent(
+                event_id=str(row["event_id"]),
                 sequence=int(row["sequence"]),
                 event_type=str(row["event_type"]),
                 timestamp=str(row["timestamp"]),
                 elapsed_ms=int(row["elapsed_ms"]),
+                task_id=str(row["task_id"]),
+                step_id=str(row["step_id"]),
+                tool_call_id=str(row["tool_call_id"]),
+                agent_id=str(row["agent_id"]) or None,
+                agent_version=str(row["agent_version"]) or None,
+                node_name=str(row["node_name"]) or None,
+                subgraph_path=str(row["subgraph_path"]) or None,
                 payload=json.loads(str(row["payload_json"])),
             )
             for row in rows

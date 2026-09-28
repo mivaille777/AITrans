@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import uuid4
 
+from backend.agent_core.orchestration.migration import (
+    resolve_agent_graph_engine,
+)
 from backend.agent_core.reliability import AgentExecutionPolicy
+from backend.agent_core.state import (
+    CURRENT_AGENT_GRAPH_VERSION,
+    CURRENT_AGENT_STATE_SCHEMA_VERSION,
+)
 from backend.models.agent_run import AgentRunRecord, AgentRunStatus
 from backend.models.agent_runtime import AgentRuntimeProfile
 from backend.models.agent_tasks import AgentTaskRecord
@@ -72,6 +79,9 @@ class AgentRunScheduler:
             trace_id=trace_id or f"trace-{uuid4().hex}",
             runtime_profile=runtime_profile,
             status=AgentRunStatus.QUEUED,
+            engine=resolve_agent_graph_engine(),
+            graph_version=CURRENT_AGENT_GRAPH_VERSION,
+            state_schema_version=CURRENT_AGENT_STATE_SCHEMA_VERSION,
         )
         self.store.create_task_and_run(task, run, request_payload=request_payload)
         return run
@@ -85,8 +95,12 @@ class AgentRunScheduler:
     def resume(self, run_id: str) -> AgentRunRecord:
         return self.store.resume_run(run_id)
 
-    def confirm(self, run_id: str, *, tool_name: str) -> AgentRunRecord:
-        return self.store.confirm_waiting_run(run_id, tool_name=tool_name)
+    def confirm(
+        self, run_id: str, *, tool_name: str, approved: bool = True
+    ) -> AgentRunRecord:
+        return self.store.confirm_waiting_run(
+            run_id, tool_name=tool_name, approved=approved
+        )
 
     def retry(self, run_id: str) -> AgentRunRecord:
         current = self.store.get_run(run_id)
@@ -102,6 +116,9 @@ class AgentRunScheduler:
             trace_id=f"trace-{uuid4().hex}",
             runtime_profile=current.runtime_profile,
             status=AgentRunStatus.QUEUED,
+            engine=current.engine,
+            graph_version=current.graph_version,
+            state_schema_version=current.state_schema_version,
         )
         return self.store.create_run(
             retry_run,

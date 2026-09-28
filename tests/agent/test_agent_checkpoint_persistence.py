@@ -8,7 +8,12 @@ from backend.agent_core.events import AgentEventType
 from backend.agent_core.exceptions import AgentRuntimeError
 from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
 from backend.agent_core.runtime import AgentRuntime
-from backend.agent_core.state import AgentState
+from backend.agent_core.state import (
+    CURRENT_AGENT_GRAPH_VERSION,
+    CURRENT_AGENT_STATE_SCHEMA_VERSION,
+    LEGACY_AGENT_GRAPH_VERSION,
+    AgentState,
+)
 from backend.agent_graph.root_agent_graph import RootAgentGraph
 from backend.models.agent_runtime import AgentRouteDecision
 from backend.models.agent_tools import AgentPlan
@@ -409,10 +414,49 @@ def test_cp04_legacy_checkpoint_loads_through_explicit_migration(tmp_path) -> No
     graph = runtime.workflow_adapter.compiled_graph
     config = {"configurable": {"thread_id": run_id}}
     payload = dict(graph.get_state(config).values["agent_state"])
-    payload["graph_version"] = "reading-agent-v1"
+    payload["graph_version"] = LEGACY_AGENT_GRAPH_VERSION
     payload["state_schema_version"] = 1
-    graph.update_state(config, {"agent_state": payload})
+    graph.update_state(
+        config,
+        {
+            "agent_state": payload,
+            "graph_version": LEGACY_AGENT_GRAPH_VERSION,
+            "state_schema_version": 1,
+        },
+    )
     restored = runtime.restore_checkpoint(run_id)
-    assert restored.checkpoint_source_graph_version == "reading-agent-v1"
-    assert restored.graph_version != "reading-agent-v1"
+    assert restored.checkpoint_source_graph_version == LEGACY_AGENT_GRAPH_VERSION
+    assert restored.graph_version == CURRENT_AGENT_GRAPH_VERSION
+    assert runtime.workflow_adapter._graph_version == LEGACY_AGENT_GRAPH_VERSION
+    assert runtime.checkpoint_metadata(run_id)["graph_version"] == LEGACY_AGENT_GRAPH_VERSION
+    store.close()
+
+
+def test_pinned_run_version_rejects_checkpoint_version_drift(tmp_path) -> None:
+    store = AgentCheckpointService(storage_path=tmp_path / "checkpoints.sqlite3")
+    runtime = _runtime(DirectAnswerService(), store)
+    run_id = "run-version-pin"
+    runtime.execute(_state(run_id))
+    graph = runtime.workflow_adapter.compiled_graph
+    config = {"configurable": {"thread_id": run_id}}
+    payload = dict(graph.get_state(config).values["agent_state"])
+    payload["graph_version"] = LEGACY_AGENT_GRAPH_VERSION
+    payload["state_schema_version"] = 1
+    graph.update_state(
+        config,
+        {
+            "agent_state": payload,
+            "graph_version": LEGACY_AGENT_GRAPH_VERSION,
+            "state_schema_version": 1,
+        },
+    )
+
+    runtime.select_graph_version(
+        CURRENT_AGENT_GRAPH_VERSION,
+        state_schema_version=CURRENT_AGENT_STATE_SCHEMA_VERSION,
+    )
+    with pytest.raises(AgentRuntimeError, match="does not match checkpoint") as exc_info:
+        runtime.restore_checkpoint(run_id)
+
+    assert exc_info.value.fallback_reason == "checkpoint_graph_version_mismatch"
     store.close()

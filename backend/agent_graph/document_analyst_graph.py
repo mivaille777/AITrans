@@ -6,10 +6,15 @@ from collections.abc import Mapping
 from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.runtime_budget import reserve_runtime_resource
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
+from backend.agent_core.orchestration.specialist_adapter import (
+    commit_specialist_effect,
+    specialist_memory_snapshot,
+)
 from backend.models.agent_artifacts import (
     ClaimRecord,
     DocumentAnalysisArtifact,
@@ -142,7 +147,9 @@ class DocumentAnalystGraph:
     def compiled_graph(self):
         return self._compiled
 
-    def _plan_coverage(self, state: DocumentAnalystState) -> dict[str, Any]:
+    def _plan_coverage(
+        self, state: DocumentAnalystState, runtime: Runtime[Any]
+    ) -> dict[str, Any]:
         task = state["task"]
         scope = state["scope"]
         document_ids = list(task.target_source_ids or scope.allowed_document_ids)
@@ -151,7 +158,8 @@ class DocumentAnalystGraph:
             f"{task.objective} methods datasets experiments results",
             f"{task.objective} limitations future work",
         ][: self._max_queries]
-        for item in role_memory_projection(state.get("memory_snapshot", {}), "document"):
+        memory_snapshot = specialist_memory_snapshot(runtime, state)
+        for item in role_memory_projection(memory_snapshot, "document"):
             if item.get("kind") == "reading_goal" and str(item.get("content", "")).strip():
                 queries.append(str(item["content"])[:1000])
                 break
@@ -185,9 +193,12 @@ class DocumentAnalystGraph:
         )
         return {"draft": draft}
 
-    def _verify_artifact(self, state: DocumentAnalystState) -> dict[str, Any]:
+    def _verify_artifact(
+        self, state: DocumentAnalystState, runtime: Runtime[Any]
+    ) -> dict[str, Any]:
         task = state["task"]
         scope = state["scope"]
+        memory_snapshot = specialist_memory_snapshot(runtime, state)
         packets = list(state.get("evidence", []))
         draft = dict(state.get("draft", {}))
         available_evidence = {
@@ -394,13 +405,11 @@ class DocumentAnalystGraph:
             },
             "visual_evidence": visual_evidence,
             "memory_snapshot_ref": str(
-                state.get("memory_snapshot", {}).get("snapshot_id", "") or ""
+                memory_snapshot.get("snapshot_id", "") or ""
             ),
             "memory_context_ids": [
                 str(item.get("item_id", ""))
-                for item in role_memory_projection(
-                    state.get("memory_snapshot", {}), "document"
-                )
+                for item in role_memory_projection(memory_snapshot, "document")
                 if str(item.get("item_id", ""))
             ],
         }
@@ -432,7 +441,11 @@ class DocumentAnalystGraph:
             verification_status=status,
             verification_report=report,
         )
-        stored = self._artifacts.put(artifact)
+        stored = commit_specialist_effect(
+            runtime,
+            f"artifact_commit:{task.task_id}",
+            lambda: self._artifacts.put(artifact),
+        )
         coverage = (
             len(visited_documents) / len(state["document_ids"])
             if state["document_ids"]

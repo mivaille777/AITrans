@@ -9,8 +9,32 @@ from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceSe
 
 MultiAgentEngine = Literal["typed", "legacy", "off"]
 MultiAgentRollout = Literal["simple", "single", "workflow"]
+AgentGraphEngine = Literal["compat", "native"]
 _ENGINE_ENV_NAME = "AITRANS_MULTI_AGENT_ENGINE"
 _ROLLOUT_ENV_NAME = "AITRANS_MULTI_AGENT_ROLLOUT"
+_NATIVE_ENV_NAME = "AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT"
+
+
+def resolve_langgraph_native_multi_agent(value: str | None = None) -> bool:
+    """Read the opt-in switch that pins native Root execution for new runs.
+
+    Existing runs keep the engine and graph version recorded when they were
+    created; the environment switch never changes an in-progress or resumed run.
+    """
+
+    raw = value if value is not None else os.getenv(_NATIVE_ENV_NAME, "false")
+    normalized = str(raw or "false").strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{_NATIVE_ENV_NAME} must be a boolean; got {normalized!r}")
+
+
+def resolve_agent_graph_engine(value: str | None = None) -> AgentGraphEngine:
+    """Pin the Root topology selected for a newly created Agent run."""
+
+    return "native" if resolve_langgraph_native_multi_agent(value) else "compat"
 
 
 def resolve_multi_agent_engine(value: str | None = None) -> MultiAgentEngine:
@@ -61,9 +85,12 @@ def build_migration_bridge(
 
 
 __all__ = [
+    "AgentGraphEngine",
     "MultiAgentEngine",
     "MultiAgentRollout",
     "build_migration_bridge",
+    "resolve_agent_graph_engine",
+    "resolve_langgraph_native_multi_agent",
     "resolve_multi_agent_engine",
     "resolve_multi_agent_rollout",
 ]

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 
+from app.ai.chat.service import build_chat_prompt
 from backend.services.agent_planner_service import AgentPlannerService
 from backend.services.agent_react_decision_service import AgentReActDecisionService
+from backend.services.companion_chat_service import CompanionChatService
 
 
 def _knowledge_context() -> dict[str, object]:
@@ -94,3 +96,42 @@ def test_react_prompt_receives_first_class_canvas_context() -> None:
     assert payload["runtime_policy"]["knowledge_relation_trust"] == (
         "organizational_context_not_factual_evidence"
     )
+
+
+def test_companion_prompt_keeps_canvas_and_bounded_relative_workspace_manifest() -> None:
+    request = CompanionChatService._build_request(
+        session_id="canvas-stage",
+        context_mode="general",
+        filesystem_workspace_files=[
+            {"relative_path": "input/data.csv", "size_bytes": 42},
+            {"relative_path": "C:/private/key.txt", "size_bytes": 7},
+            {"relative_path": "../outside.txt", "size_bytes": 9},
+        ],
+        **_shared_payload(),
+    )
+    _prefix, serialized = build_chat_prompt(request).split("\n\n", 1)
+    payload = json.loads(serialized)
+
+    assert payload["knowledge_context"]["canvas"]["board_id"] == "board-stage"
+    assert payload["filesystem_workspace_files"] == [
+        {"relative_path": "input/data.csv", "size_bytes": 42}
+    ]
+    assert payload["reading_context"] is None
+
+
+def test_companion_prompt_keeps_valid_json_when_workspace_manifest_is_large() -> None:
+    request = CompanionChatService._build_request(
+        session_id="canvas-large-manifest",
+        context_mode="general",
+        filesystem_workspace_files=[
+            {"relative_path": f"input/{index:02d}-{'x' * 150}.csv", "size_bytes": index}
+            for index in range(64)
+        ],
+        **_shared_payload(),
+    )
+    _prefix, serialized = build_chat_prompt(request).split("\n\n", 1)
+    files = json.loads(serialized)["filesystem_workspace_files"]
+
+    assert 1 < len(files) < 64
+    assert len(json.dumps(files, ensure_ascii=False)) <= 2_400
+    assert files[0]["relative_path"].startswith("input/00-")

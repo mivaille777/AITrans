@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
-from app.ai.errors import AIConfigurationError, AIError
+from langgraph.types import interrupt
+
 from app.ai.knowledge_context import normalize_knowledge_context
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
@@ -15,7 +17,11 @@ from backend.agent_core.exceptions import (
     AgentToolError,
     AgentToolTimeoutError,
 )
-from backend.agent_core.reliability import AgentRunControl, run_safe_tool_with_timeout
+from backend.agent_core.reliability import (
+    AgentRunControl,
+    is_transient_provider_error,
+    run_safe_tool_with_timeout,
+)
 from backend.models.agent_runtime import (
     AgentCitationRef,
     AgentEvidenceItem,
@@ -80,14 +86,17 @@ def _retryable_tool_error(exc: Exception) -> bool:
     if isinstance(
         exc,
         (
-            AIConfigurationError,
             AgentCancelledError,
             AgentBudgetExceededError,
-            AgentToolTimeoutError,
+            ValueError,
+            PermissionError,
         ),
     ):
         return False
-    return isinstance(exc, (AIError, OSError, TimeoutError, AgentRuntimeError))
+    # AgentToolTimeoutError is the hard outer deadline for a worker that may
+    # still be running. Retrying it can overlap the original operation; provider
+    # timeouts raised by the provider remain retryable through the classifier.
+    return is_transient_provider_error(exc)
 
 
 def _route_to_plan(route: AgentRouteDecision) -> AgentPlan:
@@ -151,6 +160,12 @@ class ProductAgentService:
             grounded_synthesis_service
             or GroundedSynthesisService(chat_service=chat_service)
         )
+
+    @property
+    def tool_registry(self) -> AgentToolRegistry:
+        """Expose the server-owned typed registry for orchestration validation."""
+
+        return self._registry
 
     @staticmethod
     def _reading_fields(payload: dict[str, Any]) -> dict[str, Any]:
@@ -403,6 +418,7 @@ class ProductAgentService:
         control: AgentRunControl,
         event_sink: AgentLifecycleSink | None,
         request_id: int,
+        durable_write_interrupt: bool = False,
     ) -> tuple[AgentToolExecutionResult | None, bool]:
         selected = set(_trusted_scope_ids(payload.get("enabled_tools", ()), limit=64))
         if selected and plan.tool_name not in selected:
@@ -434,14 +450,6 @@ class ProductAgentService:
             for item in payload.get("confirmed_write_tools", ())
             if str(item).strip()
         }
-        if (
-            spec.effect == "write"
-            and spec.requires_confirmation
-            and spec.name not in confirmed
-        ):
-            self._emit(event_sink, "tool_call", call_event)
-            return None, True
-
         try:
             validated_arguments = self._validated_arguments(spec.name, plan.arguments)
         except (KeyError, ValueError) as exc:
@@ -450,6 +458,62 @@ class ProductAgentService:
                 stage="tool",
                 fallback_reason="invalid_tool_arguments",
             ) from exc
+
+        write_confirmed = spec.name in confirmed
+        if spec.effect == "write" and spec.requires_confirmation:
+            if durable_write_interrupt:
+                normalized = json.dumps(
+                    validated_arguments,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                )
+                arguments_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+                step_id = str(payload.get("step_id", "direct") or "direct")
+                run_id = str(payload.get("run_id", "") or "")
+                tool_version = str(getattr(spec, "tool_version", "1") or "1")
+                call_material = json.dumps(
+                    (run_id, step_id, spec.name, arguments_hash, tool_version),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                intent_id = hashlib.sha256(call_material.encode("utf-8")).hexdigest()
+                intent = {
+                    "intent_id": intent_id,
+                    "run_id": run_id,
+                    "task_id": str(payload.get("task_id", "") or ""),
+                    "step_id": step_id,
+                    "tool_name": spec.name,
+                    "tool_version": tool_version,
+                    "arguments_hash": arguments_hash,
+                    # The target is included in the full canonical argument
+                    # fingerprint. Keep only the fingerprint in the event log.
+                    "target_hash": arguments_hash,
+                }
+                raw_decision = payload.get("write_confirmation_decision", {})
+                has_decision = isinstance(raw_decision, dict) and bool(raw_decision)
+                if not has_decision:
+                    self._emit(
+                        event_sink,
+                        "write_confirmation_required",
+                        {"intent": intent},
+                    )
+                decision = interrupt(intent)
+                if not isinstance(decision, dict) or any(
+                    decision.get(key) != value for key, value in intent.items()
+                ):
+                    raise AgentToolError(
+                        "The write authorization does not match the pending tool arguments.",
+                        stage="tool",
+                        fallback_reason="write_confirmation_mismatch",
+                    )
+                if decision.get("approved") is not True:
+                    raise AgentCancelledError("The write action was rejected by the user.")
+                write_confirmed = True
+            elif not write_confirmed:
+                self._emit(event_sink, "tool_call", call_event)
+                return None, True
 
         execution_payload = {
             **reading,
@@ -530,7 +594,7 @@ class ProductAgentService:
                     run_id=str(payload.get("run_id", "") or ""),
                     step_id=str(payload.get("step_id", "direct") or "direct"),
                     emit_retry=emit_retry, on_call=remember_call,
-                    write_confirmed=spec.name in confirmed,
+                    write_confirmed=write_confirmed,
                 )
             except Exception as exc:
                 self._emit(event_sink, "failure", {
@@ -937,6 +1001,7 @@ class ProductAgentService:
 
         forced_route = payload.pop("_resolved_route", None)
         route_metadata = dict(payload.pop("_route_metadata", {}) or {})
+        durable_write_interrupt = bool(payload.pop("_durable_write_interrupt", False))
         suppress_plan_event = bool(payload.pop("_suppress_plan_event", False))
         skip_synthesis = bool(payload.pop("_skip_synthesis", False))
 
@@ -1000,6 +1065,7 @@ class ProductAgentService:
             control=control,
             event_sink=event_sink,
             request_id=request_id,
+            durable_write_interrupt=durable_write_interrupt,
         )
         if confirmation_required:
             return ProductAgentRunResult(

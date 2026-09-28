@@ -5,10 +5,15 @@ from collections.abc import Mapping
 from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 from app.ai.errors import AIError
 from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.serial_executor import SpecialistExecution
+from backend.agent_core.orchestration.specialist_adapter import (
+    commit_specialist_effect,
+    specialist_memory_snapshot,
+)
 from backend.models.agent_artifacts import (
     Artifact,
     ArtifactKind,
@@ -299,7 +304,9 @@ class AcademicWriterGraph:
     def compiled_graph(self):
         return self._compiled
 
-    def _load_inputs(self, state: AcademicWriterState) -> dict[str, Any]:
+    def _load_inputs(
+        self, state: AcademicWriterState, runtime: Runtime[Any]
+    ) -> dict[str, Any]:
         inputs: list[Artifact] = []
         issues: list[dict[str, Any]] = []
         for result in state["dependency_results"].values():
@@ -324,13 +331,12 @@ class AcademicWriterGraph:
                     )
                     continue
                 inputs.append(artifact)
+        memory_snapshot = specialist_memory_snapshot(runtime, state)
         return {
             "input_artifacts": inputs,
             "input_issues": issues,
-            "user_material": _normalize_user_material(state.get("memory_snapshot", {})),
-            "writing_preferences": role_memory_projection(
-                state.get("memory_snapshot", {}), "writer"
-            ),
+            "user_material": _normalize_user_material(memory_snapshot),
+            "writing_preferences": role_memory_projection(memory_snapshot, "writer"),
         }
 
     def _review_draft(self, state: AcademicWriterState) -> dict[str, Any]:
@@ -476,7 +482,9 @@ class AcademicWriterGraph:
             )
         return references
 
-    def _verify(self, state: AcademicWriterState) -> dict[str, Any]:
+    def _verify(
+        self, state: AcademicWriterState, runtime: Runtime[Any]
+    ) -> dict[str, Any]:
         task = state["task"]
         scope = state["scope"]
         draft = dict(state.get("draft", {}))
@@ -503,7 +511,7 @@ class AcademicWriterGraph:
         kind = task.expected_output_kind
         references = self._references(input_artifacts, list(evidence_by_id.values()))
         missing_inputs = [str(item) for item in draft.get("missing_inputs", []) or []]
-        memory_snapshot = state.get("memory_snapshot", {})
+        memory_snapshot = specialist_memory_snapshot(runtime, state)
         memory_provenance = {
             "memory_snapshot_ref": str(memory_snapshot.get("snapshot_id", "") or ""),
             "memory_references": list(memory_snapshot.get("references", [])),
@@ -816,7 +824,11 @@ class AcademicWriterGraph:
                 ),
             )
 
-        stored = self._artifacts.put(artifact)
+        stored = commit_specialist_effect(
+            runtime,
+            f"artifact_commit:{task.task_id}",
+            lambda: self._artifacts.put(artifact),
+        )
         task_status = (
             TaskStatus.SUCCEEDED
             if stored.verification_status is VerificationStatus.PASSED

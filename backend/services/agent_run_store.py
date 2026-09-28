@@ -21,7 +21,7 @@ from backend.models.agent_run import (
 from backend.models.agent_tasks import AgentTaskRecord
 
 DEFAULT_AGENT_RUNTIME_FILENAME = "agent_runtime.sqlite3"
-AGENT_RUNTIME_SCHEMA_VERSION = 4
+AGENT_RUNTIME_SCHEMA_VERSION = 7
 
 
 class AgentRunStoreError(RuntimeError):
@@ -108,6 +108,8 @@ class AgentRunStore:
                 runtime_profile TEXT NOT NULL,
                 request_json TEXT NOT NULL DEFAULT '{}',
                 result_json TEXT,
+                write_confirmation_json TEXT NOT NULL DEFAULT '',
+                engine TEXT NOT NULL DEFAULT '',
                 graph_version TEXT NOT NULL DEFAULT '',
                 state_schema_version INTEGER NOT NULL DEFAULT 0,
                 checkpoint_id TEXT NOT NULL DEFAULT '',
@@ -156,6 +158,10 @@ class AgentRunStore:
                 sequence INTEGER NOT NULL,
                 task_id TEXT NOT NULL,
                 trace_id TEXT NOT NULL,
+                agent_id TEXT,
+                agent_version TEXT,
+                node_name TEXT,
+                subgraph_path TEXT,
                 event_type TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 elapsed_ms INTEGER NOT NULL DEFAULT 0,
@@ -191,10 +197,12 @@ class AgentRunStore:
             if "result_json" not in columns:
                 connection.execute("ALTER TABLE agent_runs ADD COLUMN result_json TEXT")
             for name, declaration in (
+                ("engine", "TEXT NOT NULL DEFAULT ''"),
                 ("graph_version", "TEXT NOT NULL DEFAULT ''"),
                 ("state_schema_version", "INTEGER NOT NULL DEFAULT 0"),
                 ("checkpoint_id", "TEXT NOT NULL DEFAULT ''"),
                 ("budget_used_ms", "INTEGER NOT NULL DEFAULT 0"),
+                ("write_confirmation_json", "TEXT NOT NULL DEFAULT ''"),
             ):
                 if name not in columns:
                     connection.execute(f"ALTER TABLE agent_runs ADD COLUMN {name} {declaration}")
@@ -204,6 +212,13 @@ class AgentRunStore:
             }
             if "result_json" not in tool_columns:
                 connection.execute("ALTER TABLE agent_tool_calls ADD COLUMN result_json TEXT")
+            event_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(agent_runtime_events)")
+            }
+            for name in ("agent_id", "agent_version", "node_name", "subgraph_path"):
+                if name not in event_columns:
+                    connection.execute(f"ALTER TABLE agent_runtime_events ADD COLUMN {name} TEXT")
             connection.execute(
                 """
                 INSERT INTO agent_runtime_state(key, value)
@@ -249,9 +264,10 @@ class AgentRunStore:
         connection.execute(
             """
             INSERT INTO agent_runs(
-                run_id, task_id, trace_id, runtime_profile, request_json, status,
+                run_id, task_id, trace_id, runtime_profile, request_json, engine,
+                graph_version, state_schema_version, status,
                 created_at, updated_at, started_at, finished_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run.run_id,
@@ -259,6 +275,9 @@ class AgentRunStore:
                 run.trace_id,
                 run.runtime_profile.value,
                 json.dumps(request_payload or {}, ensure_ascii=False, sort_keys=True),
+                run.engine,
+                run.graph_version,
+                run.state_schema_version,
                 run.status.value,
                 _iso(run.created_at),
                 _iso(run.updated_at),
@@ -288,6 +307,7 @@ class AgentRunStore:
             updated_at=_parse_datetime(row["updated_at"]),
             started_at=_parse_datetime(row["started_at"]),
             finished_at=_parse_datetime(row["finished_at"]),
+            engine=str(row["engine"] or "compat"),
             graph_version=str(row["graph_version"]),
             state_schema_version=int(row["state_schema_version"]),
             checkpoint_id=str(row["checkpoint_id"]),
@@ -346,6 +366,15 @@ class AgentRunStore:
                 "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
             ).fetchone()
         return self._run_from_row(row) if row is not None else None
+
+    def list_recent_runs(self, *, limit: int = 100) -> tuple[AgentRunRecord, ...]:
+        bounded = max(1, min(int(limit), 500))
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_runs ORDER BY created_at DESC, run_id DESC LIMIT ?",
+                (bounded,),
+            ).fetchall()
+        return tuple(self._run_from_row(row) for row in rows)
 
     def get_run_request(self, run_id: str) -> dict[str, object] | None:
         with closing(self._connect()) as connection:
@@ -605,7 +634,9 @@ class AgentRunStore:
         )
 
 
-    def confirm_waiting_run(self, run_id: str, *, tool_name: str) -> AgentRunRecord:
+    def confirm_waiting_run(
+        self, run_id: str, *, tool_name: str, approved: bool = True
+    ) -> AgentRunRecord:
         tool = str(tool_name or "").strip()
         if not tool:
             raise ValueError("tool_name is required")
@@ -620,31 +651,174 @@ class AgentRunStore:
                 raise AgentRunStoreConflictError(
                     f"run {run_id} cannot confirm from {current.status.value}"
                 )
-            request_row = connection.execute(
-                "SELECT request_json FROM agent_runs WHERE run_id = ?", (run_id,)
-            ).fetchone()
-            request_payload = json.loads(str(request_row["request_json"]))
-            request_payload["confirmed_write_tools"] = [tool]
-            updated = transition_run(current, AgentRunStatus.RECOVERING)
-            cursor = connection.execute(
+            pending = connection.execute(
                 """
-                UPDATE agent_runs
-                SET status = ?, updated_at = ?, request_json = ?
-                WHERE run_id = ? AND status = ?
+                SELECT sequence, payload_json FROM agent_runtime_events
+                WHERE run_id = ? AND event_type = ?
+                ORDER BY sequence DESC LIMIT 1
                 """,
-                (
-                    updated.status.value,
-                    _iso(updated.updated_at),
-                    json.dumps(request_payload, ensure_ascii=False, sort_keys=True),
-                    run_id,
-                    current.status.value,
-                ),
-            )
+                (run_id, AgentEventType.WRITE_CONFIRMATION_REQUIRED.value),
+            ).fetchone()
+            if pending is None:
+                if current.engine == "native":
+                    raise AgentRunStoreConflictError(
+                        "native run has no pending write confirmation intent"
+                    )
+                # Compatibility for old non-native runs created before exact
+                # one-use write intents were persisted.
+                request_row = connection.execute(
+                    "SELECT request_json FROM agent_runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+                request_payload = json.loads(str(request_row["request_json"]))
+                request_payload["confirmed_write_tools"] = [tool]
+                decision_json = ""
+            else:
+                payload = json.loads(str(pending["payload_json"]))
+                intent = payload.get("intent") if isinstance(payload, dict) else None
+                if not isinstance(intent, dict):
+                    raise AgentRunStoreConflictError(
+                        "pending write confirmation has no exact intent"
+                    )
+                if str(intent.get("tool_name", "") or "") != tool:
+                    raise AgentRunStoreConflictError(
+                        "tool_name does not match the pending write intent"
+                    )
+                if (
+                    str(intent.get("run_id", "") or "") != run_id
+                    or str(intent.get("task_id", "") or "") != current.task_id
+                    or not str(intent.get("intent_id", "") or "")
+                    or not str(intent.get("arguments_hash", "") or "")
+                    or not str(intent.get("target_hash", "") or "")
+                    or not str(intent.get("step_id", "") or "")
+                ):
+                    raise AgentRunStoreConflictError(
+                        "pending write intent identity is incomplete or mismatched"
+                    )
+                later_decision = connection.execute(
+                    """
+                    SELECT 1 FROM agent_runtime_events
+                    WHERE run_id = ? AND sequence > ?
+                      AND event_type IN (?, ?)
+                      AND json_extract(payload_json, '$.intent_id') = ?
+                    LIMIT 1
+                    """,
+                    (
+                        run_id,
+                        int(pending["sequence"]),
+                        AgentEventType.WRITE_CONFIRMED.value,
+                        AgentEventType.WRITE_REJECTED.value,
+                        str(intent.get("intent_id", "")),
+                    ),
+                ).fetchone()
+                if later_decision is not None:
+                    raise AgentRunStoreConflictError(
+                        "pending write intent has already been decided"
+                    )
+                prior_decision = connection.execute(
+                    "SELECT write_confirmation_json FROM agent_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if prior_decision and str(prior_decision["write_confirmation_json"] or ""):
+                    raise AgentRunStoreConflictError(
+                        "pending write confirmation was already decided"
+                    )
+                decision = {**intent, "approved": bool(approved)}
+                decision_json = json.dumps(decision, ensure_ascii=False, sort_keys=True)
+                request_payload = None
+            updated = transition_run(current, AgentRunStatus.RECOVERING)
+            if request_payload is not None:
+                cursor = connection.execute(
+                    """
+                    UPDATE agent_runs
+                    SET status = ?, updated_at = ?, request_json = ?
+                    WHERE run_id = ? AND status = ?
+                    """,
+                    (
+                        updated.status.value,
+                        _iso(updated.updated_at),
+                        json.dumps(request_payload, ensure_ascii=False, sort_keys=True),
+                        run_id,
+                        current.status.value,
+                    ),
+                )
+            else:
+                cursor = connection.execute(
+                    """
+                    UPDATE agent_runs
+                    SET status = ?, updated_at = ?, write_confirmation_json = ?
+                    WHERE run_id = ? AND status = ?
+                    """,
+                    (
+                        updated.status.value,
+                        _iso(updated.updated_at),
+                        decision_json,
+                        run_id,
+                        current.status.value,
+                    ),
+                )
             if cursor.rowcount != 1:
                 raise AgentRunStoreConflictError(
                     f"run {run_id} changed during confirmation"
                 )
+            if request_payload is None:
+                event_type = (
+                    AgentEventType.WRITE_CONFIRMED
+                    if approved
+                    else AgentEventType.WRITE_REJECTED
+                )
+                self._insert_lifecycle_event(
+                    connection,
+                    AgentEvent(
+                        event_type=event_type,
+                        run_id=run_id,
+                        task_id=current.task_id,
+                        trace_id=current.trace_id,
+                        step_id=str(intent.get("step_id", "") or ""),
+                        payload={
+                            "intent_id": str(intent.get("intent_id", "") or ""),
+                            "tool_name": tool,
+                            "arguments_hash": str(intent.get("arguments_hash", "") or ""),
+                            "target_hash": str(intent.get("target_hash", "") or ""),
+                            "approved": bool(approved),
+                        },
+                    ),
+                )
         return updated
+
+
+    @staticmethod
+    def _insert_lifecycle_event(
+        connection: sqlite3.Connection, event: AgentEvent
+    ) -> None:
+        sequence = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(sequence), -1) + 1 FROM agent_runtime_events WHERE run_id = ?",
+                (event.run_id,),
+            ).fetchone()[0]
+        )
+        persisted = event.model_copy(update={"sequence": sequence}, deep=True)
+        connection.execute(
+            """
+            INSERT INTO agent_runtime_events(
+                event_id, run_id, sequence, task_id, trace_id,
+                event_type, timestamp, elapsed_ms, step_id,
+                tool_call_id, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                persisted.event_id,
+                persisted.run_id,
+                persisted.sequence,
+                persisted.task_id,
+                persisted.trace_id,
+                persisted.event_type.value,
+                persisted.timestamp,
+                persisted.elapsed_ms,
+                persisted.step_id,
+                persisted.tool_call_id,
+                json.dumps(persisted.payload, ensure_ascii=False, sort_keys=True),
+            ),
+        )
 
 
     def consume_run_confirmations(
@@ -700,6 +874,42 @@ class AgentRunStore:
             )
         return tools
 
+
+    def consume_write_confirmation(
+        self, run_id: str, *, lease_owner: str
+    ) -> dict[str, object] | None:
+        """Consume the single exact-intent decision after recovery is leased."""
+
+        owner = str(lease_owner or "").strip()
+        if not owner:
+            raise ValueError("lease_owner is required")
+        now = datetime.now(UTC)
+        with self._write_transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT r.write_confirmation_json FROM agent_runs AS r
+                JOIN agent_worker_leases AS l ON l.run_id = r.run_id
+                WHERE r.run_id = ? AND r.status = ?
+                  AND l.lease_owner = ? AND l.lease_expires_at > ?
+                """,
+                (run_id, AgentRunStatus.RUNNING.value, owner, _iso(now)),
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} confirmation cannot be consumed by {owner}"
+                )
+            raw = str(row["write_confirmation_json"] or "")
+            if not raw:
+                return None
+            decision = json.loads(raw)
+            if not isinstance(decision, dict):
+                raise AgentRunStoreConflictError("invalid write confirmation decision")
+            connection.execute(
+                "UPDATE agent_runs SET write_confirmation_json = '', updated_at = ? WHERE run_id = ? AND status = ?",
+                (_iso(now), run_id, AgentRunStatus.RUNNING.value),
+            )
+        return decision
+
     def update_checkpoint_metadata(
         self,
         run_id: str,
@@ -714,10 +924,33 @@ class AgentRunStore:
         if not graph_version or not checkpoint_id or state_schema_version < 1:
             raise ValueError("complete checkpoint metadata is required")
         with self._write_transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise AgentRunStoreNotFoundError(f"run not found: {run_id}")
+            current = self._run_from_row(row)
+            if current.graph_version and current.graph_version != graph_version:
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} graph version is pinned to "
+                    f"{current.graph_version}, not {graph_version}"
+                )
+            if (
+                current.state_schema_version > 0
+                and current.state_schema_version != state_schema_version
+            ):
+                raise AgentRunStoreConflictError(
+                    f"run {run_id} state schema is pinned to "
+                    f"{current.state_schema_version}, not {state_schema_version}"
+                )
             cursor = connection.execute(
                 """
                 UPDATE agent_runs
-                SET graph_version = ?, state_schema_version = ?, checkpoint_id = ?
+                SET graph_version = CASE WHEN graph_version = '' THEN ? ELSE graph_version END,
+                    state_schema_version = CASE
+                        WHEN state_schema_version = 0 THEN ? ELSE state_schema_version
+                    END,
+                    checkpoint_id = ?
                 WHERE run_id = ? AND status IN (?, ?)
                   AND EXISTS (
                     SELECT 1 FROM agent_worker_leases
@@ -1091,7 +1324,19 @@ class AgentRunStore:
                     raise AgentRunStoreConflictError(
                         f"run {event.run_id} is not owned by {lease_owner}"
                     )
-            sequence = int(
+            existing = connection.execute(
+                "SELECT * FROM agent_runtime_events WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["run_id"]) != event.run_id:
+                    raise AgentRunStoreConflictError(
+                        f"event already exists in another run: {event.event_id}"
+                    )
+                return event.model_copy(
+                    update={"sequence": int(existing["sequence"])}, deep=True
+                )
+            next_sequence = int(
                 connection.execute(
                     """
                     SELECT COALESCE(MAX(sequence), -1) + 1
@@ -1100,15 +1345,17 @@ class AgentRunStore:
                     (event.run_id,),
                 ).fetchone()[0]
             )
+            sequence = event.sequence if event.sequence >= 0 else next_sequence
             persisted = event.model_copy(update={"sequence": sequence}, deep=True)
             try:
                 connection.execute(
                     """
                     INSERT INTO agent_runtime_events(
                         event_id, run_id, sequence, task_id, trace_id,
+                        agent_id, agent_version, node_name, subgraph_path,
                         event_type, timestamp, elapsed_ms, step_id,
                         tool_call_id, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         persisted.event_id,
@@ -1116,6 +1363,10 @@ class AgentRunStore:
                         persisted.sequence,
                         persisted.task_id,
                         persisted.trace_id,
+                        persisted.agent_id,
+                        persisted.agent_version,
+                        persisted.node_name,
+                        persisted.subgraph_path,
                         persisted.event_type.value,
                         persisted.timestamp,
                         persisted.elapsed_ms,
@@ -1155,6 +1406,10 @@ class AgentRunStore:
                 task_id=str(row["task_id"]),
                 run_id=str(row["run_id"]),
                 trace_id=str(row["trace_id"]),
+                agent_id=str(row["agent_id"]) if row["agent_id"] else None,
+                agent_version=str(row["agent_version"]) if row["agent_version"] else None,
+                node_name=str(row["node_name"]) if row["node_name"] else None,
+                subgraph_path=str(row["subgraph_path"]) if row["subgraph_path"] else None,
                 step_id=str(row["step_id"]),
                 tool_call_id=str(row["tool_call_id"]),
                 elapsed_ms=int(row["elapsed_ms"]),

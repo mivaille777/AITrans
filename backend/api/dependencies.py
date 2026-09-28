@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from threading import Lock
 
+from backend.agent_tools.base import TypedAgentToolDefinition
 from backend.api.knowledge_dependencies import (
     get_knowledge_library_service,
     get_rag_runtime,
@@ -319,8 +320,41 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 sandbox_network_permission_service=SandboxNetworkPermissionService(
                     get_sandbox_approval_service()
                 ),
+                external_tool_definitions=get_server_agent_tool_definitions(),
             )
         return _agent_tool_registry
+
+
+def get_server_agent_tool_definitions() -> tuple[TypedAgentToolDefinition, ...]:
+    """Return server-configured Tool extensions; request payloads never feed it."""
+
+    return ()
+
+
+def build_agent_tool_runtime_port(
+    *,
+    task_resolver,
+    scope_resolver,
+    context_provider,
+    write_confirmation_provider=None,
+    agent_registry=None,
+):
+    """Bind server-owned ProductAgent and Tool services to a worker port."""
+
+    from backend.agent_core.orchestration.agent_registry import (
+        build_default_agent_registry,
+    )
+    from backend.services.product_agent_tool_port import ProductAgentToolRuntimePort
+
+    return ProductAgentToolRuntimePort(
+        agent_registry=agent_registry or build_default_agent_registry(),
+        tool_registry=get_agent_tool_registry(),
+        product_agent_service=get_product_agent_service(),
+        task_resolver=task_resolver,
+        scope_resolver=scope_resolver,
+        context_provider=context_provider,
+        write_confirmation_provider=write_confirmation_provider,
+    )
 
 
 def _sandbox_enabled() -> bool:

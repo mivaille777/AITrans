@@ -68,6 +68,7 @@ class MemoryPacket(MemoryModel):
     profile_id: str
     scope_ref: str
     workspace_id: str = ""
+    policy_revision: str = ""
     references: list[MemoryReference] = Field(default_factory=list)
     role_projections: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     invalidated_item_ids: list[str] = Field(default_factory=list)

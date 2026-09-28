@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Activity,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -42,6 +43,7 @@ import { LocalModelManager } from "./LocalModelManager"
 import { LlmProviderSettings } from "./LlmProviderSettings"
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
 import SandboxDebugStudio from "./SandboxDebugStudio"
+import RuntimeDebugStudio from "./RuntimeDebugStudio"
 import { useLocalModels } from "./useLocalModels"
 
 import "./SettingsWorkspace.css"
@@ -56,11 +58,12 @@ type SettingsSectionId =
   | "advanced"
 
 type SettingsDrawer = "llm" | "browser" | "research-data" | "advanced" | null
-type SettingsStudio = "rag" | "sandbox" | null
+type SettingsStudio = "rag" | "sandbox" | "runtime-debug" | null
 
 interface SettingsNavigationState {
-  studio?: "rag" | "sandbox"
+  studio?: "rag" | "sandbox" | "runtime-debug"
   sandboxId?: string
+  runtimeRunId?: string
 }
 
 const settingsSections: Array<{
@@ -95,6 +98,7 @@ export default function SettingsWorkspace({
   const [notice, setNotice] = useState("")
   const [activeStudio, setActiveStudio] = useState<SettingsStudio>(null)
   const [sandboxIntentId, setSandboxIntentId] = useState("")
+  const [trustedRuntimeRunId, setTrustedRuntimeRunId] = useState("")
   const [, setOverlayPreferences] = useState(readOverlayPreferences)
 
   const llmSettingsQuery = useQuery({
@@ -136,6 +140,9 @@ export default function SettingsWorkspace({
 
     if (navigationState.studio === "rag") {
       setActiveStudio("rag")
+    } else if (navigationState.studio === "runtime-debug") {
+      setActiveStudio("runtime-debug")
+      setTrustedRuntimeRunId(navigationState.runtimeRunId?.trim() ?? "")
     } else if (workspace.sandboxEnabled) {
       setActiveStudio("sandbox")
       setSandboxIntentId(navigationState.sandboxId?.trim() ?? "")
@@ -285,6 +292,19 @@ export default function SettingsWorkspace({
             <span className="ait-settings-nav-item-copy">
               <strong>RAG Debug Studio</strong>
               <small>Trace retrieval runs</small>
+            </span>
+            <ChevronRight className="ait-settings-nav-item-arrow" size={15} strokeWidth={1.7} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`ait-settings-nav-item${activeStudio === "runtime-debug" ? " is-active" : ""}`}
+            aria-current={activeStudio === "runtime-debug" ? "page" : undefined}
+            onClick={() => setActiveStudio("runtime-debug")}
+          >
+            <Activity size={18} strokeWidth={1.8} aria-hidden="true" />
+            <span className="ait-settings-nav-item-copy">
+              <strong>Agent Runtime Debug</strong>
+              <small>Inspect safe run projections</small>
             </span>
             <ChevronRight className="ait-settings-nav-item-arrow" size={15} strokeWidth={1.7} aria-hidden="true" />
           </button>
@@ -460,7 +480,13 @@ export default function SettingsWorkspace({
           </main>
         </div>
         <div className={activeStudio === "rag" ? "block h-full min-h-0" : "hidden"}>
-          <RagDebugStudioTrace />
+          <RagDebugStudioTrace
+            trustedAgentRunId={trustedRuntimeRunId || undefined}
+            onOpenRuntimeDebug={(runId) => { setTrustedRuntimeRunId(runId); setActiveStudio("runtime-debug") }}
+          />
+        </div>
+        <div className={activeStudio === "runtime-debug" ? "block h-full min-h-0" : "hidden"}>
+          <RuntimeDebugStudio initialRunId={trustedRuntimeRunId} />
         </div>
         {workspace.sandboxEnabled ? (
           <div className={activeStudio === "sandbox" ? "block h-full min-h-0" : "hidden"}>

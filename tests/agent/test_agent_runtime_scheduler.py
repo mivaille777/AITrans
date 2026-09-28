@@ -10,6 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.agent_core.events import AgentEvent, AgentEventType
+from backend.agent_core.reliability import AgentExecutionPolicy
+from backend.agent_core.state import (
+    CURRENT_AGENT_GRAPH_VERSION,
+    CURRENT_AGENT_STATE_SCHEMA_VERSION,
+)
 from backend.api.agent_runtime_jobs import (
     execute_persisted_agent_run,
     get_agent_run_store,
@@ -17,7 +22,11 @@ from backend.api.agent_runtime_jobs import (
 from backend.main import create_app
 from backend.models.agent_run import AgentRunStatus
 from backend.models.agent_runtime import AgentRuntimeProfile
-from backend.services.agent_run_scheduler import PROFILE_BUDGETS, AgentRunScheduler
+from backend.services.agent_run_scheduler import (
+    PROFILE_BUDGETS,
+    AgentProfileBudget,
+    AgentRunScheduler,
+)
 from backend.services.agent_run_store import (
     AGENT_RUNTIME_SCHEMA_VERSION,
     AgentRunStore,
@@ -125,6 +134,30 @@ async def test_rt_w05_cancel_stops_worker_and_fences_completion(tmp_path) -> Non
     assert result.status is AgentRunStatus.CANCELLED
     assert cancelled.is_set()
     assert store.get_lease(queued.run_id) is None
+
+
+@pytest.mark.asyncio
+async def test_worker_timeout_cancels_the_runtime_control(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path)
+    AgentRunScheduler(store).enqueue(goal="Timeout this run")
+    control_holder = {}
+    monkeypatch.setitem(
+        PROFILE_BUDGETS,
+        AgentRuntimeProfile.INTERACTIVE,
+        AgentProfileBudget(
+            policy=AgentExecutionPolicy(total_timeout_seconds=0.02),
+            max_parallel_tools=1,
+        ),
+    )
+
+    async def execute(_run, control, _recovering):
+        control_holder["value"] = control
+        await asyncio.sleep(1)
+
+    result = await AgentRunWorker(store, execute).run_once()
+
+    assert result.status is AgentRunStatus.FAILED
+    assert control_holder["value"].cancel_event.is_set()
 
 
 def test_rt_w06_profiles_have_distinct_bounded_budgets() -> None:
@@ -258,6 +291,11 @@ def test_canonical_runtime_api_supports_create_lookup_and_retry(tmp_path) -> Non
     assert second["run_id"] != run_id
     assert second["trace_id"] != first["trace_id"]
     assert store.get_run_request(second["run_id"])["user_message"] == "Analyze durable runtime"
+    first_record = store.get_run(run_id)
+    retry_record = store.get_run(second["run_id"])
+    assert retry_record.engine == first_record.engine
+    assert retry_record.graph_version == first_record.graph_version
+    assert retry_record.state_schema_version == first_record.state_schema_version
 
 
 def test_canonical_runtime_stream_replays_after_sequence_and_closes_on_terminal(tmp_path) -> None:
@@ -395,8 +433,8 @@ async def test_worker_executes_persisted_request_outside_http(monkeypatch, tmp_p
     class Runtime:
         def checkpoint_metadata(self, run_id):
             return {
-                "graph_version": "reading-agent-ma03-v1",
-                "state_schema_version": 2,
+                "graph_version": CURRENT_AGENT_GRAPH_VERSION,
+                "state_schema_version": CURRENT_AGENT_STATE_SCHEMA_VERSION,
                 "checkpoint_id": "checkpoint-test",
             }
 
@@ -434,8 +472,8 @@ async def test_worker_executes_persisted_request_outside_http(monkeypatch, tmp_p
     ]
     assert store.get_run_result(queued.run_id)["output_text"] == "done"
     persisted = store.get_run(queued.run_id)
-    assert persisted.graph_version == "reading-agent-ma03-v1"
-    assert persisted.state_schema_version == 2
+    assert persisted.graph_version == CURRENT_AGENT_GRAPH_VERSION
+    assert persisted.state_schema_version == CURRENT_AGENT_STATE_SCHEMA_VERSION
     assert persisted.checkpoint_id == "checkpoint-test"
 
 
@@ -499,7 +537,11 @@ def test_stage2_database_schema_upgrades_without_losing_runs(tmp_path) -> None:
             """
         )
     upgraded = AgentRunStore(storage_path=path)
-    assert upgraded.get_run("old-run").status is AgentRunStatus.QUEUED
+    old_run = upgraded.get_run("old-run")
+    assert old_run.status is AgentRunStatus.QUEUED
+    assert old_run.engine == "compat"
+    assert old_run.graph_version == ""
+    assert old_run.state_schema_version == 0
     assert upgraded.get_run_request("old-run") == {}
     assert upgraded.get_run_result("old-run") is None
     with sqlite3.connect(path) as connection:
@@ -508,4 +550,7 @@ def test_stage2_database_schema_upgrades_without_losing_runs(tmp_path) -> None:
         ).fetchone()[0] == str(AGENT_RUNTIME_SCHEMA_VERSION)
         assert "result_json" in {
             row[1] for row in connection.execute("PRAGMA table_info(agent_tool_calls)")
+        }
+        assert "engine" in {
+            row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")
         }

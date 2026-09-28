@@ -32,16 +32,24 @@ from backend.models.knowledge_access import (
     ResolvedKnowledgeScope,
 )
 
-CURRENT_AGENT_GRAPH_VERSION = "reading-agent-ma03-v1"
-CURRENT_AGENT_STATE_SCHEMA_VERSION = 2
+CURRENT_AGENT_GRAPH_VERSION = "reading-agent-ma06-v1"
+CURRENT_AGENT_STATE_SCHEMA_VERSION = 6
 LEGACY_AGENT_GRAPH_VERSION = "reading-agent-v1"
+PREVIOUS_AGENT_GRAPH_VERSION = "reading-agent-ma04-v1"
+PREVIOUS_NATIVE_AGENT_GRAPH_VERSION = "reading-agent-ma05-v1"
 SUPPORTED_AGENT_GRAPH_VERSIONS = frozenset(
-    {LEGACY_AGENT_GRAPH_VERSION, CURRENT_AGENT_GRAPH_VERSION}
+    {
+        LEGACY_AGENT_GRAPH_VERSION,
+        "reading-agent-ma03-v1",
+        PREVIOUS_AGENT_GRAPH_VERSION,
+        PREVIOUS_NATIVE_AGENT_GRAPH_VERSION,
+        CURRENT_AGENT_GRAPH_VERSION,
+    }
 )
 
 
 def migrate_agent_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade pre-MA03 checkpoints without accepting an unknown node graph."""
+    """Upgrade known Agent checkpoints without accepting an unknown node graph."""
 
     migrated = dict(payload)
     graph_version = str(migrated.get("graph_version", "") or "").strip()
@@ -521,6 +529,8 @@ __all__ = [
     "CURRENT_AGENT_GRAPH_VERSION",
     "CURRENT_AGENT_STATE_SCHEMA_VERSION",
     "LEGACY_AGENT_GRAPH_VERSION",
+    "PREVIOUS_AGENT_GRAPH_VERSION",
+    "PREVIOUS_NATIVE_AGENT_GRAPH_VERSION",
     "SUPPORTED_AGENT_GRAPH_VERSIONS",
     "AgentState",
     "migrate_agent_state_payload",

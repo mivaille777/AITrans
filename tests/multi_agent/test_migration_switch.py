@@ -4,6 +4,7 @@ import pytest
 
 from backend.agent_core.orchestration.migration import (
     build_migration_bridge,
+    resolve_langgraph_native_multi_agent,
     resolve_multi_agent_engine,
     resolve_multi_agent_rollout,
 )
@@ -26,6 +27,36 @@ class _Orchestrator:
             ),
             reason_code="rollout-test",
         )
+
+
+def test_native_switch_is_off_by_default_and_does_not_select_a_new_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT", raising=False)
+    assert resolve_langgraph_native_multi_agent() is False
+    assert resolve_langgraph_native_multi_agent("true") is True
+    assert resolve_multi_agent_engine() == "typed"
+    bridge = build_migration_bridge(_Service(), orchestrator=_Orchestrator())
+    assert bridge is not None and bridge.orchestrator is not None
+
+
+@pytest.mark.parametrize("native_flag", ["false", "true"])
+def test_native_root_flag_keeps_typed_specialist_bridge_for_stage_6(
+    monkeypatch: pytest.MonkeyPatch, native_flag: str
+) -> None:
+    monkeypatch.setenv("AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT", native_flag)
+
+    bridge = build_migration_bridge(_Service(), orchestrator=_Orchestrator())
+
+    assert resolve_multi_agent_engine() == "typed"
+    assert bridge is not None
+    assert bridge.orchestrator is not None
+    assert bridge.should_run(AgentState(user_input="single task")) is True
+
+
+def test_native_switch_rejects_invalid_value() -> None:
+    with pytest.raises(ValueError, match="AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT"):
+        resolve_langgraph_native_multi_agent("perhaps")
 
 
 def test_migration_engine_defaults_to_typed(monkeypatch: pytest.MonkeyPatch) -> None:

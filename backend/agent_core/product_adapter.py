@@ -114,6 +114,7 @@ class ProductAgentRuntimeAdapter:
         )
         return {
             "session_id": state.session_id or "agent-session",
+            "task_id": state.task_id,
             "run_id": state.run_id,
             "trace_id": state.trace_id,
             "user_message": state.user_input,
@@ -144,6 +145,9 @@ class ProductAgentRuntimeAdapter:
             "conversation_id": state.conversation.conversation_id,
             "history": history,
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],
+            "write_confirmation_decision": context.get(
+                "write_confirmation_decision", {}
+            ),
             "enabled_tools": _scope_values(context.get("enabled_tools", ())),
             "disabled_tools": _scope_values(context.get("disabled_tools", ())),
             "knowledge_document_ids": _scope_values(context.get("knowledge_document_ids", ())),
@@ -610,6 +614,7 @@ class ProductAgentRuntimeAdapter:
         control: AgentRunControl | None = None,
         resolved_route: AgentRouteDecision | dict[str, Any] | None = None,
         route_metadata: dict[str, Any] | None = None,
+        durable_write_interrupt: bool = False,
     ) -> tuple[AgentState, set[AgentEventType]]:
         emitted, forward = self._event_forwarder(emit)
         payload = self.build_payload(state)
@@ -628,6 +633,7 @@ class ProductAgentRuntimeAdapter:
                 route_value.model_dump()
             )
             payload["_route_metadata"] = dict(route_metadata or {})
+        payload["_durable_write_interrupt"] = bool(durable_write_interrupt)
         result = self._service.run(
             event_sink=forward,
             control=control,
@@ -642,6 +648,7 @@ class ProductAgentRuntimeAdapter:
         emit: Callable[[AgentEventType, dict[str, Any]], None] | None = None,
         *,
         control: AgentRunControl | None = None,
+        durable_write_interrupt: bool = False,
     ) -> tuple[AgentState, set[AgentEventType]]:
         emitted, forward = self._event_forwarder(emit)
         route = AgentRouteDecision(
@@ -671,6 +678,7 @@ class ProductAgentRuntimeAdapter:
                 },
                 "_suppress_plan_event": True,
                 "_skip_synthesis": True,
+                "_durable_write_interrupt": bool(durable_write_interrupt),
             }
         )
         result = self._service.run(

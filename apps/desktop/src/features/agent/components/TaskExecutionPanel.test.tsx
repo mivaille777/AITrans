@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { AgentRunSnapshot, AgentTraceEvent } from "../../../api/agent"
+import type { AgentCatalogEntry } from "../../../api/agent-runtime-debug"
 import { TaskExecutionPanel } from "./TaskExecutionPanel"
 
 const events: AgentTraceEvent[] = [
@@ -20,6 +21,22 @@ describe("TaskExecutionPanel", () => {
     expect(screen.getByText("document analysis deliverable")).not.toBeNull()
     expect(screen.getByText("依赖：document-1")).not.toBeNull()
     expect(document.querySelector('[data-task-id="document-1"]')?.getAttribute("data-task-status")).toBe("running")
+  })
+
+  it("uses catalog identity for the actual Agent instance and keeps same-agent tasks separate", () => {
+    const agents: AgentCatalogEntry[] = [{
+      agent_id: "document", name: "Document Analyst", description: "Document work",
+      capabilities: ["reading"], version: "1", icon: "file-text",
+    }]
+    const sameAgentEvents: AgentTraceEvent[] = [
+      { ...events[0], payload: { ...events[0].payload, task_id: "document-a", agent_id: "document" } },
+      { ...events[0], sequence: 4, payload: { ...events[0].payload, task_id: "document-b", agent_id: "document" } },
+    ]
+    render(<TaskExecutionPanel events={sameAgentEvents} snapshot={null} running={false} onRetry={() => undefined} agents={agents} />)
+    expect(screen.getAllByText("Document Analyst").length).toBe(2)
+    expect(document.querySelector('[data-task-id="document-a"]')).not.toBeNull()
+    expect(document.querySelector('[data-task-id="document-b"]')).not.toBeNull()
+    expect(document.querySelectorAll('[data-agent-id="document"]').length).toBe(2)
   })
 
   it("uses the authoritative snapshot and exposes only retryable tasks", () => {

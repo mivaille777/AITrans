@@ -17,8 +17,8 @@ const MAX_LLM_API_KEY_BYTES: usize = 4096;
 fn llm_credential_target(provider: &str) -> Result<String, String> {
     let normalized = provider.trim().to_ascii_lowercase().replace('-', "_");
     match normalized.as_str() {
-        "deepseek" | "openai" | "google" | "mistral" | "groq" | "openrouter"
-        | "together" | "qwen" | "openai_compatible" => {
+        "deepseek" | "openai" | "google" | "mistral" | "groq" | "openrouter" | "together"
+        | "qwen" | "openai_compatible" => {
             Ok(format!("{LLM_CREDENTIAL_TARGET_PREFIX}/{normalized}"))
         }
         _ => Err("Unsupported AI provider credential namespace.".to_string()),
@@ -93,7 +93,12 @@ fn llm_credential_preview(provider: &str) -> Result<String, String> {
                 String::new()
             } else {
                 let suffix: String = characters.iter().rev().take(4).rev().collect();
-                let mask = "•".repeat(characters.len().saturating_sub(suffix.chars().count()).clamp(4, 12));
+                let mask = "•".repeat(
+                    characters
+                        .len()
+                        .saturating_sub(suffix.chars().count())
+                        .clamp(4, 12),
+                );
                 format!("{mask}{suffix} · {} chars", characters.len())
             }
         }
@@ -208,9 +213,9 @@ fn enforce_overlay_borderless_frame(window: &tauri::WebviewWindow) -> Result<(),
     use windows_sys::Win32::Foundation::HWND as Win32Hwnd;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-        WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
-        WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_WINDOWEDGE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+        WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     };
 
     let hwnd = window.hwnd().map_err(|error| error.to_string())?;
@@ -232,8 +237,8 @@ fn enforce_overlay_borderless_frame(window: &tauri::WebviewWindow) -> Result<(),
     }
 
     let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
-    let borderless_ex_style = ex_style
-        & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+    let borderless_ex_style =
+        ex_style & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
     if borderless_ex_style != ex_style {
         unsafe {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, borderless_ex_style as isize);
@@ -357,22 +362,23 @@ fn apply_overlay_window_shape(_window: &tauri::WebviewWindow) -> Result<(), Stri
 }
 
 #[cfg(windows)]
-fn apply_overlay_visual_theme(
-    window: &tauri::WebviewWindow,
-    theme: &str,
-) -> Result<(), String> {
+fn apply_overlay_visual_theme(window: &tauri::WebviewWindow, theme: &str) -> Result<(), String> {
     use std::{ffi::c_void, mem::size_of};
     use windows_sys::Win32::Foundation::HWND as Win32Hwnd;
     use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW,
-        DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
+        DwmSetWindowAttribute, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
     };
 
     enforce_overlay_borderless_frame(window)?;
 
     let hwnd = window.hwnd().map_err(|error| error.to_string())?;
     let hwnd = hwnd.0 as Win32Hwnd;
-    let dark_mode: i32 = if theme.eq_ignore_ascii_case("dark") { 1 } else { 0 };
+    let dark_mode: i32 = if theme.eq_ignore_ascii_case("dark") {
+        1
+    } else {
+        0
+    };
 
     // Keep the native non-client color mode aligned with the React theme. This
     // is best-effort because older Windows releases may not expose the DWM
@@ -416,10 +422,7 @@ fn apply_overlay_visual_theme(
 }
 
 #[cfg(not(windows))]
-fn apply_overlay_visual_theme(
-    _window: &tauri::WebviewWindow,
-    _theme: &str,
-) -> Result<(), String> {
+fn apply_overlay_visual_theme(_window: &tauri::WebviewWindow, _theme: &str) -> Result<(), String> {
     Ok(())
 }
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 from app.ai.knowledge_context import knowledge_context_diagnostics
@@ -11,12 +13,26 @@ from backend.agent_core.exceptions import (
     AgentPauseRequestedError,
     AgentRuntimeError,
 )
+from backend.agent_core.orchestration.agent_registry import build_default_agent_registry
 from backend.agent_core.reliability import AgentRunControl
 from backend.agent_core.state import AgentState
 
 AgentEventSink = Callable[[AgentEvent], None]
 AgentRunRecorder = Callable[[AgentState, tuple[AgentEvent, ...]], None]
 AgentEventRecorder = Callable[[AgentState, AgentEvent, int], int | None]
+
+
+def _optional_event_text(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+@lru_cache(maxsize=32)
+def _registered_agent_version(agent_id: str) -> str | None:
+    try:
+        return build_default_agent_registry().get(agent_id).version
+    except KeyError:
+        return None
 
 
 def _fallback_reason(exc: Exception) -> str:
@@ -66,6 +82,7 @@ class AgentRuntime:
         self.tool_executor = tool_executor
         self.collaboration_adapter = collaboration_adapter
         self.workflow_adapter = workflow_adapter
+        self._selected_graph_version = ""
         self.run_recorder = run_recorder
         self.event_recorder = event_recorder
         self.events: list[AgentEvent] = []
@@ -82,10 +99,18 @@ class AgentRuntime:
     def _emit(self, event_type: AgentEventType, payload: dict[str, Any]) -> None:
         state = self._active_state
         control = self._control
+        agent_id = _optional_event_text(payload.get("agent_id"))
         event = AgentEvent(
             event_type=event_type,
             payload=payload,
             task_id=state.task_id if state is not None else "",
+            agent_id=agent_id,
+            agent_version=(
+                _optional_event_text(payload.get("agent_version"))
+                or (_registered_agent_version(agent_id) if agent_id else None)
+            ),
+            node_name=_optional_event_text(payload.get("node_name")),
+            subgraph_path=_optional_event_text(payload.get("subgraph_path")),
             run_id=state.run_id if state is not None else "",
             trace_id=state.trace_id if state is not None else "",
             step_id=str(payload.get("step_id", "") or ""),
@@ -138,9 +163,37 @@ class AgentRuntime:
         state.sync_contract()
         return state
 
+    def select_graph_version(
+        self,
+        graph_version: str,
+        *,
+        state_schema_version: int | None = None,
+        engine: str | None = None,
+    ) -> None:
+        """Pin the workflow builder before a durable run resumes."""
+
+        selector = getattr(self.workflow_adapter, "select_graph_version", None)
+        if callable(selector):
+            parameters = inspect.signature(selector).parameters
+            options: dict[str, Any] = {
+                "state_schema_version": state_schema_version
+            }
+            if "pin" in parameters:
+                options["pin"] = True
+            if "engine" in parameters and engine is not None:
+                options["engine"] = engine
+            selector(graph_version, **options)
+        self._selected_graph_version = str(graph_version or "").strip()
+
     def restore_checkpoint(self, run_id: str) -> AgentState:
         """Return the latest persisted graph state for an explicit resume."""
 
+        if not self._selected_graph_version:
+            prepare = getattr(
+                self.workflow_adapter, "prepare_checkpoint_resume", None
+            )
+            if callable(prepare):
+                prepare(run_id)
         loader = getattr(self.workflow_adapter, "checkpoint_state", None)
         state = loader(run_id) if callable(loader) else None
         if not isinstance(state, AgentState):
@@ -151,12 +204,20 @@ class AgentRuntime:
             )
         context = dict(state.browser_context)
         context["confirmed_write_tools"] = []
+        context.pop("write_confirmation_decision", None)
+        context.pop("native_task_retry_resume", None)
         state.browser_context = context
         state.sync_contract()
         return state
 
     def checkpoint_metadata(self, run_id: str) -> dict[str, str | int] | None:
         loader = getattr(self.workflow_adapter, "checkpoint_metadata", None)
+        return loader(run_id) if callable(loader) else None
+
+    def checkpoint_orchestration_state(self, run_id: str) -> dict | None:
+        loader = getattr(
+            self.workflow_adapter, "checkpoint_orchestration_state", None
+        )
         return loader(run_id) if callable(loader) else None
 
     def prepare_task_retry(self, state: AgentState, task_id: str) -> tuple[str, ...]:
@@ -174,6 +235,7 @@ class AgentRuntime:
         # A confirmation authorizes one concrete write attempt only. A resumed
         # or retried task must request a fresh confirmation if it reaches a write.
         context["confirmed_write_tools"] = []
+        context.pop("write_confirmation_decision", None)
         context["retry_task_id"] = str(task_id or "").strip()
         state.browser_context = context
         state.sync_contract()
@@ -189,9 +251,16 @@ class AgentRuntime:
     ) -> AgentState:
         resume_context = {
             key: state.browser_context[key]
-            for key in ("confirmed_write_tools", "enabled_tools")
+            for key in (
+                "confirmed_write_tools",
+                "enabled_tools",
+                "write_confirmation_decision",
+                "native_task_retry_resume",
+                "retry_task_id",
+            )
             if key in state.browser_context
         }
+        resume = bool(resume or resume_context.get("native_task_retry_resume"))
         if resume:
             state = self.restore_checkpoint(state.run_id)
             if resume_context:

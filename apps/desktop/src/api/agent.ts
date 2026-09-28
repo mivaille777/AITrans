@@ -90,6 +90,9 @@ export type AgentTraceEventType =
   | "react_started"
   | "decision_ready"
   | "tool_call"
+  | "write_confirmation_required"
+  | "write_confirmed"
+  | "write_rejected"
   | "retry"
   | "tool_result"
   | "observation_ready"
@@ -222,11 +225,16 @@ export interface AgentRunResponse {
 }
 
 export interface AgentTraceEvent {
+  event_id?: string
   sequence: number
   event_type: AgentTraceEventType
   task_id?: string
   step_id?: string
   tool_call_id?: string
+  agent_id?: string | null
+  agent_version?: string | null
+  node_name?: string | null
+  subgraph_path?: string | null
   timestamp: string
   run_id: string
   trace_id: string
@@ -246,7 +254,8 @@ export interface AgentRunTraceResponse {
 
 export interface AgentTaskSpec {
   task_id: string
-  role: "document" | "research" | "writer" | "curator"
+  role: string
+  agent_id?: string
   objective: string
   depends_on: string[]
   required: boolean

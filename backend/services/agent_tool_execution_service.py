@@ -14,7 +14,6 @@ from time import monotonic, sleep
 from typing import Any
 from uuid import uuid4
 
-from app.ai.errors import AIConfigurationError, AIError
 from backend.agent_core.exceptions import (
     AgentBudgetExceededError,
     AgentCancelledError,
@@ -22,7 +21,11 @@ from backend.agent_core.exceptions import (
     AgentToolError,
     AgentToolTimeoutError,
 )
-from backend.agent_core.reliability import AgentRunControl, run_safe_tool_with_timeout
+from backend.agent_core.reliability import (
+    AgentRunControl,
+    is_transient_provider_error,
+    run_safe_tool_with_timeout,
+)
 from backend.agent_tools.base import AgentToolExecutionResult
 from backend.models.agent_run import AgentToolCallRecord, AgentToolCallStatus
 from backend.services.agent_run_store import AgentRunStore
@@ -44,11 +47,15 @@ def bound_tool_run_store() -> AgentRunStore | None:
 
 
 def _retryable(error: Exception) -> bool:
-    if isinstance(error, (AIConfigurationError, AgentCancelledError,
-                          AgentBudgetExceededError, AgentToolTimeoutError,
-                          ValueError, PermissionError)):
+    if isinstance(
+        error,
+        (AgentCancelledError, AgentBudgetExceededError, ValueError, PermissionError),
+    ):
         return False
-    return isinstance(error, (AIError, OSError, TimeoutError, AgentRuntimeError))
+    # This helper is only consulted after the registry has allowed automatic
+    # retry for a read/compute action. The hard outer timeout leaves its worker
+    # running, so retry only provider/network failures that returned control.
+    return is_transient_provider_error(error)
 
 
 def _digest(value: Any) -> str:

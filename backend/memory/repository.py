@@ -133,6 +133,24 @@ class SQLiteMemoryRepository:
             )
         return profile
 
+    def profile_policy(self, profile_id: str) -> dict[str, bool]:
+        """Read the current memory access switches without creating a profile."""
+
+        profile = str(profile_id or "").strip()
+        if not profile:
+            raise ValueError("profile_id is required")
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT read_enabled, write_enabled FROM memory_profiles WHERE profile_id=?",
+                (profile,),
+            ).fetchone()
+        if row is None:
+            return {"read_enabled": True, "write_enabled": True}
+        return {
+            "read_enabled": bool(row["read_enabled"]),
+            "write_enabled": bool(row["write_enabled"]),
+        }
+
     @staticmethod
     def _item(row: sqlite3.Row) -> MemoryItem:
         return MemoryItem(

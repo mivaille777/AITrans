@@ -13,7 +13,10 @@ from backend.agent_core.orchestration.parallel_executor import ParallelTaskGraph
 from backend.agent_core.state import AgentState
 from backend.models.agent_tasks import TaskRole
 from backend.services.agent_trace_store_service import AgentTraceStoreService
-from backend.services.multi_agent_runtime_bridge import _EVENT_MAP
+from backend.services.multi_agent_runtime_bridge import (
+    MultiAgentRuntimeBridge,
+    _EVENT_MAP,
+)
 from tests.multi_agent.scheduler_support import FunctionExecutor, plan, scope, success
 
 TASK_EVENTS = (
@@ -97,6 +100,34 @@ def test_task_started_reaches_sink_before_specialist_finishes() -> None:
     assert started.payload["task_id"] == "a"
     assert started.payload["attempt"] == 1
     assert "usage" in started.payload
+
+
+def test_runtime_bridge_preserves_task_agent_identity_without_labeling_supervisor() -> None:
+    collector = MultiAgentTraceCollector(run_id="bridge-agent-run")
+    task_event = collector.emit(
+        "task_started",
+        actor="mock_data",
+        status="running",
+        payload={"task_id": "document-a", "role": "mock_data"},
+    )
+    supervisor_event = collector.emit(
+        "task_planned", actor="supervisor", status="running"
+    )
+    delivered: list[tuple[AgentEventType, dict[str, object]]] = []
+
+    MultiAgentRuntimeBridge._forward_event(
+        task_event, lambda event_type, payload: delivered.append((event_type, payload))
+    )
+    MultiAgentRuntimeBridge._forward_event(
+        supervisor_event,
+        lambda event_type, payload: delivered.append((event_type, payload)),
+    )
+
+    assert delivered[0][0] is AgentEventType.TASK_STARTED
+    assert delivered[0][1]["task_id"] == "document-a"
+    assert delivered[0][1]["agent_id"] == "mock_data"
+    assert delivered[1][0] is AgentEventType.TASK_PLANNED
+    assert "agent_id" not in delivered[1][1]
 
 
 def test_live_task_events_persist_with_monotonic_resume_sequence(tmp_path) -> None:

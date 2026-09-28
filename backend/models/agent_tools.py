@@ -65,6 +65,9 @@ AgentTraceEventType = Literal[
     "react_started",
     "decision_ready",
     "tool_call",
+    "write_confirmation_required",
+    "write_confirmed",
+    "write_rejected",
     "retry",
     "tool_result",
     "observation_ready",
@@ -245,11 +248,19 @@ class AgentRunResponse(BaseModel):
 
 
 class AgentTraceEvent(BaseModel):
+    event_id: str = ""
     sequence: int = Field(ge=0)
     event_type: AgentTraceEventType
     timestamp: str
     run_id: str = ""
     trace_id: str = ""
+    task_id: str = ""
+    step_id: str = ""
+    tool_call_id: str = ""
+    agent_id: str | None = None
+    agent_version: str | None = None
+    node_name: str | None = None
+    subgraph_path: str | None = None
     elapsed_ms: int = Field(default=0, ge=0)
     payload: dict[str, Any] = Field(default_factory=dict)
 

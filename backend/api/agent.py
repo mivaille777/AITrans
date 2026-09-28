@@ -24,6 +24,7 @@ from backend.agent_core.exceptions import (
     AgentToolTimeoutError,
 )
 from backend.agent_core.orchestration import build_artifact_store
+from backend.agent_core.orchestration.graph_state import project_orchestration_state
 from backend.agent_core.orchestration.parallel_executor import (
     TaskCheckpointConflictError,
     TaskRunLeaseError,
@@ -389,21 +390,29 @@ def _execute_runtime(
 
 def _trace_event(sequence: int, event: AgentEvent) -> AgentTraceEvent:
     return AgentTraceEvent(
+        event_id=event.event_id,
         sequence=event.sequence if event.sequence >= 0 else sequence,
         event_type=event.event_type.value,
         timestamp=event.timestamp,
         run_id=event.run_id,
         trace_id=event.trace_id,
+        task_id=event.task_id,
+        step_id=event.step_id,
+        tool_call_id=event.tool_call_id,
+        agent_id=event.agent_id,
+        agent_version=event.agent_version,
+        node_name=event.node_name,
+        subgraph_path=event.subgraph_path,
         elapsed_ms=event.elapsed_ms,
         payload=event.payload,
     )
 
 
-def _snapshot_artifacts(state: AgentState) -> list[dict[str, Any]]:
+def _snapshot_artifacts(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     store = build_artifact_store()
     artifacts: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
-    for result in state.orchestration_results:
+    for result in results:
         for raw_ref in list(result.get("artifact_refs", []) or []):
             if not isinstance(raw_ref, dict):
                 continue
@@ -431,7 +440,12 @@ def get_agent_run_snapshot(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     stored = trace_store.get_run(run_id)
     stored_events = trace_store.list_events(run_id)
-    results = [dict(item) for item in state.orchestration_results]
+    checkpoint_state = getattr(runtime, "checkpoint_orchestration_state", None)
+    canonical = checkpoint_state(run_id) or {} if callable(checkpoint_state) else {}
+    projection = project_orchestration_state(
+        canonical, legacy=state.model_dump(mode="json")
+    )
+    results = [dict(item) for item in projection["orchestration_results"]]
     retryable = sorted(
         str(item.get("task_id", "") or "")
         for item in results
@@ -444,16 +458,24 @@ def get_agent_run_snapshot(
         stored.status
         if stored is not None and stored.status
         else response_status
-        or state.orchestration_status
+        or projection["orchestration_status"]
         or "running"
     )
     events = [
         AgentTraceEvent(
+            event_id=event.event_id,
             sequence=event.sequence,
             event_type=event.event_type,
             timestamp=event.timestamp,
             run_id=state.run_id,
             trace_id=state.trace_id,
+            task_id=event.task_id,
+            step_id=event.step_id,
+            tool_call_id=event.tool_call_id,
+            agent_id=event.agent_id,
+            agent_version=event.agent_version,
+            node_name=event.node_name,
+            subgraph_path=event.subgraph_path,
             elapsed_ms=event.elapsed_ms,
             payload=event.payload,
         )
@@ -463,10 +485,10 @@ def get_agent_run_snapshot(
         run_id=state.run_id,
         trace_id=state.trace_id,
         status=status_value,
-        scope=dict(state.orchestration_scope),
-        plan=dict(state.orchestration_plan),
+        scope=dict(projection["orchestration_scope"]),
+        plan=dict(projection["orchestration_plan"]),
         results=results,
-        artifacts=_snapshot_artifacts(state),
+        artifacts=_snapshot_artifacts(results),
         events=events,
         resumable=status_value not in {"completed", "failed", "cancelled"},
         retryable_task_ids=retryable,
