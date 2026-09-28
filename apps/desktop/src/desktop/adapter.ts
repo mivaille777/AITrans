@@ -1,4 +1,4 @@
-export type DesktopRuntime = "browser" | "tauri" | "electron"
+export type DesktopRuntime = "browser" | "electron"
 
 export type DesktopOverlayTheme = "light" | "dark"
 

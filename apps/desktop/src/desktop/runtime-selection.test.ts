@@ -61,7 +61,6 @@ function createBridge(): ElectronDesktopApi {
 describe("desktop runtime selection", () => {
   afterEach(() => {
     delete window.aiTransDesktop
-    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
     vi.resetModules()
   })
 

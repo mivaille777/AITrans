@@ -20,9 +20,6 @@
     "preview": "vite preview",
     "backend:dev": "cd ../.. && python -m backend",
     "backend:package": "node scripts/build-backend-sidecar.mjs",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
     "electron:compile": "tsc -p tsconfig.electron.json",
     "electron:dev": "node scripts/electron-dev.mjs",
     "electron:build": "npm run build && npm run electron:compile",
@@ -41,14 +38,11 @@
     "desktop:build": "npm run electron:build",
     "desktop:preview": "npm run electron:preview",
     "desktop:package": "npm run electron:package",
-    "desktop:make": "npm run electron:make",
-    "legacy:tauri:dev": "npm run tauri:dev",
-    "legacy:tauri:build": "npm run tauri:build"
+    "desktop:make": "npm run electron:make"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.101.4",
-    "@tauri-apps/api": "^2.11.1",
     "lucide-react": "^1.33.0",
     "pdfjs-dist": "6.3.289",
     "react": "^19.2.8",
@@ -61,7 +55,6 @@
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
     "@electron-forge/maker-squirrel": "7.11.2",
-    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.5",

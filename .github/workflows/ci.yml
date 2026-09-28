@@ -281,38 +281,6 @@ jobs:
       - name: Smoke test Electron credential vault
         run: node scripts/electron-credential-smoke.mjs
 
-  tauri_shell:
-    name: Tauri shell build (legacy fallback)
-    runs-on: windows-latest
-    timeout-minutes: 30
-    continue-on-error: true
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
-
-      - name: Check Rust formatting baseline
-        continue-on-error: true
-        shell: pwsh
-        run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
-
-      - name: Run Clippy
-        shell: pwsh
-        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --no-default-features --all-targets -- -D warnings
-
-      - name: Run Rust tests
-        shell: pwsh
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --no-default-features
-
-      - name: Build and link Tauri shell
-        shell: pwsh
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --no-default-features
-
   quality_gate:
     name: CI quality gate
     if: always()

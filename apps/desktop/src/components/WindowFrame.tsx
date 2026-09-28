@@ -65,7 +65,7 @@ export default function WindowFrame({ children }: { children: ReactNode }) {
   return (
     <div className={`window-frame ${isMaximized ? "is-maximized" : ""}`}>
       <header className="window-titlebar">
-        <div className="window-brand" data-tauri-drag-region>
+        <div className="window-brand">
           <span className="window-logo">A</span>
           <div>
             <span>AITranslator</span>
@@ -73,7 +73,7 @@ export default function WindowFrame({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <div className="window-drag-space" data-tauri-drag-region />
+        <div className="window-drag-space" />
 
         <div className="window-controls">
           <button

@@ -20,7 +20,6 @@ module.exports = {
       /^\/src(?:\/|$)/,
       /^\/electron(?:\/|$)/,
       /^\/scripts(?:\/|$)/,
-      /^\/src-tauri(?:\/|$)/,
       /^\/public(?:\/|$)/,
       /^\/resources(?:\/|$)/,
       /^\/node_modules(?:\/|$)/,

@@ -15,9 +15,6 @@ out/
 public/pdfjs/
 *.local
 
-# Tauri build output
-src-tauri/target/
-src-tauri/gen/schemas/
 
 # Editor directories and files
 .vscode/*
