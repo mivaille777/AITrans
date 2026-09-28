@@ -186,3 +186,44 @@ npm run dev
 
 If backend health supplies `sandbox_enabled`, the runtime value takes
 precedence over the frontend build default.
+
+
+## Stage 10 packaging
+
+Windows distribution uses Electron Forge plus a PyInstaller `onedir` FastAPI
+sidecar. The installed application does not require a system Python, Conda,
+Rust, or Node.js runtime.
+
+First prepare the Python packaging environment from the repository root:
+
+```powershell
+cd D:\AITrans
+python -m pip install -e ".[build]" -r aitranslator-rag-requirements.txt
+```
+
+Then build from `apps/desktop`:
+
+```powershell
+cd apps\desktop
+
+# Runnable unpacked Windows application directory.
+npm run electron:package
+
+# Squirrel.Windows Setup.exe + .nupkg + RELEASES.
+npm run electron:make
+```
+
+Both commands build and smoke-test the frozen backend before Electron packaging.
+The packaged backend is copied outside ASAR to:
+
+```text
+resources/backend/AITransBackend/AITransBackend.exe
+```
+
+The production renderer is unpacked to
+`resources/app.asar.unpacked/dist` and remains served by the secure
+`aitrans://app` protocol.
+
+RAG model weights are intentionally excluded. Managed models stay in the
+user-local AITrans models directory and are downloaded/managed independently
+from the application installer.

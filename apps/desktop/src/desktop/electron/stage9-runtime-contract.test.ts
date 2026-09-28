@@ -19,8 +19,6 @@ describe("Electron Stage 9 development runtime contract", () => {
     expect(scripts["electron:verify"]).toContain("electron:check")
     expect(scripts["electron:preview"]).toContain("electron:build")
     expect(scripts["electron:preview"]).toContain("electron .")
-    expect(scripts["electron:package"]).toBeUndefined()
-    expect(scripts["electron:make"]).toBeUndefined()
   })
 
   it("preflights renderer/backend ports and owns child cleanup", () => {
