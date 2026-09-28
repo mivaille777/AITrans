@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process"
+import path from "node:path"
+
 import { app, type BrowserWindow } from "electron"
 
 import { registerAppSchemePrivileges, installAppProtocol } from "./app-protocol.cjs"
@@ -11,16 +14,44 @@ import { createMainWindow } from "./window-manager.cjs"
 
 const ELECTRON_RUNTIME_SMOKE_ARGUMENT = "--electron-runtime-smoke-test"
 
-const SQUIRREL_LIFECYCLE_ARGUMENTS = new Set([
+const SQUIRREL_INSTALL_ARGUMENTS = new Set([
   "--squirrel-install",
   "--squirrel-updated",
-  "--squirrel-uninstall",
-  "--squirrel-obsolete",
 ])
+const SQUIRREL_UNINSTALL_ARGUMENT = "--squirrel-uninstall"
+const SQUIRREL_OBSOLETE_ARGUMENT = "--squirrel-obsolete"
 
-function isSquirrelLifecycleLaunch(): boolean {
-  return process.platform === "win32" &&
-    process.argv.some((argument) => SQUIRREL_LIFECYCLE_ARGUMENTS.has(argument))
+function squirrelLifecycleArgument(): string | null {
+  if (process.platform !== "win32") return null
+  return process.argv.find((argument) =>
+    SQUIRREL_INSTALL_ARGUMENTS.has(argument) ||
+    argument === SQUIRREL_UNINSTALL_ARGUMENT ||
+    argument === SQUIRREL_OBSOLETE_ARGUMENT
+  ) ?? null
+}
+
+function runSquirrelShortcutCommand(action: "--createShortcut" | "--removeShortcut"): void {
+  const updateExecutable = path.resolve(path.dirname(process.execPath), "..", "Update.exe")
+  const executableName = path.basename(process.execPath)
+  const result = spawnSync(updateExecutable, [action, executableName], {
+    windowsHide: true,
+    stdio: "ignore",
+    timeout: 10000,
+  })
+  if (result.error) {
+    console.error(`Squirrel shortcut lifecycle failed for ${action}.`, result.error)
+  } else if (result.status !== 0) {
+    console.error(`Squirrel shortcut lifecycle returned status ${result.status} for ${action}.`)
+  }
+}
+
+function handleSquirrelLifecycle(argument: string): void {
+  if (SQUIRREL_INSTALL_ARGUMENTS.has(argument)) {
+    runSquirrelShortcutCommand("--createShortcut")
+  } else if (argument === SQUIRREL_UNINSTALL_ARGUMENT) {
+    runSquirrelShortcutCommand("--removeShortcut")
+  }
+  app.quit()
 }
 
 async function runPackagedRuntimeSmoke(): Promise<void> {
@@ -112,8 +143,10 @@ function startApplication(): void {
   })
 }
 
-if (isSquirrelLifecycleLaunch()) {
-  app.quit()
+const squirrelArgument = squirrelLifecycleArgument()
+
+if (squirrelArgument) {
+  handleSquirrelLifecycle(squirrelArgument)
 } else if (process.argv.includes(ELECTRON_RUNTIME_SMOKE_ARGUMENT)) {
   void app.whenReady().then(runPackagedRuntimeSmoke)
 } else {
