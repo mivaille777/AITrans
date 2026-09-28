@@ -7,17 +7,31 @@ function read(relativePath: string): string {
 }
 
 describe("Electron desktop window contract", () => {
-  it("marks only the titlebar as draggable and keeps controls interactive", () => {
+  it("keeps the titlebar interactive and limits drag regions to non-control areas", () => {
     const css = read("../../components/WindowFrame.css")
 
-    expect(css).toMatch(/\.window-titlebar\s*\{\s*-webkit-app-region:\s*drag;/)
+    expect(css).toMatch(/\.window-titlebar\s*\{\s*-webkit-app-region:\s*no-drag;/)
+    expect(css).toMatch(/\.window-brand\s*\{\s*-webkit-app-region:\s*drag;/)
+    expect(css).toMatch(/\.window-drag-space\s*\{\s*-webkit-app-region:\s*drag;/)
     expect(css).toMatch(/\.window-controls\s*\{\s*-webkit-app-region:\s*no-drag;/)
     expect(css).toMatch(/\.window-controls button\s*\{\s*-webkit-app-region:\s*no-drag;/)
+    expect(css).toContain("pointer-events:auto")
   })
 
-  it("keeps the Tauri drag-region attributes during the dual-runtime phase", () => {
+  it("keeps Tauri drag markers only on explicit drag zones during dual-runtime migration", () => {
     const source = read("../../components/WindowFrame.tsx")
 
-    expect(source).toContain("data-tauri-drag-region")
+    expect(source).toContain('<header className="window-titlebar">')
+    expect(source).toContain('<div className="window-brand" data-tauri-drag-region>')
+    expect(source).toContain('<div className="window-drag-space" data-tauri-drag-region />')
+    expect(source).not.toContain('<header className="window-titlebar" data-tauri-drag-region>')
+  })
+
+  it("routes all three caption controls through the desktop adapter", () => {
+    const source = read("../../components/WindowFrame.tsx")
+
+    expect(source).toContain("desktop.window.minimize()")
+    expect(source).toContain("desktop.window.toggleMaximize()")
+    expect(source).toContain("desktop.window.close()")
   })
 })

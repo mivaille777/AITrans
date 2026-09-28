@@ -20,7 +20,7 @@
 }
 
 .window-titlebar {
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
   height: 44px;
   min-height: 44px;
   display:flex;
@@ -31,6 +31,7 @@
 }
 
 .window-brand {
+  -webkit-app-region: drag;
   display:flex;
   align-items:center;
   gap:9px;
@@ -58,10 +59,16 @@
   font-size:12px;
 }
 
-.window-drag-space { flex:1; }
+.window-drag-space {
+  -webkit-app-region: drag;
+  align-self:stretch;
+  flex:1;
+}
 
 .window-controls {
   -webkit-app-region: no-drag;
+  position:relative;
+  z-index:2;
   display:flex;
   align-items:center;
   gap:3px;
@@ -78,6 +85,7 @@
   background:transparent;
   color:#64748b;
   cursor:pointer;
+  pointer-events:auto;
   transition:transform .18s ease, background .18s ease, color .18s ease;
 }
 
