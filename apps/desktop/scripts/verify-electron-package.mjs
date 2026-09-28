@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { readdir, stat } from "node:fs/promises"
+import { readFile, readdir, stat } from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
 import { fileURLToPath } from "node:url"
@@ -68,15 +68,28 @@ async function findForbiddenModelArtifact(root) {
 const packageDir = await findPackagedApp()
 const resources = path.join(packageDir, "resources")
 const sidecarDir = path.join(resources, "backend", "AITransBackend")
+const updateConfigPath = path.join(resources, "update-config.json")
 const required = [
   path.join(packageDir, "AITrans.exe"),
   path.join(resources, "app.asar"),
   path.join(resources, "app.asar.unpacked", "dist", "index.html"),
   path.join(sidecarDir, "AITransBackend.exe"),
   path.join(resources, "backend", "sidecar-manifest.json"),
+  updateConfigPath,
 ]
 for (const file of required) {
   if (!(await existsFile(file))) throw new Error(`Packaged artifact is missing: ${file}`)
+}
+
+const updateConfig = JSON.parse(await readFile(updateConfigPath, "utf8"))
+if (updateConfig.schema_version !== 1) {
+  throw new Error("Packaged update config schema_version must be 1.")
+}
+if (!["stable", "beta"].includes(updateConfig.channel)) {
+  throw new Error("Packaged update config channel is invalid.")
+}
+if (updateConfig.enabled && !/^https:\/\//i.test(String(updateConfig.base_url ?? ""))) {
+  throw new Error("Enabled packaged update config must use an HTTPS base_url.")
 }
 
 const forbidden = await findForbiddenModelArtifact(path.join(resources, "backend"))
