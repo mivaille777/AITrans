@@ -43,5 +43,6 @@ describe("Electron Stage 12 full regression contract", () => {
     expect(source).toContain("electron-regression.json")
     expect(source).toContain("packaged_runtime: false")
     expect(source).toContain("gui_manual_acceptance: false")
+    expect(source).toContain("Failed Electron regression steps")
   })
 })

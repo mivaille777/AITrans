@@ -80,7 +80,12 @@ for (const step of steps) {
   console.log("\n=== Electron regression: " + step.name + " ===")
   const result = await runStep(step)
   results.push(result)
-  if (result.status !== "passed") { failed = true; break }
+  if (result.status !== "passed") {
+    failed = true
+    console.error("Electron regression step failed: " + step.name)
+  } else {
+    console.log("Electron regression step passed: " + step.name)
+  }
 }
 
 const report = {
@@ -100,4 +105,12 @@ const report = {
 }
 await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8")
 console.log("\nElectron regression report: " + reportPath)
-if (failed) process.exitCode = 1
+console.log("\nElectron regression summary:")
+for (const result of results) {
+  console.log("  " + result.status.toUpperCase().padEnd(6) + " " + result.name)
+}
+if (failed) {
+  const failedNames = results.filter((item) => item.status !== "passed").map((item) => item.name)
+  console.error("\nFailed Electron regression steps: " + failedNames.join(", "))
+  process.exitCode = 1
+}
