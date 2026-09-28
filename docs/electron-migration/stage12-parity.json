@@ -118,5 +118,12 @@
     "canonical_npm_prefix": "desktop:",
     "tauri_fallback": "legacy_non_blocking",
     "manual_parity_complete": false
+  },
+  "stage14": {
+    "status": "runtime_removed",
+    "electron_only": true,
+    "removal_authorized_by_owner": true,
+    "manual_parity_complete": false,
+    "historical_runtime_archive": "docs/archive/legacy"
   }
 }

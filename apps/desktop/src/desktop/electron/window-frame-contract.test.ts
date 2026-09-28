@@ -18,13 +18,13 @@ describe("Electron desktop window contract", () => {
     expect(css).toContain("pointer-events:auto")
   })
 
-  it("keeps Tauri drag markers only on explicit drag zones during dual-runtime migration", () => {
+  it("keeps Electron drag behavior in CSS without legacy runtime attributes", () => {
     const source = read("../../components/WindowFrame.tsx")
 
     expect(source).toContain('<header className="window-titlebar">')
-    expect(source).toContain('<div className="window-brand" data-tauri-drag-region>')
-    expect(source).toContain('<div className="window-drag-space" data-tauri-drag-region />')
-    expect(source).not.toContain('<header className="window-titlebar" data-tauri-drag-region>')
+    expect(source).toContain('<div className="window-brand">')
+    expect(source).toContain('<div className="window-drag-space" />')
+    expect(source).not.toContain("data-tauri")
   })
 
   it("keeps the main BrowserWindow on the native Windows window-state path", () => {

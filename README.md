@@ -15,7 +15,7 @@ The project started as a translation assistant and is evolving into a knowledge-
 - Knowledge Library, boards, relations, and graph views
 - Local RAG and retrieval debugging
 - Translation as a reusable language capability
-- Desktop integration with Tauri and browser reading context
+- Desktop integration with Electron and browser reading context
 
 中文简介：
 
@@ -56,7 +56,7 @@ RAG Debug Studio makes document import, chunking, retrieval, reranking, trace in
   <img src="docs/assets/screenshots/rag-debug-studio.png" alt="AITrans RAG Debug Studio" width="100%" />
 </p>
 
-> Screenshots above are captured from the current `WebReBuild` implementation.
+> Screenshots above reflect the current desktop implementation.
 
 ---
 
@@ -80,7 +80,7 @@ AITrans currently exposes the following primary routes:
 
 ```text
                          AITrans Desktop
-                  React 19 + TypeScript + Tauri
+                  React 19 + TypeScript + Electron
                               |
                               v
                        FastAPI Backend
@@ -104,7 +104,7 @@ The architecture follows a separation-of-responsibilities model:
 - **Agent runtime** owns orchestration, workflow state, checkpoints, events, and bounded specialist execution.
 - **Knowledge and Research runtimes** preserve reusable evidence and artifacts instead of treating every interaction as disposable chat.
 - **RAG runtime** handles retrieval-oriented context construction and exposes a dedicated debugging surface.
-- **Desktop layer** provides Tauri integration and browser/selection workflows.
+- **Desktop layer** provides Electron integration and browser/selection workflows.
 
 ---
 
@@ -207,7 +207,7 @@ Hardware-dependent Qwen3 embedding and reranker integration tests remain opt-in.
 
 AITrans supports desktop reading workflows through:
 
-- Tauri desktop shell
+- Electron desktop shell
 - Browser Selection Bridge
 - Reading Context Capture
 - Native overlay interactions
@@ -223,7 +223,7 @@ The browser and native desktop surfaces are treated as context-entry points rath
 | Layer | Main technologies |
 | --- | --- |
 | Desktop UI | React 19, TypeScript, Vite |
-| Desktop shell | Tauri 2, Rust |
+| Desktop shell | Electron |
 | Backend | Python 3.11+, FastAPI |
 | Agent orchestration | LangGraph-oriented runtime |
 | Testing | Pytest, Vitest, Testing Library, Clippy |
@@ -234,10 +234,10 @@ The browser and native desktop surfaces are treated as context-entry points rath
 
 ## Development
 
-Main development branch:
+Main migration branch:
 
 ```text
-WebReBuild
+electronrebuild
 ```
 
 Recommended environment:
@@ -245,7 +245,6 @@ Recommended environment:
 ```text
 Python 3.11
 Node.js 24
-Rust stable
 ```
 
 Start the local development environment:
@@ -267,8 +266,8 @@ The repository provides a unified verification entry point:
 # Frontend: lint, Vitest/type checks, production build
 .\scripts\verify.ps1 -Scope Frontend
 
-# Tauri: formatting visibility, Clippy, Rust tests, locked build
-.\scripts\verify.ps1 -Scope Tauri
+# Desktop: Electron compile/contracts and credential smoke
+.\scripts\verify.ps1 -Scope Desktop
 
 # Run all verification layers
 .\scripts\verify.ps1 -Scope All
@@ -284,7 +283,7 @@ Use `-Install` when dependencies need to be installed or refreshed:
 
 ## CI and Branch Quality Gate
 
-Pull requests into `WebReBuild` and `main` are protected by the repository Ruleset and the aggregated **CI quality gate**.
+Pull requests into `electronrebuild` and `main` are protected by the repository Ruleset and the aggregated **CI quality gate**.
 
 The gate currently covers:
 
@@ -295,10 +294,10 @@ CI quality gate
     +-- Python quality
     +-- Python compatibility (3.12)
     +-- React lint, tests, and build
-    +-- Tauri shell build
+    +-- Electron shell compile
 ```
 
-Feature development should normally use a short-lived branch and a pull request into `WebReBuild`.
+Feature development should normally use a short-lived branch and a pull request into `electronrebuild`.
 
 ---
 
