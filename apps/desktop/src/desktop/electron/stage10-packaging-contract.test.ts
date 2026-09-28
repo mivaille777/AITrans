@@ -61,5 +61,7 @@ describe("Electron Stage 10 packaging contract", () => {
     expect(verifier).toContain("--electron-runtime-smoke-test")
     expect(verifier).toContain("AITRANS_API_PORT")
     expect(verifier).toContain("AITRANS_BACKEND_HEALTH_URL")
+    expect(verifier).toContain("packaged update configuration")
+    expect(verifier).toContain("update-config.json")
   })
 })

@@ -32,6 +32,13 @@ describe("Electron Stage 17 signing and update contract", () => {
     expect(prepare).toContain("Production auto-update base URL must use HTTPS")
   })
 
+  it("verifies the packaged update configuration is present and safe", () => {
+    const verifier = read("../../../scripts/verify-electron-package.mjs")
+    expect(verifier).toContain("update-config.json")
+    expect(verifier).toContain("schema_version")
+    expect(verifier).toContain("Enabled packaged update config must use an HTTPS base_url.")
+  })
+
   it("only starts autoUpdater for packaged Squirrel installs with explicit enabled configuration", () => {
     const updater = read("../../../electron/main/services/update-manager.cts")
     const main = read("../../../electron/main/index.cts")
