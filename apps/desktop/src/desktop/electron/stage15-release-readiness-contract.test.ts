@@ -17,6 +17,11 @@ describe("Electron Stage 15 release readiness contract", () => {
     expect(packageJson.version).toBe(version)
     expect(pyproject).toContain(`version = "${version}"`)
     expect(backend).toContain("version=get_app_version()")
+
+    const forge = read("../../../forge.config.cjs")
+    expect(forge).toContain('path.join(repoRoot, "VERSION")')
+    expect(forge).toContain("appVersion: releaseVersion")
+    expect(forge).toContain("buildVersion: releaseVersion")
   })
 
   it("bundles VERSION into the frozen backend and sidecar manifest", () => {

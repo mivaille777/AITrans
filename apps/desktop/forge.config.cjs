@@ -1,14 +1,18 @@
+const fs = require("node:fs")
 const path = require("node:path")
 
 const desktopRoot = __dirname
 const repoRoot = path.resolve(desktopRoot, "../..")
 const stagedBackend = path.join(repoRoot, "build", "electron-resources", "backend")
+const releaseVersion = fs.readFileSync(path.join(repoRoot, "VERSION"), "utf8").trim()
 
 module.exports = {
   outDir: "out",
   packagerConfig: {
     name: "AITrans",
     executableName: "AITrans",
+    appVersion: releaseVersion,
+    buildVersion: releaseVersion,
     icon: path.join(desktopRoot, "resources", "icon.ico"),
     asar: {
       unpackDir: "dist",
