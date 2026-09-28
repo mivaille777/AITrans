@@ -1,7 +1,10 @@
 {
-  "name": "desktop",
+  "name": "aitrans",
+  "productName": "AITrans",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Local-first AI Agent workspace for research, knowledge, RAG, and multi-agent workflows.",
+  "author": "AITrans Contributors",
   "type": "module",
   "scripts": {
     "predev": "npm run sync:pdfjs-assets",
@@ -16,6 +19,7 @@
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "preview": "vite preview",
     "backend:dev": "cd ../.. && python -m backend",
+    "backend:package": "node scripts/build-backend-sidecar.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
@@ -26,7 +30,9 @@
     "test:electron-contracts": "vitest run src/desktop/electron src/desktop/runtime-selection.test.ts && npm run typecheck:test",
     "electron:check": "npm run electron:compile && npm run test:electron-contracts",
     "electron:verify": "npm run electron:check && npm run lint && npm run test && npm run build && node scripts/electron-credential-smoke.mjs",
-    "electron:preview": "npm run electron:build && electron ."
+    "electron:preview": "npm run electron:build && electron .",
+    "electron:package": "npm run electron:build && npm run backend:package && electron-forge package --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs",
+    "electron:make": "npm run electron:build && npm run backend:package && electron-forge make --platform=win32 --arch=x64 && node scripts/verify-electron-package.mjs --require-installer"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -43,6 +49,7 @@
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
     "@tauri-apps/cli": "^2.11.4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
@@ -52,6 +59,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "electron": "^44.4.5",
+    "electron-winstaller": "5.4.4",
     "jsdom": "^29.1.1",
     "oxlint": "^1.75.0",
     "typescript": "~6.0.2",
