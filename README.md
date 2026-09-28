@@ -2,7 +2,7 @@
 
 > Local-first AI Agent Workspace for reading, research, knowledge management, RAG, and multi-Agent execution.
 
-[![CI](https://github.com/mivaille777/AITrans/actions/workflows/ci.yml/badge.svg?branch=WebReBuild)](https://github.com/mivaille777/AITrans/actions/workflows/ci.yml)
+[![CI](https://github.com/mivaille777/AITrans/actions/workflows/ci.yml/badge.svg?branch=electronrebuild)](https://github.com/mivaille777/AITrans/actions/workflows/ci.yml)
 
 AITrans is a local-first **AI Agent Workspace** that brings document reading, research assistance, personal knowledge management, retrieval-augmented generation, and observable Agent execution into one desktop application.
 
@@ -226,7 +226,7 @@ The browser and native desktop surfaces are treated as context-entry points rath
 | Desktop shell | Electron |
 | Backend | Python 3.11+, FastAPI |
 | Agent orchestration | LangGraph-oriented runtime |
-| Testing | Pytest, Vitest, Testing Library, Clippy |
+| Testing | Pytest, Vitest, Testing Library, Electron contract tests |
 | Retrieval / Knowledge | Local RAG, vector retrieval, structured knowledge storage |
 | CI | GitHub Actions with aggregated `CI quality gate` |
 
@@ -308,7 +308,7 @@ Feature development should normally use a short-lived branch and a pull request 
 - [MA10 deterministic report](docs/development/ma10-deterministic-report.json)
 - [Contributing guide](CONTRIBUTING.md)
 
-Before migration or rollback, back up the local data root, especially checkpoint, artifact, memory, Knowledge, and Research SQLite databases.
+Before desktop upgrades or rollback, back up the local data root, especially checkpoint, artifact, memory, Knowledge, and Research SQLite databases.
 
 Real Qwen3 GPU tests require PyTorch/CUDA and explicit `AITRANS_RUN_RAG_GPU_TESTS=1`. Real configured-LLM and manual-UI results are not claimed by deterministic regression reports.
 

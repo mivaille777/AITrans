@@ -66,3 +66,11 @@ The workflow builds and uploads a release candidate but intentionally does not p
 6. release-manifest.json is generated with SHA-256 checksums.
 7. Release Readiness workflow uploads the candidate artifacts.
 8. Publishing remains an explicit project-owner action.
+
+
+## Manual parity note
+
+Stage 15 improves release engineering but does not retroactively mark the
+remaining Stage 12 GUI/DPI/manual parity items as PASS. The project owner
+authorized the Electron-only cutover and legacy runtime removal earlier; the
+parity manifest continues to record manual parity as incomplete.

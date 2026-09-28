@@ -125,5 +125,15 @@
     "removal_authorized_by_owner": true,
     "manual_parity_complete": false,
     "historical_runtime_archive": "docs/archive/legacy"
+  },
+  "stage15": {
+    "status": "release_readiness_active",
+    "version_authority": "VERSION",
+    "release_static_gate": "npm run release:static",
+    "release_candidate_command": "npm run desktop:release-candidate",
+    "release_workflow": ".github/workflows/electron-release-readiness.yml",
+    "integrity_manifest": "apps/desktop/out/release-manifest.json",
+    "auto_publish": false,
+    "manual_parity_complete": false
   }
 }

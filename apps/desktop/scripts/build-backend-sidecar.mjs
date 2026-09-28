@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises"
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
 import { fileURLToPath } from "node:url"
@@ -80,7 +80,7 @@ async function findForbiddenModelArtifact(root) {
   return walk(root)
 }
 
-const appVersion = (await (await import("node:fs/promises")).readFile(versionPath, "utf8")).trim()
+const appVersion = (await readFile(versionPath, "utf8")).trim()
 if (!appVersion) throw new Error("VERSION must not be empty.")
 
 await assertBuildEnvironment()
