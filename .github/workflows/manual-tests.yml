@@ -6,7 +6,7 @@ on:
       target_ref:
         description: Branch, tag, or commit to test
         required: true
-        default: WebReBuild
+        default: electronrebuild
         type: string
       scope:
         description: Verification scope
@@ -17,7 +17,7 @@ on:
           - all
           - backend
           - frontend
-          - tauri
+          - desktop
 
 permissions:
   contents: read
@@ -90,11 +90,11 @@ jobs:
         shell: pwsh
         run: .\scripts\verify.ps1 -Scope Frontend -Install
 
-  tauri:
-    if: ${{ inputs.scope == 'all' || inputs.scope == 'tauri' }}
-    name: Tauri verification
+  desktop:
+    if: ${{ inputs.scope == 'all' || inputs.scope == 'desktop' }}
+    name: Electron desktop verification
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Check out target ref
@@ -102,11 +102,13 @@ jobs:
         with:
           ref: ${{ inputs.target_ref }}
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
         with:
-          components: clippy,rustfmt
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
 
-      - name: Run Tauri verification
+      - name: Run Electron desktop verification
         shell: pwsh
-        run: .\scripts\verify.ps1 -Scope Tauri
+        run: .\scripts\verify.ps1 -Scope Desktop -Install

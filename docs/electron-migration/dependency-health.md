@@ -1,26 +1,28 @@
 # Electron dependency health policy
 
-AITrans separates runtime dependency risk from development/build-tool dependency debt.
+AITrans audits both application dependencies and the Electron build toolchain.
 
-## Runtime audit
+## Release audit
 
 Release readiness blocks on:
-
-```powershell
-npm run security:audit:runtime
-```
-
-This runs `npm audit --omit=dev --audit-level=high`. High/critical vulnerabilities in dependencies that belong to the application runtime must be resolved before a release candidate is accepted.
-
-## Full audit
-
-Use:
 
 ```powershell
 npm run security:audit:all
 ```
 
-The full audit includes Electron Forge, Electron Packager, Squirrel maker, rebuild tooling and their transitive installer dependencies. Some deprecated/vulnerable packages can remain in the latest stable upstream toolchain even when they are not shipped in the application bundle.
+This runs `npm audit` and blocks CI and release candidates on any reported vulnerability, including development and packaging dependencies.
+
+## Runtime-only check
+
+Use:
+
+```powershell
+npm run security:audit:runtime
+```
+
+This runs `npm audit --omit=dev --audit-level=high` for a quick check of shipped dependencies. It does not replace the full release audit.
+
+Forge 7 needs the Packager 18 callback interface. The `package.json` overrides keep that interface while replacing its vulnerable `extract-zip` dependency with Electron's maintained fork; they also pin audited versions of `@electron/rebuild`, `tmp`, and `undici`. Changes to these overrides require a clean `npm ci`, Electron regression, and a Windows package smoke test before release.
 
 Do not use `npm audit fix --force` blindly. It can force incompatible major versions into the Electron packaging chain.
 
@@ -43,6 +45,6 @@ npm ci --prefer-online
 
 Cache corruption is workstation state, not a repository lockfile defect.
 
-## Current packaging-tool constraint
+## Packaging-tool constraint
 
-The project intentionally stays on the current stable Electron Forge/Squirrel line. Deprecated transitive packages should be removed by upstream stable releases or a separately tested packaging-stack upgrade; they must not be hidden by suppressing npm warnings.
+The project remains on stable Electron Forge and Squirrel. Deprecated packages may still produce installation warnings; the audit and packaging tests remain the acceptance checks.

@@ -119,7 +119,7 @@ try {
     # AITrans currently uses synchronous local SQLite services. LangGraph's
     # development Blockbuster guard intentionally rejects those calls on the
     # ASGI event loop. --allow-blocking is confined to this local Studio path;
-    # it does not change the production FastAPI/Tauri runtime.
+    # it does not change the production FastAPI/Electron runtime.
     & langgraph dev --allow-blocking
     if ($LASTEXITCODE -ne 0) {
         throw "langgraph dev exited with code $LASTEXITCODE."

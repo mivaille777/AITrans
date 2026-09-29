@@ -42,7 +42,7 @@ describe("Electron Stage 15 release readiness contract", () => {
     expect(packageJson.scripts["deps:repair"]).toContain("npm cache verify")
     expect(packageJson.scripts["deps:repair"]).toContain("npm ci --prefer-online")
     expect(packageJson.scripts["release:static"]).toBe("node scripts/release-readiness.mjs")
-    expect(packageJson.scripts["desktop:release-check"]).toContain("security:audit:runtime")
+    expect(packageJson.scripts["desktop:release-check"]).toContain("security:audit:all")
     expect(packageJson.scripts["desktop:release-check"]).toContain("release:static")
     expect(packageJson.scripts["desktop:release-check"]).toContain("desktop:regression")
     expect(packageJson.scripts["desktop:release-check"]).toContain("desktop:build")

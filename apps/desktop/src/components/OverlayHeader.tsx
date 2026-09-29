@@ -41,7 +41,6 @@ export default function OverlayHeader({
           ? "ait-overlay-native-drag cursor-move"
           : "cursor-default"
       }`}
-      data-tauri-drag-region="false"
       onPointerDown={handlePointerDown}
     >
       <div className="flex min-w-0 items-center gap-3">

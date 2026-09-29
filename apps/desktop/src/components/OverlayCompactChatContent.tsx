@@ -392,7 +392,7 @@ export default function OverlayCompactChat({
             )}
           </div>
           {runtime.recoveryState === "offline" && (
-            <button type="button" data-tauri-drag-region="false" className="shrink-0 rounded-full border border-current/15 px-2 py-0.5 font-medium hover:bg-white/[0.06]" onClick={() => void runtime.retryRecovery()}>Retry</button>
+            <button type="button" className="shrink-0 rounded-full border border-current/15 px-2 py-0.5 font-medium hover:bg-white/[0.06]" onClick={() => void runtime.retryRecovery()}>Retry</button>
           )}
         </div>
       )}
@@ -444,14 +444,14 @@ export default function OverlayCompactChat({
         </div>
 
         {showJumpToLatest && (
-          <button type="button" data-tauri-drag-region="false" className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-slate-950/90 px-2.5 py-1 text-[9px] font-medium text-slate-300 shadow-lg backdrop-blur" onClick={jumpToLatest}>↓ Latest</button>
+          <button type="button" className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-slate-950/90 px-2.5 py-1 text-[9px] font-medium text-slate-300 shadow-lg backdrop-blur" onClick={jumpToLatest}>↓ Latest</button>
         )}
       </div>
 
       {runtime.errorMessage && runtime.recoveryState === "idle" && (
         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-[12px] border border-rose-300/15 bg-rose-300/[0.08] px-3 py-2 text-[10px] leading-4 text-rose-200">
           <span>{runtime.errorMessage}</span>
-          {retryUser && !runtime.conversationBusyElsewhere && <button type="button" data-tauri-drag-region="false" className="shrink-0 rounded-full border border-rose-200/15 px-2 py-0.5 font-medium hover:bg-rose-200/10" onClick={retryLastReply}>Retry</button>}
+          {retryUser && !runtime.conversationBusyElsewhere && <button type="button" className="shrink-0 rounded-full border border-rose-200/15 px-2 py-0.5 font-medium hover:bg-rose-200/10" onClick={retryLastReply}>Retry</button>}
         </div>
       )}
 
@@ -491,15 +491,15 @@ export default function OverlayCompactChat({
             }}
           />
           {runtime.activeRequestId !== null ? (
-            <button type="button" data-tauri-drag-region="false" title="Stop generation" className="ait-overlay-action-button flex h-9 w-9 items-center justify-center rounded-full text-xs text-rose-200" onClick={runtime.cancelStream}>■</button>
+            <button type="button" title="Stop generation" className="ait-overlay-action-button flex h-9 w-9 items-center justify-center rounded-full text-xs text-rose-200" onClick={runtime.cancelStream}>■</button>
           ) : (
-            <button type="button" data-tauri-drag-region="false" title="Send · Enter" disabled={!composerHasExecutableAction || !runtime.draft.trim() || runtime.openingConversation || runtime.conversationBusyElsewhere || recovering || translationHandoffBusy} className="ait-overlay-action-button flex h-9 w-9 items-center justify-center rounded-full text-sm disabled:opacity-35" onClick={submitComposer}>↑</button>
+            <button type="button" title="Send · Enter" disabled={!composerHasExecutableAction || !runtime.draft.trim() || runtime.openingConversation || runtime.conversationBusyElsewhere || recovering || translationHandoffBusy} className="ait-overlay-action-button flex h-9 w-9 items-center justify-center rounded-full text-sm disabled:opacity-35" onClick={submitComposer}>↑</button>
           )}
         </div>
 
         <div className="mt-2 flex items-center justify-between gap-3">
           <span className="text-[9px] text-slate-600">Enter send · Shift+Enter newline · {mode === "translation" ? "Esc assistant" : "Esc blur"}</span>
-          <button type="button" data-tauri-drag-region="false" disabled={handoffMutation.isPending || runtime.activeRequestId !== null || runtime.openingConversation || recovering} className="text-[9px] font-medium text-slate-500 hover:text-slate-300 disabled:opacity-40" onClick={openMainChat}>{mainChatLabel}</button>
+          <button type="button" disabled={handoffMutation.isPending || runtime.activeRequestId !== null || runtime.openingConversation || recovering} className="text-[9px] font-medium text-slate-500 hover:text-slate-300 disabled:opacity-40" onClick={openMainChat}>{mainChatLabel}</button>
         </div>
       </div>
     </div>

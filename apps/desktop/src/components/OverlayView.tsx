@@ -276,7 +276,6 @@ export default function OverlayView() {
         menuPosition && (
           <div
             data-overlay-menu
-            data-tauri-drag-region="false"
             className="ait-overlay-context-menu ait-system-popover fixed z-50 max-h-[calc(100vh-16px)] w-[220px] overflow-y-auto rounded-[16px] border border-white/10 bg-slate-800 p-1.5 text-xs shadow-2xl"
             style={{ left: menuPosition.x, top: menuPosition.y }}
             onPointerDown={(event) => event.stopPropagation()}
@@ -348,7 +347,6 @@ function MenuItem({
   return (
     <button
       type="button"
-      data-tauri-drag-region="false"
       disabled={disabled}
       className={`ait-control-motion flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left disabled:cursor-not-allowed disabled:opacity-35 ${danger ? "text-rose-300 hover:bg-rose-400/10" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}
       onClick={onClick}

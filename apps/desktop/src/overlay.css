@@ -380,7 +380,7 @@ html[data-ait-view="overlay"] .ait-overlay-context-menu {
 }
 
 
-/* Electron frameless-window drag regions. Tauri ignores these CSS properties. */
+/* Electron frameless-window drag regions. */
 html[data-ait-view="overlay"] .ait-overlay-native-drag {
   -webkit-app-region: drag;
 }

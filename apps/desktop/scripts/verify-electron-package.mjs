@@ -74,6 +74,7 @@ const required = [
   path.join(resources, "app.asar"),
   path.join(resources, "app.asar.unpacked", "dist", "index.html"),
   path.join(sidecarDir, "AITransBackend.exe"),
+  path.join(sidecarDir, "THIRD_PARTY_LICENSES.zip"),
   path.join(resources, "backend", "sidecar-manifest.json"),
   updateConfigPath,
 ]

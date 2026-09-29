@@ -2,7 +2,7 @@
 
 The smoke test exercises the shared DeepSeekClient instead of calling the
 provider SDK directly. It performs a real network request and requires a
-DeepSeek key already saved from Settings -> Cloud LLM in the Tauri desktop app.
+DeepSeek key already saved from Settings -> Cloud LLM in the Electron desktop app.
 
 Usage (PowerShell):
     python scripts/manual/deepseek_api_smoke_test.py

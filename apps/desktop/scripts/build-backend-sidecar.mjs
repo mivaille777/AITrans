@@ -101,6 +101,11 @@ await run(python, [
 const executable = await stat(sidecarExe).catch(() => null)
 if (!executable?.isFile()) throw new Error(`PyInstaller did not produce ${sidecarExe}.`)
 
+await run(python, [
+  path.join(scriptDir, "archive-sidecar-licenses.py"),
+  sourceSidecar,
+])
+
 console.log("Running frozen backend runtime smoke test...")
 await run(sidecarExe, ["--runtime-smoke-test"], { cwd: sourceSidecar })
 

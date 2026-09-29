@@ -40,7 +40,7 @@
     "desktop:package": "npm run electron:package",
     "desktop:make": "npm run electron:make",
     "release:static": "node scripts/release-readiness.mjs",
-    "desktop:release-check": "npm run security:audit:runtime && npm run release:static && npm run desktop:regression && npm run desktop:build",
+    "desktop:release-check": "npm run security:audit:all && npm run release:static && npm run desktop:regression && npm run desktop:build",
     "desktop:release-package": "npm run desktop:release-check && npm run desktop:package",
     "release:manifest": "node scripts/create-release-manifest.mjs",
     "desktop:release-candidate": "npm run desktop:release-check && npm run desktop:make && npm run release:verify-signing && npm run release:manifest && npm run release:update-feed",
@@ -86,6 +86,12 @@
   "main": "dist-electron/main/index.cjs",
   "allowScripts": {
     "electron-winstaller@5.4.4": true
+  },
+  "overrides": {
+    "@electron/rebuild": "4.2.0",
+    "extract-zip": "npm:@electron-internal/extract-zip@1.0.5",
+    "tmp": "0.2.7",
+    "undici": "7.30.0"
   },
   "config": {
     "forge": "./forge.config.cjs"

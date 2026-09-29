@@ -275,8 +275,8 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci --no-audit --prefer-offline
 
-      - name: Audit runtime npm dependencies
-        run: npm run security:audit:runtime
+      - name: Audit all npm dependencies
+        run: npm run security:audit:all
 
       - name: Run Electron local contract gate
         run: npm run electron:check

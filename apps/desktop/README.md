@@ -68,6 +68,10 @@ Windows distribution uses Electron Forge plus a PyInstaller `onedir` FastAPI sid
 The backend lives under `resources/backend/AITransBackend/AITransBackend.exe` and
 the production renderer under `resources/app.asar.unpacked/dist`.
 
+PyTorch's deeply nested license files are preserved in the sidecar's
+`THIRD_PARTY_LICENSES.zip` so Squirrel.Windows can process the package within
+its path-length limit.
+
 RAG model weights are not bundled; managed models remain in the per-user AITrans model directory.
 
 ## Security boundary

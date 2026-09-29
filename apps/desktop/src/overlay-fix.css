@@ -31,7 +31,7 @@ html[data-ait-view="overlay"] .ait-overlay-shell > div::-webkit-scrollbar-thumb 
 }
 
 /*
- * The native Tauri window is transparent in both themes. The material layer
+ * The native Electron window is transparent in both themes. The material layer
  * in overlay-theme.css decides whether the WebView host is opaque (classic
  * dark) or transparent so DWM can supply the light desktop backdrop.
  */
