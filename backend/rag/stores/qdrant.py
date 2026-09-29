@@ -12,7 +12,11 @@ from qdrant_client.http import models as qdrant_models
 from backend.rag.config import RagVectorStoreConfig
 from backend.rag.exceptions import RagConfigurationError, RagVectorStoreError
 from backend.rag.models import DocumentChunk, RetrievalCandidate
-from backend.rag.stores.base import VectorSearchFilter, is_reference_chunk
+from backend.rag.stores.base import (
+    VectorSearchFilter,
+    effective_document_ids,
+    is_reference_chunk,
+)
 
 _DISTANCES = {
     "cosine": qdrant_models.Distance.COSINE,
@@ -134,25 +138,35 @@ class QdrantLocalVectorStore:
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        allowed_document_ids: list[str] | None = None,
         generation_id: str | None = None,
         active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise RagVectorStoreError("top_k must be positive")
-        self.ensure_collection()
         normalized_generation = self._normalize_generation_id(generation_id)
+        effective_ids = effective_document_ids(
+            filters,
+            allowed_document_ids,
+        )
+        if effective_ids == []:
+            return []
+        scoped_document_ids = set(effective_ids) if effective_ids is not None else None
         if active_generations is not None:
             effective_active = {
                 document_id: active_generation
                 for document_id, active_generation in active_generations.items()
-                if not filters
-                or not filters.document_ids
-                or document_id in filters.document_ids
+                if (scoped_document_ids is None or document_id in scoped_document_ids)
+                and (
+                    normalized_generation is None
+                    or active_generation == normalized_generation
+                )
             }
             if not effective_active:
                 return []
         else:
             effective_active = None
+        self.ensure_collection()
         query_vector = self._validate_vector(vector)
         try:
             response = self._client.query_points(
@@ -162,6 +176,7 @@ class QdrantLocalVectorStore:
                     filters,
                     normalized_generation,
                     effective_active,
+                    allowed_document_ids=allowed_document_ids,
                 ),
                 # Older indexes predate ``section_kind``. Fetch a bounded
                 # surplus so the in-process legacy safeguard can still return
@@ -175,9 +190,30 @@ class QdrantLocalVectorStore:
 
         candidates: list[RetrievalCandidate] = []
         for point in response.points:
+            payload = point.payload
+            if not payload:
+                continue
+            payload_document_id = payload.get("document_id")
+            if not isinstance(payload_document_id, str) or not payload_document_id:
+                continue
+            if (
+                scoped_document_ids is not None
+                and payload_document_id not in scoped_document_ids
+            ):
+                continue
+            if not self._matches_payload_generation(
+                payload,
+                payload_document_id,
+                normalized_generation,
+                effective_active,
+            ):
+                continue
             chunk = self._chunk_from_payload(point.payload)
-            if effective_active is not None and not self._matches_active_generation(
-                chunk, effective_active
+            if not self._matches_search_generation(
+                point.payload,
+                chunk,
+                normalized_generation,
+                effective_active,
             ):
                 continue
             if filters and filters.exclude_references and is_reference_chunk(chunk):
@@ -428,15 +464,21 @@ class QdrantLocalVectorStore:
         filters: VectorSearchFilter | None,
         generation_id: str | None = None,
         active_generations: Mapping[str, str | None] | None = None,
+        *,
+        allowed_document_ids: list[str] | None = None,
     ) -> qdrant_models.Filter | None:
         conditions: list[qdrant_models.FieldCondition] = []
         must: list[Any] = conditions
         must_not: list[qdrant_models.FieldCondition] = []
-        if filters and filters.document_ids:
+        effective_ids = effective_document_ids(
+            filters,
+            allowed_document_ids,
+        )
+        if effective_ids is not None:
             conditions.append(
                 qdrant_models.FieldCondition(
                     key="document_id",
-                    match=qdrant_models.MatchAny(any=filters.document_ids),
+                    match=qdrant_models.MatchAny(any=effective_ids),
                 )
             )
         if filters and filters.source_kind:
@@ -472,9 +514,7 @@ class QdrantLocalVectorStore:
             scoped_generations = {
                 document_id: active_generation
                 for document_id, active_generation in active_generations.items()
-                if not filters
-                or not filters.document_ids
-                or document_id in filters.document_ids
+                if effective_ids is None or document_id in effective_ids
             }
             generation_pairs = []
             for document_id, active_generation in sorted(scoped_generations.items()):
@@ -517,15 +557,66 @@ class QdrantLocalVectorStore:
         )
 
     @classmethod
-    def _matches_active_generation(
+    def _matches_search_generation(
         cls,
+        payload: dict[str, Any] | None,
         chunk: DocumentChunk,
-        active_generations: Mapping[str, str | None],
+        generation_id: str | None,
+        active_generations: Mapping[str, str | None] | None,
     ) -> bool:
-        return (
-            chunk.document_id in active_generations
-            and cls._chunk_generation(chunk) == active_generations[chunk.document_id]
+        if not cls._matches_payload_generation(
+            payload,
+            chunk.document_id,
+            generation_id,
+            active_generations,
+        ):
+            return False
+        chunk_generation = cls._chunk_generation(chunk)
+        if active_generations is not None:
+            return chunk.document_id in active_generations and (
+                chunk_generation == active_generations[chunk.document_id]
+            )
+        if generation_id is not None:
+            return chunk_generation == generation_id
+        return chunk_generation is None
+
+    @staticmethod
+    def _matches_payload_generation(
+        payload: dict[str, Any] | None,
+        document_id: str,
+        generation_id: str | None,
+        active_generations: Mapping[str, str | None] | None,
+    ) -> bool:
+        if not payload:
+            return False
+        raw_payload_generation = payload.get("index_generation")
+        if raw_payload_generation is not None and not isinstance(
+            raw_payload_generation, str
+        ):
+            return False
+        payload_generation = str(raw_payload_generation or "").strip() or None
+        metadata = payload.get("metadata") or {}
+        raw_metadata_generation = (
+            metadata.get("index_generation") if isinstance(metadata, Mapping) else None
         )
+        if raw_metadata_generation is not None and not isinstance(
+            raw_metadata_generation, str
+        ):
+            return False
+        metadata_generation = str(raw_metadata_generation or "").strip() or None
+        if (
+            payload_generation is not None
+            and metadata_generation is not None
+            and payload_generation != metadata_generation
+        ):
+            return False
+        if active_generations is not None:
+            return document_id in active_generations and (
+                payload_generation == active_generations[document_id]
+            )
+        if generation_id is not None:
+            return payload_generation == generation_id
+        return payload_generation is None and metadata_generation is None
 
     @staticmethod
     def _normalize_generation_id(generation_id: str | None) -> str | None:

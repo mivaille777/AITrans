@@ -21,6 +21,31 @@ class VectorSearchFilter(BaseModel):
     exclude_references: bool = True
 
 
+def effective_document_ids(
+    filters: VectorSearchFilter | None,
+    allowed_document_ids: list[str] | None,
+) -> list[str] | None:
+    """Intersect request filters with the caller's resolved access allowlist.
+
+    ``None`` keeps the legacy unscoped contract. An empty allowlist or empty
+    intersection is an explicit deny-all result.
+    """
+
+    requested = (
+        set(filters.document_ids)
+        if filters is not None and filters.document_ids
+        else None
+    )
+    allowed = set(allowed_document_ids) if allowed_document_ids is not None else None
+    if requested is None and allowed is None:
+        return None
+    if requested is None:
+        return sorted(allowed or set())
+    if allowed is None:
+        return sorted(requested)
+    return sorted(requested.intersection(allowed))
+
+
 _REFERENCE_HEADING = re.compile(
     r"(?:^|\s)(?:references?|bibliography|works cited|reference list)(?:$|\s)",
     re.IGNORECASE,
@@ -65,6 +90,7 @@ class VectorStore(Protocol):
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        allowed_document_ids: list[str] | None = None,
         generation_id: str | None = None,
         active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]: ...
@@ -86,4 +112,9 @@ class VectorStore(Protocol):
     ) -> list[DocumentChunk]: ...
 
 
-__all__ = ["VectorSearchFilter", "VectorStore", "is_reference_chunk"]
+__all__ = [
+    "VectorSearchFilter",
+    "VectorStore",
+    "effective_document_ids",
+    "is_reference_chunk",
+]
