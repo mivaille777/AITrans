@@ -98,6 +98,20 @@ def test_manifest_delete_persists(tmp_path: Path) -> None:
     assert IndexManifest(path).get("doc_one") is None
 
 
+def test_manifest_delete_removes_generation_catalogue(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    manifest = IndexManifest(path)
+    manifest.upsert(make_record())
+    manifest.begin_generation("doc_one", "generation-1", ["chunk_one"])
+    manifest.validate_generation("doc_one", "generation-1", ["chunk_one"])
+    manifest.publish_generation("doc_one", "generation-1")
+
+    assert manifest.delete("doc_one") is True
+    restarted = IndexManifest(path)
+    assert restarted.get("doc_one") is None
+    assert restarted.list_generations("doc_one") == []
+
+
 def test_manifest_atomic_write_leaves_no_temporary_file(tmp_path: Path) -> None:
     path = tmp_path / "manifest.json"
     manifest = IndexManifest(path)

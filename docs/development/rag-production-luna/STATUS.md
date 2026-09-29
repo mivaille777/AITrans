@@ -12,10 +12,11 @@
 - S01.2：PASS（manifest generation 状态迁移、active pointer、旧版保留和重启恢复）
 - S01.3：PASS（Qdrant/BM25 generation 并存、定向读写删除）
 - S01.4：PASS（校验后原子发布；检索只读取 active generation；失败清理半成品并保留旧版）
-- 当前工程任务：S01.5（按用户 2026-09-30 明确要求继续执行整份任务书；继续技术工作不视为 S00 门禁通过）
-- S01 Stage 门禁：BLOCKED，待 S01.5 多格式导入/删除/重启/零孤儿与性能验证
+- S01.5：PASS（PDF/DOCX/HTML/TXT 导入、重导入、重启、删除与零残留）
+- S01 Stage 门禁：PASS（工程一致性门；不代表生产质量门通过）
+- 当前工程任务：S02.1（按用户 2026-09-30 明确要求继续执行整份任务书；继续技术工作不视为 S00 门禁通过）
 - Holdout：181 个问题、56 篇论文，已冻结、未运行、不得用于调参
 - GitHub 写入：未推送；只在本地提交
 - 工作区原有用户修改：保留；提交时只暂存任务书当前允许的文件
 
-详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 汇总和子任务报告见 [S01.md](S01.md)、[S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)、[S01.4.md](S01.4.md)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。
+详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 汇总和子任务报告见 [S01.md](S01.md)、[S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)、[S01.4.md](S01.4.md)、[S01.5.md](S01.5.md)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。

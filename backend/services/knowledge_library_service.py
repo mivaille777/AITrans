@@ -9,7 +9,7 @@ from urllib.request import url2pathname
 from backend.rag.config import RagConfig
 from backend.rag.document_tree import DocumentTree, DocumentTreeBuilder
 from backend.rag.embeddings import EmbeddingProvider
-from backend.rag.index_manifest import IndexManifest, IndexManifestRecord
+from backend.rag.index_manifest import IndexManifest, IndexManifestRecord, IndexStatus
 from backend.rag.index_service import IndexDocumentResult, IndexService
 from backend.rag.models import NormalizedDocument
 from backend.rag.parsers import parse_document
@@ -126,7 +126,8 @@ class KnowledgeLibraryService:
         result = self._index_service.index_document(
             self.validate_source_path(source_path)
         )
-        self._academic_cache.pop(result.document_id, None)
+        if result.status is IndexStatus.READY and not result.reused_existing:
+            self._academic_cache.pop(result.document_id, None)
         return result
 
     def list_documents(self) -> list[IndexManifestRecord]:
@@ -141,7 +142,8 @@ class KnowledgeLibraryService:
             return None
         path = self.validate_source_path(self._path_from_file_uri(record.source_uri))
         result = self._index_service.reindex_document(path)
-        self._academic_cache.pop(record.document_id, None)
+        if result.status is IndexStatus.READY and not result.reused_existing:
+            self._academic_cache.pop(record.document_id, None)
         return result
 
     def delete_document(self, document_id: str) -> bool:

@@ -370,9 +370,18 @@ class IndexManifest:
 
     def delete(self, document_id: str) -> bool:
         with self._lock:
-            removed = self._data.documents.pop(document_id, None) is not None
+            before_delete = self._data.model_copy(deep=True)
+            removed_document = self._data.documents.pop(document_id, None) is not None
+            removed_generations = (
+                self._data.generations.pop(document_id, None) is not None
+            )
+            removed = removed_document or removed_generations
             if removed:
-                self._save()
+                try:
+                    self._save()
+                except Exception:
+                    self._data = before_delete
+                    raise
             return removed
 
     def mark_status(

@@ -36,6 +36,16 @@ class FailingEmbedding(FakeEmbedding):
         raise RuntimeError("embedding runtime unavailable")
 
 
+class ToggleEmbedding(FakeEmbedding):
+    def __init__(self) -> None:
+        self.fail = False
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if self.fail:
+            raise RuntimeError("embedding runtime unavailable")
+        return super().embed_documents(texts)
+
+
 class FakeVectorStore:
     def __init__(self) -> None:
         self.chunks: dict[tuple[str | None, str], DocumentChunk] = {}
@@ -178,6 +188,8 @@ def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
     assert document["status"] == "ready"
     assert document["source_type"] == "md"
     assert document["chunk_count"] == 1
+    first_record = service.get_document(document_id)
+    assert first_record is not None
     assert vector_store.chunks
     assert sparse.chunks
 
@@ -206,6 +218,11 @@ def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
     reindexed = client.post(f"/api/knowledge/documents/{document_id}/reindex")
     assert reindexed.status_code == 200
     assert reindexed.json()["document"]["status"] == "ready"
+    reindexed_record = service.get_document(document_id)
+    assert reindexed_record is not None
+    assert reindexed_record.generation_id != first_record.generation_id
+    assert vector_store.list_chunks(generation_id=first_record.generation_id)
+    assert sparse.list_chunks(generation_id=first_record.generation_id)
 
     deleted = client.delete(f"/api/knowledge/documents/{document_id}")
     assert deleted.json() == {
@@ -217,6 +234,7 @@ def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
     assert vector_store.chunks == {}
     assert sparse.chunks == {}
     assert client.get(f"/api/knowledge/documents/{document_id}").status_code == 404
+    assert service._manifest.list_generations(document_id) == []
 
 
 def test_import_rejects_unsupported_missing_relative_and_oversized_files(
@@ -295,6 +313,47 @@ def test_import_returns_service_unavailable_when_indexing_fails(tmp_path: Path) 
     listed = client.get("/api/knowledge/documents").json()
     assert listed["total"] == 1
     assert listed["documents"][0]["status"] == "failed"
+
+
+def test_failed_reimport_keeps_active_generation_and_academic_cache(
+    tmp_path: Path,
+) -> None:
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    source = allowed / "control.md"
+    source.write_text("Original published knowledge content.", encoding="utf-8")
+    embedding = ToggleEmbedding()
+    library, _vector_store, _sparse = _service(
+        tmp_path / "state",
+        allowed,
+        embedding=embedding,
+    )
+
+    first = library.import_document(source)
+    first_record = library.get_document(first.document_id)
+    assert first.status.value == "ready"
+    assert first_record is not None
+    cached_outline = (first_record.content_hash, object(), object())
+    library._academic_cache[first.document_id] = cached_outline
+
+    source.write_text("Replacement content whose embedding fails.", encoding="utf-8")
+    embedding.fail = True
+    failed = library.import_document(source)
+
+    failed_record = library.get_document(first.document_id)
+    assert failed.status.value == "failed"
+    assert failed_record is not None
+    assert failed_record.status.value == "ready"
+    assert failed_record.generation_id == first_record.generation_id
+    assert library._academic_cache[first.document_id] == cached_outline
+
+    embedding.fail = False
+    recovered = library.import_document(source)
+    recovered_record = library.get_document(first.document_id)
+    assert recovered.status.value == "ready"
+    assert recovered_record is not None
+    assert recovered_record.generation_id != first_record.generation_id
+    assert first.document_id not in library._academic_cache
 
 
 def test_unknown_document_operations_return_not_found(tmp_path: Path) -> None:
