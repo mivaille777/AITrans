@@ -40,14 +40,18 @@
     "desktop:package": "npm run electron:package",
     "desktop:make": "npm run electron:make",
     "release:static": "node scripts/release-readiness.mjs",
-    "desktop:release-check": "npm run release:static && npm run desktop:regression && npm run desktop:build",
+    "desktop:release-check": "npm run security:audit:runtime && npm run release:static && npm run desktop:regression && npm run desktop:build",
     "desktop:release-package": "npm run desktop:release-check && npm run desktop:package",
     "release:manifest": "node scripts/create-release-manifest.mjs",
     "desktop:release-candidate": "npm run desktop:release-check && npm run desktop:make && npm run release:verify-signing && npm run release:manifest && npm run release:update-feed",
     "desktop:lifecycle-test": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/electron-installer-lifecycle.ps1 -AcknowledgeInstallMutation",
     "prepare:update-config": "node scripts/prepare-update-config.mjs",
     "release:verify-signing": "node scripts/verify-windows-signing.mjs",
-    "release:update-feed": "node scripts/create-update-feed.mjs"
+    "release:update-feed": "node scripts/create-update-feed.mjs",
+    "security:audit:runtime": "npm audit --omit=dev --audit-level=high",
+    "security:audit:all": "npm audit",
+    "deps:cache:verify": "npm cache verify",
+    "deps:repair": "npm cache verify && npm ci --prefer-online"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

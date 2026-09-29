@@ -37,7 +37,12 @@ describe("Electron Stage 15 release readiness contract", () => {
   it("defines a release gate before packaging", () => {
     const packageJson = JSON.parse(read("../../../package.json"))
 
+    expect(packageJson.scripts["security:audit:runtime"]).toBe("npm audit --omit=dev --audit-level=high")
+    expect(packageJson.scripts["security:audit:all"]).toBe("npm audit")
+    expect(packageJson.scripts["deps:repair"]).toContain("npm cache verify")
+    expect(packageJson.scripts["deps:repair"]).toContain("npm ci --prefer-online")
     expect(packageJson.scripts["release:static"]).toBe("node scripts/release-readiness.mjs")
+    expect(packageJson.scripts["desktop:release-check"]).toContain("security:audit:runtime")
     expect(packageJson.scripts["desktop:release-check"]).toContain("release:static")
     expect(packageJson.scripts["desktop:release-check"]).toContain("desktop:regression")
     expect(packageJson.scripts["desktop:release-check"]).toContain("desktop:build")
