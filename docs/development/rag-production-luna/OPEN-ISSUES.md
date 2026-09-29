@@ -26,8 +26,20 @@
 - 需要决策：是否将当前开发基线 snapshot 固定为默认模型版本，或由产品指定另一个已验证的完整 commit hash。确认后可在 S03 Stage 门禁前补齐；在此之前不能声称同 ID 权重变更已被检测。
 - 阻塞：S03 Stage 的模型版本迁移门；不阻塞独立的 S03.2 scope 实现与验证。
 
+## OI-004：S03 Vector Only 门禁低于 S00 Hybrid 基线
+
+- 影响：S03 Stage 按任务书要求“Vector Only 不低于 S00 同数据基线”时未通过；不能按门禁继续进入 S04。
+- 证据：同一冻结 QASPER dev100、87 个可评估 gold evidence 问题上，S03.3 Dense Only 的 Recall@5/MRR/nDCG@10 为 `0.6724/0.4640/0.5723`；S00 Dense+BM25+reranker 为 `0.8161/0.5181/0.6122`。Vector Only Recall@10 为 `0.9425`，高于 S00 的 `0.8989`；暖查询 P95 `103.967 ms`，低于 S00 的 `841.468 ms`。见 `S03.3.md` 和本机 `data/benchmarks/qasper/s03-3-vector-only/` 结果。
+- 开源方案核对：BEIR 将 dense、lexical/sparse 与 reranking-based retrieval 作为不同架构分别评估，并提供 dense 和 BM25+cross-encoder 示例；适合用于同数据、同指标的消融对照，但无法让 Dense Only 自然达到 Hybrid 指标：[BEIR 官方仓库](https://github.com/beir-cellar/beir)。
+- 约束：S03.3 只允许改 embedding 批量/冷启动配置；调整模型或排序策略超出该子任务范围。S00 是 Hybrid 基线，当前任务书没有记录可供同配置比较的 Vector Only 基线。
+- 需要决策：门禁是否应改为与同配置的 S00 Vector Only 基线比较；若坚持超过 S00 Hybrid，则批准扩大检索算法/模型调优范围，并明确此门禁允许的实验与资源预算。
+- 阻塞：S03 Stage 门禁及进入 S04。
+
 ## 后续代码可自行解决（非待用户裁决）
 
 - Parser、错论文与 no-answer 的端到端坏例缺少真实样本；收到 OI-001 数据后补充标注并回放。
 - 注入 Qdrant/BM25/manifest 中途失败、崩溃恢复和 generation 发布检查在 S01 中实现；当前快照三存储均为 1312 个 chunk ID，差集为 0，不代表故障路径已经验证。
 - Debug Studio 后端能按 run/case 返回 Trace，但尚未完成人工桌面 UI 点选核查。
+- S03.3 配置改造、Vector Only 基准、冷启动/内存、缩写/跨语言 probe 及 generation 排序 smoke 已完成；Vector Only 质量低于 S00 Hybrid，详见 `S03.3.md`。
+- S03 Stage 门禁 BLOCKED：OI-004 门禁基准需确认；OI-003 模型 snapshot revision 未进入 runtime fingerprint；RetrievalService/BM25/Graph 的应用级 scope 接线仍未完成。不能宣称 S03 或生产 Go/No-Go 通过。
+- 当前停在 S03 Stage 门禁；OI-004 决策前不进入 S04。
