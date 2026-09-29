@@ -1,0 +1,6 @@
+{
+  "case_id": "real-txt-import-smoke",
+  "query": "zephyrquartz7319",
+  "expected_term": "zephyrquartz7319",
+  "source": "synthetic"
+}

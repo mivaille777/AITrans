@@ -1,0 +1,3 @@
+Synthetic production-evaluation fixture.
+
+The unique retrieval marker is zephyrquartz7319. It is used only to verify that a real TXT file can pass through document parsing, indexing, retrieval, evidence construction, and citation creation.

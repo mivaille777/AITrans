@@ -1,0 +1,7 @@
+{"chunk_id":"fixture:hybrid:rrf","document_id":"fixture:hybrid-guide","text":"Reciprocal rank fusion combines rankings from multiple retrieval channels using reciprocal rank contributions."}
+{"chunk_id":"fixture:embedding:qwen3","document_id":"fixture:embedding-guide","text":"The Qwen3-Embedding-0.6B model emits normalized 1024-dimensional vectors in the default AITrans configuration."}
+{"chunk_id":"fixture:index:chunking","document_id":"fixture:index-guide","text":"The indexer parses source documents and divides their text into stable, traceable chunks."}
+{"chunk_id":"fixture:retrieval:citation","document_id":"fixture:index-guide","text":"Retrieved chunks retain source identifiers so the citation service can create program-owned references."}
+{"chunk_id":"fixture:index:generation","document_id":"fixture:index-guide","text":"A new index generation becomes visible to queries only after its chunks and manifest have passed validation and publication."}
+{"chunk_id":"fixture:hybrid:bm25","document_id":"fixture:bm25-guide","text":"BM25 provides sparse lexical matching and is useful for terms, abbreviations, and exact identifiers."}
+{"chunk_id":"fixture:hybrid:qdrant","document_id":"fixture:qdrant-guide","text":"Qdrant stores dense vectors and supports scoped similarity search over indexed chunks."}
