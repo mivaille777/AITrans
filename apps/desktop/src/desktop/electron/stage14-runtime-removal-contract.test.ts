@@ -12,8 +12,12 @@ function read(relativePath: string): string {
 
 describe("Electron Stage 14 legacy runtime removal", () => {
   it("removes legacy runtime directories and npm dependencies", () => {
-    expect(existsSync(pathOf("../../../src-tauri"))).toBe(false)
-    expect(existsSync(pathOf("../tauri"))).toBe(false)
+    // Local ignored build leftovers (for example src-tauri/target) may survive
+    // a branch migration. Guard the actual legacy runtime entrypoints instead
+    // of treating any leftover directory as active product code.
+    expect(existsSync(pathOf("../../../src-tauri/tauri.conf.json"))).toBe(false)
+    expect(existsSync(pathOf("../../../src-tauri/src/main.rs"))).toBe(false)
+    expect(existsSync(pathOf("../tauri/tauri-adapter.ts"))).toBe(false)
     const packageJson = JSON.parse(read("../../../package.json"))
     const lock = read("../../../package-lock.json").toLowerCase()
     expect(JSON.stringify(packageJson).toLowerCase()).not.toContain("tauri")
