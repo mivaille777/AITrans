@@ -1,15 +1,16 @@
 # RAG Luna 执行状态
 
-- 仓库：mivaille777/AITrans
-- 目标分支：electronrebuild
-- 本地 HEAD 与本地缓存的 origin/electronrebuild：匹配；GitHub 连接器已确认远端分支存在且可读
-- 基准 HEAD：23d355e0a28574c9e6703887d7ea08b38d4307d5
-- 执行计划：D:\AITrans\AITrans-RAG-Production-Improvement-Plan-GPT6-Luna.md
-- 当前 Stage：S00
-- 当前任务：S00.3
-- 已通过：S00.1（只读调用链审计）、S00.2（基线 fixture/runner）
-- 待处理：S00.3 数据、指纹、存储差集及门槛冻结
-- 未解决且需用户决策：暂无
-- GitHub 远端推送：本次无
+- 仓库：`mivaille777/AITrans`
+- 分支：`electronrebuild`
+- 本地基准提交：`3f39f81b377aa6e4618ee88ab0a25be8569a03c5`
+- 执行计划：`D:\AITrans\AITrans-RAG-Production-Improvement-Plan-GPT6-Luna.md`
+- S00.1：PASS
+- S00.2：PASS
+- S00.3：BLOCKED（已建立基线与数据/模型/索引/机器指纹；生产数据、经确认门槛、完整坏例回放缺失）
+- 生产 Go/No-Go：BLOCKED；不得据此启用 Graph 默认值或宣称生产达标
+- 当前工程任务：S01.1（按用户 2026-09-30 明确要求继续执行整份任务书；继续技术工作不视为 S00 门禁通过）
+- Holdout：181 个问题、56 篇论文，已冻结、未运行、不得用于调参
+- GitHub 写入：未推送；只在本地提交
+- 工作区原有用户修改：保留；提交时只暂存任务书当前允许的文件
 
-开始工作区已有修改/未跟踪文件。后续每次提交仅暂存当前任务明确允许的文件；不要使用 git add -A。
+详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。

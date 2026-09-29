@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "created_date": "2026-09-30",
+  "repository": "mivaille777/AITrans",
+  "branch": "electronrebuild",
+  "baseline_commit": "3f39f81b377aa6e4618ee88ab0a25be8569a03c5",
+  "python_environment": {
+    "activation": "conda activate aitrans",
+    "python": "3.11.7",
+    "torch": "2.13.0+cu130",
+    "cuda_available": true,
+    "sentence_transformers": "5.7.0",
+    "transformers": "5.15.0",
+    "qdrant_client": "1.19.0"
+  },
+  "machine": {
+    "os": "Windows 10.0.26200",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1",
+    "logical_cpu_count": 32,
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "gpu_memory_mib": 8188,
+    "cuda_runtime": "13.0",
+    "driver": "610.88"
+  },
+  "models": {
+    "embedding": {
+      "id": "Qwen/Qwen3-Embedding-0.6B",
+      "dimension": 1024,
+      "huggingface_snapshot": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+    },
+    "reranker": {
+      "id": "Qwen/Qwen3-Reranker-0.6B",
+      "huggingface_snapshot": "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+    }
+  },
+  "dataset": {
+    "name": "QASPER",
+    "version": "0.3",
+    "mode": "validation / known-paper retrieval-only",
+    "source_path": "data/benchmarks/qasper/raw/qasper-dev-v0.3.json",
+    "source_sha256": "2ae7ee62a65b1c4225791c70de80c2aad4e8998cf1fd4f09a53103db4f21af93",
+    "paper_split_scheme": "paper-group-holdout-v1",
+    "paper_split_manifest_sha256": "d311836d6f0ec9ddd923a9099d2269b6eeab6d2e24f8c141bce121ac5dccd822",
+    "dev_question_ids": {
+      "count": 100,
+      "path": "data/benchmarks/qasper/frozen_s00/dev-question-ids.txt",
+      "sha256": "217baa80d7d2802a428074fe660d1278902db5f7cba9144b52439dad5f76a37c"
+    },
+    "holdout_question_ids": {
+      "count": 181,
+      "path": "data/benchmarks/qasper/frozen_s00/holdout-question-ids.txt",
+      "sha256": "6403117043331c0ac4ef1b983e0203afa5aadd483fbf90e5c1beea765ef8982a",
+      "executed": false
+    },
+    "paper_counts": {
+      "source": 281,
+      "development": 225,
+      "holdout": 56,
+      "overlap": 0
+    },
+    "sample_hash": "1a38cf16e937d258582166e09a8cdb8edc669318d3ee81de0e0d50e46ab7e45d",
+    "qrels_path": "data/benchmarks/qasper/qrels/1a38cf16e937d258582166e09a8cdb8edc669318d3ee81de0e0d50e46ab7e45d.jsonl",
+    "qrels_sha256": "d4ee8cb111567ddd0ff66d8feb48a4ccf5f6cbb14ba8eec3febd09dfa6941929",
+    "answer_generation": false
+  },
+  "index": {
+    "fingerprint": "9685e1782d996e19e5ebe627df86c0ba5f8abf6fa14dba4d1f499d4dc3515264",
+    "documents": 80,
+    "chunks": 1312,
+    "stores": {
+      "manifest": 1312,
+      "bm25": 1312,
+      "qdrant": 1312
+    },
+    "pairwise_chunk_id_difference_count": 0,
+    "config_hash": "cf2079692db78e621a47a40937a95ac44d4ff3abc00a59ef381c75235aaf6bf9"
+  },
+  "runs": [
+    {
+      "run_id": "s00-3-paper-disjoint-dev100",
+      "command": "python scripts/run_qasper_benchmark.py --root data/benchmarks/qasper --split validation --raw-json data/benchmarks/qasper/raw/qasper-dev-v0.3.json --mode dev --limit 100 --seed 42 --run-id s00-3-paper-disjoint-dev100 --question-ids-file data/benchmarks/qasper/frozen_s00/dev-question-ids.txt --retrieval-only",
+      "exit_code": 0,
+      "question_count": 100,
+      "error_count": 0,
+      "artifact_sha256": {
+        "manifest.json": "cbdcc00b314032096fa519b157dc6797cf377b9aa148cc63c8bbf0264e9d707c",
+        "metrics.json": "145da739f785bb34998f1ab37d88fe2f7d3a9fe75a622dea40e009974560ea84",
+        "predictions.jsonl": "11e6329a225589d5dd9c9f2cd06b6c8a6758008f4dfdd7e558d2c89ab5962283",
+        "retrieval_trace.jsonl": "4444b1bfa68b393b62beca0c5c15c9accd601347ea8dc236c607728c35393639",
+        "errors.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "run_id": "s00-3-paper-disjoint-dev100-replay",
+      "exit_code": 0,
+      "question_count": 100,
+      "error_count": 0,
+      "quality_metrics_equal": true,
+      "ordered_chunk_id_lists_equal": true,
+      "p95_latency_ms": 850.694,
+      "artifact_sha256": {
+        "metrics.json": "09a6dc3085e3e73253e56990563dcfa943a3cef309e1b96926c3dcdc03a7f351",
+        "predictions.jsonl": "11e6329a225589d5dd9c9f2cd06b6c8a6758008f4dfdd7e558d2c89ab5962283",
+        "retrieval_trace.jsonl": "b473b4ff803371b343bed81a04a8cc05ac2559ba6719e2b31d776ff0e60c82d1",
+        "errors.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "baseline_metrics": {
+    "evaluated_cases": 87,
+    "recall_at_5": 0.8160919540229885,
+    "recall_at_10": 0.8988505747126437,
+    "mrr": 0.5181171319102353,
+    "ndcg_at_10": 0.6121824682198513,
+    "pre_rerank_mrr": 0.47299692644520247,
+    "post_rerank_mrr": 0.5181171319102353,
+    "pre_rerank_ndcg_at_10": 0.5814426253128634,
+    "post_rerank_ndcg_at_10": 0.6121824682198513,
+    "gold_evidence_recall_at_5": 0.8180076628352491,
+    "evidence_precision_at_5": 0.10086885500812046,
+    "evidence_f1_at_5": 0.17355880615086144,
+    "gold_evidence_recall_at_8": 0.8977011494252873,
+    "context_evidence_coverage": 0.9034482758620689,
+    "retrieval_p50_ms": 651.31,
+    "retrieval_p95_ms": 841.468,
+    "answer_f1": null,
+    "faithfulness": null,
+    "citation_accuracy": null
+  },
+  "debug_trace_api": {
+    "case_list_http_status": 200,
+    "case_count": 100,
+    "single_case_http_status": 200,
+    "manual_desktop_ui_check": false
+  },
+  "real_file_smoke": {
+    "kind": "synthetic TXT through production import/runtime path",
+    "fixture_sha256": "59672ca31bde168cb63272922cba369aaa3a666c7f121f87b4916c952df9e3a7",
+    "documents": 1,
+    "chunks": 2,
+    "scope_violations": 0,
+    "unresolved_citations": 0,
+    "note": "single-document synthetic smoke; not a production corpus benchmark"
+  },
+  "safety_observations": {
+    "observed_scope_violations": 0,
+    "observed_unresolved_citations": 0,
+    "partial_generation_visibility_tested": false,
+    "crash_recovery_tested": false,
+    "concurrency_tested": false,
+    "historical_bad_case_recurrence_tested": false
+  }
+}

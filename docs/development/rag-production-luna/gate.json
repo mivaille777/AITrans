@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "decision": "BLOCKED",
+  "decision_date": "2026-09-30",
+  "baseline_manifest": "baseline-manifest.json",
+  "policy": {
+    "candidate_source": "GPT-6 Luna taskbook section 1.2 and its listed candidate thresholds",
+    "owner_approval": "pending",
+    "unknown_is_pass": false,
+    "absolute_regression_tolerance": 0.02,
+    "minimum_slice_sample_candidate": 30,
+    "note": "Candidate values below are not business-approved production SLOs. The production gate remains blocked until corpus, use cases, and thresholds are approved."
+  },
+  "slices": [
+    {
+      "slice_id": "qasper_known_paper_answerable_mapped",
+      "population": "QASPER validation, known paper filtered, mapped gold evidence",
+      "observed_N": 87,
+      "B": {
+        "recall_at_5": {"value": 0.8160919540229885, "unit": "ratio"},
+        "recall_at_10": {"value": 0.8988505747126437, "unit": "ratio"},
+        "mrr": {"value": 0.5181171319102353, "unit": "ratio"},
+        "ndcg_at_10": {"value": 0.6121824682198513, "unit": "ratio"},
+        "evidence_precision_at_5": {"value": 0.10086885500812046, "unit": "ratio"},
+        "retrieval_p95": {"value": 841.468, "unit": "ms", "sample_N": 100}
+      },
+      "Delta": {
+        "quality_metric_absolute_gain": {"value": 0.02, "unit": "ratio points", "status": "provisional taskbook candidate"},
+        "regression_tolerance": {"value": 0.02, "unit": "absolute ratio points", "status": "taskbook candidate"}
+      },
+      "F": {
+        "recall_at_5": {"value": 0.8, "unit": "ratio", "status": "provisional candidate; owner approval pending"},
+        "mrr": {"value": 0.7, "unit": "ratio", "status": "provisional candidate; owner approval pending"}
+      },
+      "L": {"value": 800, "unit": "ms end-to-end retrieval P95", "status": "provisional candidate; owner approval pending"},
+      "C": {
+        "citation_accuracy": {"value": 0.9, "unit": "ratio", "status": "provisional candidate; not measured in retrieval-only baseline"},
+        "faithfulness": {"value": null, "unit": "ratio", "status": "no approved threshold and no answer-evaluation dataset"}
+      },
+      "N": {
+        "value": 30,
+        "unit": "questions per reported slice",
+        "status": "minimum candidate only; statistical power and confidence-interval policy not approved",
+        "observed_answerable_mapped": 87,
+        "observed_smaller_slice_warning": "Most answer-type and query-category strata have fewer than 30 examples."
+      },
+      "status": "BLOCKED"
+    },
+    {
+      "slice_id": "synthetic_single_document_import_smoke",
+      "population": "one synthetic TXT imported through the project runtime",
+      "observed_N": 1,
+      "B": {
+        "expected_identifier_hit": {"value": 1.0, "unit": "hit ratio"},
+        "scope_violations": {"value": 0, "unit": "count"},
+        "unresolved_citations": {"value": 0, "unit": "count"}
+      },
+      "Delta": {"value": 0.02, "unit": "ratio points", "status": "not statistically meaningful at N=1"},
+      "F": {"value": null, "unit": "metric dependent", "status": "synthetic smoke is not a quality floor"},
+      "L": {"value": null, "unit": "ms", "status": "no load sample"},
+      "C": {"value": null, "unit": "ratio", "status": "citation resolution smoke is not claim-level citation accuracy"},
+      "N": {"value": 30, "unit": "questions per reported slice", "status": "candidate minimum; observed N=1"},
+      "status": "BLOCKED"
+    },
+    {
+      "slice_id": "production_open_document_discovery",
+      "population": "user-owned source files and cross-document questions",
+      "observed_N": 0,
+      "B": {"value": null, "unit": "metric dependent", "status": "no representative production corpus or gold evidence"},
+      "Delta": {"value": 0.02, "unit": "ratio points", "status": "provisional taskbook candidate"},
+      "F": {
+        "recall_at_5": {"value": 0.8, "unit": "ratio", "status": "provisional candidate; owner approval pending"},
+        "mrr": {"value": 0.7, "unit": "ratio", "status": "provisional candidate; owner approval pending"}
+      },
+      "L": {"value": 800, "unit": "ms end-to-end retrieval P95", "status": "provisional candidate; owner approval pending"},
+      "C": {
+        "citation_accuracy": {"value": 0.9, "unit": "ratio", "status": "provisional candidate; not measured"},
+        "faithfulness": {"value": null, "unit": "ratio", "status": "owner threshold and blinded labels required"}
+      },
+      "N": {"value": 30, "unit": "questions per reported slice", "status": "provisional minimum; owner must approve evaluation design"},
+      "status": "BLOCKED"
+    }
+  ],
+  "release_blockers": [
+    "No representative user-owned document corpus, open-document query set, or source-span gold labels.",
+    "Candidate recall/MRR/citation/latency values lack owner-approved business SLOs.",
+    "Answer generation was disabled, so claim-level Citation Accuracy and Faithfulness were not measured.",
+    "Parser, wrong-paper, and injected partial-index bad cases are not yet replayable; see S00.3.md and OPEN-ISSUES.md."
+  ]
+}
