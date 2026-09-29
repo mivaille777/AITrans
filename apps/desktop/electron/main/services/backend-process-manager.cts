@@ -155,6 +155,9 @@ export class BackendProcessManager {
       env: {
         ...process.env,
         PYTHONUNBUFFERED: "1",
+        ...(app.isPackaged
+          ? { AITRANS_SANDBOX_BUILD_CONTEXT: path.join(process.resourcesPath, "sandbox", "python") }
+          : {}),
       },
     })
 

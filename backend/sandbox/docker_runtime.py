@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
+from pathlib import Path
 from threading import Event
 from typing import Any
 
@@ -24,6 +25,7 @@ from backend.sandbox.errors import (
     SandboxCleanupError,
     SandboxCreateError,
     SandboxExecutionError,
+    SandboxImageBuildError,
     SandboxImageMissingError,
     SandboxStartError,
 )
@@ -163,6 +165,104 @@ class DockerSandboxRuntime:
             server_os=server_os,
             message="Docker sandbox runtime is ready.",
         )
+
+    def build_image(
+        self,
+        context_path: Path,
+        *,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """Build the configured sandbox image while exposing safe progress text."""
+
+        if not context_path.is_dir() or not (context_path / "Dockerfile").is_file():
+            raise SandboxImageBuildError(
+                "Sandbox image build files are missing from this installation."
+            )
+
+        def report(message: str) -> None:
+            if on_progress is not None:
+                on_progress(message[:180])
+
+        report(
+            "Building the sandbox image. Docker may need to download the Python "
+            "base image and dependencies."
+        )
+        try:
+            client = self._get_client()
+            # Use the low-level streaming API so long builds can report progress
+            # while Docker downloads and creates image layers.
+            for event in client.api.build(
+                path=str(context_path),
+                dockerfile="Dockerfile",
+                tag=self.image,
+                rm=True,
+                pull=True,
+                decode=True,
+                timeout=900,
+            ):
+                if not isinstance(event, dict):
+                    continue
+                if event.get("error"):
+                    raise SandboxImageBuildError(
+                        "Docker could not build the sandbox image. Check Docker Desktop "
+                        "and network access, then retry."
+                    )
+
+                stream = str(event.get("stream", ""))
+                step = re.search(
+                    r"Step\s+(\d+)/(\d+)|#\d+\s+\[(\d+)/(\d+)\]",
+                    stream,
+                    flags=re.IGNORECASE,
+                )
+                stream_lower = stream.lower()
+                if (
+                    "pip install" in stream_lower
+                    or "installing collected packages" in stream_lower
+                ):
+                    report("Installing Python sandbox dependencies.")
+                    continue
+                if "load metadata for docker.io/library/python" in stream_lower:
+                    report("Checking the Python base image and downloading it if needed.")
+                    continue
+                if step:
+                    current_step = step.group(1) or step.group(3)
+                    total_steps = step.group(2) or step.group(4)
+                    report(
+                        f"Building sandbox image (step {current_step} of {total_steps})."
+                    )
+                    continue
+
+                status = str(event.get("status", "")).lower()
+                if status == "downloading":
+                    progress = event.get("progressDetail") or {}
+                    current = (
+                        progress.get("current") if isinstance(progress, dict) else None
+                    )
+                    total = progress.get("total") if isinstance(progress, dict) else None
+                    if isinstance(current, int) and isinstance(total, int) and total > 0:
+                        percent = min(100, max(0, int(current * 100 / total)))
+                        report(f"Downloading Python base image ({percent}%).")
+                    else:
+                        report("Downloading Python base image.")
+                elif status in {"extracting", "pull complete", "download complete"}:
+                    report("Preparing Python base image layers.")
+                elif "Successfully built" in stream or "Successfully tagged" in stream:
+                    report("Finishing the sandbox image build.")
+
+            client.images.get(self.image)
+        except SandboxImageBuildError:
+            raise
+        except DockerException as exc:
+            raise SandboxImageBuildError(
+                "Docker could not build the sandbox image. Check Docker Desktop "
+                "and network access, then retry."
+            ) from exc
+        except OSError as exc:
+            raise SandboxImageBuildError(
+                "Sandbox image build files could not be read."
+            ) from exc
+
+        report("Sandbox image build complete.")
 
     def _ensure_ready(self) -> None:
         health = self.health()

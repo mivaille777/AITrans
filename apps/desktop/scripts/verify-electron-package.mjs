@@ -76,6 +76,8 @@ const required = [
   path.join(sidecarDir, "AITransBackend.exe"),
   path.join(sidecarDir, "THIRD_PARTY_LICENSES.zip"),
   path.join(resources, "backend", "sidecar-manifest.json"),
+  path.join(resources, "sandbox", "python", "Dockerfile"),
+  path.join(resources, "sandbox", "python", "requirements.txt"),
   updateConfigPath,
 ]
 for (const file of required) {

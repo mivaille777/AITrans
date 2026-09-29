@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from backend.api.dependencies import (
     get_filesystem_workspace_service,
     get_sandbox_debug_manager,
+    get_sandbox_debug_runtime_start_status,
     get_sandbox_debug_service,
     get_sandbox_runtime_health,
     start_sandbox_debug_runtime,
@@ -17,6 +18,7 @@ from backend.models.sandbox_debug import (
     SandboxDebugTrace,
     SandboxRunSummary,
     SandboxRuntimeHealthResponse,
+    SandboxRuntimeStartStatusResponse,
 )
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxRuntimeHealth
@@ -68,9 +70,14 @@ def sandbox_debug_health() -> SandboxRuntimeHealthResponse:
     return _health_response()
 
 
-@router.post("/runtime/start", response_model=SandboxRuntimeHealthResponse)
-def start_sandbox_debug_runtime_route() -> SandboxRuntimeHealthResponse:
-    return _health_response(start_sandbox_debug_runtime())
+@router.post("/runtime/start", response_model=SandboxRuntimeStartStatusResponse)
+def start_sandbox_debug_runtime_route() -> SandboxRuntimeStartStatusResponse:
+    return start_sandbox_debug_runtime()
+
+
+@router.get("/runtime/start", response_model=SandboxRuntimeStartStatusResponse)
+def sandbox_debug_runtime_start_status() -> SandboxRuntimeStartStatusResponse:
+    return get_sandbox_debug_runtime_start_status()
 
 
 @router.get("/runs", response_model=list[SandboxRunSummary])

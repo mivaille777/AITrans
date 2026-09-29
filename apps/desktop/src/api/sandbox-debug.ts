@@ -22,6 +22,12 @@ interface RawSandboxRuntimeHealth {
   message?: string
 }
 
+export interface SandboxRuntimeStartStatus {
+  status: "idle" | "starting" | "ready" | "failed"
+  message: string
+  error_code: string
+}
+
 export type SandboxRunStatus =
   | "pending"
   | "preparing"
@@ -240,12 +246,15 @@ export async function getSandboxRuntimeHealth(): Promise<SandboxRuntimeHealth> {
   return normalizeSandboxRuntimeHealth(raw)
 }
 
-export async function startSandboxDebugRuntime(): Promise<SandboxRuntimeHealth> {
-  const raw = await apiPost<RawSandboxRuntimeHealth, Record<string, never>>(
+export async function startSandboxDebugRuntime(): Promise<SandboxRuntimeStartStatus> {
+  return apiPost<SandboxRuntimeStartStatus, Record<string, never>>(
     "/api/sandbox/debug/runtime/start",
     {},
   )
-  return normalizeSandboxRuntimeHealth(raw)
+}
+
+export async function getSandboxRuntimeStartStatus(): Promise<SandboxRuntimeStartStatus> {
+  return apiGet<SandboxRuntimeStartStatus>("/api/sandbox/debug/runtime/start")
 }
 
 export function normalizeSandboxRuntimeHealth(

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from threading import Lock
+from pathlib import Path
+from threading import Lock, Thread
+from typing import Literal
 
 from backend.agent_tools.base import TypedAgentToolDefinition
 from backend.api.knowledge_dependencies import (
@@ -16,7 +18,9 @@ from backend.api.llm_dependencies import (
     build_routed_quick_action_service,
 )
 from backend.models.sandbox_approval import SandboxApprovalRequest
+from backend.models.sandbox_debug import SandboxRuntimeStartStatusResponse
 from backend.sandbox.docker_runtime import DEFAULT_IMAGE, DockerSandboxRuntime
+from backend.sandbox.errors import SandboxError, SandboxImageBuildError
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxRuntimeHealth
 from backend.services.agent_tool_registry import AgentToolRegistry
@@ -74,6 +78,8 @@ _sandbox_manager: SandboxManager | None = None
 _sandbox_manager_lock = Lock()
 _sandbox_debug_manager: SandboxManager | None = None
 _sandbox_debug_manager_lock = Lock()
+_sandbox_debug_runtime_start_status = SandboxRuntimeStartStatusResponse(status="idle")
+_sandbox_debug_runtime_start_status_lock = Lock()
 _filesystem_workspace_service: FilesystemWorkspaceService | None = None
 _filesystem_workspace_service_lock = Lock()
 _sandbox_debug_service: SandboxDebugService | None = None
@@ -476,10 +482,10 @@ def close_workspace_apply_service() -> None:
 
 
 def get_sandbox_runtime_health() -> SandboxRuntimeHealth:
+    debug_manager = _sandbox_debug_manager
+    if debug_manager is not None:
+        return debug_manager.health()
     if not _sandbox_enabled():
-        manager = _sandbox_debug_manager
-        if manager is not None:
-            return manager.health()
         return SandboxRuntimeHealth(
             available=False,
             image=os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip()
@@ -506,37 +512,115 @@ def get_sandbox_runtime_health() -> SandboxRuntimeHealth:
         runtime.close()
 
 
-def start_sandbox_debug_runtime() -> SandboxRuntimeHealth:
-    """Enable Sandbox Debug Studio for this backend session when Docker is ready."""
+def _set_sandbox_debug_runtime_start_status(
+    status: Literal["idle", "starting", "ready", "failed"],
+    message: str,
+    error_code: str = "",
+) -> SandboxRuntimeStartStatusResponse:
+    global _sandbox_debug_runtime_start_status
+    value = SandboxRuntimeStartStatusResponse(
+        status=status, message=message, error_code=error_code
+    )
+    with _sandbox_debug_runtime_start_status_lock:
+        _sandbox_debug_runtime_start_status = value
+    return value
 
-    if _sandbox_enabled():
-        manager = get_sandbox_manager()
-        if manager is not None:
-            return manager.health()
-        return get_sandbox_runtime_health()
 
+def get_sandbox_debug_runtime_start_status() -> SandboxRuntimeStartStatusResponse:
+    with _sandbox_debug_runtime_start_status_lock:
+        return _sandbox_debug_runtime_start_status.model_copy()
+
+
+def _sandbox_image_build_context() -> Path:
+    configured = os.getenv("AITRANS_SANDBOX_BUILD_CONTEXT", "").strip()
+    if configured:
+        context = Path(configured).resolve()
+    else:
+        context = Path(__file__).resolve().parents[2] / "sandbox" / "python"
+    if not context.is_dir() or not (context / "Dockerfile").is_file():
+        raise SandboxImageBuildError(
+            "Sandbox image build files are missing from this installation."
+        )
+    return context
+
+
+def _start_sandbox_debug_runtime_worker() -> None:
     global _sandbox_debug_manager
-    with _sandbox_debug_manager_lock:
-        if _sandbox_debug_manager is not None:
-            return _sandbox_debug_manager.health()
-
-        image = os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE
-        try:
-            runtime = DockerSandboxRuntime(image=image)
-        except ValueError:
-            return SandboxRuntimeHealth(
-                available=False,
-                image=image,
-                error_code="invalid_sandbox_image",
-                message="The configured sandbox image is invalid.",
+    image = os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE
+    runtime: DockerSandboxRuntime | None = None
+    runtime_transferred = False
+    try:
+        runtime = DockerSandboxRuntime(image=image, docker_api_timeout_seconds=5)
+        health = runtime.health()
+        if not health.available and health.error_code == "sandbox_image_missing":
+            _set_sandbox_debug_runtime_start_status(
+                "starting",
+                "Sandbox image is missing. Building it now; the first build may "
+                "download the Python base image and Python dependencies.",
             )
 
-        health = runtime.health()
-        if health.available:
-            _sandbox_debug_manager = SandboxManager(runtime)
-        else:
+            def report_build_progress(message: str) -> None:
+                _set_sandbox_debug_runtime_start_status("starting", message)
+
+            runtime.build_image(
+                _sandbox_image_build_context(),
+                on_progress=report_build_progress,
+            )
+            health = runtime.health()
+
+        if not health.available:
             runtime.close()
-        return health
+            runtime = None
+            _set_sandbox_debug_runtime_start_status(
+                "failed",
+                health.message or "Sandbox runtime is unavailable.",
+                health.error_code,
+            )
+            return
+
+        manager = SandboxManager(runtime)
+        with _sandbox_debug_manager_lock:
+            previous = _sandbox_debug_manager
+            _sandbox_debug_manager = manager
+        runtime_transferred = True
+        if previous is not None:
+            previous.close()
+        _set_sandbox_debug_runtime_start_status(
+            "ready", "Sandbox is ready. You can run code in an isolated container."
+        )
+    except SandboxError as exc:
+        _set_sandbox_debug_runtime_start_status("failed", str(exc), exc.code)
+    except ValueError:
+        _set_sandbox_debug_runtime_start_status(
+            "failed", "The configured sandbox image is invalid.", "invalid_sandbox_image"
+        )
+    except Exception:  # noqa: BLE001 - keep Docker and filesystem details out of the API.
+        _set_sandbox_debug_runtime_start_status(
+            "failed", "Sandbox runtime could not be started.", "sandbox_start_failed"
+        )
+    finally:
+        if runtime is not None and not runtime_transferred:
+            runtime.close()
+
+
+def start_sandbox_debug_runtime() -> SandboxRuntimeStartStatusResponse:
+    """Start the Studio runtime asynchronously, building its image when needed."""
+
+    global _sandbox_debug_runtime_start_status
+    with _sandbox_debug_runtime_start_status_lock:
+        if _sandbox_debug_runtime_start_status.status == "starting":
+            return _sandbox_debug_runtime_start_status.model_copy()
+        _sandbox_debug_runtime_start_status = SandboxRuntimeStartStatusResponse(
+            status="starting", message="Checking Docker Desktop and sandbox image…"
+        )
+        response = _sandbox_debug_runtime_start_status.model_copy()
+
+    Thread(
+        target=_start_sandbox_debug_runtime_worker,
+        daemon=True,
+        name="sandbox-debug-runtime-start",
+    ).start()
+    return response
 
 
 def get_sandbox_manager() -> SandboxManager | None:
@@ -565,10 +649,13 @@ def get_sandbox_manager() -> SandboxManager | None:
 def get_sandbox_debug_manager() -> SandboxManager | None:
     """Return the configured Agent runtime or a Studio-started debug runtime."""
 
+    manager = _sandbox_debug_manager
+    if manager is not None:
+        return manager
     manager = get_sandbox_manager()
     if manager is not None:
         return manager
-    return _sandbox_debug_manager
+    return None
 
 
 def close_sandbox_manager() -> None:

@@ -4,6 +4,7 @@ const path = require("node:path")
 const desktopRoot = __dirname
 const repoRoot = path.resolve(desktopRoot, "../..")
 const stagedBackend = path.join(repoRoot, "build", "electron-resources", "backend")
+const stagedSandbox = path.join(repoRoot, "build", "electron-resources", "sandbox")
 const releaseVersion = fs.readFileSync(path.join(repoRoot, "VERSION"), "utf8").trim()
 const updateConfigPath = path.join(repoRoot, "build", "electron-resources", "update-config.json")
 
@@ -34,7 +35,7 @@ module.exports = {
     },
     overwrite: true,
     prune: false,
-    extraResource: [stagedBackend, updateConfigPath],
+    extraResource: [stagedBackend, stagedSandbox, updateConfigPath],
     ...(windowsSign ? { windowsSign } : {}),
     ignore: [
       /^\/src(?:\/|$)/,

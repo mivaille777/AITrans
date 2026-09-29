@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import {
   getSandboxDebugRun,
   getSandboxRuntimeHealth,
+  getSandboxRuntimeStartStatus,
   startSandboxDebugRuntime,
   type SandboxDebugTrace as SandboxDebugTraceData,
   type SandboxRuntimeHealth,
@@ -115,21 +116,36 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   async function startRuntime() {
     if (runtimeStartPending) return
     setRuntimeStartPending(true)
-    setRuntimeActionMessage("")
+    setRuntimeActionMessage("Checking Docker Desktop and sandbox image…")
     try {
-      const health = await startSandboxDebugRuntime()
-      setRuntimeHealth(health)
-      if (!health.available) {
-        const hint = health.error_code === "sandbox_image_missing"
-          ? "Build the image with .\\scripts\\sandbox\\build_image.ps1, then retry."
-          : health.error_code === "docker_unavailable"
-            ? "Start Docker Desktop in Linux container mode, then retry."
-            : health.error_code === "docker_not_linux"
-              ? "Switch Docker Desktop to Linux containers, then retry."
-              : "Check Docker Desktop and the configured sandbox image, then retry."
-        setRuntimeActionMessage(`${sandboxDebugErrorFromCode(health.error_code, "Sandbox runtime is unavailable.")} ${hint}`)
-      } else {
+      let status = await startSandboxDebugRuntime()
+      setRuntimeActionMessage(status.message || "Starting sandbox runtime…")
+      while (status.status === "starting") {
+        await new Promise((resolve) => window.setTimeout(resolve, 1200))
+        status = await getSandboxRuntimeStartStatus()
+        if (status.status === "starting") {
+          setRuntimeActionMessage(status.message || "Building sandbox image…")
+        }
+      }
+
+      const health = await getSandboxRuntimeHealth().catch(() => null)
+      if (health) setRuntimeHealth(health)
+      if (status.status === "ready" && health?.available) {
         setRuntimeActionMessage("Sandbox is ready. Each Run starts an isolated container and removes it when execution ends.")
+      } else {
+        const hint = status.error_code === "docker_unavailable"
+          ? "Start Docker Desktop in Linux container mode, then retry."
+          : status.error_code === "docker_not_linux"
+            ? "Switch Docker Desktop to Linux containers, then retry."
+            : status.error_code === "sandbox_image_build_failed"
+              ? "Check Docker Desktop network access, then retry."
+              : "Check Docker Desktop and retry."
+        const errorMessage = status.status === "ready"
+          ? "Sandbox runtime health check did not confirm readiness."
+          : status.error_code
+            ? sandboxDebugErrorFromCode(status.error_code, status.message || "Sandbox runtime is unavailable.")
+            : status.message || "Sandbox runtime is unavailable."
+        setRuntimeActionMessage(`${errorMessage} ${hint}`)
       }
     } catch (error) {
       setRuntimeActionMessage(sandboxDebugErrorMessage(error, "Sandbox runtime could not be started."))

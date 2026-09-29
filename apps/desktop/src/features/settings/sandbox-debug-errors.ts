@@ -4,6 +4,7 @@ const ERROR_BY_CODE: Record<string, string> = {
   sandbox_disabled: "Sandbox runtime has not been started.",
   docker_not_linux: "Sandbox requires a Linux Docker runtime.",
   sandbox_image_missing: "Sandbox image is missing.",
+  sandbox_image_build_failed: "Sandbox image could not be built.",
   image_missing: "Sandbox image is missing.",
   filesystem_workspace_unavailable: "Filesystem workspace is unavailable.",
   workspace_unavailable: "Filesystem workspace is unavailable.",

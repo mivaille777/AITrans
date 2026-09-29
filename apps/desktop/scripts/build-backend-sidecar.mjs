@@ -14,6 +14,9 @@ const sourceSidecar = path.join(pyinstallerDist, "AITransBackend")
 const sidecarExe = path.join(sourceSidecar, "AITransBackend.exe")
 const stagedBackendRoot = path.join(buildRoot, "electron-resources", "backend")
 const stagedSidecar = path.join(stagedBackendRoot, "AITransBackend")
+const sourceSandboxContext = path.join(repoRoot, "sandbox", "python")
+const stagedSandboxRoot = path.join(buildRoot, "electron-resources", "sandbox")
+const stagedSandboxContext = path.join(stagedSandboxRoot, "python")
 const specPath = path.join(repoRoot, "aitrans_backend.spec")
 const versionPath = path.join(repoRoot, "VERSION")
 const python = process.env.AITRANS_PYTHON_EXECUTABLE?.trim() || "python"
@@ -87,6 +90,7 @@ await assertBuildEnvironment()
 await rm(pyinstallerDist, { recursive: true, force: true })
 await rm(pyinstallerWork, { recursive: true, force: true })
 await rm(stagedBackendRoot, { recursive: true, force: true })
+await rm(stagedSandboxRoot, { recursive: true, force: true })
 await mkdir(pyinstallerDist, { recursive: true })
 await mkdir(pyinstallerWork, { recursive: true })
 
@@ -114,6 +118,7 @@ if (forbidden) throw new Error(`Model weight artifact must not be bundled into t
 
 await mkdir(stagedBackendRoot, { recursive: true })
 await cp(sourceSidecar, stagedSidecar, { recursive: true })
+await cp(sourceSandboxContext, stagedSandboxContext, { recursive: true })
 await writeFile(
   path.join(stagedBackendRoot, "sidecar-manifest.json"),
   JSON.stringify({
@@ -126,3 +131,4 @@ await writeFile(
   "utf8",
 )
 console.log(`Staged Electron backend resource: ${stagedSidecar}`)
+console.log(`Staged sandbox image build context: ${stagedSandboxContext}`)

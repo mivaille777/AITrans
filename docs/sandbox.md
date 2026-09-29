@@ -30,10 +30,13 @@ not registered for Agent runs. The image must use a pinned tag; `latest` is
 rejected.
 
 For manual runs, open **Settings → Sandbox Debug Studio** and click **Start
-Sandbox**. Docker Desktop must be running in Linux container mode, and the image
-above must already be built. Starting the Studio runtime applies only to the
-current backend session. Each **Run** starts a short-lived isolated container
-and removes it when execution ends.
+Sandbox**. Docker Desktop must be running in Linux container mode. If the image
+is missing, the page builds it automatically and shows the current build stage;
+the first build needs network access to download the Python base image and its
+Python dependencies. Running the PowerShell build script above is optional.
+Starting the Studio runtime applies only to the current backend session. Each
+**Run** starts a short-lived isolated container and removes it when execution
+ends.
 
 When starting the desktop app with the development launcher, opt in explicitly:
 

@@ -21,6 +21,10 @@ class SandboxImageMissingError(SandboxError):
     code = "sandbox_image_missing"
 
 
+class SandboxImageBuildError(SandboxError):
+    code = "sandbox_image_build_failed"
+
+
 class SandboxCreateError(SandboxError):
     code = "sandbox_create_failed"
 

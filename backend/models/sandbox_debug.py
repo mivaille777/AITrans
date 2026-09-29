@@ -53,6 +53,12 @@ class SandboxRuntimeHealthResponse(SandboxDebugModel):
     error_code: str | None = None
 
 
+class SandboxRuntimeStartStatusResponse(SandboxDebugModel):
+    status: Literal["idle", "starting", "ready", "failed"]
+    message: str = ""
+    error_code: str = ""
+
+
 class SandboxRunSummary(SandboxDebugModel):
     sandbox_id: str
     run_id: str
@@ -190,4 +196,5 @@ __all__ = [
     "SandboxRunStatus",
     "SandboxRunSummary",
     "SandboxRuntimeHealthResponse",
+    "SandboxRuntimeStartStatusResponse",
 ]
