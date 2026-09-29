@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from backend.rag.source_span import SourceSpan
+
 
 class RagContractModel(BaseModel):
     """Base model for stable RAG domain contracts."""
@@ -35,7 +37,7 @@ class DocumentSection(RagContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_character_range(self) -> "DocumentSection":
+    def validate_character_range(self) -> DocumentSection:
         if self.end_char < self.start_char:
             raise ValueError("end_char must be greater than or equal to start_char")
         return self
@@ -49,7 +51,7 @@ class DocumentPage(RagContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_character_range(self) -> "DocumentPage":
+    def validate_character_range(self) -> DocumentPage:
         if self.end_char < self.start_char:
             raise ValueError("end_char must be greater than or equal to start_char")
         return self
@@ -112,12 +114,34 @@ class DocumentChunk(RagContractModel):
     parser_version: str = ""
     chunker_version: str = ""
     embedding_version: str = ""
+    source_span: SourceSpan | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_character_range(self) -> "DocumentChunk":
+    def validate_character_range(self) -> DocumentChunk:
         if self.end_char < self.start_char:
             raise ValueError("end_char must be greater than or equal to start_char")
+        if self.source_span is not None:
+            if (
+                self.start_char != self.source_span.start_char
+                or self.end_char != self.source_span.end_char
+            ):
+                raise ValueError(
+                    "chunk character range must match its source_span range"
+                )
+            if (
+                self.document_hash
+                and self.document_hash != self.source_span.document_hash
+            ):
+                raise ValueError(
+                    "chunk document_hash must match source_span document_hash"
+                )
+            if (
+                self.source_uri
+                and self.source_span.source_uri
+                and self.source_uri != self.source_span.source_uri
+            ):
+                raise ValueError("chunk source_uri must match source_span source_uri")
         if (
             self.paragraph_index is not None
             and self.paragraph_end_index is not None
@@ -141,10 +165,13 @@ class RetrievalContextWindow(RagContractModel):
     strategy: str = "small-to-big"
 
     @model_validator(mode="after")
-    def validate_window(self) -> "RetrievalContextWindow":
-        if self.page_start is not None and self.page_end is not None:
-            if self.page_end < self.page_start:
-                raise ValueError("page_end must not be smaller than page_start")
+    def validate_window(self) -> RetrievalContextWindow:
+        if (
+            self.page_start is not None
+            and self.page_end is not None
+            and self.page_end < self.page_start
+        ):
+            raise ValueError("page_end must not be smaller than page_start")
         if self.chunks and self.anchor_chunk_id not in {
             chunk.chunk_id for chunk in self.chunks
         }:
@@ -210,5 +237,6 @@ __all__ = [
     "RetrievalCandidate",
     "RetrievalContextWindow",
     "RetrievalResult",
+    "SourceSpan",
     "build_stable_chunk_id",
 ]
