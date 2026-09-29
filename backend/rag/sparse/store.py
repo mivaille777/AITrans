@@ -17,13 +17,20 @@ from backend.rag.structure_retrieval import section_match_priority
 
 @runtime_checkable
 class SparseRetriever(Protocol):
-    def index_chunks(self, chunks: list[DocumentChunk]) -> None: ...
+    def index_chunks(
+        self,
+        chunks: list[DocumentChunk],
+        *,
+        generation_id: str | None = None,
+    ) -> None: ...
 
     def search(
         self,
         query: str,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        *,
+        generation_id: str | None = None,
     ) -> list[RetrievalCandidate]: ...
 
     def search_sections(
@@ -31,21 +38,44 @@ class SparseRetriever(Protocol):
         headings: tuple[str, ...],
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        *,
+        generation_id: str | None = None,
     ) -> list[RetrievalCandidate]: ...
 
     def section_neighbors(
         self,
         anchor: DocumentChunk,
         radius: int,
+        *,
+        generation_id: str | None = None,
     ) -> list[DocumentChunk]: ...
 
-    def delete_document(self, document_id: str) -> None: ...
+    def delete_document(
+        self,
+        document_id: str,
+        *,
+        generation_id: str | None = None,
+    ) -> None: ...
 
-    def rebuild(self, chunks: list[DocumentChunk]) -> None: ...
+    def rebuild(
+        self,
+        chunks: list[DocumentChunk],
+        *,
+        generation_id: str | None = None,
+    ) -> None: ...
 
-    def list_chunks(self) -> list[DocumentChunk]: ...
+    def list_chunks(
+        self,
+        *,
+        generation_id: str | None = None,
+    ) -> list[DocumentChunk]: ...
 
-    def get_chunk(self, chunk_id: str) -> DocumentChunk | None: ...
+    def get_chunk(
+        self,
+        chunk_id: str,
+        *,
+        generation_id: str | None = None,
+    ) -> DocumentChunk | None: ...
 
 
 class _SparseData(BaseModel):
@@ -70,9 +100,35 @@ class BM25SparseRetriever:
         self._data = self._load()
         self._rebuild_index()
 
-    def index_chunks(self, chunks: list[DocumentChunk]) -> None:
+    def index_chunks(
+        self,
+        chunks: list[DocumentChunk],
+        *,
+        generation_id: str | None = None,
+    ) -> None:
+        normalized_generation = self._normalize_generation_id(generation_id)
+        additions: dict[str, DocumentChunk] = {}
         for chunk in chunks:
-            self._data.chunks[chunk.chunk_id] = chunk.model_copy(deep=True)
+            chunk_generation = self._chunk_generation(chunk)
+            if (
+                normalized_generation
+                and chunk_generation
+                and (normalized_generation != chunk_generation)
+            ):
+                raise RagInvariantError(
+                    "chunk generation metadata does not match generation_id"
+                )
+            effective_generation = normalized_generation or chunk_generation
+            stored_chunk = self._with_generation(chunk, effective_generation)
+            storage_key = self._storage_key(chunk.chunk_id, effective_generation)
+            existing = additions.get(storage_key) or self._data.chunks.get(storage_key)
+            if existing and (
+                existing.chunk_id != stored_chunk.chunk_id
+                or self._chunk_generation(existing) != effective_generation
+            ):
+                raise RagInvariantError("sparse generation storage key collision")
+            additions[storage_key] = stored_chunk
+        self._data.chunks.update(additions)
         self._rebuild_index()
         self._save()
 
@@ -81,9 +137,12 @@ class BM25SparseRetriever:
         query: str,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        *,
+        generation_id: str | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
+        normalized_generation = self._normalize_generation_id(generation_id)
         query_tokens = self._tokenizer.tokenize(query)
         if not query_tokens:
             return []
@@ -92,6 +151,9 @@ class BM25SparseRetriever:
             chunk_id: score
             for chunk_id, score in scores.items()
             if self._matches_filter(self._data.chunks[chunk_id], filters)
+            and self._matches_generation(
+                self._data.chunks[chunk_id], normalized_generation
+            )
         }
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:top_k]
         return [
@@ -108,23 +170,32 @@ class BM25SparseRetriever:
         headings: tuple[str, ...],
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        *,
+        generation_id: str | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
+        normalized_generation = self._normalize_generation_id(generation_id)
         if not any(str(item).strip() for item in headings):
             return []
 
         normalized_headings = " ".join(headings).casefold()
         effective_filters = filters
-        if "reference" in normalized_headings or "bibliography" in normalized_headings:
-            if filters is not None and filters.exclude_references:
-                effective_filters = filters.model_copy(
-                    update={"exclude_references": False}
-                )
+        if (
+            (
+                "reference" in normalized_headings
+                or "bibliography" in normalized_headings
+            )
+            and filters is not None
+            and filters.exclude_references
+        ):
+            effective_filters = filters.model_copy(update={"exclude_references": False})
 
         matches: list[tuple[int, DocumentChunk]] = []
         for chunk in self._data.chunks.values():
             if not self._matches_filter(chunk, effective_filters):
+                continue
+            if not self._matches_generation(chunk, normalized_generation):
                 continue
             priority = section_match_priority(
                 RetrievalCandidate(chunk=chunk),
@@ -156,13 +227,30 @@ class BM25SparseRetriever:
         self,
         anchor: DocumentChunk,
         radius: int,
+        *,
+        generation_id: str | None = None,
     ) -> list[DocumentChunk]:
         """Return a bounded document-order neighborhood inside one leaf section."""
 
         if radius < 0:
             raise ValueError("section neighbor radius must not be negative")
-        stored_anchor = self._data.chunks.get(anchor.chunk_id, anchor)
-        section_path = tuple(item.strip() for item in stored_anchor.section_path if item.strip())
+        normalized_generation = self._normalize_generation_id(generation_id)
+        anchor_generation = self._chunk_generation(anchor)
+        if (
+            normalized_generation
+            and anchor_generation
+            and (normalized_generation != anchor_generation)
+        ):
+            raise RagInvariantError("anchor generation does not match generation_id")
+        normalized_generation = normalized_generation or self._normalize_generation_id(
+            anchor_generation
+        )
+        stored_anchor = self._data.chunks.get(
+            self._storage_key(anchor.chunk_id, normalized_generation), anchor
+        )
+        section_path = tuple(
+            item.strip() for item in stored_anchor.section_path if item.strip()
+        )
         if not section_path:
             return [stored_anchor.model_copy(deep=True)]
 
@@ -170,7 +258,9 @@ class BM25SparseRetriever:
             chunk
             for chunk in self._data.chunks.values()
             if chunk.document_id == stored_anchor.document_id
-            and tuple(item.strip() for item in chunk.section_path if item.strip()) == section_path
+            and self._matches_generation(chunk, normalized_generation)
+            and tuple(item.strip() for item in chunk.section_path if item.strip())
+            == section_path
         ]
         section_chunks.sort(key=lambda chunk: (chunk.chunk_index, chunk.chunk_id))
         anchor_position = next(
@@ -187,31 +277,81 @@ class BM25SparseRetriever:
         end = min(len(section_chunks), anchor_position + radius + 1)
         return [chunk.model_copy(deep=True) for chunk in section_chunks[start:end]]
 
-    def delete_document(self, document_id: str) -> None:
+    def delete_document(
+        self,
+        document_id: str,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
+        normalized_generation = self._normalize_generation_id(generation_id)
         self._data.chunks = {
-            chunk_id: chunk
-            for chunk_id, chunk in self._data.chunks.items()
+            storage_key: chunk
+            for storage_key, chunk in self._data.chunks.items()
             if chunk.document_id != document_id
+            or (
+                normalized_generation is not None
+                and self._chunk_generation(chunk) != normalized_generation
+            )
         }
         self._rebuild_index()
         self._save()
 
-    def rebuild(self, chunks: list[DocumentChunk]) -> None:
-        self._data.chunks = {
-            chunk.chunk_id: chunk.model_copy(deep=True) for chunk in chunks
-        }
+    def rebuild(
+        self,
+        chunks: list[DocumentChunk],
+        *,
+        generation_id: str | None = None,
+    ) -> None:
+        normalized_generation = self._normalize_generation_id(generation_id)
+        rebuilt_chunks: dict[str, DocumentChunk] = {}
+        if normalized_generation is not None:
+            rebuilt_chunks = {
+                key: chunk
+                for key, chunk in self._data.chunks.items()
+                if self._chunk_generation(chunk) != normalized_generation
+            }
+        for chunk in chunks:
+            chunk_generation = self._chunk_generation(chunk)
+            if (
+                normalized_generation
+                and chunk_generation
+                and (normalized_generation != chunk_generation)
+            ):
+                raise RagInvariantError(
+                    "chunk generation metadata does not match generation_id"
+                )
+            effective_generation = normalized_generation or chunk_generation
+            stored_chunk = self._with_generation(chunk, effective_generation)
+            storage_key = self._storage_key(chunk.chunk_id, effective_generation)
+            existing = rebuilt_chunks.get(storage_key)
+            if existing and existing.chunk_id != stored_chunk.chunk_id:
+                raise RagInvariantError("sparse generation storage key collision")
+            rebuilt_chunks[storage_key] = stored_chunk
+        self._data.chunks = rebuilt_chunks
         self._rebuild_index()
         self._save()
 
-    def list_chunks(self) -> list[DocumentChunk]:
+    def list_chunks(
+        self,
+        *,
+        generation_id: str | None = None,
+    ) -> list[DocumentChunk]:
         """Return the persisted chunk catalogue without exposing private state."""
 
+        normalized_generation = self._normalize_generation_id(generation_id)
+        chunks = [
+            chunk
+            for chunk in self._data.chunks.values()
+            if normalized_generation is None
+            or self._chunk_generation(chunk) == normalized_generation
+        ]
         return [
             chunk.model_copy(deep=True)
             for chunk in sorted(
-                self._data.chunks.values(),
+                chunks,
                 key=lambda item: (
                     item.document_id,
+                    self._chunk_generation(item) or "",
                     item.page_number if item.page_number is not None else 10**9,
                     item.chunk_index,
                     item.chunk_id,
@@ -219,9 +359,63 @@ class BM25SparseRetriever:
             )
         ]
 
-    def get_chunk(self, chunk_id: str) -> DocumentChunk | None:
-        chunk = self._data.chunks.get(str(chunk_id or "").strip())
+    def get_chunk(
+        self,
+        chunk_id: str,
+        *,
+        generation_id: str | None = None,
+    ) -> DocumentChunk | None:
+        normalized_chunk_id = str(chunk_id or "").strip()
+        normalized_generation = self._normalize_generation_id(generation_id)
+        chunk = self._data.chunks.get(
+            self._storage_key(normalized_chunk_id, normalized_generation)
+        )
         return chunk.model_copy(deep=True) if chunk is not None else None
+
+    @staticmethod
+    def _normalize_generation_id(generation_id: str | None) -> str | None:
+        if generation_id is None:
+            return None
+        normalized = str(generation_id).strip()
+        if not normalized:
+            raise RagInvariantError("generation_id must not be empty")
+        return normalized
+
+    @staticmethod
+    def _chunk_generation(chunk: DocumentChunk) -> str | None:
+        generation = str(chunk.metadata.get("index_generation") or "").strip()
+        return generation or None
+
+    @staticmethod
+    def _storage_key(chunk_id: str, generation_id: str | None) -> str:
+        if generation_id is None:
+            return chunk_id
+        return f"\x00generation:{len(generation_id)}:{generation_id}:{chunk_id}"
+
+    @staticmethod
+    def _with_generation(
+        chunk: DocumentChunk,
+        generation_id: str | None,
+    ) -> DocumentChunk:
+        copied = chunk.model_copy(deep=True)
+        if generation_id is None:
+            return copied
+        metadata = dict(copied.metadata)
+        metadata["index_generation"] = generation_id
+        return copied.model_copy(update={"metadata": metadata})
+
+    @classmethod
+    def _matches_generation(
+        cls,
+        chunk: DocumentChunk,
+        generation_id: str | None,
+    ) -> bool:
+        chunk_generation = cls._chunk_generation(chunk)
+        return (
+            chunk_generation is None
+            if generation_id is None
+            else chunk_generation == generation_id
+        )
 
     def _rebuild_index(self) -> None:
         self._index.rebuild(

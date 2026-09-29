@@ -10,9 +10,10 @@
 - 生产 Go/No-Go：BLOCKED；不得据此启用 Graph 默认值或宣称生产达标
 - S01.1：PASS（只读检查三库 document/chunk/generation 差异；当前 generation 缺失会明确报告 incomplete）
 - S01.2：PASS（manifest generation 状态迁移、active pointer、旧版保留和重启恢复；未切换线上写入路径）
-- 当前工程任务：S01.3（按用户 2026-09-30 明确要求继续执行整份任务书；继续技术工作不视为 S00 门禁通过）
+- S01.3：PASS（Qdrant/BM25 支持 generation 并存、定向读写删除；产品入口仍读取 legacy generation）
+- 当前工程任务：S01.4（按用户 2026-09-30 明确要求继续执行整份任务书；继续技术工作不视为 S00 门禁通过）
 - Holdout：181 个问题、56 篇论文，已冻结、未运行、不得用于调参
 - GitHub 写入：未推送；只在本地提交
 - 工作区原有用户修改：保留；提交时只暂存任务书当前允许的文件
 
-详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 报告见 [S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。
+详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 报告见 [S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。

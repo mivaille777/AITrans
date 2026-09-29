@@ -251,3 +251,64 @@ def test_chunk_vector_count_mismatch_is_rejected(tmp_path: Path) -> None:
             store.upsert_chunks([make_chunk("chunk_one")], [])
     finally:
         store.close()
+
+
+def test_generations_coexist_search_after_restart_and_delete_independently(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "qdrant"
+    first_store = make_store(path)
+    legacy = make_chunk("chunk_shared", text="legacy blue harbor evidence")
+    generation_one = make_chunk("chunk_shared", text="generation one amber evidence")
+    generation_two = make_chunk("chunk_shared", text="generation two violet evidence")
+    first_store.upsert_chunks([legacy], [[1.0, 0.0, 0.0, 0.0]])
+    first_store.upsert_chunks(
+        [generation_one],
+        [[1.0, 0.0, 0.0, 0.0]],
+        generation_id="generation-one",
+    )
+    first_store.upsert_chunks(
+        [generation_two],
+        [[1.0, 0.0, 0.0, 0.0]],
+        generation_id="generation-two",
+    )
+    first_store.close()
+
+    store = make_store(path)
+    try:
+        assert store.count_chunks() == 3
+        assert store.count_chunks(generation_id="generation-one") == 1
+        assert len(store.list_chunks()) == 3
+        assert [
+            candidate.chunk.text
+            for candidate in store.search([1.0, 0.0, 0.0, 0.0], top_k=5)
+        ] == [legacy.text]
+        assert [
+            candidate.chunk.text
+            for candidate in store.search(
+                [1.0, 0.0, 0.0, 0.0],
+                top_k=5,
+                generation_id="generation-one",
+            )
+        ] == [generation_one.text]
+        assert store.get_chunk("chunk_shared") == legacy
+        restored_generation = store.get_chunk(
+            "chunk_shared", generation_id="generation-two"
+        )
+        assert restored_generation is not None
+        assert restored_generation.text == generation_two.text
+        assert restored_generation.metadata["index_generation"] == "generation-two"
+
+        store.delete_chunks(["chunk_shared"], generation_id="generation-one")
+        assert store.get_chunk("chunk_shared", generation_id="generation-one") is None
+        assert store.get_chunk("chunk_shared") == legacy
+        assert (
+            store.get_chunk("chunk_shared", generation_id="generation-two").text
+            == generation_two.text
+        )
+
+        store.delete_document("doc_one", generation_id="generation-two")
+        assert store.count_chunks() == 1
+        assert store.get_chunk("chunk_shared") == legacy
+    finally:
+        store.close()

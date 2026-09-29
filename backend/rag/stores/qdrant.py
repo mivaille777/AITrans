@@ -84,6 +84,8 @@ class QdrantLocalVectorStore:
         self,
         chunks: list[DocumentChunk],
         vectors: list[list[float]],
+        *,
+        generation_id: str | None = None,
     ) -> None:
         if len(chunks) != len(vectors):
             raise RagVectorStoreError(
@@ -91,14 +93,30 @@ class QdrantLocalVectorStore:
             )
         if not chunks:
             return
+        normalized_generation = self._normalize_generation_id(generation_id)
+        chunk_generations = [self._chunk_generation(chunk) for chunk in chunks]
+        if normalized_generation and any(
+            chunk_generation and chunk_generation != normalized_generation
+            for chunk_generation in chunk_generations
+        ):
+            raise RagVectorStoreError(
+                "chunk generation metadata does not match generation_id"
+            )
         self.ensure_collection()
         points = [
             qdrant_models.PointStruct(
-                id=self._point_id(chunk.chunk_id),
+                id=self._point_id(
+                    chunk.chunk_id,
+                    normalized_generation or chunk_generation,
+                ),
                 vector=self._validate_vector(vector),
-                payload=self._chunk_payload(chunk),
+                payload=self._chunk_payload(
+                    chunk, normalized_generation or chunk_generation
+                ),
             )
-            for chunk, vector in zip(chunks, vectors, strict=True)
+            for chunk, vector, chunk_generation in zip(
+                chunks, vectors, chunk_generations, strict=True
+            )
         ]
         try:
             self._client.upsert(
@@ -115,16 +133,18 @@ class QdrantLocalVectorStore:
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        generation_id: str | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise RagVectorStoreError("top_k must be positive")
         self.ensure_collection()
+        normalized_generation = self._normalize_generation_id(generation_id)
         query_vector = self._validate_vector(vector)
         try:
             response = self._client.query_points(
                 collection_name=self.collection_name,
                 query=query_vector,
-                query_filter=self._build_filter(filters),
+                query_filter=self._build_filter(filters, normalized_generation),
                 # Older indexes predate ``section_kind``. Fetch a bounded
                 # surplus so the in-process legacy safeguard can still return
                 # the requested number of non-reference candidates.
@@ -151,20 +171,25 @@ class QdrantLocalVectorStore:
                 break
         return candidates
 
-    def delete_document(self, document_id: str) -> None:
+    def delete_document(
+        self,
+        document_id: str,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         if not document_id:
             raise RagVectorStoreError("document_id must not be empty")
+        normalized_generation = self._normalize_generation_id(generation_id)
         self.ensure_collection()
-        selector = qdrant_models.FilterSelector(
-            filter=qdrant_models.Filter(
-                must=[
-                    qdrant_models.FieldCondition(
-                        key="document_id",
-                        match=qdrant_models.MatchValue(value=document_id),
-                    )
-                ]
+        must = [
+            qdrant_models.FieldCondition(
+                key="document_id",
+                match=qdrant_models.MatchValue(value=document_id),
             )
-        )
+        ]
+        if normalized_generation:
+            must.append(self._generation_condition(normalized_generation))
+        selector = qdrant_models.FilterSelector(filter=qdrant_models.Filter(must=must))
         try:
             self._client.delete(
                 collection_name=self.collection_name,
@@ -176,12 +201,21 @@ class QdrantLocalVectorStore:
                 f"failed to delete Qdrant document: {document_id}"
             ) from exc
 
-    def delete_chunks(self, chunk_ids: list[str]) -> None:
+    def delete_chunks(
+        self,
+        chunk_ids: list[str],
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         if not chunk_ids:
             return
+        normalized_generation = self._normalize_generation_id(generation_id)
         self.ensure_collection()
         selector = qdrant_models.PointIdsList(
-            points=[self._point_id(chunk_id) for chunk_id in chunk_ids]
+            points=[
+                self._point_id(chunk_id, normalized_generation)
+                for chunk_id in chunk_ids
+            ]
         )
         try:
             self._client.delete(
@@ -192,14 +226,20 @@ class QdrantLocalVectorStore:
         except Exception as exc:
             raise RagVectorStoreError("failed to delete stale Qdrant chunks") from exc
 
-    def get_chunk(self, chunk_id: str) -> DocumentChunk | None:
+    def get_chunk(
+        self,
+        chunk_id: str,
+        *,
+        generation_id: str | None = None,
+    ) -> DocumentChunk | None:
         if not chunk_id:
             return None
+        normalized_generation = self._normalize_generation_id(generation_id)
         self.ensure_collection()
         try:
             records = self._client.retrieve(
                 collection_name=self.collection_name,
-                ids=[self._point_id(chunk_id)],
+                ids=[self._point_id(chunk_id, normalized_generation)],
                 with_payload=True,
                 with_vectors=False,
             )
@@ -210,22 +250,29 @@ class QdrantLocalVectorStore:
         chunk = self._chunk_from_payload(records[0].payload)
         return chunk if chunk.chunk_id == chunk_id else None
 
-    def count_chunks(self, document_ids: list[str] | None = None) -> int:
+    def count_chunks(
+        self,
+        document_ids: list[str] | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> int:
         """Count indexed chunks, optionally scoped to the supplied documents."""
 
         self.ensure_collection()
+        normalized_generation = self._normalize_generation_id(generation_id)
         if document_ids is not None and not document_ids:
             return 0
-        count_filter = None
+        must: list[qdrant_models.FieldCondition] = []
         if document_ids:
-            count_filter = qdrant_models.Filter(
-                must=[
-                    qdrant_models.FieldCondition(
-                        key="document_id",
-                        match=qdrant_models.MatchAny(any=document_ids),
-                    )
-                ]
+            must.append(
+                qdrant_models.FieldCondition(
+                    key="document_id",
+                    match=qdrant_models.MatchAny(any=document_ids),
+                )
             )
+        if normalized_generation:
+            must.append(self._generation_condition(normalized_generation))
+        count_filter = qdrant_models.Filter(must=must) if must else None
         try:
             result = self._client.count(
                 collection_name=self.collection_name,
@@ -235,6 +282,53 @@ class QdrantLocalVectorStore:
         except Exception as exc:
             raise RagVectorStoreError("failed to count Qdrant chunks") from exc
         return int(result.count)
+
+    def list_chunks(
+        self,
+        *,
+        generation_id: str | None = None,
+    ) -> list[DocumentChunk]:
+        """List persisted chunks; an explicit ID limits the view to one generation."""
+
+        normalized_generation = self._normalize_generation_id(generation_id)
+        if not self._client.collection_exists(self.collection_name):
+            return []
+        scroll_filter = (
+            qdrant_models.Filter(
+                must=[self._generation_condition(normalized_generation)]
+            )
+            if normalized_generation
+            else None
+        )
+        offset: Any = None
+        chunks: list[DocumentChunk] = []
+        try:
+            while True:
+                points, offset = self._client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=scroll_filter,
+                    limit=512,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                chunks.extend(
+                    self._chunk_from_payload(point.payload) for point in points
+                )
+                if offset is None:
+                    break
+        except Exception as exc:
+            raise RagVectorStoreError("failed to list Qdrant chunks") from exc
+        return sorted(
+            chunks,
+            key=lambda chunk: (
+                chunk.document_id,
+                self._chunk_generation(chunk) or "",
+                chunk.page_number if chunk.page_number is not None else 10**9,
+                chunk.chunk_index,
+                chunk.chunk_id,
+            ),
+        )
 
     def close(self) -> None:
         if self._owns_client:
@@ -260,13 +354,33 @@ class QdrantLocalVectorStore:
         return converted
 
     @staticmethod
-    def _point_id(chunk_id: str) -> UUID:
-        return uuid5(NAMESPACE_URL, f"aitrans-rag:{chunk_id}")
+    def _point_id(chunk_id: str, generation_id: str | None = None) -> UUID:
+        if generation_id is None:
+            identity = f"aitrans-rag:{chunk_id}"
+        else:
+            identity = f"aitrans-rag:g{len(generation_id)}:{generation_id}:{chunk_id}"
+        return uuid5(NAMESPACE_URL, identity)
 
-    @staticmethod
-    def _chunk_payload(chunk: DocumentChunk) -> dict[str, Any]:
+    @classmethod
+    def _chunk_payload(
+        cls,
+        chunk: DocumentChunk,
+        generation_id: str | None = None,
+    ) -> dict[str, Any]:
         payload = chunk.model_dump(mode="json")
         payload["source_kind"] = str(chunk.metadata.get("source_kind", ""))
+        chunk_generation = cls._chunk_generation(chunk)
+        if generation_id and chunk_generation and generation_id != chunk_generation:
+            raise RagVectorStoreError(
+                "chunk generation metadata does not match generation_id"
+            )
+        effective_generation = generation_id or chunk_generation
+        if effective_generation:
+            payload["index_generation"] = effective_generation
+            payload["metadata"] = {
+                **payload.get("metadata", {}),
+                "index_generation": effective_generation,
+            }
         return payload
 
     @staticmethod
@@ -275,6 +389,11 @@ class QdrantLocalVectorStore:
             raise RagVectorStoreError("Qdrant point is missing chunk payload")
         chunk_data = dict(payload)
         chunk_data.pop("source_kind", None)
+        generation_id = str(chunk_data.pop("index_generation", "") or "").strip()
+        if generation_id:
+            metadata = dict(chunk_data.get("metadata") or {})
+            metadata["index_generation"] = generation_id
+            chunk_data["metadata"] = metadata
         try:
             return DocumentChunk.model_validate(chunk_data)
         except Exception as exc:
@@ -285,51 +404,79 @@ class QdrantLocalVectorStore:
     @staticmethod
     def _build_filter(
         filters: VectorSearchFilter | None,
+        generation_id: str | None = None,
     ) -> qdrant_models.Filter | None:
-        if filters is None:
-            return None
         conditions: list[qdrant_models.FieldCondition] = []
+        must: list[Any] = conditions
         must_not: list[qdrant_models.FieldCondition] = []
-        if filters.document_ids:
+        if filters and filters.document_ids:
             conditions.append(
                 qdrant_models.FieldCondition(
                     key="document_id",
                     match=qdrant_models.MatchAny(any=filters.document_ids),
                 )
             )
-        if filters.source_kind:
+        if filters and filters.source_kind:
             conditions.append(
                 qdrant_models.FieldCondition(
                     key="source_kind",
                     match=qdrant_models.MatchValue(value=filters.source_kind),
                 )
             )
-        if filters.language:
+        if filters and filters.language:
             conditions.append(
                 qdrant_models.FieldCondition(
                     key="language",
                     match=qdrant_models.MatchValue(value=filters.language),
                 )
             )
-        for key, value in sorted(filters.metadata.items()):
-            conditions.append(
-                qdrant_models.FieldCondition(
-                    key=f"metadata.{key}",
-                    match=qdrant_models.MatchValue(value=value),
+        if filters:
+            for key, value in sorted(filters.metadata.items()):
+                conditions.append(
+                    qdrant_models.FieldCondition(
+                        key=f"metadata.{key}",
+                        match=qdrant_models.MatchValue(value=value),
+                    )
                 )
-            )
-        if filters.exclude_references:
+        if filters and filters.exclude_references:
             must_not.append(
                 qdrant_models.FieldCondition(
                     key="metadata.section_kind",
                     match=qdrant_models.MatchValue(value="references"),
                 )
             )
-        return (
-            qdrant_models.Filter(must=conditions, must_not=must_not)
-            if conditions or must_not
-            else None
+        if generation_id is None:
+            # Product calls without a generation keep their legacy view and
+            # cannot accidentally see staged or retired generation points.
+            must.append(
+                qdrant_models.IsEmptyCondition(
+                    is_empty=qdrant_models.PayloadField(key="index_generation")
+                )
+            )
+        else:
+            must.append(QdrantLocalVectorStore._generation_condition(generation_id))
+        return qdrant_models.Filter(must=must, must_not=must_not)
+
+    @staticmethod
+    def _generation_condition(generation_id: str) -> qdrant_models.FieldCondition:
+        return qdrant_models.FieldCondition(
+            key="index_generation",
+            match=qdrant_models.MatchValue(value=generation_id),
         )
+
+    @staticmethod
+    def _normalize_generation_id(generation_id: str | None) -> str | None:
+        if generation_id is None:
+            return None
+        normalized = str(generation_id).strip()
+        if not normalized:
+            raise RagVectorStoreError("generation_id must not be empty")
+        return normalized
+
+    @staticmethod
+    def _chunk_generation(chunk: DocumentChunk) -> str | None:
+        generation = str(chunk.metadata.get("index_generation") or "").strip()
+        return generation or None
 
 
 __all__ = ["QdrantLocalVectorStore"]
