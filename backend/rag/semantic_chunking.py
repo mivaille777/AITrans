@@ -4,6 +4,7 @@ import math
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
+from itertools import pairwise
 from statistics import fmean, pstdev
 
 from backend.rag.chunking import CHUNKER_VERSION as STRUCTURAL_CHUNKER_VERSION
@@ -21,9 +22,10 @@ from backend.rag.models import (
     NormalizedDocument,
     build_stable_chunk_id,
 )
+from backend.rag.source_span import SourceSpan
 from backend.rag.tokenization import HeuristicTokenCounter, TokenCounter
 
-SEMANTIC_CHUNKER_VERSION = "hierarchical-semantic-v4"
+SEMANTIC_CHUNKER_VERSION = "hierarchical-semantic-v5"
 
 _BLOCK_HEADING = "heading"
 _BLOCK_PARAGRAPH = "paragraph"
@@ -61,7 +63,9 @@ class SemanticStructureAwareChunker:
         self._base = base_chunker
         self._semantic = semantic_config
         self._embedding = embedding_provider
-        self._token_counter = token_counter or base_chunker.token_counter or HeuristicTokenCounter()
+        self._token_counter = (
+            token_counter or base_chunker.token_counter or HeuristicTokenCounter()
+        )
 
     @property
     def version(self) -> str:
@@ -168,13 +172,18 @@ class SemanticStructureAwareChunker:
                     group_start = group.nodes[0].start_char
                     group_end = group.nodes[-1].end_char
                     for chunk in section_chunks:
-                        if chunk.start_char < group_end and chunk.end_char > group_start:
+                        if (
+                            chunk.start_char < group_end
+                            and chunk.end_char > group_start
+                        ):
                             replaced_ids.add(chunk.chunk_id)
 
         if not semantic_chunks:
             return base_chunks
 
-        retained = [chunk for chunk in base_chunks if chunk.chunk_id not in replaced_ids]
+        retained = [
+            chunk for chunk in base_chunks if chunk.chunk_id not in replaced_ids
+        ]
         ordered = sorted(
             [*retained, *semantic_chunks],
             key=lambda chunk: (
@@ -239,7 +248,7 @@ class SemanticStructureAwareChunker:
             (left.node_id, right.node_id): self._cosine(
                 vectors[left.node_id], vectors[right.node_id]
             )
-            for left, right in zip(prose, prose[1:])
+            for left, right in pairwise(prose)
         }
 
         leading_heading = nodes[0] if nodes[0].block_type == _BLOCK_HEADING else None
@@ -248,7 +257,14 @@ class SemanticStructureAwareChunker:
         group_nodes: list[DocumentParagraphNode] = (
             [leading_heading, first] if leading_heading is not None else [first]
         )
-        groups_raw: list[tuple[list[DocumentParagraphNode], list[DocumentParagraphNode], float | None, str]] = []
+        groups_raw: list[
+            tuple[
+                list[DocumentParagraphNode],
+                list[DocumentParagraphNode],
+                float | None,
+                str,
+            ]
+        ] = []
         break_before: float | None = None
         boundary_reason = "section_start"
 
@@ -268,7 +284,7 @@ class SemanticStructureAwareChunker:
                 document.text[start_char:current_end]
             )
             combined_tokens = self._token_counter.count(
-                document.text[start_char:paragraph.end_char]
+                document.text[start_char : paragraph.end_char]
             )
             should_merge, split_reason = self._merge_decision(
                 similarity=similarity,
@@ -289,10 +305,14 @@ class SemanticStructureAwareChunker:
             break_before = similarity
             boundary_reason = split_reason
 
-        groups_raw.append((list(group_nodes), list(buffer), break_before, boundary_reason))
+        groups_raw.append(
+            (list(group_nodes), list(buffer), break_before, boundary_reason)
+        )
 
         groups: list[_SemanticGroup] = []
-        for index, (all_nodes, paragraph_nodes, before, reason) in enumerate(groups_raw):
+        for index, (all_nodes, paragraph_nodes, before, reason) in enumerate(
+            groups_raw
+        ):
             after: float | None = None
             if index + 1 < len(groups_raw):
                 next_paragraphs = groups_raw[index + 1][1]
@@ -362,7 +382,7 @@ class SemanticStructureAwareChunker:
             return None
         similarities = [
             self._cosine(vectors[left.node_id], vectors[right.node_id])
-            for left, right in zip(paragraphs, paragraphs[1:])
+            for left, right in pairwise(paragraphs)
         ]
         if not similarities:
             return None
@@ -415,9 +435,7 @@ class SemanticStructureAwareChunker:
                 "semantic_break_before": self._rounded(group.break_before),
                 "semantic_break_after": self._rounded(group.break_after),
                 "semantic_boundary_reason": group.boundary_reason,
-                "semantic_adaptive_threshold": self._rounded(
-                    group.adaptive_threshold
-                ),
+                "semantic_adaptive_threshold": self._rounded(group.adaptive_threshold),
                 "paragraph_start": group.paragraph_nodes[0].paragraph_index,
                 "paragraph_end": group.paragraph_nodes[-1].paragraph_index,
                 "block_types": list(
@@ -449,6 +467,15 @@ class SemanticStructureAwareChunker:
             language=document.document.language,
             source_uri=document.document.source_uri,
             document_hash=document.document.content_hash,
+            source_span=SourceSpan.from_text(
+                document.text,
+                start_char=start,
+                end_char=end,
+                document_hash=document.document.content_hash,
+                source_uri=document.document.source_uri,
+                page_start=pages[0].page_number if pages else None,
+                page_end=pages[-1].page_number if pages else None,
+            ),
             parser_version=str(document.metadata.get("parser_version", "")),
             chunker_version=self.version,
             metadata=metadata,
@@ -497,7 +524,9 @@ class SemanticStructureAwareChunker:
         dimension = len(vectors[0])
         if dimension == 0 or any(len(vector) != dimension for vector in vectors):
             raise ValueError("semantic embedding dimensions are inconsistent")
-        return [fmean(vector[index] for vector in vectors) for index in range(dimension)]
+        return [
+            fmean(vector[index] for vector in vectors) for index in range(dimension)
+        ]
 
     @staticmethod
     def _cosine(left: list[float], right: list[float]) -> float:
@@ -531,9 +560,7 @@ class SemanticStructureAwareChunker:
         end: int,
     ) -> str:
         digest = sha256(
-            f"{document_hash}\x1f{section_id}\x1f{group_index}\x1f{start}\x1f{end}".encode(
-                "utf-8"
-            )
+            f"{document_hash}\x1f{section_id}\x1f{group_index}\x1f{start}\x1f{end}".encode()
         ).hexdigest()[:20]
         return f"semantic_{digest}"
 

@@ -17,9 +17,10 @@ from backend.rag.models import (
     NormalizedDocument,
     build_stable_chunk_id,
 )
+from backend.rag.source_span import SourceSpan
 from backend.rag.tokenization import HeuristicTokenCounter, TokenCounter
 
-CHUNKER_VERSION = "hierarchical-special-block-v3"
+CHUNKER_VERSION = "hierarchical-special-block-v4"
 
 _SENTENCE_BREAK = re.compile(r"(?:[.!?。！？；;]+[\"'”’）)】》]*)(?=\s|$)|\n+")
 
@@ -116,6 +117,15 @@ class StructureAwareChunker:
                     language=document.document.language,
                     source_uri=document.document.source_uri,
                     document_hash=document.document.content_hash,
+                    source_span=SourceSpan.from_text(
+                        text,
+                        start_char=span.start,
+                        end_char=span.end,
+                        document_hash=document.document.content_hash,
+                        source_uri=document.document.source_uri,
+                        page_start=pages[0].page_number if pages else None,
+                        page_end=pages[-1].page_number if pages else None,
+                    ),
                     parser_version=str(document.metadata.get("parser_version", "")),
                     chunker_version=CHUNKER_VERSION,
                     metadata=metadata,
@@ -395,7 +405,8 @@ class StructureAwareChunker:
             )
             current_tokens = self._buffer_tokens(text, buffer)
             if combined_tokens <= hard and (
-                current_tokens < self._config.target_tokens or combined_tokens <= preferred
+                current_tokens < self._config.target_tokens
+                or combined_tokens <= preferred
             ):
                 buffer.append(paragraph)
                 continue
@@ -496,7 +507,9 @@ class StructureAwareChunker:
             return after_preferred[0]
         return self._prefer_word_boundary(text, start, hard_end)
 
-    def _fallback_overlap_start(self, text: str, chunk_start: int, chunk_end: int) -> int:
+    def _fallback_overlap_start(
+        self, text: str, chunk_start: int, chunk_end: int
+    ) -> int:
         if self._config.overlap_tokens == 0:
             return chunk_end
 
@@ -504,7 +517,10 @@ class StructureAwareChunker:
         high = chunk_end
         while low < high:
             middle = (low + high) // 2
-            if self._token_counter.count(text[middle:chunk_end]) <= self._config.overlap_tokens:
+            if (
+                self._token_counter.count(text[middle:chunk_end])
+                <= self._config.overlap_tokens
+            ):
                 high = middle
             else:
                 low = middle + 1
@@ -526,7 +542,9 @@ class StructureAwareChunker:
     ) -> int:
         if not buffer:
             return 0
-        return self._token_counter.count(text[buffer[0].start_char : buffer[-1].end_char])
+        return self._token_counter.count(
+            text[buffer[0].start_char : buffer[-1].end_char]
+        )
 
     @staticmethod
     def _next_is(
@@ -534,7 +552,10 @@ class StructureAwareChunker:
         index: int,
         block_type: str,
     ) -> bool:
-        return index + 1 < len(paragraphs) and paragraphs[index + 1].block_type == block_type
+        return (
+            index + 1 < len(paragraphs)
+            and paragraphs[index + 1].block_type == block_type
+        )
 
     @staticmethod
     def _lead_heading(
@@ -739,7 +760,9 @@ def chunk_document(
     config: RagChunkingConfig | None = None,
     token_counter: TokenCounter | None = None,
 ) -> list[DocumentChunk]:
-    return StructureAwareChunker(config=config, token_counter=token_counter).chunk(document)
+    return StructureAwareChunker(config=config, token_counter=token_counter).chunk(
+        document
+    )
 
 
 __all__ = ["CHUNKER_VERSION", "StructureAwareChunker", "chunk_document"]

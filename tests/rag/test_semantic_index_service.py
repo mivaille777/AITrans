@@ -3,12 +3,15 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 
-from backend.rag.chunking import StructureAwareChunker
+import pytest
+
+from backend.rag.chunking import CHUNKER_VERSION, StructureAwareChunker
 from backend.rag.config import RagChunkingConfig, RagSemanticChunkingConfig
 from backend.rag.index_manifest import IndexManifest, IndexStatus
 from backend.rag.index_service import IndexService
 from backend.rag.models import (
     DocumentChunk,
+    DocumentPage,
     DocumentSection,
     KnowledgeDocument,
     NormalizedDocument,
@@ -17,6 +20,7 @@ from backend.rag.semantic_chunking import (
     SEMANTIC_CHUNKER_VERSION,
     SemanticStructureAwareChunker,
 )
+from backend.rag.source_span import resolve_source_span
 
 
 class SharedEmbedding:
@@ -133,6 +137,16 @@ def test_index_service_reuses_one_embedding_provider_for_semantics_and_final_chu
     assert all("Paragraph:" in item for item in embedding.calls[0])
     assert embedding.calls[1] == [chunk.text for chunk in store.chunks]
     assert len(store.chunks) == 2
+    for chunk in store.chunks:
+        assert chunk.source_span is not None
+        assert (
+            resolve_source_span(
+                chunk.source_span,
+                path.read_text(encoding="utf-8"),
+                expected_document_hash=chunk.document_hash,
+            )
+            == chunk.text
+        )
     record = manifest.get(first.document_id)
     assert record is not None
     assert record.chunker_version == service.chunker_version
@@ -141,3 +155,108 @@ def test_index_service_reuses_one_embedding_provider_for_semantics_and_final_chu
 
     assert second.reused_existing is True
     assert len(embedding.calls) == 2
+
+
+@pytest.mark.parametrize("invalid_mode", ["text", "page"])
+def test_index_service_rejects_misaligned_evidence_before_replacing_ready_generation(
+    tmp_path: Path,
+    invalid_mode: str,
+) -> None:
+    path = tmp_path / "paper.txt"
+    path.write_text(
+        "Methods\n\nTOPIC_A first mechanism paragraph.\n\n"
+        "TOPIC_A second mechanism paragraph.",
+        encoding="utf-8",
+    )
+    embedding = SharedEmbedding()
+    structural_chunker = StructureAwareChunker(
+        RagChunkingConfig(
+            target_tokens=80,
+            preferred_max_tokens=90,
+            hard_max_tokens=100,
+            minimum_tokens=2,
+            overlap_tokens=4,
+        )
+    )
+
+    def parser_with_pages(path: str | Path) -> NormalizedDocument:
+        document = parser(path)
+        second_paragraph_start = document.text.index(
+            "TOPIC_A second mechanism paragraph."
+        )
+        page_one_end = second_paragraph_start - 2
+        return document.model_copy(
+            update={
+                "pages": [
+                    DocumentPage(
+                        page_number=1,
+                        text=document.text[:page_one_end],
+                        start_char=0,
+                        end_char=page_one_end,
+                    ),
+                    DocumentPage(
+                        page_number=2,
+                        text=document.text[second_paragraph_start:],
+                        start_char=second_paragraph_start,
+                        end_char=len(document.text),
+                    ),
+                ]
+            }
+        )
+
+    class SwitchingChunker:
+        version = CHUNKER_VERSION
+
+        def __init__(self) -> None:
+            self.invalid_mode: str | None = None
+
+        def chunk(self, document: NormalizedDocument) -> list[DocumentChunk]:
+            chunks = structural_chunker.chunk(document)
+            if self.invalid_mode == "text":
+                chunks[0] = chunks[0].model_copy(
+                    update={"text": "evidence that is not in the source"}
+                )
+            elif self.invalid_mode == "page":
+                assert chunks[0].source_span is not None
+                wrong_span = chunks[0].source_span.model_copy(
+                    update={"page_start": 2, "page_end": 2}
+                )
+                metadata = {**chunks[0].metadata, "page_start": 2, "page_end": 2}
+                chunks[0] = chunks[0].model_copy(
+                    update={
+                        "page_number": 2,
+                        "metadata": metadata,
+                        "source_span": wrong_span,
+                    }
+                )
+            return chunks
+
+    chunker = SwitchingChunker()
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    store = Store()
+    service = IndexService(
+        chunker=chunker,
+        embedding_provider=embedding,
+        vector_store=store,
+        manifest=manifest,
+        parser=parser_with_pages,
+    )
+
+    initial = service.index_document(path)
+    assert initial.status is IndexStatus.READY
+    original_chunk_ids = [chunk.chunk_id for chunk in store.chunks]
+    initial_embedding_call_count = len(embedding.calls)
+
+    chunker.invalid_mode = invalid_mode
+    rejected = service.reindex_document(path)
+
+    assert rejected.status is IndexStatus.FAILED
+    expected_error = (
+        "does not match chunk evidence"
+        if invalid_mode == "text"
+        else "source page range does not match normalized document pages"
+    )
+    assert expected_error in rejected.error
+    assert manifest.get(initial.document_id).status is IndexStatus.READY
+    assert [chunk.chunk_id for chunk in store.chunks] == original_chunk_ids
+    assert len(embedding.calls) == initial_embedding_call_count

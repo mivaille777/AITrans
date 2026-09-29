@@ -6,11 +6,17 @@ import pytest
 
 from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import RagChunkingConfig, RagSemanticChunkingConfig
-from backend.rag.models import DocumentSection, KnowledgeDocument, NormalizedDocument
+from backend.rag.models import (
+    DocumentPage,
+    DocumentSection,
+    KnowledgeDocument,
+    NormalizedDocument,
+)
 from backend.rag.semantic_chunking import (
     SEMANTIC_CHUNKER_VERSION,
     SemanticStructureAwareChunker,
 )
+from backend.rag.source_span import resolve_source_span
 
 
 class TopicEmbedding:
@@ -39,7 +45,9 @@ class TopicEmbedding:
         return vectors
 
 
-def _section(text: str, heading: str, start: int, end: int, level: int = 1) -> DocumentSection:
+def _section(
+    text: str, heading: str, start: int, end: int, level: int = 1
+) -> DocumentSection:
     return DocumentSection(
         heading=heading,
         level=level,
@@ -49,7 +57,12 @@ def _section(text: str, heading: str, start: int, end: int, level: int = 1) -> D
     )
 
 
-def _document(text: str, sections: list[DocumentSection]) -> NormalizedDocument:
+def _document(
+    text: str,
+    sections: list[DocumentSection],
+    *,
+    pages: list[DocumentPage] | None = None,
+) -> NormalizedDocument:
     content_hash = sha256(text.encode("utf-8")).hexdigest()
     return NormalizedDocument(
         document=KnowledgeDocument(
@@ -63,8 +76,26 @@ def _document(text: str, sections: list[DocumentSection]) -> NormalizedDocument:
         ),
         text=text,
         sections=sections,
+        pages=pages or [],
         metadata={"parser_version": "test-parser-v1"},
     )
+
+
+def _assert_resolvable_source_spans(
+    document: NormalizedDocument,
+    chunks,
+) -> None:
+    for chunk in chunks:
+        assert chunk.text.strip()
+        assert chunk.source_span is not None
+        assert (
+            resolve_source_span(
+                chunk.source_span,
+                document.text,
+                expected_document_hash=document.document.content_hash,
+            )
+            == chunk.text
+        )
 
 
 def _chunker(
@@ -126,6 +157,10 @@ def test_semantic_topic_shift_splits_before_token_target() -> None:
     assert chunks[0].metadata["semantic_cohesion"] == pytest.approx(1.0)
     assert len(embedding.calls) == 1
     assert len(embedding.calls[0]) == 4
+    _assert_resolvable_source_spans(
+        _document(text, [section]),
+        chunks,
+    )
 
 
 def test_semantic_grouping_never_crosses_section_boundary() -> None:
@@ -194,22 +229,66 @@ def test_special_table_chunk_is_preserved_and_not_semantically_regrouped() -> No
     assert "| M10 | 0.40 |" in tables[0].text
     assert tables[0].metadata["boundary_strategy"] == "table_block"
     assert tables[0].chunker_version == SEMANTIC_CHUNKER_VERSION
+    _assert_resolvable_source_spans(_document(text, [section]), chunks)
+
+
+def test_semantic_chunk_spans_preserve_page_ranges_and_exact_unicode_source() -> None:
+    page_one = "方法\n\nTOPIC_A 测量精度 🧪 的第一段证据。\n\nTOPIC_A 继续说明。"
+    page_two = "TOPIC_B 另一页的实验结论。\n\nTOPIC_B 复现了结果。"
+    text = f"{page_one}\n\n{page_two}"
+    page_two_start = len(page_one) + 2
+    pages = [
+        DocumentPage(
+            page_number=1,
+            text=page_one,
+            start_char=0,
+            end_char=len(page_one),
+        ),
+        DocumentPage(
+            page_number=2,
+            text=page_two,
+            start_char=page_two_start,
+            end_char=len(text),
+        ),
+    ]
+    document = _document(
+        text,
+        [_section(text, "方法", 0, len(text))],
+        pages=pages,
+    )
+
+    chunks = _chunker(TopicEmbedding(), target=80, preferred=90, hard=100).chunk(
+        document
+    )
+
+    _assert_resolvable_source_spans(document, chunks)
+    assert len(chunks) == 2
+    assert [
+        (chunk.source_span.page_start, chunk.source_span.page_end) for chunk in chunks
+    ] == [
+        (1, 1),
+        (2, 2),
+    ]
 
 
 def test_semantic_embedding_failure_degrades_to_structural_chunks() -> None:
     text = "Methods\n\nTOPIC_A first paragraph.\n\nTOPIC_B second paragraph."
     section = _section(text, "Methods", 0, len(text))
 
-    chunks = _chunker(TopicEmbedding(fail=True), target=80, preferred=90, hard=100).chunk(
-        _document(text, [section])
-    )
+    chunks = _chunker(
+        TopicEmbedding(fail=True), target=80, preferred=90, hard=100
+    ).chunk(_document(text, [section]))
 
     assert len(chunks) == 1
     assert chunks[0].metadata["boundary_strategy"] == "paragraph_group"
     assert chunks[0].metadata["semantic_chunking_enabled"] is True
     assert chunks[0].metadata["semantic_chunking_applied"] is False
-    assert "semantic embedding failed" in chunks[0].metadata["semantic_chunking_fallback_reason"]
+    assert (
+        "semantic embedding failed"
+        in chunks[0].metadata["semantic_chunking_fallback_reason"]
+    )
     assert chunks[0].chunker_version == SEMANTIC_CHUNKER_VERSION
+    _assert_resolvable_source_spans(_document(text, [section]), chunks)
 
 
 def test_semantic_metadata_exposes_boundary_and_cohesion_for_inspection() -> None:

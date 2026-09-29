@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.rag.chunking import CHUNKER_VERSION, StructureAwareChunker
 from backend.rag.config import RagVisualUnderstandingConfig
 from backend.rag.embeddings.base import EmbeddingProvider
+from backend.rag.exceptions import RagInvariantError
 from backend.rag.index_manifest import (
     IndexGenerationStatus,
     IndexManifest,
@@ -23,13 +24,14 @@ from backend.rag.index_manifest import (
     IndexStatus,
     ready_manifest_record,
 )
-from backend.rag.models import NormalizedDocument
+from backend.rag.models import DocumentChunk, NormalizedDocument
 from backend.rag.multimodal import (
     MULTIMODAL_INDEX_VERSION,
     build_multimodal_chunks,
     delete_document_assets,
 )
 from backend.rag.parsers import parse_document
+from backend.rag.source_span import SourceSpan, SourceSpanError, resolve_source_span
 from backend.rag.sparse.store import SparseRetriever
 from backend.rag.stores.base import VectorStore
 from backend.rag.vision import (
@@ -201,6 +203,10 @@ class IndexService:
                 preserve_ready=keep_existing_ready,
             )
             text_chunks = self._chunker.chunk(normalized)
+            text_chunks = self._ensure_text_chunk_source_spans(
+                normalized,
+                text_chunks,
+            )
             multimodal_chunks = build_multimodal_chunks(
                 normalized,
                 start_index=len(text_chunks),
@@ -407,6 +413,140 @@ class IndexService:
             and record.embedding_model == self._embedding_provider.model_name
             and record.embedding_dimension == self._embedding_provider.dimension
         )
+
+    @staticmethod
+    def _ensure_text_chunk_source_spans(
+        document: NormalizedDocument,
+        chunks: list[DocumentChunk],
+    ) -> list[DocumentChunk]:
+        """Verify every text evidence chunk and attach a span for compatible chunkers."""
+
+        source = document.document
+        normalized_text = document.text
+        if not source.content_hash:
+            raise RagInvariantError(
+                "normalized document content_hash must not be empty"
+            )
+
+        verified: list[DocumentChunk] = []
+        for chunk in chunks:
+            if not chunk.text.strip():
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} contains empty evidence text"
+                )
+            if chunk.document_id != source.document_id:
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} points to a different document"
+                )
+            if chunk.document_hash and chunk.document_hash != source.content_hash:
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} points to a different document version"
+                )
+            if chunk.source_uri and chunk.source_uri != source.source_uri:
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} points to a different source URI"
+                )
+            if (
+                chunk.start_char < 0
+                or chunk.end_char <= chunk.start_char
+                or chunk.end_char > len(normalized_text)
+            ):
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} has an invalid source character range"
+                )
+            selected_text = normalized_text[chunk.start_char : chunk.end_char]
+            if selected_text != chunk.text:
+                raise RagInvariantError(
+                    f"source span does not match chunk evidence for {chunk.chunk_id!r}"
+                )
+
+            page_start = chunk.metadata.get("page_start", chunk.page_number)
+            page_end = chunk.metadata.get("page_end", chunk.page_number)
+            if (page_start is None) != (page_end is None):
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} has an incomplete source page range"
+                )
+            if page_start is not None:
+                try:
+                    page_start = int(page_start)
+                    page_end = int(page_end)
+                except (TypeError, ValueError) as exc:
+                    raise RagInvariantError(
+                        f"chunk {chunk.chunk_id!r} has an invalid source page range"
+                    ) from exc
+                if page_start < 1 or page_end < page_start:
+                    raise RagInvariantError(
+                        f"chunk {chunk.chunk_id!r} has an invalid source page range"
+                    )
+
+            intersecting_pages = sorted(
+                (
+                    page
+                    for page in document.pages
+                    if chunk.start_char < page.end_char
+                    and chunk.end_char > page.start_char
+                ),
+                key=lambda page: page.page_number,
+            )
+            expected_page_range = (
+                (intersecting_pages[0].page_number, intersecting_pages[-1].page_number)
+                if intersecting_pages
+                else (None, None)
+            )
+            if (page_start, page_end) != expected_page_range:
+                raise RagInvariantError(
+                    f"source page range does not match normalized document pages "
+                    f"for chunk {chunk.chunk_id!r}"
+                )
+            expected_page_number = expected_page_range[0]
+            if chunk.page_number != expected_page_number:
+                raise RagInvariantError(
+                    f"chunk {chunk.chunk_id!r} page_number does not match its source span"
+                )
+
+            span = chunk.source_span
+            if span is None:
+                span = SourceSpan.from_text(
+                    normalized_text,
+                    start_char=chunk.start_char,
+                    end_char=chunk.end_char,
+                    document_hash=source.content_hash,
+                    source_uri=source.source_uri,
+                    page_start=page_start,
+                    page_end=page_end,
+                )
+                chunk = chunk.model_copy(
+                    update={
+                        "document_hash": source.content_hash,
+                        "source_uri": source.source_uri,
+                        "source_span": span,
+                    }
+                )
+            else:
+                if span.source_uri and span.source_uri != source.source_uri:
+                    raise RagInvariantError(
+                        f"source span for {chunk.chunk_id!r} points to a different source URI"
+                    )
+                if (span.page_start, span.page_end) != (page_start, page_end):
+                    raise RagInvariantError(
+                        f"source span for {chunk.chunk_id!r} has a different source page range"
+                    )
+                try:
+                    resolved = resolve_source_span(
+                        span,
+                        normalized_text,
+                        expected_document_hash=source.content_hash,
+                    )
+                except SourceSpanError as exc:
+                    raise RagInvariantError(
+                        f"source span for {chunk.chunk_id!r} is invalid: {exc}"
+                    ) from exc
+                if resolved != chunk.text:
+                    raise RagInvariantError(
+                        f"source span does not match chunk evidence for {chunk.chunk_id!r}"
+                    )
+            verified.append(chunk)
+        return verified
 
     @staticmethod
     def _structure_quality(document: NormalizedDocument) -> tuple[str, bool]:

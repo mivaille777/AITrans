@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 
 from backend.rag.models import DocumentChunk
+from backend.rag.source_span import SourceSpan, resolve_source_span
 from backend.rag.sparse import BM25SparseRetriever
 
 
@@ -123,3 +125,43 @@ def test_rebuild_replaces_only_requested_generation_and_neighbors_stay_scoped(
     )
     neighbors = retriever.section_neighbors(other_anchor, radius=1)
     assert [chunk.text for chunk in neighbors] == [other_anchor.text, other_next.text]
+
+
+def test_source_span_survives_bm25_json_restart(tmp_path: Path) -> None:
+    path = tmp_path / "bm25.json"
+    source_text = "Introductory text. Exact source evidence. Final notes."
+    selected_text = "Exact source evidence."
+    start_char = source_text.index(selected_text)
+    end_char = start_char + len(selected_text)
+    document_hash = sha256(b"original PDF bytes").hexdigest()
+    source_uri = "file:///paper.pdf"
+    span = SourceSpan.from_text(
+        source_text,
+        start_char=start_char,
+        end_char=end_char,
+        document_hash=document_hash,
+        source_uri=source_uri,
+        page_start=2,
+        page_end=2,
+    )
+    chunk = DocumentChunk(
+        chunk_id="chunk_source_span",
+        document_id="doc_one",
+        text=selected_text,
+        page_number=2,
+        chunk_index=0,
+        start_char=start_char,
+        end_char=end_char,
+        source_uri=source_uri,
+        document_hash=document_hash,
+        source_span=span,
+    )
+    retriever = BM25SparseRetriever(path)
+    retriever.index_chunks([chunk])
+
+    reopened = BM25SparseRetriever(path)
+    restored = reopened.get_chunk(chunk.chunk_id)
+
+    assert restored is not None
+    assert restored.source_span == span
+    assert resolve_source_span(restored.source_span, source_text) == selected_text

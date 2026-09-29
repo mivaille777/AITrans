@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from backend.rag.config import RagVectorStoreConfig
 from backend.rag.exceptions import RagConfigurationError, RagVectorStoreError
 from backend.rag.models import DocumentChunk
+from backend.rag.source_span import SourceSpan, resolve_source_span
 from backend.rag.stores import QdrantLocalVectorStore, VectorSearchFilter
 
 
@@ -120,6 +122,47 @@ def test_get_chunk_uses_deterministic_point_identity(tmp_path: Path) -> None:
 
         assert restored == chunk
         assert store.get_chunk("chunk_missing") is None
+    finally:
+        store.close()
+
+
+def test_source_span_survives_qdrant_payload_round_trip(tmp_path: Path) -> None:
+    source_text = "Introductory text. Exact source evidence. Final notes."
+    selected_text = "Exact source evidence."
+    start_char = source_text.index(selected_text)
+    end_char = start_char + len(selected_text)
+    document_hash = sha256(b"original PDF bytes").hexdigest()
+    source_uri = "file:///paper.pdf"
+    span = SourceSpan.from_text(
+        source_text,
+        start_char=start_char,
+        end_char=end_char,
+        document_hash=document_hash,
+        source_uri=source_uri,
+        page_start=2,
+        page_end=2,
+    )
+    chunk = DocumentChunk(
+        chunk_id="chunk_source_span",
+        document_id="doc_one",
+        text=selected_text,
+        page_number=2,
+        chunk_index=0,
+        start_char=start_char,
+        end_char=end_char,
+        source_uri=source_uri,
+        document_hash=document_hash,
+        source_span=span,
+    )
+    store = make_store(tmp_path / "qdrant")
+    try:
+        store.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+
+        restored = store.get_chunk(chunk.chunk_id)
+
+        assert restored is not None
+        assert restored.source_span == span
+        assert resolve_source_span(restored.source_span, source_text) == selected_text
     finally:
         store.close()
 
