@@ -18,9 +18,11 @@
 - S02.2：PASS（Docling 低文本/页序/OCR/表格来源页诊断；空文档拒绝；真实三页 PDF 集成验证）
 - S02.3：PASS（Chunk SourceSpan 集成；Qdrant/BM25 共 1312/1312 精确回源；错文本/错页失败关闭）
 - S02 Stage 门禁：BLOCKED（缺真实用户文件及引用金标；已知论文集检索 P95 825.297 ms；生产阈值未批准）
-- 当前工程任务：S03.1（按用户 2026-09-30 明确要求继续执行整份任务书；不代表 S02/S00 生产门禁通过）
+- S03.1：PASS（embedding 指纹进入 provider 与 READY manifest；模型 ID/维度变化触发重建；Hugging Face snapshot revision 未包含，见 OI-003）
+- S03 Stage 门禁：PENDING（S03.2/S03.3 未执行；snapshot revision 身份仍待解决，不能宣称版本迁移门通过）
+- 当前工程任务：S03.2（按用户 2026-09-30 明确要求继续执行整份任务书；不代表生产门禁通过）
 - Holdout：181 个问题、56 篇论文，已冻结、未运行、不得用于调参
 - GitHub 写入：未推送；只在本地提交
 - 工作区原有用户修改：保留；提交时只暂存任务书当前允许的文件
 
-详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 汇总和子任务报告见 [S01.md](S01.md)、[S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)、[S01.4.md](S01.4.md)、[S01.5.md](S01.5.md)；S02 汇总和子任务报告见 [S02.md](S02.md)、[S02.1.md](S02.1.md)、[S02.2.md](S02.2.md)、[S02.3.md](S02.3.md)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。
+详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 汇总和子任务报告见 [S01.md](S01.md)、[S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)、[S01.4.md](S01.4.md)、[S01.5.md](S01.5.md)；S02 汇总和子任务报告见 [S02.md](S02.md)、[S02.1.md](S02.1.md)、[S02.2.md](S02.2.md)、[S02.3.md](S02.3.md)；S03.1 报告见 [S03.1.md](S03.1.md)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。
