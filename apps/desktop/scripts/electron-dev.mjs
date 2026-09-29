@@ -36,8 +36,8 @@ function spawnProcess(command, args, options = {}) {
   })
 }
 
-async function run(command, args) {
-  const child = spawnProcess(command, args)
+async function run(command, args, options = {}) {
+  const child = spawnProcess(command, args, options)
   return new Promise((resolve, reject) => {
     child.once("error", reject)
     child.once("exit", (code) => {
@@ -45,6 +45,29 @@ async function run(command, args) {
       else reject(new Error(`${command} exited with code ${code ?? "unknown"}.`))
     })
   })
+}
+
+async function ensureElectronBinary() {
+  const installScript = path.join(process.cwd(), "node_modules", "electron", "install.js")
+  try {
+    await run(process.execPath, [installScript])
+  } catch (error) {
+    if (
+      process.env.ELECTRON_MIRROR ||
+      process.env.npm_config_electron_mirror ||
+      process.env.NPM_CONFIG_ELECTRON_MIRROR
+    ) {
+      throw error
+    }
+
+    console.warn("Electron download failed; retrying with a checksum-verified mirror.")
+    await run(process.execPath, [installScript], {
+      env: {
+        ...process.env,
+        ELECTRON_MIRROR: "https://npmmirror.com/mirrors/electron/",
+      },
+    })
+  }
 }
 
 function portIsOpen(host, port, timeoutMs = 500) {
@@ -154,6 +177,7 @@ process.once("SIGTERM", stop)
 
 try {
   await preflightPorts()
+  await ensureElectronBinary()
   await run(npmCommand, npmArgs(["run", "electron:compile"]))
 
   vite = spawnProcess(npmCommand, npmArgs(["run", "dev"]))
