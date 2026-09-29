@@ -38,7 +38,8 @@ Starting the Studio runtime applies only to the current backend session. Each
 **Run** starts a short-lived isolated container and removes it when execution
 ends.
 
-When starting the desktop app with the development launcher, opt in explicitly:
+To also enable Python sandbox tools for Agent runs, opt in explicitly when
+starting the desktop app with the development launcher:
 
 ```powershell
 .\scripts\start.ps1 -Mode Desktop -SkipInstall -EnableSandbox
