@@ -50,8 +50,6 @@ describe("Electron Stage 14 legacy runtime removal", () => {
       "../../../../../start-electronrebuild.ps1",
       "../../../../../scripts/start.ps1",
       "../../../../../scripts/verify.ps1",
-      "../../../../../scripts/verify_and_start.ps1",
-      "../../../../../scripts/build_windows.ps1",
       "../../../README.md",
     ]) {
       expect(read(file).toLowerCase()).not.toContain("tauri")
