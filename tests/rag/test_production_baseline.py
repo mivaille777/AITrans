@@ -5,8 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import RagChunkingConfig, RagConfig
 from backend.rag.evaluation_dataset import load_evaluation_dataset
@@ -16,7 +14,6 @@ from backend.rag.models import DocumentChunk
 from backend.rag.parsers import parse_document
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.sparse import BM25SparseRetriever
-from backend.rag.stores.base import VectorSearchFilter
 from backend.services.knowledge_library_service import KnowledgeLibraryService
 from scripts.rag_production_baseline import (
     FIXTURE_ROOT,
@@ -39,7 +36,7 @@ class _FixedEmbedding:
 
 class _MemoryVectorStore:
     def __init__(self) -> None:
-        self.chunks: dict[str, DocumentChunk] = {}
+        self.chunks: dict[tuple[str | None, str], DocumentChunk] = {}
 
     def ensure_collection(self) -> None:
         return None
@@ -48,26 +45,36 @@ class _MemoryVectorStore:
         self,
         chunks: list[DocumentChunk],
         vectors: list[list[float]],
+        *,
+        generation_id: str | None = None,
     ) -> None:
         assert len(chunks) == len(vectors)
-        self.chunks.update({chunk.chunk_id: chunk for chunk in chunks})
+        self.chunks.update({(generation_id, chunk.chunk_id): chunk for chunk in chunks})
+
+    def list_chunks(self, *, generation_id: str | None = None):
+        return [
+            chunk
+            for (stored_generation, _chunk_id), chunk in self.chunks.items()
+            if stored_generation == generation_id
+        ]
 
     def search(self, *_args, **_kwargs):
         return []
 
-    def delete_document(self, document_id: str) -> None:
+    def delete_document(self, document_id: str, *, generation_id=None) -> None:
         self.chunks = {
-            chunk_id: chunk
-            for chunk_id, chunk in self.chunks.items()
+            key: chunk
+            for key, chunk in self.chunks.items()
             if chunk.document_id != document_id
+            or (generation_id is not None and key[0] != generation_id)
         }
 
-    def delete_chunks(self, chunk_ids: list[str]) -> None:
+    def delete_chunks(self, chunk_ids: list[str], *, generation_id=None) -> None:
         for chunk_id in chunk_ids:
-            self.chunks.pop(chunk_id, None)
+            self.chunks.pop((generation_id, chunk_id), None)
 
-    def get_chunk(self, chunk_id: str) -> DocumentChunk | None:
-        return self.chunks.get(chunk_id)
+    def get_chunk(self, chunk_id: str, *, generation_id=None) -> DocumentChunk | None:
+        return self.chunks.get((generation_id, chunk_id))
 
 
 def _make_import_pipeline(tmp_path: Path):
@@ -98,6 +105,7 @@ def _make_import_pipeline(tmp_path: Path):
         vector_store=vector_store,
         sparse_retriever=sparse,
         config=config.retrieval,
+        manifest=manifest,
     )
     return library, retrieval
 
@@ -106,12 +114,12 @@ def test_production_eval_fixture_is_valid_and_deidentified() -> None:
     cases = load_evaluation_dataset(FIXTURE_ROOT / "cases.jsonl")
     chunks = [
         json.loads(line)
-        for line in (FIXTURE_ROOT / "chunks.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (FIXTURE_ROOT / "chunks.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     chunk_ids = {item["chunk_id"] for item in chunks}
-    answerable_ids = {
-        chunk_id for case in cases for chunk_id in case.graded_relevance
-    }
+    answerable_ids = {chunk_id for case in cases for chunk_id in case.graded_relevance}
 
     assert len(cases) == 6
     assert {category for case in cases for category in case.categories} == {

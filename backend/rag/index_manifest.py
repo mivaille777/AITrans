@@ -191,15 +191,25 @@ class IndexManifest:
         self,
         document_id: str,
         generation_id: str,
+        *,
+        manifest_record: IndexManifestRecord | None = None,
     ) -> IndexGenerationRecord:
         """Atomically activate a validated generation and retain its predecessor."""
 
         with self._lock:
+            before_publish = self._data.model_copy(deep=True)
             normalized_document_id = str(document_id or "").strip()
             record = self._get_generation_for_transition(
                 normalized_document_id, generation_id
             )
             self._require_generation_status(record, IndexGenerationStatus.VALIDATING)
+            if manifest_record is not None and (
+                manifest_record.document_id != normalized_document_id
+                or manifest_record.chunk_ids != record.chunk_ids
+            ):
+                raise RagInvariantError(
+                    "published manifest record does not match generation identity"
+                )
             document_record = self._data.documents.get(normalized_document_id)
             previous_generation_id = (
                 document_record.generation_id if document_record else ""
@@ -222,7 +232,17 @@ class IndexManifest:
             record.previous_generation_id = previous_generation_id
             record.published_at = now
             record.error = ""
-            if document_record is None:
+            if manifest_record is not None:
+                document_record = manifest_record.model_copy(
+                    update={
+                        "generation_id": record.generation_id,
+                        "status": IndexStatus.READY,
+                        "indexed_at": now,
+                        "error": "",
+                    },
+                    deep=True,
+                )
+            elif document_record is None:
                 document_record = IndexManifestRecord(
                     document_id=normalized_document_id,
                     chunk_ids=list(record.chunk_ids),
@@ -242,7 +262,11 @@ class IndexManifest:
                     deep=True,
                 )
             self._data.documents[normalized_document_id] = document_record
-            self._save()
+            try:
+                self._save()
+            except Exception:
+                self._data = before_publish
+                raise
             return record.model_copy(deep=True)
 
     def fail_generation(
@@ -308,6 +332,32 @@ class IndexManifest:
                     f"active generation pointer is invalid: {document_id}/{generation_id}"
                 )
             return generation.model_copy(deep=True)
+
+    def list_active_generations(self) -> dict[str, str | None]:
+        """Return each READY document's published generation (None for legacy)."""
+
+        with self._lock:
+            active: dict[str, str | None] = {}
+            for document_id, document in self._data.documents.items():
+                if document.status is not IndexStatus.READY:
+                    continue
+                generation_id = document.generation_id.strip()
+                if generation_id:
+                    generation = self._data.generations.get(document_id, {}).get(
+                        generation_id
+                    )
+                    if (
+                        generation is None
+                        or generation.status is not IndexGenerationStatus.READY
+                    ):
+                        raise RagInvariantError(
+                            "active generation pointer is invalid: "
+                            f"{document_id}/{generation_id}"
+                        )
+                    active[document_id] = generation_id
+                else:
+                    active[document_id] = None
+            return active
 
     def upsert(self, record: IndexManifestRecord) -> None:
         with self._lock:

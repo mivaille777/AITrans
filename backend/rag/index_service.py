@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,6 +17,7 @@ from backend.rag.chunking import CHUNKER_VERSION, StructureAwareChunker
 from backend.rag.config import RagVisualUnderstandingConfig
 from backend.rag.embeddings.base import EmbeddingProvider
 from backend.rag.index_manifest import (
+    IndexGenerationStatus,
     IndexManifest,
     IndexManifestRecord,
     IndexStatus,
@@ -135,11 +138,17 @@ class IndexService:
             existing.document_id if existing else self._stable_document_id(source_uri)
         )
         content_hash = existing.content_hash if existing else ""
+        keep_existing_ready = bool(
+            existing is not None and existing.status is IndexStatus.READY
+        )
+        generation_id = ""
+        generation_started = False
 
-        self._manifest.mark_status(
+        self._mark_progress(
             document_id,
             IndexStatus.PARSING,
             source_uri=source_uri,
+            preserve_ready=keep_existing_ready,
         )
         try:
             normalized = self._parser(source_path)
@@ -185,7 +194,12 @@ class IndexService:
                 provider=self._visual_description_provider,
             )
 
-            self._manifest.mark_status(document_id, IndexStatus.CHUNKING)
+            self._mark_progress(
+                document_id,
+                IndexStatus.CHUNKING,
+                source_uri=source_uri,
+                preserve_ready=keep_existing_ready,
+            )
             text_chunks = self._chunker.chunk(normalized)
             multimodal_chunks = build_multimodal_chunks(
                 normalized,
@@ -201,22 +215,71 @@ class IndexService:
                 chunk.model_copy(update={"embedding_version": embedding_version})
                 for chunk in chunks
             ]
-            self._manifest.mark_status(document_id, IndexStatus.EMBEDDING)
+            self._mark_progress(
+                document_id,
+                IndexStatus.EMBEDDING,
+                source_uri=source_uri,
+                preserve_ready=keep_existing_ready,
+            )
             vectors = self._embedding_provider.embed_documents(
                 [chunk.text for chunk in chunks]
             )
 
-            self._manifest.mark_status(document_id, IndexStatus.INDEXING)
-            self._vector_store.upsert_chunks(chunks, vectors)
-            if self._sparse_retriever is not None:
-                self._sparse_retriever.delete_document(document_id)
-                self._sparse_retriever.index_chunks(chunks)
-            new_chunk_ids = [chunk.chunk_id for chunk in chunks]
-            stale_chunk_ids = (
-                sorted(set(existing.chunk_ids) - set(new_chunk_ids)) if existing else []
+            self._mark_progress(
+                document_id,
+                IndexStatus.INDEXING,
+                source_uri=source_uri,
+                preserve_ready=keep_existing_ready,
             )
-            if stale_chunk_ids:
-                self._vector_store.delete_chunks(stale_chunk_ids)
+            new_chunk_ids = [chunk.chunk_id for chunk in chunks]
+            generation_id = uuid4().hex
+            self._manifest.begin_generation(document_id, generation_id, new_chunk_ids)
+            generation_started = True
+            self._vector_store.upsert_chunks(
+                chunks,
+                vectors,
+                generation_id=generation_id,
+            )
+            if self._sparse_retriever is not None:
+                self._sparse_retriever.index_chunks(
+                    chunks,
+                    generation_id=generation_id,
+                )
+
+            vector_chunk_ids = [
+                chunk.chunk_id
+                for chunk in self._vector_store.list_chunks(generation_id=generation_id)
+                if chunk.document_id == document_id
+            ]
+            self._require_exact_chunk_ids(
+                "vector store",
+                expected=new_chunk_ids,
+                observed=vector_chunk_ids,
+            )
+            if self._sparse_retriever is not None:
+                sparse_chunk_ids = [
+                    chunk.chunk_id
+                    for chunk in self._sparse_retriever.list_chunks(
+                        generation_id=generation_id
+                    )
+                    if chunk.document_id == document_id
+                ]
+                self._require_exact_chunk_ids(
+                    "BM25 store",
+                    expected=new_chunk_ids,
+                    observed=sparse_chunk_ids,
+                )
+                if Counter(sparse_chunk_ids) != Counter(vector_chunk_ids):
+                    raise ValueError(
+                        "vector/BM25 generation chunk IDs differ: "
+                        f"vector={sorted(vector_chunk_ids)}, "
+                        f"BM25={sorted(sparse_chunk_ids)}"
+                    )
+            self._manifest.validate_generation(
+                document_id,
+                generation_id,
+                vector_chunk_ids,
+            )
 
             record = ready_manifest_record(
                 document_id=document_id,
@@ -231,8 +294,12 @@ class IndexService:
                 structure_quality=structure_quality,
                 section_count=len(normalized.sections),
                 reindex_recommended=reindex_recommended,
+            ).model_copy(update={"generation_id": generation_id})
+            self._manifest.publish_generation(
+                document_id,
+                generation_id,
+                manifest_record=record,
             )
-            self._manifest.upsert(record)
             return self._result(
                 started,
                 document_id=document_id,
@@ -242,12 +309,48 @@ class IndexService:
             )
         except Exception as exc:  # noqa: BLE001 - service boundary returns typed failures
             error = str(exc) or exc.__class__.__name__
-            self._manifest.mark_status(
-                document_id,
-                IndexStatus.FAILED,
-                source_uri=source_uri,
-                error=error,
-            )
+            if generation_started:
+                cleanup_errors: list[str] = []
+                try:
+                    self._vector_store.delete_document(
+                        document_id,
+                        generation_id=generation_id,
+                    )
+                except Exception as cleanup_exc:  # noqa: BLE001 - preserve root cause
+                    cleanup_errors.append(
+                        "Qdrant cleanup: "
+                        + (str(cleanup_exc) or cleanup_exc.__class__.__name__)
+                    )
+                if self._sparse_retriever is not None:
+                    try:
+                        self._sparse_retriever.delete_document(
+                            document_id,
+                            generation_id=generation_id,
+                        )
+                    except Exception as cleanup_exc:  # noqa: BLE001 - preserve root cause
+                        cleanup_errors.append(
+                            "BM25 cleanup: "
+                            + (str(cleanup_exc) or cleanup_exc.__class__.__name__)
+                        )
+                if cleanup_errors:
+                    error = f"{error}; generation cleanup failed: {'; '.join(cleanup_errors)}"
+                generation = self._manifest.get_generation(document_id, generation_id)
+                if generation and generation.status in {
+                    IndexGenerationStatus.BUILDING,
+                    IndexGenerationStatus.VALIDATING,
+                }:
+                    self._manifest.fail_generation(
+                        document_id,
+                        generation_id,
+                        error=error,
+                    )
+            if not keep_existing_ready:
+                self._manifest.mark_status(
+                    document_id,
+                    IndexStatus.FAILED,
+                    source_uri=source_uri,
+                    error=error,
+                )
             return self._result(
                 started,
                 document_id=document_id,
@@ -255,6 +358,40 @@ class IndexService:
                 content_hash=content_hash,
                 error=error,
             )
+
+    def _mark_progress(
+        self,
+        document_id: str,
+        status: IndexStatus,
+        *,
+        source_uri: str,
+        preserve_ready: bool,
+    ) -> None:
+        if preserve_ready:
+            return
+        self._manifest.mark_status(
+            document_id,
+            status,
+            source_uri=source_uri,
+        )
+
+    @staticmethod
+    def _require_exact_chunk_ids(
+        store_name: str,
+        *,
+        expected: list[str],
+        observed: list[str],
+    ) -> None:
+        expected_counts = Counter(expected)
+        observed_counts = Counter(observed)
+        if expected_counts == observed_counts:
+            return
+        missing = sorted((expected_counts - observed_counts).elements())
+        unexpected = sorted((observed_counts - expected_counts).elements())
+        raise ValueError(
+            f"{store_name} generation chunk IDs failed validation: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
 
     def _can_reuse(
         self,

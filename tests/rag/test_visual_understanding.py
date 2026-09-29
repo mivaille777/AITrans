@@ -111,7 +111,9 @@ def _document(tmp_path: Path, *, content_hash: str = "hash-v1") -> NormalizedDoc
     )
 
 
-def test_visual_description_enriches_retrieval_text_and_evidence(tmp_path: Path) -> None:
+def test_visual_description_enriches_retrieval_text_and_evidence(
+    tmp_path: Path,
+) -> None:
     provider = FakeVisualProvider()
     enriched = enrich_document_with_visual_descriptions(
         _document(tmp_path),
@@ -157,7 +159,9 @@ def test_disabled_visual_understanding_never_calls_provider(tmp_path: Path) -> N
     assert enriched.metadata["image_understanding_enabled"] is False
 
 
-def test_visual_provider_failure_falls_back_to_caption_surrogate(tmp_path: Path) -> None:
+def test_visual_provider_failure_falls_back_to_caption_surrogate(
+    tmp_path: Path,
+) -> None:
     provider = FakeVisualProvider(fail=True)
     original = _document(tmp_path)
     original_surrogate = original.elements[0].surrogate_text
@@ -178,9 +182,7 @@ def test_visual_provider_failure_falls_back_to_caption_surrogate(tmp_path: Path)
 
 def test_unavailable_provider_and_image_limit_are_nonfatal(tmp_path: Path) -> None:
     document = _document(tmp_path)
-    second = document.elements[0].model_copy(
-        update={"element_id": "element-2"}
-    )
+    second = document.elements[0].model_copy(update={"element_id": "element-2"})
     document = document.model_copy(update={"elements": [document.elements[0], second]})
 
     unavailable = enrich_document_with_visual_descriptions(
@@ -204,16 +206,20 @@ def test_unavailable_provider_and_image_limit_are_nonfatal(tmp_path: Path) -> No
     assert bounded.elements[1].metadata["visual_description_status"] == "limit_skipped"
 
 
-def test_visual_index_fingerprint_changes_with_semantic_config_and_disabled_is_stable() -> None:
+def test_visual_index_fingerprint_changes_with_semantic_config_and_disabled_is_stable() -> (
+    None
+):
     first = visual_description_index_version(_config(model="vision-a"))
     second = visual_description_index_version(_config(model="vision-b"))
-    bounded = visual_description_index_version(_config(model="vision-a", max_output_tokens=96))
+    bounded = visual_description_index_version(
+        _config(model="vision-a", max_output_tokens=96)
+    )
 
     assert first != second
     assert first != bounded
-    assert visual_description_index_version(
-        RagVisualUnderstandingConfig()
-    ).endswith("-off")
+    assert visual_description_index_version(RagVisualUnderstandingConfig()).endswith(
+        "-off"
+    )
 
 
 def test_openai_compatible_visual_provider_sends_image_data_url(tmp_path: Path) -> None:
@@ -278,9 +284,14 @@ class FakeVectorStore:
     def __init__(self) -> None:
         self.chunks: dict[str, DocumentChunk] = {}
 
-    def upsert_chunks(self, chunks, vectors) -> None:
+    def upsert_chunks(self, chunks, vectors, *, generation_id=None) -> None:
+        _ = generation_id
         assert len(chunks) == len(vectors)
         self.chunks.update({chunk.chunk_id: chunk for chunk in chunks})
+
+    def list_chunks(self, *, generation_id=None):
+        _ = generation_id
+        return list(self.chunks.values())
 
     def delete_chunks(self, chunk_ids) -> None:
         for chunk_id in chunk_ids:

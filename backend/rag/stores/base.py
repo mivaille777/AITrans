@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -54,6 +55,8 @@ class VectorStore(Protocol):
         self,
         chunks: list[DocumentChunk],
         vectors: list[list[float]],
+        *,
+        generation_id: str | None = None,
     ) -> None: ...
 
     def search(
@@ -62,13 +65,25 @@ class VectorStore(Protocol):
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]: ...
 
-    def delete_document(self, document_id: str) -> None: ...
+    def delete_document(
+        self, document_id: str, *, generation_id: str | None = None
+    ) -> None: ...
 
-    def delete_chunks(self, chunk_ids: list[str]) -> None: ...
+    def delete_chunks(
+        self, chunk_ids: list[str], *, generation_id: str | None = None
+    ) -> None: ...
 
-    def get_chunk(self, chunk_id: str) -> DocumentChunk | None: ...
+    def get_chunk(
+        self, chunk_id: str, *, generation_id: str | None = None
+    ) -> DocumentChunk | None: ...
+
+    def list_chunks(
+        self, *, generation_id: str | None = None
+    ) -> list[DocumentChunk]: ...
 
 
 __all__ = ["VectorSearchFilter", "VectorStore", "is_reference_chunk"]

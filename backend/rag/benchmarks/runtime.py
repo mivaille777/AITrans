@@ -140,6 +140,7 @@ def build_benchmark_rag_runtime(
         sparse_retriever=sparse,
         config=isolated_config.retrieval,
         reranker=resolved_reranker,
+        manifest=manifest,
     )
     index = IndexService(
         chunker=chunker,

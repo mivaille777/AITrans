@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Self
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -134,21 +135,38 @@ class QdrantLocalVectorStore:
         top_k: int,
         filters: VectorSearchFilter | None = None,
         generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise RagVectorStoreError("top_k must be positive")
         self.ensure_collection()
         normalized_generation = self._normalize_generation_id(generation_id)
+        if active_generations is not None:
+            effective_active = {
+                document_id: active_generation
+                for document_id, active_generation in active_generations.items()
+                if not filters
+                or not filters.document_ids
+                or document_id in filters.document_ids
+            }
+            if not effective_active:
+                return []
+        else:
+            effective_active = None
         query_vector = self._validate_vector(vector)
         try:
             response = self._client.query_points(
                 collection_name=self.collection_name,
                 query=query_vector,
-                query_filter=self._build_filter(filters, normalized_generation),
+                query_filter=self._build_filter(
+                    filters,
+                    normalized_generation,
+                    effective_active,
+                ),
                 # Older indexes predate ``section_kind``. Fetch a bounded
                 # surplus so the in-process legacy safeguard can still return
                 # the requested number of non-reference candidates.
-                limit=top_k * 3 if filters and filters.exclude_references else top_k,
+                limit=(top_k * 3 if filters and filters.exclude_references else top_k),
                 with_payload=True,
                 with_vectors=False,
             )
@@ -158,6 +176,10 @@ class QdrantLocalVectorStore:
         candidates: list[RetrievalCandidate] = []
         for point in response.points:
             chunk = self._chunk_from_payload(point.payload)
+            if effective_active is not None and not self._matches_active_generation(
+                chunk, effective_active
+            ):
+                continue
             if filters and filters.exclude_references and is_reference_chunk(chunk):
                 continue
             candidates.append(
@@ -405,6 +427,7 @@ class QdrantLocalVectorStore:
     def _build_filter(
         filters: VectorSearchFilter | None,
         generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> qdrant_models.Filter | None:
         conditions: list[qdrant_models.FieldCondition] = []
         must: list[Any] = conditions
@@ -445,7 +468,36 @@ class QdrantLocalVectorStore:
                     match=qdrant_models.MatchValue(value="references"),
                 )
             )
-        if generation_id is None:
+        if active_generations is not None:
+            scoped_generations = {
+                document_id: active_generation
+                for document_id, active_generation in active_generations.items()
+                if not filters
+                or not filters.document_ids
+                or document_id in filters.document_ids
+            }
+            generation_pairs = []
+            for document_id, active_generation in sorted(scoped_generations.items()):
+                pair_must: list[Any] = [
+                    qdrant_models.FieldCondition(
+                        key="document_id",
+                        match=qdrant_models.MatchValue(value=document_id),
+                    )
+                ]
+                if active_generation is None:
+                    pair_must.append(
+                        qdrant_models.IsEmptyCondition(
+                            is_empty=qdrant_models.PayloadField(key="index_generation")
+                        )
+                    )
+                else:
+                    pair_must.append(
+                        QdrantLocalVectorStore._generation_condition(active_generation)
+                    )
+                generation_pairs.append(qdrant_models.Filter(must=pair_must))
+            if generation_pairs:
+                must.append(qdrant_models.Filter(should=generation_pairs))
+        elif generation_id is None:
             # Product calls without a generation keep their legacy view and
             # cannot accidentally see staged or retired generation points.
             must.append(
@@ -462,6 +514,17 @@ class QdrantLocalVectorStore:
         return qdrant_models.FieldCondition(
             key="index_generation",
             match=qdrant_models.MatchValue(value=generation_id),
+        )
+
+    @classmethod
+    def _matches_active_generation(
+        cls,
+        chunk: DocumentChunk,
+        active_generations: Mapping[str, str | None],
+    ) -> bool:
+        return (
+            chunk.document_id in active_generations
+            and cls._chunk_generation(chunk) == active_generations[chunk.document_id]
         )
 
     @staticmethod

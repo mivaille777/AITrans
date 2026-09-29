@@ -1033,6 +1033,7 @@ class RagDebugService:
             sparse_retriever=runtime.sparse_retriever,
             config=profile.config.retrieval,
             reranker=getattr(base, "_reranker", None),
+            manifest=runtime.manifest,
         )
 
     @classmethod

@@ -31,19 +31,21 @@ class SharedEmbedding:
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(list(texts))
-        return [
-            [0.0, 1.0] if "TOPIC_B" in text else [1.0, 0.0]
-            for text in texts
-        ]
+        return [[0.0, 1.0] if "TOPIC_B" in text else [1.0, 0.0] for text in texts]
 
 
 class Store:
     def __init__(self) -> None:
         self.chunks: list[DocumentChunk] = []
 
-    def upsert_chunks(self, chunks, vectors) -> None:
+    def upsert_chunks(self, chunks, vectors, *, generation_id=None) -> None:
+        _ = generation_id
         assert len(chunks) == len(vectors)
         self.chunks = list(chunks)
+
+    def list_chunks(self, *, generation_id=None):
+        _ = generation_id
+        return list(self.chunks)
 
     def delete_document(self, _document_id: str) -> None:
         self.chunks = []
@@ -52,7 +54,9 @@ class Store:
         return None
 
     def get_chunk(self, chunk_id: str):
-        return next((chunk for chunk in self.chunks if chunk.chunk_id == chunk_id), None)
+        return next(
+            (chunk for chunk in self.chunks if chunk.chunk_id == chunk_id), None
+        )
 
 
 def parser(path: str | Path) -> NormalizedDocument:

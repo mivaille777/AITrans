@@ -69,6 +69,10 @@ class _StoreState:
     def __init__(self) -> None:
         self.chunk_ids_by_document: dict[str, set[str]] = defaultdict(set)
         self.generations_by_chunk: dict[tuple[str, str], set[str]] = defaultdict(set)
+        self.chunk_ids_by_document_generation: dict[tuple[str, str], set[str]] = (
+            defaultdict(set)
+        )
+        self.untagged_chunk_ids_by_document: dict[str, set[str]] = defaultdict(set)
         self.manifest_status_by_document: dict[str, str] = {}
         self.invalid_qdrant_points = 0
 
@@ -77,7 +81,12 @@ class _StoreState:
 
     @property
     def chunk_count(self) -> int:
-        return sum(len(chunk_ids) for chunk_ids in self.chunk_ids_by_document.values())
+        return sum(
+            len(chunk_ids)
+            for chunk_ids in self.chunk_ids_by_document_generation.values()
+        ) + sum(
+            len(chunk_ids) for chunk_ids in self.untagged_chunk_ids_by_document.values()
+        )
 
     @property
     def generation_values(self) -> set[str]:
@@ -89,7 +98,20 @@ class _StoreState:
 
     @property
     def generation_tagged_chunk_count(self) -> int:
-        return sum(bool(values) for values in self.generations_by_chunk.values())
+        return sum(
+            len(chunk_ids)
+            for chunk_ids in self.chunk_ids_by_document_generation.values()
+        )
+
+    def add_chunk(self, document_id: str, chunk_id: str, generation: str = "") -> None:
+        self.chunk_ids_by_document[document_id].add(chunk_id)
+        if generation:
+            self.chunk_ids_by_document_generation[(document_id, generation)].add(
+                chunk_id
+            )
+            self.generations_by_chunk[(document_id, chunk_id)].add(generation)
+        else:
+            self.untagged_chunk_ids_by_document[document_id].add(chunk_id)
 
 
 def audit_index_consistency(
@@ -164,9 +186,44 @@ def _read_manifest(manifest: ManifestReader, state: _StoreState) -> None:
                 raise IndexAuditError(
                     f"manifest record for {document_id!r} has an empty chunk ID"
                 )
-            state.chunk_ids_by_document[document_id].add(chunk_id)
-            if generation:
-                state.generations_by_chunk[(document_id, chunk_id)].add(generation)
+            state.add_chunk(document_id, chunk_id, generation)
+
+    list_generations = getattr(manifest, "list_generations", None)
+    if callable(list_generations):
+        for document_id in sorted(state.manifest_status_by_document):
+            try:
+                generations = list_generations(document_id)
+            except Exception as exc:
+                raise IndexAuditError(
+                    f"failed to read manifest generations for {document_id!r}"
+                ) from exc
+            for generation_record in generations:
+                generation_status = getattr(generation_record, "status", "")
+                if getattr(generation_status, "value", generation_status) == "failed":
+                    # A failed generation is expected to be physically rolled
+                    # back; surviving points will still appear as store-only IDs.
+                    continue
+                generation_id = _generation(
+                    getattr(generation_record, "generation_id", None)
+                )
+                if not generation_id:
+                    raise IndexAuditError(
+                        f"manifest generation for {document_id!r} has no generation ID"
+                    )
+                generation_chunk_ids = getattr(generation_record, "chunk_ids", None)
+                if not isinstance(generation_chunk_ids, (list, tuple, set)):
+                    raise IndexAuditError(
+                        f"manifest generation {document_id!r}/{generation_id!r} "
+                        "has no chunk ID catalogue"
+                    )
+                for raw_chunk_id in generation_chunk_ids:
+                    chunk_id = str(raw_chunk_id or "").strip()
+                    if not chunk_id:
+                        raise IndexAuditError(
+                            f"manifest generation {document_id!r}/{generation_id!r} "
+                            "has an empty chunk ID"
+                        )
+                    state.add_chunk(document_id, chunk_id, generation_id)
 
 
 def _read_sparse(sparse_retriever: SparseReader, state: _StoreState) -> None:
@@ -179,10 +236,8 @@ def _read_sparse(sparse_retriever: SparseReader, state: _StoreState) -> None:
         raise IndexAuditError("failed to read BM25 catalogue") from exc
     for chunk in chunks:
         document_id, chunk_id = _chunk_identity(chunk, "BM25")
-        state.chunk_ids_by_document[document_id].add(chunk_id)
         generation = _generation(_chunk_generation_value(chunk))
-        if generation:
-            state.generations_by_chunk[(document_id, chunk_id)].add(generation)
+        state.add_chunk(document_id, chunk_id, generation)
 
 
 def _read_qdrant(vector_store: Any, state: _StoreState, *, page_size: int) -> None:
@@ -224,10 +279,8 @@ def _read_qdrant(vector_store: Any, state: _StoreState, *, page_size: int) -> No
                 if not document_id or not chunk_id:
                     state.invalid_qdrant_points += 1
                     continue
-                state.chunk_ids_by_document[document_id].add(chunk_id)
                 generation = _generation(_chunk_generation_value(payload))
-                if generation:
-                    state.generations_by_chunk[(document_id, chunk_id)].add(generation)
+                state.add_chunk(document_id, chunk_id, generation)
             if offset is None:
                 break
     except IndexAuditError:
@@ -330,12 +383,13 @@ def _build_report(states: dict[str, _StoreState]) -> IndexAuditReport:
             }
             for name, values in generations.items():
                 generations_by_store.setdefault(name, set()).update(values)
-            known_values = set().union(*generations.values())
-            if len(known_values) > 1:
-                generation_mismatch = True
-                chunk_mismatch_ids.append(chunk_id)
-            elif not all(generations[name] for name in _STORE_NAMES):
-                generation_incomplete = True
+            if all(chunk_id in ids_by_store[name] for name in _STORE_NAMES):
+                known_values = {frozenset(values) for values in generations.values()}
+                if len(known_values) > 1:
+                    generation_mismatch = True
+                    chunk_mismatch_ids.append(chunk_id)
+                elif not all(generations[name] for name in _STORE_NAMES):
+                    generation_incomplete = True
         if chunk_mismatch_ids:
             findings.append(
                 IndexAuditFinding(

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from time import perf_counter
 
 from backend.rag.config import RagRetrievalConfig
 from backend.rag.embeddings.base import EmbeddingProvider
 from backend.rag.exceptions import RagRetrievalError
 from backend.rag.fusion import rrf_fuse
+from backend.rag.index_manifest import IndexManifest
 from backend.rag.models import RetrievalCandidate, RetrievalResult
 from backend.rag.rerankers.base import RerankerProvider
 from backend.rag.small_to_big import SmallToBigContextExpander
@@ -23,12 +25,14 @@ class RetrievalService:
         sparse_retriever: SparseRetriever,
         config: RagRetrievalConfig | None = None,
         reranker: RerankerProvider | None = None,
+        manifest: IndexManifest | None = None,
     ) -> None:
         self._embedding = embedding_provider
         self._vector_store = vector_store
         self._sparse = sparse_retriever
         self._config = config or RagRetrievalConfig()
         self._reranker = reranker
+        self._manifest = manifest
 
     def retrieve(
         self,
@@ -56,6 +60,7 @@ class RetrievalService:
             effective_filters = effective_filters.model_copy(
                 update={"exclude_references": False}
             )
+        active_generations = self._resolve_active_generations(effective_filters)
 
         dense: list[RetrievalCandidate] = []
         sparse: list[RetrievalCandidate] = []
@@ -80,11 +85,18 @@ class RetrievalService:
                 vector = self._embedding.embed_query(query)
                 embedding_ms = (perf_counter() - embedding_started) * 1000
                 dense_started = perf_counter()
-                dense = self._vector_store.search(
-                    vector,
-                    top_k=self._config.dense_top_k,
-                    filters=effective_filters,
-                )
+                search_kwargs = {
+                    "top_k": self._config.dense_top_k,
+                    "filters": effective_filters,
+                }
+                if active_generations is not None:
+                    dense = self._vector_store.search(
+                        vector,
+                        **search_kwargs,
+                        active_generations=active_generations,
+                    )
+                else:
+                    dense = self._vector_store.search(vector, **search_kwargs)
                 dense_ms = (perf_counter() - dense_started) * 1000
             except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
                 dense_error = str(exc) or exc.__class__.__name__
@@ -92,11 +104,19 @@ class RetrievalService:
         if sparse_enabled:
             sparse_started = perf_counter()
             try:
-                sparse = self._sparse.search(
-                    query,
-                    self._config.sparse_top_k,
-                    effective_filters,
-                )
+                if active_generations is not None:
+                    sparse = self._sparse.search(
+                        query,
+                        self._config.sparse_top_k,
+                        effective_filters,
+                        active_generations=active_generations,
+                    )
+                else:
+                    sparse = self._sparse.search(
+                        query,
+                        self._config.sparse_top_k,
+                        effective_filters,
+                    )
             except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
                 sparse_error = str(exc) or exc.__class__.__name__
             sparse_ms = (perf_counter() - sparse_started) * 1000
@@ -106,11 +126,22 @@ class RetrievalService:
         if use_structural and callable(search_sections):
             structural_started = perf_counter()
             try:
-                structural = search_sections(
-                    section_hints,
-                    max(self._config.fusion_top_k, desired_top_k),
-                    effective_filters,
-                )
+                section_kwargs = {
+                    "filters": effective_filters,
+                }
+                if active_generations is not None:
+                    structural = search_sections(
+                        section_hints,
+                        max(self._config.fusion_top_k, desired_top_k),
+                        active_generations=active_generations,
+                        **section_kwargs,
+                    )
+                else:
+                    structural = search_sections(
+                        section_hints,
+                        max(self._config.fusion_top_k, desired_top_k),
+                        effective_filters,
+                    )
             except Exception as exc:  # noqa: BLE001 - structural recall is additive
                 structural_error = str(exc) or exc.__class__.__name__
             structural_ms = (perf_counter() - structural_started) * 1000
@@ -173,9 +204,7 @@ class RetrievalService:
                 candidates = fusion_candidates
                 reranker_fallback_reason = str(exc) or exc.__class__.__name__
             rerank_ms = (perf_counter() - rerank_started) * 1000
-        post_rerank_chunk_ids = [
-            candidate.chunk.chunk_id for candidate in candidates
-        ]
+        post_rerank_chunk_ids = [candidate.chunk.chunk_id for candidate in candidates]
 
         candidates = self._finalize_candidates(
             candidates,
@@ -236,11 +265,30 @@ class RetrievalService:
                 "reranker_applied": reranker_applied,
                 "reranker_fallback_reason": reranker_fallback_reason,
                 "structural_section_hints": list(section_hints),
+                "active_generation_count": (
+                    len(active_generations) if active_generations is not None else None
+                ),
                 "small_to_big_enabled": use_small_to_big,
                 "small_to_big_error": small_to_big_error,
                 **small_to_big_metadata,
             },
         )
+
+    def _resolve_active_generations(
+        self,
+        filters: VectorSearchFilter,
+    ) -> Mapping[str, str | None] | None:
+        if self._manifest is None:
+            return None
+        active = self._manifest.list_active_generations()
+        if filters.document_ids:
+            allowed_document_ids = set(filters.document_ids)
+            active = {
+                document_id: generation_id
+                for document_id, generation_id in active.items()
+                if document_id in allowed_document_ids
+            }
+        return active
 
     @staticmethod
     def _strategy(

@@ -54,48 +54,67 @@ class OfflineRerankerModel:
 
 class InMemoryVectorStore:
     def __init__(self) -> None:
-        self.entries: dict[str, tuple[DocumentChunk, list[float]]] = {}
+        self.entries: dict[
+            tuple[str | None, str], tuple[DocumentChunk, list[float]]
+        ] = {}
 
-    def upsert_chunks(self, chunks, vectors) -> None:
+    def upsert_chunks(self, chunks, vectors, *, generation_id=None) -> None:
         self.entries.update(
             {
-                chunk.chunk_id: (chunk, vector)
+                (generation_id, chunk.chunk_id): (chunk, vector)
                 for chunk, vector in zip(chunks, vectors, strict=True)
             }
         )
 
-    def search(self, vector, *, top_k, filters=None):
+    def search(self, vector, *, top_k, filters=None, active_generations=None):
         def score(candidate):
             _chunk, stored = candidate
             return sum(left * right for left, right in zip(vector, stored, strict=True))
 
         eligible = [
-            entry
-            for entry in self.entries.values()
-            if filters is None
-            or not filters.document_ids
-            or entry[0].document_id in filters.document_ids
+            (generation, entry)
+            for (generation, _chunk_id), entry in self.entries.items()
+            if (
+                filters is None
+                or not filters.document_ids
+                or entry[0].document_id in filters.document_ids
+            )
+            and (
+                active_generations is not None
+                and entry[0].document_id in active_generations
+                and generation == active_generations[entry[0].document_id]
+                or active_generations is None
+                and generation is None
+            )
         ]
-        ranked = sorted(eligible, key=score, reverse=True)[:top_k]
+        ranked = sorted(eligible, key=lambda item: score(item[1]), reverse=True)[:top_k]
         return [
             RetrievalCandidate(
                 chunk=chunk,
                 dense_score=score((chunk, stored)),
                 rank=rank,
             )
-            for rank, (chunk, stored) in enumerate(ranked, start=1)
+            for rank, (_generation, (chunk, stored)) in enumerate(ranked, start=1)
         ]
 
-    def delete_document(self, document_id):
+    def delete_document(self, document_id, *, generation_id=None):
         self.entries = {
-            chunk_id: entry
-            for chunk_id, entry in self.entries.items()
+            key: entry
+            for key, entry in self.entries.items()
             if entry[0].document_id != document_id
+            or (generation_id is not None and key[0] != generation_id)
         }
 
-    def delete_chunks(self, chunk_ids):
+    def delete_chunks(self, chunk_ids, *, generation_id=None):
         for chunk_id in chunk_ids:
-            self.entries.pop(chunk_id, None)
+            self.entries.pop((generation_id, chunk_id), None)
+
+    def list_chunks(self, *, generation_id=None):
+        return [
+            chunk
+            for (stored_generation, _chunk_id), (chunk, _vector) in self.entries.items()
+            if stored_generation == generation_id
+        ]
 
 
 def _installed_manager(root: Path) -> ModelManager:
@@ -153,6 +172,7 @@ def test_installed_local_runtime_indexes_and_retrieves_without_network(
     )
     vector_store = InMemoryVectorStore()
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
+    manifest = IndexManifest(tmp_path / "manifest.json")
     index = IndexService(
         chunker=StructureAwareChunker(
             RagChunkingConfig(
@@ -164,7 +184,7 @@ def test_installed_local_runtime_indexes_and_retrieves_without_network(
         embedding_provider=embedding,
         vector_store=vector_store,
         sparse_retriever=sparse,
-        manifest=IndexManifest(tmp_path / "manifest.json"),
+        manifest=manifest,
     )
     source = tmp_path / "paper.txt"
     source.write_text(
@@ -185,6 +205,7 @@ def test_installed_local_runtime_indexes_and_retrieves_without_network(
             final_top_k=2,
         ),
         reranker=reranker,
+        manifest=manifest,
     ).retrieve("How are Gaussian processes used?")
 
     assert indexed.status is IndexStatus.READY

@@ -160,6 +160,25 @@ def test_generation_publish_switches_active_and_retains_previous_version(
         "generation-1",
         "generation-2",
     ]
+    assert manifest.list_active_generations() == {"doc_one": "generation-2"}
+
+
+def test_active_generation_catalog_keeps_legacy_documents_and_hides_failed_builds(
+    tmp_path: Path,
+) -> None:
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    manifest.upsert(make_record("legacy_doc"))
+    manifest.upsert(make_record("versioned_doc"))
+    manifest.begin_generation("versioned_doc", "generation-1", ["chunk_v1"])
+    manifest.validate_generation("versioned_doc", "generation-1", ["chunk_v1"])
+    manifest.publish_generation("versioned_doc", "generation-1")
+    manifest.begin_generation("versioned_doc", "generation-2", ["chunk_v2"])
+    manifest.fail_generation("versioned_doc", "generation-2", error="injected")
+
+    assert manifest.list_active_generations() == {
+        "legacy_doc": None,
+        "versioned_doc": "generation-1",
+    }
 
 
 def test_generation_state_machine_rejects_invalid_and_duplicate_publish(
@@ -183,6 +202,35 @@ def test_generation_state_machine_rejects_invalid_and_duplicate_publish(
         manifest.publish_generation("doc_one", "generation-1")
     with pytest.raises(RagInvariantError, match="generation already exists"):
         manifest.begin_generation("doc_one", "generation-1", ["chunk_one"])
+
+
+def test_failed_atomic_publish_keeps_previous_active_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    manifest.upsert(make_record())
+    manifest.begin_generation("doc_one", "generation-1", ["chunk_v1"])
+    manifest.validate_generation("doc_one", "generation-1", ["chunk_v1"])
+    manifest.publish_generation("doc_one", "generation-1")
+    manifest.begin_generation("doc_one", "generation-2", ["chunk_v2"])
+    manifest.validate_generation("doc_one", "generation-2", ["chunk_v2"])
+
+    def fail_save() -> None:
+        raise OSError("injected manifest disk failure")
+
+    monkeypatch.setattr(manifest, "_save", fail_save)
+    with pytest.raises(OSError, match="injected manifest disk failure"):
+        manifest.publish_generation("doc_one", "generation-2")
+
+    monkeypatch.undo()
+    assert manifest.get_active_generation("doc_one").generation_id == "generation-1"
+    assert manifest.get_generation("doc_one", "generation-1").status is (
+        IndexGenerationStatus.READY
+    )
+    assert manifest.get_generation("doc_one", "generation-2").status is (
+        IndexGenerationStatus.VALIDATING
+    )
 
 
 def test_interrupted_generations_recover_and_preserve_previous_active_version(

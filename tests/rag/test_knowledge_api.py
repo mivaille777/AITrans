@@ -38,36 +38,54 @@ class FailingEmbedding(FakeEmbedding):
 
 class FakeVectorStore:
     def __init__(self) -> None:
-        self.chunks: dict[str, DocumentChunk] = {}
+        self.chunks: dict[tuple[str | None, str], DocumentChunk] = {}
 
-    def upsert_chunks(self, chunks, vectors) -> None:
+    def upsert_chunks(self, chunks, vectors, *, generation_id=None) -> None:
         assert len(chunks) == len(vectors)
-        self.chunks.update({chunk.chunk_id: chunk for chunk in chunks})
+        self.chunks.update({(generation_id, chunk.chunk_id): chunk for chunk in chunks})
 
-    def delete_document(self, document_id: str) -> None:
+    def list_chunks(self, *, generation_id=None):
+        return [
+            chunk
+            for (stored_generation, _chunk_id), chunk in self.chunks.items()
+            if stored_generation == generation_id
+        ]
+
+    def delete_document(self, document_id: str, *, generation_id=None) -> None:
         self.chunks = {
-            chunk_id: chunk
-            for chunk_id, chunk in self.chunks.items()
+            key: chunk
+            for key, chunk in self.chunks.items()
             if chunk.document_id != document_id
+            or (generation_id is not None and key[0] != generation_id)
         }
 
-    def delete_chunks(self, chunk_ids: list[str]) -> None:
+    def delete_chunks(self, chunk_ids: list[str], *, generation_id=None) -> None:
         for chunk_id in chunk_ids:
-            self.chunks.pop(chunk_id, None)
+            self.chunks.pop((generation_id, chunk_id), None)
 
 
 class FakeSparse:
     def __init__(self) -> None:
-        self.chunks: dict[str, DocumentChunk] = {}
+        self.chunks: dict[tuple[str | None, str], DocumentChunk] = {}
 
-    def index_chunks(self, chunks: list[DocumentChunk]) -> None:
-        self.chunks.update({chunk.chunk_id: chunk for chunk in chunks})
+    def index_chunks(
+        self, chunks: list[DocumentChunk], *, generation_id: str | None = None
+    ) -> None:
+        self.chunks.update({(generation_id, chunk.chunk_id): chunk for chunk in chunks})
 
-    def delete_document(self, document_id: str) -> None:
+    def list_chunks(self, *, generation_id=None):
+        return [
+            chunk
+            for (stored_generation, _chunk_id), chunk in self.chunks.items()
+            if stored_generation == generation_id
+        ]
+
+    def delete_document(self, document_id: str, *, generation_id=None) -> None:
         self.chunks = {
-            chunk_id: chunk
-            for chunk_id, chunk in self.chunks.items()
+            key: chunk
+            for key, chunk in self.chunks.items()
             if chunk.document_id != document_id
+            or (generation_id is not None and key[0] != generation_id)
         }
 
 

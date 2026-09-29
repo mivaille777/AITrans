@@ -166,6 +166,53 @@ def test_matching_legacy_catalogues_are_incomplete_without_generation_metadata(
         vector.close()
 
 
+def test_audit_compares_retained_generations_without_false_chunk_divergence(
+    tmp_path: Path,
+) -> None:
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    manifest.upsert(_ready_record("doc_one", ["chunk_old"]))
+    manifest.begin_generation("doc_one", "generation-old", ["chunk_old"])
+    manifest.validate_generation("doc_one", "generation-old", ["chunk_old"])
+    manifest.publish_generation("doc_one", "generation-old")
+    manifest.begin_generation("doc_one", "generation-new", ["chunk_new"])
+    manifest.validate_generation("doc_one", "generation-new", ["chunk_new"])
+    manifest.publish_generation("doc_one", "generation-new")
+
+    sparse = BM25SparseRetriever(tmp_path / "bm25.json")
+    sparse.index_chunks(
+        [_chunk("chunk_old", generation="generation-old")],
+        generation_id="generation-old",
+    )
+    sparse.index_chunks(
+        [_chunk("chunk_new", generation="generation-new")],
+        generation_id="generation-new",
+    )
+    vector = _vector_store(tmp_path / "qdrant")
+    vector.upsert_chunks(
+        [_chunk("chunk_old")],
+        [[1.0, 0.0, 0.0, 0.0]],
+        generation_id="generation-old",
+    )
+    vector.upsert_chunks(
+        [_chunk("chunk_new")],
+        [[1.0, 0.0, 0.0, 0.0]],
+        generation_id="generation-new",
+    )
+    try:
+        report = audit_index_consistency(
+            manifest=manifest,
+            sparse_retriever=sparse,
+            vector_store=vector,
+        )
+
+        assert report.status == "consistent"
+        assert report.chunk_ids_equal is True
+        assert report.generation_status == "consistent"
+        assert report.stores["qdrant"].chunk_count == 2
+    finally:
+        vector.close()
+
+
 @pytest.mark.parametrize(
     ("missing", "message"),
     [

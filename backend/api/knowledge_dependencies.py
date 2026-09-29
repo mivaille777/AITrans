@@ -248,6 +248,7 @@ def _build_runtime() -> RagRuntime:
             config.reranker,
             model_manager=model_manager,
         ),
+        manifest=manifest,
     )
     retrieval: RetrievalService | VisualRetrievalService = base_retrieval
     if visual_retrieval.enabled and visual_embedding_provider and visual_vector_store:

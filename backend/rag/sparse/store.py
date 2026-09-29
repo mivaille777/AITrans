@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Protocol, runtime_checkable
@@ -31,6 +32,7 @@ class SparseRetriever(Protocol):
         filters: VectorSearchFilter | None = None,
         *,
         generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]: ...
 
     def search_sections(
@@ -40,6 +42,7 @@ class SparseRetriever(Protocol):
         filters: VectorSearchFilter | None = None,
         *,
         generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]: ...
 
     def section_neighbors(
@@ -139,6 +142,7 @@ class BM25SparseRetriever:
         filters: VectorSearchFilter | None = None,
         *,
         generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
@@ -151,8 +155,15 @@ class BM25SparseRetriever:
             chunk_id: score
             for chunk_id, score in scores.items()
             if self._matches_filter(self._data.chunks[chunk_id], filters)
-            and self._matches_generation(
-                self._data.chunks[chunk_id], normalized_generation
+            and (
+                active_generations is not None
+                and normalized_generation is None
+                or self._matches_generation(
+                    self._data.chunks[chunk_id], normalized_generation
+                )
+            )
+            and self._matches_active_generation(
+                self._data.chunks[chunk_id], active_generations
             )
         }
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:top_k]
@@ -172,6 +183,7 @@ class BM25SparseRetriever:
         filters: VectorSearchFilter | None = None,
         *,
         generation_id: str | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise ValueError("top_k must be positive")
@@ -195,7 +207,11 @@ class BM25SparseRetriever:
         for chunk in self._data.chunks.values():
             if not self._matches_filter(chunk, effective_filters):
                 continue
-            if not self._matches_generation(chunk, normalized_generation):
+            if not (
+                active_generations is not None and normalized_generation is None
+            ) and not self._matches_generation(chunk, normalized_generation):
+                continue
+            if not self._matches_active_generation(chunk, active_generations):
                 continue
             priority = section_match_priority(
                 RetrievalCandidate(chunk=chunk),
@@ -415,6 +431,19 @@ class BM25SparseRetriever:
             chunk_generation is None
             if generation_id is None
             else chunk_generation == generation_id
+        )
+
+    @classmethod
+    def _matches_active_generation(
+        cls,
+        chunk: DocumentChunk,
+        active_generations: Mapping[str, str | None] | None,
+    ) -> bool:
+        if active_generations is None:
+            return True
+        return (
+            chunk.document_id in active_generations
+            and cls._chunk_generation(chunk) == active_generations[chunk.document_id]
         )
 
     def _rebuild_index(self) -> None:
