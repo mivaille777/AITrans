@@ -72,6 +72,8 @@ _agent_tool_registry: AgentToolRegistry | None = None
 _agent_tool_registry_lock = Lock()
 _sandbox_manager: SandboxManager | None = None
 _sandbox_manager_lock = Lock()
+_sandbox_debug_manager: SandboxManager | None = None
+_sandbox_debug_manager_lock = Lock()
 _filesystem_workspace_service: FilesystemWorkspaceService | None = None
 _filesystem_workspace_service_lock = Lock()
 _sandbox_debug_service: SandboxDebugService | None = None
@@ -475,6 +477,9 @@ def close_workspace_apply_service() -> None:
 
 def get_sandbox_runtime_health() -> SandboxRuntimeHealth:
     if not _sandbox_enabled():
+        manager = _sandbox_debug_manager
+        if manager is not None:
+            return manager.health()
         return SandboxRuntimeHealth(
             available=False,
             image=os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip()
@@ -501,6 +506,39 @@ def get_sandbox_runtime_health() -> SandboxRuntimeHealth:
         runtime.close()
 
 
+def start_sandbox_debug_runtime() -> SandboxRuntimeHealth:
+    """Enable Sandbox Debug Studio for this backend session when Docker is ready."""
+
+    if _sandbox_enabled():
+        manager = get_sandbox_manager()
+        if manager is not None:
+            return manager.health()
+        return get_sandbox_runtime_health()
+
+    global _sandbox_debug_manager
+    with _sandbox_debug_manager_lock:
+        if _sandbox_debug_manager is not None:
+            return _sandbox_debug_manager.health()
+
+        image = os.getenv("AITRANS_SANDBOX_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE
+        try:
+            runtime = DockerSandboxRuntime(image=image)
+        except ValueError:
+            return SandboxRuntimeHealth(
+                available=False,
+                image=image,
+                error_code="invalid_sandbox_image",
+                message="The configured sandbox image is invalid.",
+            )
+
+        health = runtime.health()
+        if health.available:
+            _sandbox_debug_manager = SandboxManager(runtime)
+        else:
+            runtime.close()
+        return health
+
+
 def get_sandbox_manager() -> SandboxManager | None:
     """Return a ready sandbox only when explicitly enabled and healthy."""
 
@@ -524,13 +562,27 @@ def get_sandbox_manager() -> SandboxManager | None:
         return _sandbox_manager
 
 
+def get_sandbox_debug_manager() -> SandboxManager | None:
+    """Return the configured Agent runtime or a Studio-started debug runtime."""
+
+    manager = get_sandbox_manager()
+    if manager is not None:
+        return manager
+    return _sandbox_debug_manager
+
+
 def close_sandbox_manager() -> None:
-    global _sandbox_manager
+    global _sandbox_manager, _sandbox_debug_manager
     with _sandbox_manager_lock:
         manager = _sandbox_manager
         _sandbox_manager = None
+    with _sandbox_debug_manager_lock:
+        debug_manager = _sandbox_debug_manager
+        _sandbox_debug_manager = None
     if manager is not None:
         manager.close()
+    if debug_manager is not None:
+        debug_manager.close()
 
 
 def close_agent_tool_registry() -> None:

@@ -1,6 +1,7 @@
 const ERROR_BY_CODE: Record<string, string> = {
   docker_unavailable: "Docker is unavailable.",
   docker_daemon_unavailable: "Docker is unavailable.",
+  sandbox_disabled: "Sandbox runtime has not been started.",
   docker_not_linux: "Sandbox requires a Linux Docker runtime.",
   sandbox_image_missing: "Sandbox image is missing.",
   image_missing: "Sandbox image is missing.",

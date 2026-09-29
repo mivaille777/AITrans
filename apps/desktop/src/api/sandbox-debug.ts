@@ -240,6 +240,14 @@ export async function getSandboxRuntimeHealth(): Promise<SandboxRuntimeHealth> {
   return normalizeSandboxRuntimeHealth(raw)
 }
 
+export async function startSandboxDebugRuntime(): Promise<SandboxRuntimeHealth> {
+  const raw = await apiPost<RawSandboxRuntimeHealth, Record<string, never>>(
+    "/api/sandbox/debug/runtime/start",
+    {},
+  )
+  return normalizeSandboxRuntimeHealth(raw)
+}
+
 export function normalizeSandboxRuntimeHealth(
   raw: RawSandboxRuntimeHealth,
 ): SandboxRuntimeHealth {

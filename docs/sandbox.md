@@ -6,6 +6,10 @@ only when the sandbox is enabled, Docker is using Linux containers, and the
 configured image is available. `command_execute` accepts an argv array for an
 allowlisted command; it does not invoke a host shell.
 
+Sandbox Debug Studio can start its own runtime for manual runs from the page.
+This does not enable Sandbox tools for Agent runs; those remain controlled by
+`AITRANS_SANDBOX_ENABLED`.
+
 Build the default image from the repository root in PowerShell:
 
 ```powershell
@@ -22,7 +26,14 @@ $env:AITRANS_SANDBOX_IMAGE = "aitrans-python-sandbox:v1"
 
 The backend must be restarted after changing these variables. With the flag
 unset or false, or when Docker/the image is unavailable, the Sandbox tools are
-not registered. The image must use a pinned tag; `latest` is rejected.
+not registered for Agent runs. The image must use a pinned tag; `latest` is
+rejected.
+
+For manual runs, open **Settings → Sandbox Debug Studio** and click **Start
+Sandbox**. Docker Desktop must be running in Linux container mode, and the image
+above must already be built. Starting the Studio runtime applies only to the
+current backend session. Each **Run** starts a short-lived isolated container
+and removes it when execution ends.
 
 When starting the desktop app with the development launcher, opt in explicitly:
 

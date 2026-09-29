@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 
 from backend.api.dependencies import (
     get_filesystem_workspace_service,
+    get_sandbox_debug_manager,
     get_sandbox_debug_service,
-    get_sandbox_manager,
     get_sandbox_runtime_health,
+    start_sandbox_debug_runtime,
 )
 from backend.models.sandbox_debug import (
     SandboxDebugRunAccepted,
@@ -18,6 +19,7 @@ from backend.models.sandbox_debug import (
     SandboxRuntimeHealthResponse,
 )
 from backend.sandbox.manager import SandboxManager
+from backend.sandbox.models import SandboxRuntimeHealth
 from backend.services.filesystem_workspace_service import FilesystemWorkspaceService
 from backend.services.sandbox_debug_service import (
     SandboxDebugError,
@@ -33,15 +35,20 @@ WorkspaceServiceDependency = Annotated[
 
 
 def _require_manager() -> SandboxManager:
-    manager = get_sandbox_manager()
+    manager = get_sandbox_debug_manager()
     if manager is None:
-        raise HTTPException(status_code=503, detail="Sandbox runtime is unavailable.")
+        raise HTTPException(
+            status_code=503,
+            detail="Start the Sandbox runtime before running code.",
+        )
     return manager
 
 
-@router.get("/health", response_model=SandboxRuntimeHealthResponse)
-def sandbox_debug_health() -> SandboxRuntimeHealthResponse:
-    health = get_sandbox_runtime_health()
+def _health_response(
+    health: SandboxRuntimeHealth | None = None,
+) -> SandboxRuntimeHealthResponse:
+    if health is None:
+        health = get_sandbox_runtime_health()
     return SandboxRuntimeHealthResponse(
         available=health.available,
         runtime=health.runtime,
@@ -54,6 +61,16 @@ def sandbox_debug_health() -> SandboxRuntimeHealthResponse:
         message=health.message,
         error_code=health.error_code,
     )
+
+
+@router.get("/health", response_model=SandboxRuntimeHealthResponse)
+def sandbox_debug_health() -> SandboxRuntimeHealthResponse:
+    return _health_response()
+
+
+@router.post("/runtime/start", response_model=SandboxRuntimeHealthResponse)
+def start_sandbox_debug_runtime_route() -> SandboxRuntimeHealthResponse:
+    return _health_response(start_sandbox_debug_runtime())
 
 
 @router.get("/runs", response_model=list[SandboxRunSummary])

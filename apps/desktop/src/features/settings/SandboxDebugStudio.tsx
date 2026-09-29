@@ -1,9 +1,10 @@
-import { AlertCircle, LoaderCircle } from "lucide-react"
+import { AlertCircle, LoaderCircle, Play } from "lucide-react"
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 
 import {
   getSandboxDebugRun,
   getSandboxRuntimeHealth,
+  startSandboxDebugRuntime,
   type SandboxDebugTrace as SandboxDebugTraceData,
   type SandboxRuntimeHealth,
 } from "../../api/sandbox-debug"
@@ -12,7 +13,7 @@ import SandboxDebugPolicy from "./SandboxDebugPolicy"
 import SandboxDebugResources from "./SandboxDebugResources"
 import SandboxDebugRuns from "./SandboxDebugRuns"
 import SandboxDebugTrace from "./SandboxDebugTrace"
-import { sandboxDebugErrorFromCode } from "./sandbox-debug-errors"
+import { sandboxDebugErrorFromCode, sandboxDebugErrorMessage } from "./sandbox-debug-errors"
 
 type SandboxDebugTab = "trace" | "filesystem" | "resources" | "policy" | "runs"
 
@@ -29,6 +30,8 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   const [visitedTabs, setVisitedTabs] = useState<Set<SandboxDebugTab>>(() => new Set(["trace"]))
   const [runtimeHealth, setRuntimeHealth] = useState<SandboxRuntimeHealth | null>(null)
   const [runtimeHealthPending, setRuntimeHealthPending] = useState(true)
+  const [runtimeStartPending, setRuntimeStartPending] = useState(false)
+  const [runtimeActionMessage, setRuntimeActionMessage] = useState("")
   const [latestTrace, setLatestTrace] = useState<SandboxDebugTraceData | null>(null)
   const [traceIntentPending, setTraceIntentPending] = useState(false)
   const [traceIntentError, setTraceIntentError] = useState("")
@@ -109,6 +112,32 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
         ? sandboxDebugErrorFromCode(runtimeHealth.error_code, "Runtime status unavailable")
         : "Runtime status unavailable"
 
+  async function startRuntime() {
+    if (runtimeStartPending) return
+    setRuntimeStartPending(true)
+    setRuntimeActionMessage("")
+    try {
+      const health = await startSandboxDebugRuntime()
+      setRuntimeHealth(health)
+      if (!health.available) {
+        const hint = health.error_code === "sandbox_image_missing"
+          ? "Build the image with .\\scripts\\sandbox\\build_image.ps1, then retry."
+          : health.error_code === "docker_unavailable"
+            ? "Start Docker Desktop in Linux container mode, then retry."
+            : health.error_code === "docker_not_linux"
+              ? "Switch Docker Desktop to Linux containers, then retry."
+              : "Check Docker Desktop and the configured sandbox image, then retry."
+        setRuntimeActionMessage(`${sandboxDebugErrorFromCode(health.error_code, "Sandbox runtime is unavailable.")} ${hint}`)
+      } else {
+        setRuntimeActionMessage("Sandbox is ready. Each Run starts an isolated container and removes it when execution ends.")
+      }
+    } catch (error) {
+      setRuntimeActionMessage(sandboxDebugErrorMessage(error, "Sandbox runtime could not be started."))
+    } finally {
+      setRuntimeStartPending(false)
+    }
+  }
+
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <header className="shrink-0 border-b border-slate-200 px-8 pt-7">
@@ -119,20 +148,43 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
               Inspect isolated execution, filesystem activity, resource limits and effective sandbox policy.
             </p>
           </div>
-          <span
-            className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${
-              runtimeReady
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-slate-200 bg-slate-50 text-slate-600"
-            }`}
-          >
+          <div className="flex shrink-0 items-center gap-2">
+            {!runtimeReady && !runtimeHealthPending && (
+              <button
+                type="button"
+                onClick={() => void startRuntime()}
+                disabled={runtimeStartPending}
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-slate-950 px-3 py-2 text-[11px] font-medium text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                {runtimeStartPending ? <LoaderCircle size={12} className="animate-spin" /> : <Play size={12} />}
+                {runtimeStartPending
+                  ? "Starting…"
+                  : runtimeHealth?.error_code === "sandbox_disabled"
+                    ? "Start Sandbox"
+                    : "Retry Runtime"}
+              </button>
+            )}
             <span
-              className={`h-1.5 w-1.5 rounded-full ${runtimeReady ? "bg-emerald-500" : "bg-slate-400"}`}
-              aria-hidden="true"
-            />
-            {runtimeStatusLabel}
-          </span>
+              className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${
+                runtimeReady
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-slate-50 text-slate-600"
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${runtimeReady ? "bg-emerald-500" : "bg-slate-400"}`}
+                aria-hidden="true"
+              />
+              {runtimeStatusLabel}
+            </span>
+          </div>
         </div>
+
+        {runtimeActionMessage && (
+          <p className={`pb-3 text-[11px] ${runtimeReady ? "text-emerald-700" : "text-amber-800"}`} role={runtimeReady ? "status" : "alert"}>
+            {runtimeActionMessage}
+          </p>
+        )}
 
         <nav className="mt-5 flex gap-8" aria-label="Sandbox Debug Studio tabs" role="tablist">
           {TABS.map((tab, index) => (
