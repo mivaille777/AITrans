@@ -46,6 +46,24 @@ def resolve_embedding_device(configured_device: str, torch_module: Any) -> str:
     )
 
 
+def resolve_embedding_runtime_config(
+    config: RagEmbeddingConfig,
+    *,
+    batch_size: int | None = None,
+    warmup: bool | None = None,
+) -> RagEmbeddingConfig:
+    """Apply validated process-level batch and first-use warmup overrides."""
+
+    updates: dict[str, int | bool] = {}
+    if batch_size is not None:
+        updates["batch_size"] = batch_size
+    if warmup is not None:
+        updates["warmup"] = warmup
+    if not updates:
+        return config.model_copy(deep=True)
+    return RagEmbeddingConfig.model_validate({**config.model_dump(), **updates})
+
+
 def create_embedding_provider(
     config: RagEmbeddingConfig,
     *,
@@ -65,4 +83,5 @@ __all__ = [
     "EmbeddingRuntimeStatus",
     "create_embedding_provider",
     "resolve_embedding_device",
+    "resolve_embedding_runtime_config",
 ]

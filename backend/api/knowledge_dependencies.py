@@ -15,10 +15,12 @@ from backend.api.rag_model_dependencies import get_rag_model_manager
 from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import (
     RagConfig,
+    RagEmbeddingConfig,
     RagVisualRetrievalConfig,
     RagVisualUnderstandingConfig,
 )
 from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
+from backend.rag.embeddings.runtime import resolve_embedding_runtime_config
 from backend.rag.index_manifest import IndexManifest
 from backend.rag.index_service import IndexService
 from backend.rag.parsers import parse_document
@@ -84,7 +86,9 @@ def _allowed_roots() -> tuple[Path, ...]:
 def _max_file_bytes() -> int:
     configured = os.getenv("AITRANS_KNOWLEDGE_MAX_FILE_BYTES", "").strip()
     try:
-        return max(1, int(configured)) if configured else DEFAULT_KNOWLEDGE_MAX_FILE_BYTES
+        return (
+            max(1, int(configured)) if configured else DEFAULT_KNOWLEDGE_MAX_FILE_BYTES
+        )
     except ValueError:
         return DEFAULT_KNOWLEDGE_MAX_FILE_BYTES
 
@@ -112,6 +116,38 @@ def _env_bool(name: str) -> bool | None:
     return None
 
 
+def _resolve_embedding_runtime_config(
+    config: RagEmbeddingConfig,
+) -> RagEmbeddingConfig:
+    batch_size_raw = os.getenv("AITRANS_RAG_EMBEDDING_BATCH_SIZE", "").strip()
+    warmup_raw = os.getenv("AITRANS_RAG_EMBEDDING_WARMUP", "").strip().casefold()
+    batch_size: int | None = None
+    warmup: bool | None = None
+    if batch_size_raw:
+        try:
+            batch_size = int(batch_size_raw)
+        except ValueError as exc:
+            raise ValueError(
+                "AITRANS_RAG_EMBEDDING_BATCH_SIZE must be a positive integer"
+            ) from exc
+        if batch_size < 1:
+            raise ValueError(
+                "AITRANS_RAG_EMBEDDING_BATCH_SIZE must be a positive integer"
+            )
+    if warmup_raw:
+        if warmup_raw in {"1", "true", "yes", "on"}:
+            warmup = True
+        elif warmup_raw in {"0", "false", "no", "off"}:
+            warmup = False
+        else:
+            raise ValueError("AITRANS_RAG_EMBEDDING_WARMUP must be a boolean value")
+    return resolve_embedding_runtime_config(
+        config,
+        batch_size=batch_size,
+        warmup=warmup,
+    )
+
+
 def _resolve_visual_understanding_config(
     config: RagVisualUnderstandingConfig,
     settings: dict[str, Any],
@@ -137,7 +173,9 @@ def _resolve_visual_understanding_config(
     ai_settings = settings.get("ai")
     if not isinstance(ai_settings, dict):
         return resolved
-    provider = str(ai_settings.get("provider", "") or "").strip().lower().replace("-", "_")
+    provider = (
+        str(ai_settings.get("provider", "") or "").strip().lower().replace("-", "_")
+    )
     if provider != "openai_compatible":
         return resolved
 
@@ -177,6 +215,8 @@ def _build_runtime() -> RagRuntime:
     settings = SettingsManager().data
     raw_rag = settings.get("rag", {})
     config = RagConfig.model_validate(raw_rag if isinstance(raw_rag, dict) else {})
+    embedding_config = _resolve_embedding_runtime_config(config.embedding)
+    config = config.model_copy(update={"embedding": embedding_config}, deep=True)
 
     visual_understanding = _resolve_visual_understanding_config(
         config.visual_understanding,
@@ -184,7 +224,9 @@ def _build_runtime() -> RagRuntime:
     )
     visual_retrieval = _resolve_visual_retrieval_config(config.visual_retrieval)
 
-    resolved_storage_path = _resolve_runtime_storage_path(config.vector_store.storage_path)
+    resolved_storage_path = _resolve_runtime_storage_path(
+        config.vector_store.storage_path
+    )
     vector_store_config = config.vector_store.model_copy(
         update={"storage_path": str(resolved_storage_path)}
     )
@@ -206,7 +248,9 @@ def _build_runtime() -> RagRuntime:
         deep=True,
     )
 
-    visual_description_provider = create_visual_description_provider(visual_understanding)
+    visual_description_provider = create_visual_description_provider(
+        visual_understanding
+    )
     visual_embedding_provider = create_visual_embedding_provider(visual_retrieval)
 
     model_manager = get_rag_model_manager()
