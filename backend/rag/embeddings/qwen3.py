@@ -7,6 +7,11 @@ from time import perf_counter
 from typing import Any
 
 from backend.rag.config import RagEmbeddingConfig
+from backend.rag.embeddings.base import (
+    QWEN3_DOCUMENT_PREFIX,
+    QWEN3_QUERY_PREFIX,
+    EmbeddingFingerprint,
+)
 from backend.rag.embeddings.runtime import (
     EmbeddingRuntimeSnapshot,
     EmbeddingRuntimeStatus,
@@ -78,6 +83,16 @@ class Qwen3EmbeddingProvider:
         return self._config.model
 
     @property
+    def fingerprint(self) -> EmbeddingFingerprint:
+        return EmbeddingFingerprint(
+            model_id=self.model_name,
+            dimension=self.dimension,
+            normalized=self._config.normalize,
+            query_prefix=QWEN3_QUERY_PREFIX,
+            document_prefix=QWEN3_DOCUMENT_PREFIX,
+        )
+
+    @property
     def runtime(self) -> EmbeddingRuntimeSnapshot:
         with self._lock:
             return EmbeddingRuntimeSnapshot(
@@ -115,10 +130,7 @@ class Qwen3EmbeddingProvider:
         return self._validate_vectors(vectors, expected_count=len(texts))
 
     def _managed_model_became_available(self) -> bool:
-        if (
-            not self._retry_when_managed_model_installed
-            or self._model_manager is None
-        ):
+        if not self._retry_when_managed_model_installed or self._model_manager is None:
             return False
         try:
             return bool(self._model_manager.is_installed(EMBEDDING_MODEL_ID))
@@ -224,7 +236,7 @@ class Qwen3EmbeddingProvider:
     def _encode_query(self, model: Any, text: str) -> Any:
         return model.encode(
             [text],
-            prompt_name="query",
+            prompt_name=QWEN3_QUERY_PREFIX,
             batch_size=self._config.batch_size,
             normalize_embeddings=True,
             convert_to_numpy=True,

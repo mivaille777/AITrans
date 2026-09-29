@@ -59,13 +59,13 @@ class FakeEmbeddingProvider:
         return self._dimension
 
     def embed_query(self, text: str) -> list[float]:
-        return [float(len(text)), 0.0, 0.0, 0.0]
+        return [float(len(text))] + [0.0] * (self._dimension - 1)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(list(texts))
         if self.fail:
             raise RuntimeError("embedding failed")
-        return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+        return [[1.0] + [0.0] * (self._dimension - 1) for _ in texts]
 
 
 class FakeVectorStore:
@@ -319,6 +319,43 @@ def test_embedding_model_change_reindexes(tmp_path: Path) -> None:
     assert len(first_embedding.calls) == 1
     assert len(second_embedding.calls) == 1
     assert store.upsert_calls == 2
+
+
+def test_embedding_dimension_change_reindexes(tmp_path: Path) -> None:
+    path = tmp_path / "paper.txt"
+    path.write_text("Embedding dimension fingerprint content.", encoding="utf-8")
+    store = FakeVectorStore()
+    first_service, parser, _first_embedding, _store, manifest = make_service(
+        tmp_path,
+        store=store,
+    )
+    first = first_service.index_document(path)
+    first_record = manifest.get(first.document_id)
+    first_fingerprint = first_record.embedding_fingerprint
+    second_embedding = FakeEmbeddingProvider(dimension=3)
+    second_service, _parser, _embedding, _store, second_manifest = make_service(
+        tmp_path,
+        parser=parser,
+        embedding=second_embedding,
+        store=store,
+    )
+
+    result = second_service.index_document(path)
+
+    assert result.reused_existing is False
+    assert result.status is IndexStatus.READY
+    assert len(second_embedding.calls) == 1
+    second_record = second_manifest.get(first.document_id)
+    second_fingerprint = second_record.embedding_fingerprint
+    assert first_fingerprint["digest"] != second_fingerprint["digest"]
+    assert second_fingerprint["dimension"] == 3
+    assert second_record.generation_id != first_record.generation_id
+    assert (
+        second_manifest.get_generation(
+            first.document_id, first_record.generation_id
+        ).status
+        is IndexGenerationStatus.RETIRED
+    )
 
 
 def test_parser_version_change_reindexes(tmp_path: Path) -> None:

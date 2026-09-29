@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.rag.embeddings.base import EmbeddingFingerprint
 from backend.rag.exceptions import RagInvariantError
 from backend.rag.index_manifest import (
     ACTIVE_INDEX_STATUSES,
@@ -40,6 +41,36 @@ def test_manifest_round_trip_and_source_lookup(tmp_path: Path) -> None:
     assert second.get("doc_one") == record
     assert second.find_by_source_uri(record.source_uri) == record
     assert second.list_records() == [record]
+    assert record.embedding_fingerprint["model_id"] == "fake-model"
+    assert record.embedding_fingerprint["dimension"] == 4
+    assert record.embedding_fingerprint["normalized"] is True
+    assert record.embedding_fingerprint["query_prefix"] == "query"
+    assert record.embedding_fingerprint["document_prefix"] == ""
+    assert record.embedding_fingerprint["digest"]
+
+
+def test_manifest_rejects_fingerprint_model_or_dimension_mismatch() -> None:
+    mismatched = EmbeddingFingerprint(
+        model_id="other-model",
+        dimension=4,
+        normalized=True,
+        query_prefix="query",
+        document_prefix="",
+    )
+
+    with pytest.raises(RagInvariantError, match="does not match manifest"):
+        ready_manifest_record(
+            document_id="doc_one",
+            content_hash="hash",
+            source_uri="file:///doc_one.txt",
+            title="Paper",
+            parser_version="text-v1",
+            chunker_version="structure-aware-v1",
+            embedding_model="fake-model",
+            embedding_dimension=4,
+            embedding_fingerprint=mismatched,
+            chunk_ids=["chunk_one"],
+        )
 
 
 def test_manifest_status_updates_preserve_index_metadata(tmp_path: Path) -> None:
@@ -127,6 +158,7 @@ def test_manifest_loads_legacy_json_without_generation_fields(tmp_path: Path) ->
     path = tmp_path / "manifest.json"
     legacy_record = make_record().model_dump(mode="json")
     legacy_record.pop("generation_id")
+    legacy_record.pop("embedding_fingerprint")
     path.write_text(
         json.dumps({"version": 1, "documents": {"doc_one": legacy_record}}),
         encoding="utf-8",
@@ -135,6 +167,7 @@ def test_manifest_loads_legacy_json_without_generation_fields(tmp_path: Path) ->
     manifest = IndexManifest(path)
 
     assert manifest.get("doc_one").generation_id == ""
+    assert manifest.get("doc_one").embedding_fingerprint == {}
     assert manifest.list_generations("doc_one") == []
 
 

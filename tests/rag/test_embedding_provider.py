@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from backend.rag.config import RagEmbeddingConfig
 from backend.rag.embeddings import EmbeddingProvider, Qwen3EmbeddingProvider
+from backend.rag.embeddings.base import EmbeddingFingerprint
 from backend.rag.embeddings.runtime import create_embedding_provider
 from backend.rag.exceptions import (
     RagConfigurationError,
@@ -57,6 +58,34 @@ def test_qwen3_provider_satisfies_embedding_protocol() -> None:
     assert isinstance(provider, EmbeddingProvider)
     assert provider.dimension == 2
     assert provider.model_name == "Qwen/Qwen3-Embedding-0.6B"
+    assert provider.fingerprint.as_dict() == {
+        "schema_version": 1,
+        "model_id": "Qwen/Qwen3-Embedding-0.6B",
+        "dimension": 2,
+        "normalized": True,
+        "query_prefix": "query",
+        "document_prefix": "",
+        "digest": provider.fingerprint.digest,
+    }
+
+
+def test_embedding_fingerprint_changes_when_prompt_prefix_changes() -> None:
+    base = EmbeddingFingerprint(
+        model_id="model-v1",
+        dimension=1024,
+        normalized=True,
+        query_prefix="query",
+        document_prefix="",
+    )
+    changed = EmbeddingFingerprint(
+        model_id="model-v1",
+        dimension=1024,
+        normalized=True,
+        query_prefix="query-v2",
+        document_prefix="",
+    )
+
+    assert base.digest != changed.digest
 
 
 def test_embedding_device_configuration_is_validated() -> None:
@@ -92,7 +121,9 @@ def test_qwen3_provider_applies_configured_input_token_limit() -> None:
     assert model.max_seq_length == 128
 
 
-def test_missing_managed_embedding_can_recover_after_model_install(tmp_path: Path) -> None:
+def test_missing_managed_embedding_can_recover_after_model_install(
+    tmp_path: Path,
+) -> None:
     manager = DeferredModelManager(tmp_path / "qwen3-embedding")
     provider = Qwen3EmbeddingProvider(
         RagEmbeddingConfig(dimension=2, warmup=False, device="cpu"),
