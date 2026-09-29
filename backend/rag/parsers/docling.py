@@ -27,6 +27,41 @@ class DoclingConversion:
 
     text: str = ""
     pages: tuple[tuple[int, str], ...] = ()
+    source_page_numbers: tuple[int, ...] = ()
+    page_order_status: str = "unavailable"
+    table_count: int = 0
+    table_source_page_numbers: tuple[int, ...] = ()
+
+
+_LOW_TEXT_PAGE_CHAR_THRESHOLD = 40
+
+
+def _page_order_status(page_numbers: tuple[int, ...]) -> str:
+    if not page_numbers:
+        return "unavailable"
+    if len(set(page_numbers)) != len(page_numbers):
+        return "duplicate_page_numbers"
+    if page_numbers != tuple(sorted(page_numbers)):
+        return "reordered_to_source_page"
+    return "ordered"
+
+
+def _docling_page_numbers(document: object) -> tuple[int, ...]:
+    pages = getattr(document, "pages", {}) or {}
+    return tuple(
+        int(getattr(page, "page_no", page_number))
+        for page_number, page in pages.items()
+    )
+
+
+def _docling_table_source_pages(document: object) -> tuple[int, ...]:
+    page_numbers: set[int] = set()
+    for table in getattr(document, "tables", ()) or ():
+        for provenance in getattr(table, "prov", ()) or ():
+            page_number = getattr(provenance, "page_no", None)
+            if page_number is not None:
+                page_numbers.add(int(page_number))
+    return tuple(sorted(page_numbers))
 
 
 class DoclingBackend(Protocol):
@@ -95,10 +130,20 @@ class DefaultDoclingBackend:
                 ) from staging_error
 
         try:
-            if not config.layout_enabled:
-                return DoclingConversion(text=str(document.export_to_text()))
+            observed_page_numbers = _docling_page_numbers(document)
+            page_numbers = tuple(sorted(set(observed_page_numbers)))
+            conversion_diagnostics = {
+                "source_page_numbers": page_numbers,
+                "page_order_status": _page_order_status(observed_page_numbers),
+                "table_count": len(getattr(document, "tables", ()) or ()),
+                "table_source_page_numbers": _docling_table_source_pages(document),
+            }
 
-            page_numbers = sorted(int(page_no) for page_no in document.pages)
+            if not config.layout_enabled:
+                return DoclingConversion(
+                    text=str(document.export_to_text()), **conversion_diagnostics
+                )
+
             if page_numbers:
                 page_markdown = tuple(
                     (
@@ -113,7 +158,7 @@ class DefaultDoclingBackend:
                     )
                     for page_no in page_numbers
                 )
-                return DoclingConversion(pages=page_markdown)
+                return DoclingConversion(pages=page_markdown, **conversion_diagnostics)
 
             return DoclingConversion(
                 text=str(
@@ -121,7 +166,8 @@ class DefaultDoclingBackend:
                         image_placeholder=_IMAGE_PLACEHOLDER,
                         traverse_pictures=True,
                     )
-                )
+                ),
+                **conversion_diagnostics,
             )
         except Exception as exc:
             raise RagParsingError(f"Docling failed to parse document: {path}") from exc
@@ -166,10 +212,14 @@ def _compose_page_aware_blocks(
                 page_blocks.append((page_number, block))
 
     if not page_blocks:
-        return "", [], [
-            DocumentPage(page_number=page_number)
-            for page_number in ordered_page_numbers
-        ]
+        return (
+            "",
+            [],
+            [
+                DocumentPage(page_number=page_number)
+                for page_number in ordered_page_numbers
+            ],
+        )
 
     parts: list[str] = []
     positions: list[tuple[int, int]] = []
@@ -278,19 +328,107 @@ class DoclingDocumentParser(BaseFileParser):
             raise RagParsingError(f"Docling failed to parse document: {path}") from exc
 
         pages: list[DocumentPage] = []
-        if isinstance(converted, DoclingConversion) and converted.pages:
+        conversion = (
+            converted
+            if isinstance(converted, DoclingConversion)
+            else DoclingConversion(text=converted)
+        )
+        page_order_status = conversion.page_order_status
+        source_page_numbers = conversion.source_page_numbers
+        if conversion.pages:
+            page_numbers = tuple(page_number for page_number, _ in conversion.pages)
+            emitted_order_status = _page_order_status(page_numbers)
+            if emitted_order_status == "duplicate_page_numbers":
+                raise RagParsingError(
+                    f"Docling returned duplicate source page numbers: {path}"
+                )
+            if (
+                emitted_order_status == "reordered_to_source_page"
+                or page_order_status == "unavailable"
+            ):
+                page_order_status = emitted_order_status
+            ordered_pages = tuple(sorted(conversion.pages, key=lambda item: item[0]))
             text, sections, pages = _compose_page_aware_blocks(
-                converted.pages,
+                ordered_pages,
                 layout_enabled=self.config.layout_enabled,
             )
+            if not source_page_numbers:
+                source_page_numbers = tuple(sorted(set(page_numbers)))
         else:
-            raw_text = converted.text if isinstance(converted, DoclingConversion) else converted
-            normalized = self._normalize_text(raw_text)
+            normalized = self._normalize_text(conversion.text)
             text, sections = compose_blocks(
                 _markdown_blocks(normalized, layout_enabled=self.config.layout_enabled)
             )
+
+        extracted_char_count = len("".join(text.split()))
+        page_character_counts = {
+            page.page_number: len("".join(page.text.split())) for page in pages
+        }
+        low_text_pages = [
+            page_number
+            for page_number, character_count in page_character_counts.items()
+            if character_count < _LOW_TEXT_PAGE_CHAR_THRESHOLD
+        ]
+        no_text_pages = [
+            page_number
+            for page_number, character_count in page_character_counts.items()
+            if character_count == 0
+        ]
+        if not source_page_numbers:
+            source_page_numbers = tuple(page.page_number for page in pages)
+        if source_page_numbers and page_order_status == "unavailable":
+            page_order_status = _page_order_status(tuple(source_page_numbers))
+        quality_status = (
+            "empty"
+            if extracted_char_count == 0
+            else "low_text"
+            if low_text_pages
+            or (
+                not page_character_counts
+                and extracted_char_count < _LOW_TEXT_PAGE_CHAR_THRESHOLD
+            )
+            else "ok"
+        )
+        diagnostic_metadata: dict[str, object] = {
+            "quality_status": quality_status,
+            "extracted_character_count": extracted_char_count,
+            "low_text_page_threshold_characters": _LOW_TEXT_PAGE_CHAR_THRESHOLD,
+            "low_text_source_pages": low_text_pages,
+            "no_text_source_pages": no_text_pages,
+            "source_page_numbers": list(source_page_numbers),
+            "page_order_status": page_order_status,
+            "reading_order_status": (
+                "docling_export_order_unverified"
+                if self.config.layout_enabled and source_page_numbers
+                else "layout_disabled"
+                if not self.config.layout_enabled
+                else "unavailable"
+            ),
+            "ocr_status": "enabled" if self.config.ocr_enabled else "disabled",
+            "scan_suspect_source_pages": no_text_pages,
+            "scan_suspect_reason": "page has no extracted text; blank pages are also possible",
+            "table_status": (
+                "disabled"
+                if not self.config.table_enabled
+                else "detected"
+                if conversion.table_count
+                else "none_detected"
+            ),
+            "table_count": conversion.table_count,
+            "table_source_page_numbers": list(conversion.table_source_page_numbers),
+            "table_source_page_mapping_status": (
+                "available"
+                if conversion.table_source_page_numbers
+                else "unavailable"
+                if conversion.table_count
+                else "not_applicable"
+            ),
+        }
         if not text.strip():
-            raise RagParsingError(f"Docling produced no extractable text: {path}")
+            raise RagParsingError(
+                f"Docling produced no extractable text: {path}; "
+                f"diagnostics={diagnostic_metadata}"
+            )
 
         title = sections[0].heading if sections else path.stem
         try:
@@ -316,6 +454,7 @@ class DoclingDocumentParser(BaseFileParser):
                 "figure_caption_preserved": self.config.layout_enabled,
                 "image_understanding_enabled": False,
                 "visual_content_mode": "caption_and_text_only",
+                "parse_diagnostics": diagnostic_metadata,
             },
         )
         return NormalizedDocument(
@@ -333,7 +472,8 @@ class DoclingDocumentParser(BaseFileParser):
                 "ocr_enabled": self.config.ocr_enabled,
                 "formula_enabled": self.config.formula_enabled,
                 "section_count": len(sections),
-                "page_count": len(pages),
+                "page_count": len(source_page_numbers),
+                "parse_diagnostics": diagnostic_metadata,
                 "figure_caption_preserved": self.config.layout_enabled,
                 "image_understanding_enabled": False,
                 "visual_content_mode": "caption_and_text_only",
