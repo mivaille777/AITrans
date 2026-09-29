@@ -68,6 +68,12 @@ export const electronDesktopAdapter: DesktopAdapter = {
     close() {
       return bridge().window.close()
     },
+    getCloseBehavior() {
+      return bridge().window.getCloseBehavior()
+    },
+    setCloseBehavior(behavior) {
+      return bridge().window.setCloseBehavior(behavior)
+    },
   },
   overlay: {
     show() {

@@ -6,6 +6,7 @@ import type {
   DesktopOverlayTheme,
   DesktopPoint,
   DesktopSize,
+  WindowCloseBehavior,
 } from "../adapter"
 
 export interface ElectronOverlayPlacementContext {
@@ -24,6 +25,8 @@ export interface ElectronDesktopApi {
     toggleMaximize(): Promise<boolean>
     isMaximized(): Promise<boolean>
     close(): Promise<void>
+    getCloseBehavior(): Promise<WindowCloseBehavior>
+    setCloseBehavior(behavior: WindowCloseBehavior): Promise<void>
   }
   files: {
     pickKnowledgeDocument(): Promise<string | null>

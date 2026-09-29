@@ -1,6 +1,7 @@
 export type DesktopRuntime = "browser" | "electron"
 
 export type DesktopOverlayTheme = "light" | "dark"
+export type WindowCloseBehavior = "minimize_to_tray" | "exit"
 
 export type OverlayPositionMode =
   | "mouse_follow"
@@ -42,6 +43,8 @@ export interface WindowControlsAdapter {
   toggleMaximize(): Promise<boolean>
   isMaximized(): Promise<boolean>
   close(): Promise<void>
+  getCloseBehavior(): Promise<WindowCloseBehavior>
+  setCloseBehavior(behavior: WindowCloseBehavior): Promise<void>
 }
 
 export type DesktopWindowAdapter = WindowAdapter & WindowControlsAdapter

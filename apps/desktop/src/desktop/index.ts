@@ -25,5 +25,6 @@ export type {
   DesktopWindowAdapter,
   OverlayPositionMode,
   OverlayWindowAdapter,
+  WindowCloseBehavior,
   WindowAdapter,
 } from "./adapter"

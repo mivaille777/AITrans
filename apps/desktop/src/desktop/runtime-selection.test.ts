@@ -17,6 +17,8 @@ function createBridge(): ElectronDesktopApi {
       toggleMaximize: async () => false,
       isMaximized: async () => false,
       close: noop,
+      getCloseBehavior: async () => "exit",
+      setCloseBehavior: noop,
     },
     files: {
       pickKnowledgeDocument: async () => null,

@@ -78,6 +78,7 @@ const required = [
   path.join(resources, "backend", "sidecar-manifest.json"),
   path.join(resources, "sandbox", "python", "Dockerfile"),
   path.join(resources, "sandbox", "python", "requirements.txt"),
+  path.join(resources, "icon.ico"),
   updateConfigPath,
 ]
 for (const file of required) {

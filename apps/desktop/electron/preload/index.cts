@@ -11,6 +11,8 @@ const IPC_CHANNELS = {
   windowToggleMaximize: "aitrans:window:toggle-maximize",
   windowIsMaximized: "aitrans:window:is-maximized",
   windowClose: "aitrans:window:close",
+  windowGetCloseBehavior: "aitrans:window:get-close-behavior",
+  windowSetCloseBehavior: "aitrans:window:set-close-behavior",
   filesPickKnowledgeDocument: "aitrans:files:pick-knowledge-document",
   filesPickAgentWorkspace: "aitrans:files:pick-agent-workspace",
   filesOpenEvidenceSource: "aitrans:files:open-evidence-source",
@@ -49,6 +51,10 @@ const api = {
     isMaximized: () =>
       ipcRenderer.invoke(IPC_CHANNELS.windowIsMaximized) as Promise<boolean>,
     close: () => ipcRenderer.invoke(IPC_CHANNELS.windowClose),
+    getCloseBehavior: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.windowGetCloseBehavior) as Promise<"minimize_to_tray" | "exit">,
+    setCloseBehavior: (behavior: "minimize_to_tray" | "exit") =>
+      ipcRenderer.invoke(IPC_CHANNELS.windowSetCloseBehavior, behavior) as Promise<void>,
   },
   files: {
     pickKnowledgeDocument: () =>

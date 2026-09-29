@@ -5,6 +5,7 @@ const desktopRoot = __dirname
 const repoRoot = path.resolve(desktopRoot, "../..")
 const stagedBackend = path.join(repoRoot, "build", "electron-resources", "backend")
 const stagedSandbox = path.join(repoRoot, "build", "electron-resources", "sandbox")
+const trayIcon = path.join(desktopRoot, "resources", "icon.ico")
 const releaseVersion = fs.readFileSync(path.join(repoRoot, "VERSION"), "utf8").trim()
 const updateConfigPath = path.join(repoRoot, "build", "electron-resources", "update-config.json")
 
@@ -35,7 +36,7 @@ module.exports = {
     },
     overwrite: true,
     prune: false,
-    extraResource: [stagedBackend, stagedSandbox, updateConfigPath],
+    extraResource: [stagedBackend, stagedSandbox, trayIcon, updateConfigPath],
     ...(windowsSign ? { windowsSign } : {}),
     ignore: [
       /^\/src(?:\/|$)/,

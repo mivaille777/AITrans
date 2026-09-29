@@ -57,6 +57,12 @@ export const browserDesktopAdapter: DesktopAdapter = {
     async close() {
       // Browser development mode cannot close the host browser window.
     },
+    async getCloseBehavior() {
+      return "exit"
+    },
+    async setCloseBehavior() {
+      // Browser development mode has no system tray lifecycle.
+    },
   },
   overlay: {
     async show() {

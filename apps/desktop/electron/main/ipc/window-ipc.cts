@@ -8,17 +8,22 @@ import {
   authorizedMainWindow,
   type MainWindowResolver,
 } from "./ipc-auth.cjs"
+import {
+  getWindowCloseBehavior,
+  isWindowCloseBehavior,
+  setWindowCloseBehavior,
+} from "../services/window-preferences.cjs"
 
 export function registerMainWindowIpc(
   resolveMainWindow: MainWindowResolver,
 ): void {
   const register = (
     channel: string,
-    handler: (window: BrowserWindow) => unknown | Promise<unknown>,
+    handler: (window: BrowserWindow, ...args: unknown[]) => unknown | Promise<unknown>,
   ) => {
     ipcMain.removeHandler(channel)
-    ipcMain.handle(channel, (event) =>
-      handler(authorizedMainWindow(event, resolveMainWindow)),
+    ipcMain.handle(channel, (event, ...args) =>
+      handler(authorizedMainWindow(event, resolveMainWindow), ...args),
     )
   }
 
@@ -54,5 +59,14 @@ export function registerMainWindowIpc(
 
   register(IPC_CHANNELS.windowClose, (window) => {
     window.close()
+  })
+
+  register(IPC_CHANNELS.windowGetCloseBehavior, () => getWindowCloseBehavior())
+
+  register(IPC_CHANNELS.windowSetCloseBehavior, (_window, behavior) => {
+    if (!isWindowCloseBehavior(behavior)) {
+      throw new TypeError("Window close behavior is invalid.")
+    }
+    setWindowCloseBehavior(behavior)
   })
 }

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 
-import { app, type BrowserWindow } from "electron"
+import { app, Menu, nativeImage, Tray, type BrowserWindow } from "electron"
 
 import { registerAppSchemePrivileges, installAppProtocol } from "./app-protocol.cjs"
 import { registerCredentialIpc } from "./ipc/credential-ipc.cjs"
@@ -11,6 +11,7 @@ import { registerOverlayIpc } from "./ipc/overlay-ipc.cjs"
 import { OverlayManager } from "./overlay-manager.cjs"
 import { BackendProcessManager } from "./services/backend-process-manager.cjs"
 import { UpdateManager } from "./services/update-manager.cjs"
+import { getWindowCloseBehavior } from "./services/window-preferences.cjs"
 import { createMainWindow } from "./window-manager.cjs"
 
 const ELECTRON_RUNTIME_SMOKE_ARGUMENT = "--electron-runtime-smoke-test"
@@ -81,9 +82,41 @@ function startApplication(): void {
   }
 
   let mainWindow: BrowserWindow | null = null
+  let systemTray: Tray | null = null
+  let isQuitting = false
   const overlayManager = new OverlayManager()
   const backendManager = new BackendProcessManager()
   const updateManager = new UpdateManager(() => backendManager.stopNow())
+
+  function showMainWindow(): void {
+    void ensureMainWindow().then((window) => {
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+    }).catch((error: unknown) => {
+      console.error("AITrans main window could not be restored from the system tray.", error)
+    })
+  }
+
+  function createSystemTray(): void {
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, "icon.ico")
+      : path.join(app.getAppPath(), "resources", "icon.ico")
+    const icon = nativeImage.createFromPath(iconPath)
+    if (icon.isEmpty()) {
+      throw new Error("The AITrans system tray icon could not be loaded.")
+    }
+
+    systemTray = new Tray(icon)
+    systemTray.setToolTip("AITrans")
+    systemTray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Open AITrans", click: showMainWindow },
+      { type: "separator" },
+      { label: "Quit AITrans", click: () => app.quit() },
+    ]))
+    systemTray.on("click", showMainWindow)
+    systemTray.on("double-click", showMainWindow)
+  }
 
   async function ensureMainWindow(): Promise<BrowserWindow> {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -91,6 +124,17 @@ function startApplication(): void {
     }
 
     mainWindow = await createMainWindow()
+    mainWindow.on("close", (event) => {
+      if (isQuitting) return
+      if (getWindowCloseBehavior() === "minimize_to_tray") {
+        event.preventDefault()
+        mainWindow?.hide()
+        return
+      }
+      event.preventDefault()
+      isQuitting = true
+      app.quit()
+    })
     mainWindow.on("closed", () => {
       mainWindow = null
       void overlayManager.destroy()
@@ -110,6 +154,7 @@ function startApplication(): void {
   void app.whenReady()
     .then(async () => {
       await installAppProtocol()
+      createSystemTray()
 
       void backendManager.start().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : "Unknown backend startup error."
@@ -121,13 +166,8 @@ function startApplication(): void {
       updateManager.start()
 
       app.on("activate", () => {
-        void Promise.all([
-          ensureMainWindow(),
-          overlayManager.ensureWindow(),
-        ]).then(([window]) => {
-          window.show()
-          window.focus()
-        })
+        showMainWindow()
+        void overlayManager.ensureWindow()
       })
     })
     .catch((error: unknown) => {
@@ -136,12 +176,15 @@ function startApplication(): void {
     })
 
   app.on("before-quit", () => {
+    isQuitting = true
+    systemTray?.destroy()
+    systemTray = null
     updateManager.stop()
     backendManager.stopNow()
   })
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
+    if (getWindowCloseBehavior() === "exit") {
       app.quit()
     }
   })

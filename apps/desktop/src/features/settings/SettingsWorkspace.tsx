@@ -36,6 +36,8 @@ import {
   subscribeOverlayPreferences,
   updateOverlayPreferences,
 } from "../../desktop/overlay-preferences"
+import { desktop } from "../../desktop"
+import type { WindowCloseBehavior } from "../../desktop/adapter"
 import OverlayPreferencesPanel from "../../components/OverlayPreferencesPanel"
 import TranslationProviderSelector from "../translation/TranslationProviderSelector"
 import type { TranslationWorkspaceController } from "../translation/useTranslationWorkspace"
@@ -96,6 +98,11 @@ export default function SettingsWorkspace({
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general")
   const [drawer, setDrawer] = useState<SettingsDrawer>(null)
   const [notice, setNotice] = useState("")
+  const [windowCloseBehavior, setWindowCloseBehavior] = useState<WindowCloseBehavior>("exit")
+  const [windowCloseBehaviorLoading, setWindowCloseBehaviorLoading] = useState(
+    desktop.runtime === "electron",
+  )
+  const [windowCloseBehaviorSaving, setWindowCloseBehaviorSaving] = useState(false)
   const [activeStudio, setActiveStudio] = useState<SettingsStudio>(null)
   const [sandboxIntentId, setSandboxIntentId] = useState("")
   const [trustedRuntimeRunId, setTrustedRuntimeRunId] = useState("")
@@ -231,6 +238,24 @@ export default function SettingsWorkspace({
     return () => window.clearTimeout(timer)
   }, [notice])
 
+  useEffect(() => {
+    if (desktop.runtime !== "electron") return
+    let disposed = false
+    void desktop.window.getCloseBehavior()
+      .then((behavior) => {
+        if (!disposed) setWindowCloseBehavior(behavior)
+      })
+      .catch(() => {
+        if (!disposed) setNotice("Unable to load the window close setting.")
+      })
+      .finally(() => {
+        if (!disposed) setWindowCloseBehaviorLoading(false)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [])
+
   const llmSettings = llmSettingsQuery.data
   const currentModel = llmSettings?.model || llmModelsQuery.data?.current_model || "Not configured"
   const modelOptions = useMemo(() => {
@@ -249,12 +274,38 @@ export default function SettingsWorkspace({
     setActiveSection(id)
   }
 
-  function resetDefaults() {
+  async function resetDefaults() {
     const nextPreferences = updateOverlayPreferences(DEFAULT_OVERLAY_PREFERENCES)
     setOverlayPreferences(nextPreferences)
     workspace.setFollowBrowserSelection(true)
     workspace.setAutoTranslateSelection(false)
+    if (desktop.runtime === "electron") {
+      setWindowCloseBehaviorSaving(true)
+      try {
+        await desktop.window.setCloseBehavior("exit")
+        setWindowCloseBehavior("exit")
+      } catch {
+        setNotice("Other defaults were restored, but the close setting could not be saved.")
+        return
+      } finally {
+        setWindowCloseBehaviorSaving(false)
+      }
+    }
     setNotice("Overlay and reading defaults restored. Model settings were kept.")
+  }
+
+  async function saveWindowCloseBehavior(behavior: WindowCloseBehavior) {
+    if (desktop.runtime !== "electron" || windowCloseBehaviorSaving) return
+    setWindowCloseBehaviorSaving(true)
+    try {
+      await desktop.window.setCloseBehavior(behavior)
+      setWindowCloseBehavior(behavior)
+      setNotice("Window close behavior saved.")
+    } catch {
+      setNotice("Unable to save the window close setting.")
+    } finally {
+      setWindowCloseBehaviorSaving(false)
+    }
   }
 
   return (
@@ -347,6 +398,23 @@ export default function SettingsWorkspace({
             <SettingRow label="Local runtime" description="Use local models and keep all data on this device.">
               <SettingsSwitch checked={localRuntimeReady} disabled label={localRuntimeReady ? "Enabled" : "Unavailable"} />
             </SettingRow>
+            {desktop.runtime === "electron" && (
+              <SettingRow
+                label="Close button behavior"
+                description="Choose whether closing the main window hides AITrans in the system tray or exits the app."
+              >
+                <select
+                  className="ait-settings-select"
+                  aria-label="Main window close behavior"
+                  value={windowCloseBehavior}
+                  disabled={windowCloseBehaviorLoading || windowCloseBehaviorSaving}
+                  onChange={(event) => void saveWindowCloseBehavior(event.target.value as WindowCloseBehavior)}
+                >
+                  <option value="minimize_to_tray">Minimize to system tray</option>
+                  <option value="exit">Exit application</option>
+                </select>
+              </SettingRow>
+            )}
           </SettingsSection>
 
           <SettingsSection
@@ -495,7 +563,7 @@ export default function SettingsWorkspace({
         ) : null}
 
         <footer className="ait-settings-actions">
-          <button type="button" className="ait-settings-secondary-button" onClick={resetDefaults}><RotateCcw size={14} /> Reset to defaults</button>
+          <button type="button" className="ait-settings-secondary-button" onClick={() => void resetDefaults()}><RotateCcw size={14} /> Reset to defaults</button>
           <button type="button" className="ait-settings-primary-button" onClick={() => setNotice("All settings are saved automatically.")}>Save changes</button>
         </footer>
       </div>
