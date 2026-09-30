@@ -1,0 +1,469 @@
+{
+  "stage": "S06",
+  "stage_gate": "BLOCKED",
+  "tasks": {
+    "S06.1": "PASS_ENGINEERING",
+    "S06.2": "PASS_ENGINEERING",
+    "S06.3": "PASS_ENGINEERING",
+    "S06.4": "BLOCKED_FULL_PDF_EXTRACTION"
+  },
+  "baseline_commit": "ef19267e",
+  "s06_1_to_3_commit": "5516b53eefbb920598348de05fe6367d054a57ce",
+  "s06_4_pending_uncommitted": [
+    "backend/rag/graph/indexer.py",
+    "backend/rag/index_service.py",
+    "backend/rag/index_manifest.py",
+    "tests/rag/graph/test_indexer.py",
+    "tests/rag/test_index_manifest.py"
+  ],
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "prompt_id": "research.memory.extract@graph-1.0.0",
+  "graph_version": "graph-v1:graph-grounding-v1:graph-1.0.0+unique-whitespace-v1:research.memory.extract@graph-1.0.0:deepseek:deepseek-v4-flash:explicit-alias-context-v1",
+  "embedding_fingerprint": {
+    "schema_version": 1,
+    "model_id": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
+    "normalized": true,
+    "query_prefix": "query",
+    "document_prefix": "",
+    "model_revision": "sha256:c86598140f103f7b29610a999268bde1d3191023b9e0634db9099d5e260514fa",
+    "digest": "800f5c653e0643850007263a28309a536b7b3b678edc55d71eea48a61beab147"
+  },
+  "config": {
+    "enabled": true,
+    "jit_search_read_enabled": false,
+    "advanced_parsing": {
+      "enabled": false,
+      "provider": "docling",
+      "device": "cpu",
+      "layout_enabled": true,
+      "table_enabled": false,
+      "ocr_enabled": false,
+      "formula_enabled": false,
+      "document_timeout_seconds": 120.0
+    },
+    "visual_understanding": {
+      "enabled": false,
+      "provider": "openai_compatible",
+      "model": "",
+      "base_url": "",
+      "inherit_ai_settings": true,
+      "detail": "auto",
+      "timeout_seconds": 30.0,
+      "max_retries": 1,
+      "max_images_per_document": 24,
+      "max_asset_bytes": 8388608,
+      "max_output_tokens": null
+    },
+    "visual_retrieval": {
+      "enabled": false,
+      "provider": "colpali_engine",
+      "model_family": "colqwen2_5",
+      "model": "tsystems/colqwen2.5-3b-multilingual-v1.0",
+      "model_path": "",
+      "device": "auto",
+      "precision": "default",
+      "dimension": 128,
+      "batch_size": 1,
+      "local_files_only": false,
+      "query_prefix": "Query: ",
+      "collection_name": "aitrans_knowledge_visual",
+      "storage_path": "config/rag/qdrant",
+      "distance": "dot",
+      "on_disk": false,
+      "asset_storage_path": "config/rag/visual_pages",
+      "render_dpi": 144,
+      "max_pages_per_document": 64,
+      "max_visual_items_per_document": 96,
+      "text_candidate_pool": 20,
+      "visual_top_k": 12,
+      "prefetch_enabled": true,
+      "prefetch_top_k": 48,
+      "prefetch_fallback_to_full_scan": true,
+      "fusion_top_k": 20,
+      "rrf_k": 60,
+      "text_weight": 1.0,
+      "visual_weight": 1.0
+    },
+    "chunking": {
+      "target_tokens": 512,
+      "preferred_max_tokens": null,
+      "hard_max_tokens": null,
+      "overlap_tokens": 80,
+      "minimum_tokens": 100
+    },
+    "semantic_chunking": {
+      "enabled": false,
+      "merge_similarity": 0.72,
+      "strong_merge_similarity": 0.82,
+      "strong_split_similarity": 0.58,
+      "small_chunk_merge_similarity": 0.78,
+      "adaptive_threshold_enabled": true,
+      "adaptive_std_factor": 1.0,
+      "min_paragraphs_for_adaptive": 4,
+      "centroid_window": 4,
+      "semantic_sentence_fallback": false
+    },
+    "embedding": {
+      "provider": "qwen3",
+      "model": "Qwen/Qwen3-Embedding-0.6B",
+      "device": "auto",
+      "dimension": 1024,
+      "batch_size": 8,
+      "normalize": true,
+      "max_input_tokens": 2048,
+      "warmup": true,
+      "precision": "default",
+      "local_files_only": false,
+      "model_path": ""
+    },
+    "vector_store": {
+      "provider": "qdrant_local",
+      "collection_name": "aitrans_benchmark_13edd089812b",
+      "distance": "cosine",
+      "storage_path": "D:\\AITrans\\data\\benchmarks\\s06\\runtime\\qdrant"
+    },
+    "retrieval": {
+      "dense_top_k": 30,
+      "sparse_top_k": 30,
+      "fusion_top_k": 20,
+      "rerank_candidate_k": null,
+      "final_top_k": 8,
+      "fusion": "rrf",
+      "small_to_big_enabled": true,
+      "small_to_big_top_k": 4,
+      "small_to_big_neighbor_radius": 1,
+      "small_to_big_max_tokens_per_anchor": 1200
+    },
+    "reranker": {
+      "provider": "qwen3",
+      "model": "Qwen/Qwen3-Reranker-0.6B",
+      "device": "auto",
+      "batch_size": 8,
+      "lazy_load": true,
+      "local_files_only": false,
+      "model_path": ""
+    }
+  },
+  "machine": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.7",
+    "pytorch": "2.13.0+cu130",
+    "cuda": "13.0",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "gpu_total_bytes": 8585216000
+  },
+  "validation": {
+    "direct_unique_tests": 68,
+    "caller_unique_tests": 22,
+    "total_unique_tests": 90,
+    "final_graph_tests": 37,
+    "ruff_check_exit_code": 0,
+    "format_check_exit_code": 0,
+    "benchmark_exit_code": 1
+  },
+  "fixture": {
+    "fixture_sha256": "d678fb4b416fdd83f878d79efcbfb321e40f48c31d6f469073ffda02ecb40133",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "extractor_version": "graph-grounding-v1:graph-1.0.0+unique-whitespace-v1:research.memory.extract@graph-1.0.0:deepseek:deepseek-v4-flash",
+    "tp": 6,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "cases": [
+      {
+        "id": "G01",
+        "gold": [
+          [
+            "alpha",
+            "uses",
+            "beta"
+          ]
+        ],
+        "predicted": [
+          [
+            "alpha",
+            "uses",
+            "beta"
+          ]
+        ],
+        "rejected": []
+      },
+      {
+        "id": "G02",
+        "gold": [
+          [
+            "alpha",
+            "improves",
+            "beta"
+          ]
+        ],
+        "predicted": [
+          [
+            "alpha",
+            "improves",
+            "beta"
+          ]
+        ],
+        "rejected": []
+      },
+      {
+        "id": "G03",
+        "gold": [],
+        "predicted": [],
+        "rejected": [
+          "negated_or_uncertain"
+        ]
+      },
+      {
+        "id": "G04",
+        "gold": [],
+        "predicted": [],
+        "rejected": [
+          "negated_or_uncertain"
+        ]
+      },
+      {
+        "id": "G05",
+        "gold": [],
+        "predicted": [],
+        "rejected": [
+          "negated_or_uncertain"
+        ]
+      },
+      {
+        "id": "G06",
+        "gold": [],
+        "predicted": [],
+        "rejected": [
+          "unsupported_predicate"
+        ]
+      },
+      {
+        "id": "G07",
+        "gold": [
+          [
+            "alpha",
+            "uses",
+            "beta"
+          ],
+          [
+            "gamma",
+            "measures",
+            "delta"
+          ]
+        ],
+        "predicted": [
+          [
+            "alpha",
+            "uses",
+            "beta"
+          ],
+          [
+            "gamma",
+            "measures",
+            "delta"
+          ]
+        ],
+        "rejected": []
+      },
+      {
+        "id": "G08",
+        "gold": [
+          [
+            "模型甲",
+            "uses",
+            "模型乙"
+          ]
+        ],
+        "predicted": [
+          [
+            "模型甲",
+            "uses",
+            "模型乙"
+          ]
+        ],
+        "rejected": []
+      },
+      {
+        "id": "G09",
+        "gold": [
+          [
+            "alpha",
+            "uses",
+            "beta"
+          ]
+        ],
+        "predicted": [
+          [
+            "alpha",
+            "uses",
+            "beta"
+          ]
+        ],
+        "rejected": []
+      },
+      {
+        "id": "G10",
+        "gold": [],
+        "predicted": [],
+        "rejected": [
+          "table"
+        ]
+      }
+    ]
+  },
+  "papers": [
+    {
+      "paper_id": "1810.04805",
+      "url": "https://arxiv.org/pdf/1810.04805",
+      "sha256": "5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e",
+      "document_id": "doc_c6c130c381fb91f4856d8719",
+      "pages": 16,
+      "chunk_count": 70,
+      "status": "FAILED",
+      "error": "Research-memory claim 2 evidence is not a verbatim source excerpt.",
+      "baseline_import_ms": 22936.31339998683,
+      "graph_import_ms": 67986.79240001366,
+      "previous_generation_preserved": true,
+      "unpublished_edges_visible": 0
+    },
+    {
+      "paper_id": "1706.03762",
+      "url": "https://arxiv.org/pdf/1706.03762",
+      "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+      "document_id": "doc_f4e4c466d959f34c915811fb",
+      "pages": 15,
+      "chunk_count": 26,
+      "status": "FAILED",
+      "error": "Research-memory extractor returned invalid structured output.",
+      "baseline_import_ms": 1501.792100025341,
+      "graph_import_ms": 8309.242299990728,
+      "previous_generation_preserved": true,
+      "unpublished_edges_visible": 0
+    }
+  ],
+  "last_run": {
+    "provider_requests": 24,
+    "cache_hits": 19,
+    "input_text_chars": 44351,
+    "graph_size_bytes": 77824,
+    "remaining_rows_after_delete": {
+      "graph_generation": 0,
+      "entity": 0,
+      "alias": 0,
+      "chunk_entity": 0,
+      "relation": 0,
+      "relation_span": 0
+    }
+  },
+  "limitations": [
+    "No successful full-PDF graph build; full-PDF reimport acceptance blocked",
+    "SQLite size after deletion is schema allocation, not complete graph size",
+    "Counters exclude earlier diagnostics; token and total billed cost unavailable",
+    "LLM cache contains actual validated provider output",
+    "Graph runtime/API remains default disabled; S07 not started",
+    "Production extraction/resolution gold and thresholds are missing",
+    "Holdout 181 questions unused"
+  ],
+  "code_files": [
+    {
+      "path": "backend/rag/graph/extractor.py",
+      "sha256": "4d150b9e44cd686c6d7ba7decab2d036c62acfd46711cdbb29bdc6cad7391287",
+      "s06_4_pending": false
+    },
+    {
+      "path": "backend/rag/graph/indexer.py",
+      "sha256": "2e081ac878d2635f14f8594bf07b98bca35cb9eacec2ca65d8e237b4e424b725",
+      "s06_4_pending": true
+    },
+    {
+      "path": "backend/rag/graph/models.py",
+      "sha256": "a0fca5ce15423fd05e2fb133f10c798cc35cd3b125a18ed62b984e4d48db86a1",
+      "s06_4_pending": false
+    },
+    {
+      "path": "backend/rag/graph/repository.py",
+      "sha256": "3fca462314cfa898f8ad8bc1fa99290113a15d6cf9066ae4e08cb0ea15922ba1",
+      "s06_4_pending": false
+    },
+    {
+      "path": "backend/rag/graph/resolver.py",
+      "sha256": "4e956f70806b9eea1891304ee640f0f97bbd8ff622e9441c8bd3a6a1c64072d7",
+      "s06_4_pending": false
+    },
+    {
+      "path": "backend/rag/index_service.py",
+      "sha256": "52f675246f1b6f6ce4b191de4caa20499711ee952204d16a45d944454ee5304c",
+      "s06_4_pending": true
+    },
+    {
+      "path": "backend/rag/index_manifest.py",
+      "sha256": "6f4e3d59fac092da85553ed4a9c8f4fd1e2821c631f121e1ff08e0acccdea5ff",
+      "s06_4_pending": true
+    },
+    {
+      "path": "tests/rag/graph/conftest.py",
+      "sha256": "32f32f9e0ed3d1ceba94779e7ace69cb48bee060444207086b3dc83699d6a1c9",
+      "s06_4_pending": false
+    },
+    {
+      "path": "tests/rag/graph/test_extractor.py",
+      "sha256": "201a114e96e6755fcc8bd3eb5203ffa9b25b1f45aa6f87e6b21159bf7725c252",
+      "s06_4_pending": false
+    },
+    {
+      "path": "tests/rag/graph/test_indexer.py",
+      "sha256": "a4d85857c0abe9740546c27c87c088f2081ef570f014791794251662f0e9cf10",
+      "s06_4_pending": true
+    },
+    {
+      "path": "tests/rag/graph/test_repository.py",
+      "sha256": "7ba2c71452e076835d5291ab38c18ada2cad029929934121d7de9d064d76a9c8",
+      "s06_4_pending": false
+    },
+    {
+      "path": "tests/rag/graph/test_resolver.py",
+      "sha256": "86d6136dba3ed44ba922845c7c2590e28e7593d903a99e5e695d4ec0b7f803e0",
+      "s06_4_pending": false
+    },
+    {
+      "path": "tests/rag/graph/fixtures/grounding-cases.json",
+      "sha256": "d678fb4b416fdd83f878d79efcbfb321e40f48c31d6f469073ffda02ecb40133",
+      "s06_4_pending": false
+    },
+    {
+      "path": "tests/rag/test_index_manifest.py",
+      "sha256": "48a42ba4c0551a4d804e71be2005084ef6c939a7e0a31801c027b14effcc2487",
+      "s06_4_pending": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "data/benchmarks/s06/graph-results.json",
+      "sha256": "2f6e3ce89a8212985854c409fb0ce66f18e597569ed504d828410c15f9612a72"
+    },
+    {
+      "path": "data/benchmarks/s06/extractor-results.json",
+      "sha256": "41b42b27855799ec93af645f25f319153a22dabb98973c704addc1f090bf2aee"
+    },
+    {
+      "path": "data/benchmarks/s06/evaluate_graph.py",
+      "sha256": "23b325684630ca8ebf19169cc4d2080dba2c98a11312b0113eed8ffdd1a16145"
+    },
+    {
+      "path": "data/benchmarks/s06/last-failed-note.json",
+      "sha256": "acc060e6cf6d8c61957a3d72b9a367de3b5a8eb72b3cd6a2ba75bf818b1df215"
+    }
+  ],
+  "sources": [
+    "https://microsoft.github.io/graphrag/index/default_dataflow/",
+    "https://microsoft.github.io/graphrag/config/models/",
+    "https://arxiv.org/abs/1706.03762",
+    "https://arxiv.org/abs/1810.04805"
+  ],
+  "holdout_used": false
+}

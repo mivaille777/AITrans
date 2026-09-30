@@ -30,9 +30,13 @@
 - S05.2：PASS（共享请求快照、Vector/BM25 适配、空范围拒绝、越权/过期候选过滤）
 - S05.3：PASS（现有入口接线、generation + chunk ID 去重、原始通道 rank/score 保留；冻结 V/B/VB 同配置排序无变化）
 - S05 完整 Stage：BLOCKED（工程完成；效果调优暂缓，公开全库 Dense/Hybrid、人工 UI 和生产质量门未验收，见 S05.md / OI-006）
-- 当前工程任务：S05 功能实现已完成；98 个定向/调用方测试通过，300 次查询无失败。代码提交 159472b6954480fcce87a1220f2ae30fd9dcbd42；S06.1 未开始。
+- S06.1：PASS（SQLite 六表、事务回滚、scope/allowlist/active generation 过滤和删除）。
+- S06.2：PASS（工程抽取/回源；10 个功能标注用例 TP=6/FP=0/FN=0，不能解释为生产质量）。
+- S06.3：PASS（显式别名、同名异物、跨文档定义和跨 scope 消歧功能验证）。
+- S06.4：BLOCKED（生命周期代码与故障测试完成；两篇完整 PDF 的模型输出校验失败，失败不发布且保留旧索引，见 S06.md / OI-007）。
+- 当前工程任务：S06.4 BLOCKED。S06.1–S06.3 已本地提交；S06.4 的 5 个文件待验收保留在工作区，未提交。不进入 S07。
 - Holdout：181 个问题、56 篇论文，已冻结、未运行、不得用于调参
-- GitHub 写入：S00–S04 已推送至 `570864be`；后续功能修复及 S05 为本地提交，尚未推送
+- GitHub 写入：S00–S04 已推送至 `570864be`；后续功能修复、S05 和 S06.1–S06.3 为本地提交，尚未推送
 - 工作区原有用户修改：保留；提交时只暂存任务书当前允许的文件
 
 详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 汇总和子任务报告见 [S01.md](S01.md)、[S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)、[S01.4.md](S01.4.md)、[S01.5.md](S01.5.md)；S02 汇总和子任务报告见 [S02.md](S02.md)、[S02.1.md](S02.1.md)、[S02.2.md](S02.2.md)、[S02.3.md](S02.3.md)；S03 子任务报告见 [S03.1.md](S03.1.md)、[S03.2.md](S03.2.md)、[S03.3.md](S03.3.md)；S04 汇总见 [S04.md](S04.md)、[S04.1.md](S04.1.md)、[S04.2.md](S04.2.md)、[S04-benchmark-manifest.json](S04-benchmark-manifest.json)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。

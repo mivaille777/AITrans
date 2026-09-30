@@ -60,6 +60,19 @@
 - 可行后续方案：恢复效果优化后，用冻结开发集比较现有 reranker 的候选池与融合排序；结合完整公开全库 V/B/VB 和真实用户金标验证。当前证据不足以直接修改权重、阈值或推广 Graph；保留默认配置，依照 S09 的配对评测决定。
 - 未运行：完整 SciFact/MedicalRetrieval Dense/Hybrid、人工 Debug Studio UI、回答引用质量和 holdout。用户当前功能优先的约束下不进行这些效果实验；上述事项与 OI-001/002 共同阻塞完整 S05/最终生产质量验收。S06 未开始。
 
+## OI-007：S06 完整论文模型抽取失败，生产验收未通过
+
+- 用户授权继续 S06。S06.1–S06.3 工程完成；S06.4 的可选接线和故障测试完成，但完整论文验收 BLOCKED，不进入 S07。报告、实际文件/指标指纹见 [S06.md](S06.md)、[S06-benchmark-manifest.json](S06-benchmark-manifest.json)。
+- 已解决：图关系的原文定位、被动语态方向、跨分句误连、唯一空白映射、权限/版本/私有别名隔离、事务回滚和中断恢复。90 个不同的直接/调用方测试通过。
+- 剩余实测问题：`deepseek-v4-flash` + `research.memory.extract@graph-1.0.0` 对 Attention 训练/Adam 段落反复返回未声明的关系端点；BERT 返回非原文引文。两篇 PDF 均图导入失败，重试一次仍失败；未发布边可见数 0，旧 READY 索引保留。删除后六表 0 行。不能用小型合成集 precision/recall=1.0 宣称已解决真实论文问题。
+- 已尝试：复用已有 schema/提示服务、Graph 专用短句与端点声明约束、仅空白差异的唯一原文匹配及一次有限重试；仍保持严格端点/证据校验。未通过丢边、忽略失败 chunk 或发布空图实现假成功。
+- 开源对照：[Microsoft GraphRAG 模型选择说明](https://microsoft.github.io/graphrag/config/models/) 要求可靠结构化输出，并明确非标准模型存在格式错误；[索引 dataflow](https://microsoft.github.io/graphrag/index/default_dataflow/) 提供 TextUnit 关联来源设计。未安装新框架或复制源码。
+- 可行路径 A：指定能稳定满足 schema 的图抽取模型，在现有服务注入点替换后重跑固定文件；模型变化记录新图版本和成本。
+- 可行路径 B：扩展现有 AI 客户端的结构化输出能力，并为不合格输出加入带验证错误反馈的有限修复，修复后仍执行相同 schema/原文/span 校验。当前 complete 不提供 response_format；这会扩大任务修改范围，未擅自改公共 AI 接口。
+- 需要决策：图抽取模型/上述修复路径和调用预算。OI-001/002 还需真实用户实体关系金标及抽取/消歧阈值；当前保守谓词支持和同定义跨文档合并规则可能漏召回。不能默认启用 Graph 或推进生产 PASS。
+- 复跑产物：本机 `data/benchmarks/s06/evaluate_graph.py`、`graph-results.json`、`extractor-results.json`、`last-failed-note.json`；原文件 hash、模型/配置/机器、产物 SHA 见 manifest。原文件/缓存不入 Git；最后一轮 24 次新调用的 token/账单未返回，不能当作 0 成本。
+- 当前指针 S06.4 BLOCKED；成功完成两篇固定 PDF 的导入/复用/重导入/删除后，再提交这 5 个待验收文件并处理 S07。
+
 ## 历史后续问题（结合上述更新读取）
 
 - Parser、错论文与 no-answer 的端到端坏例缺少真实样本；收到 OI-001 数据后补充标注并回放。
@@ -67,4 +80,4 @@
 - Debug Studio 后端能按 run/case 返回 Trace，但尚未完成人工桌面 UI 点选核查。
 - S03.3 配置改造、Vector Only 基准、冷启动/内存、缩写/跨语言 probe 及 generation 排序 smoke 已完成；Vector Only 质量低于 S00 Hybrid，详见 `S03.3.md`。
 - S03 Stage 门禁 BLOCKED：OI-004 门禁基准需确认；OI-003 模型 snapshot revision 未进入 runtime fingerprint；RetrievalService/BM25/Graph 的应用级 scope 接线仍未完成。不能宣称 S03 或生产 Go/No-Go 通过。
-- 已按用户明确指示完成 S04.1/S04.2 工程任务和 HF 评测，随后完成 S05 工程接线；S03 原门禁、S04/S05 完整质量门仍 BLOCKED。S06.1 未开始。
+- 已按用户明确指示完成 S04.1/S04.2 工程任务和 HF 评测，随后完成 S05 及 S06.1–S06.3 工程；S03 原门禁、S04/S05 完整质量门仍 BLOCKED。S06.4 因完整论文模型抽取失败而 BLOCKED，见 OI-007。
