@@ -1,0 +1,729 @@
+{
+  "date": "2026-09-30",
+  "s00_commit": "3f39f81b377aa6e4618ee88ab0a25be8569a03c5",
+  "environment": {
+    "activation": "conda activate aitrans",
+    "python": "3.11.7",
+    "os": "Windows-10-10.0.26200-SP0",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "logical_cpus": 32,
+    "huggingface_hub": "1.28.0",
+    "pyarrow": "25.0.1",
+    "pyarrow_license": "Apache-2.0",
+    "huggingface_hub_license": "Apache-2.0",
+    "physical_ram_bytes": 16961626112
+  },
+  "runs": {
+    "scifact-train-s00": {
+      "dataset": "mteb/scifact",
+      "revision": "cf10ab6856b15b0e670ef8ae5dae4e266c12d035",
+      "split": "train",
+      "implementation": "s00",
+      "baseline_commit": "3f39f81b377aa6e4618ee88ab0a25be8569a03c5",
+      "recorded_at_utc": "2026-09-30T02:55:46.407946+00:00",
+      "corpus_count": 5183,
+      "judgment_rows": 919,
+      "query_limit": null,
+      "tokenizer_version": "unversioned",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "retrieval_top_k": 100,
+      "index_build_seconds": 2.1876072000013664,
+      "index_json_bytes": 11396419,
+      "data_files": [
+        {
+          "path": "README.md",
+          "bytes": 8246,
+          "sha256": "02512d3b0331757ff7000d84e7ec9f892b669b0c6f21f726ed6a1d4ea38530ca"
+        },
+        {
+          "path": "corpus.jsonl",
+          "bytes": 8023638,
+          "sha256": "f0d32db0d156b526d75921ed7a76f2cb912902631c87248c5c97c617bad0b60c"
+        },
+        {
+          "path": "queries.jsonl",
+          "bytes": 129085,
+          "sha256": "9db7df096f7414435d52bafcbacf814c30cea50eb565c1e8fa6d11440759bba8"
+        },
+        {
+          "path": "qrels/train.jsonl",
+          "bytes": 53993,
+          "sha256": "6b678c672279ba5baa4ca3ef767152a1f7ef6af5e7a203c33f5ecf2c1f8d7e02"
+        },
+        {
+          "path": "qrels/test.jsonl",
+          "bytes": 19940,
+          "sha256": "da33fc0edc7447d43908ea92bf11de010e361ac43228295f09bdcd33ce14730c"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "3d755a673af07d1fc20dc4a72d8ba94047ea76f609fc1f70648fc31d04d59927",
+        "backend/rag/sparse/bm25.py": "576cf3ae16a4719516642b7a03e2151a534684545a4a5802f74cc2976f29e26a",
+        "backend/rag/sparse/store.py": "423e25b1917b4ccf9b842b362e68589aa44fad59098eb6a50b61f54cca1758f8"
+      },
+      "metrics": {
+        "query_count": 809,
+        "Recall@1": 0.5159044087350638,
+        "Recall@5": 0.7103831891223733,
+        "Recall@10": 0.7752163164400494,
+        "Recall@20": 0.8283065512978987,
+        "MRR@100": 0.6229258368376194,
+        "nDCG@10": 0.6518646973489451,
+        "retrieval_p50_ms": 20.470700052101165,
+        "retrieval_p95_ms": 35.13762002112344
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 404,
+          "Recall@1": 0.5639438943894389,
+          "Recall@5": 0.7660891089108911,
+          "Recall@10": 0.8267326732673267,
+          "Recall@20": 0.875,
+          "MRR@100": 0.6741715955212906,
+          "nDCG@10": 0.7046314412737753,
+          "retrieval_p50_ms": 20.56834998074919,
+          "retrieval_p95_ms": 34.60009499394801
+        },
+        "term": {
+          "query_count": 405,
+          "Recall@1": 0.4679835390946502,
+          "Recall@5": 0.6548148148148148,
+          "Recall@10": 0.7238271604938271,
+          "Recall@20": 0.7817283950617284,
+          "MRR@100": 0.5718066108914388,
+          "nDCG@10": 0.5992282416807195,
+          "retrieval_p50_ms": 19.977499963715672,
+          "retrieval_p95_ms": 36.792259977664806
+        }
+      }
+    },
+    "scifact-train-current": {
+      "dataset": "mteb/scifact",
+      "revision": "cf10ab6856b15b0e670ef8ae5dae4e266c12d035",
+      "split": "train",
+      "implementation": "current",
+      "baseline_commit": null,
+      "recorded_at_utc": "2026-09-30T02:56:01.841436+00:00",
+      "corpus_count": 5183,
+      "judgment_rows": 919,
+      "query_limit": null,
+      "tokenizer_version": "scientific-v2",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "retrieval_top_k": 100,
+      "index_build_seconds": 2.450259500008542,
+      "index_json_bytes": 11396460,
+      "data_files": [
+        {
+          "path": "README.md",
+          "bytes": 8246,
+          "sha256": "02512d3b0331757ff7000d84e7ec9f892b669b0c6f21f726ed6a1d4ea38530ca"
+        },
+        {
+          "path": "corpus.jsonl",
+          "bytes": 8023638,
+          "sha256": "f0d32db0d156b526d75921ed7a76f2cb912902631c87248c5c97c617bad0b60c"
+        },
+        {
+          "path": "queries.jsonl",
+          "bytes": 129085,
+          "sha256": "9db7df096f7414435d52bafcbacf814c30cea50eb565c1e8fa6d11440759bba8"
+        },
+        {
+          "path": "qrels/train.jsonl",
+          "bytes": 53993,
+          "sha256": "6b678c672279ba5baa4ca3ef767152a1f7ef6af5e7a203c33f5ecf2c1f8d7e02"
+        },
+        {
+          "path": "qrels/test.jsonl",
+          "bytes": 19940,
+          "sha256": "da33fc0edc7447d43908ea92bf11de010e361ac43228295f09bdcd33ce14730c"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "fad0bea4a7dde1c4cb6318985747e582cefb41951d0b1d58dc1463e35e875c18",
+        "backend/rag/sparse/bm25.py": "0ee9b04269635ce6b1e5c7244122b4e1c8802a8995d4f8b2074b1f770b747bb0",
+        "backend/rag/sparse/store.py": "c658ef94a2ff42c73abd6193438818576703d66dd45bfdaa14a91b55b1514ab3"
+      },
+      "metrics": {
+        "query_count": 809,
+        "Recall@1": 0.5140502678203543,
+        "Recall@5": 0.7103831891223733,
+        "Recall@10": 0.7694478780387309,
+        "Recall@20": 0.8258343634116193,
+        "MRR@100": 0.6206047333520853,
+        "nDCG@10": 0.6484359584455215,
+        "retrieval_p50_ms": 12.53119995817542,
+        "retrieval_p95_ms": 22.332659992389384
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 404,
+          "Recall@1": 0.5676567656765676,
+          "Recall@5": 0.7660891089108911,
+          "Recall@10": 0.8168316831683168,
+          "Recall@20": 0.875,
+          "MRR@100": 0.6760734252839321,
+          "nDCG@10": 0.7028317036270639,
+          "retrieval_p50_ms": 12.80325002153404,
+          "retrieval_p95_ms": 23.517175018787384
+        },
+        "term": {
+          "query_count": 405,
+          "Recall@1": 0.4605761316872428,
+          "Recall@5": 0.6548148148148148,
+          "Recall@10": 0.7221810699588478,
+          "Recall@20": 0.7767901234567901,
+          "MRR@100": 0.5652730011534035,
+          "nDCG@10": 0.5941745237459088,
+          "retrieval_p50_ms": 12.266700039617717,
+          "retrieval_p95_ms": 20.635400002356622
+        }
+      }
+    },
+    "scifact-test-s00": {
+      "dataset": "mteb/scifact",
+      "revision": "cf10ab6856b15b0e670ef8ae5dae4e266c12d035",
+      "split": "test",
+      "implementation": "s00",
+      "baseline_commit": "3f39f81b377aa6e4618ee88ab0a25be8569a03c5",
+      "recorded_at_utc": "2026-09-30T02:57:47.367626+00:00",
+      "corpus_count": 5183,
+      "judgment_rows": 339,
+      "query_limit": null,
+      "tokenizer_version": "unversioned",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "retrieval_top_k": 100,
+      "index_build_seconds": 2.0477320999489166,
+      "index_json_bytes": 11396419,
+      "data_files": [
+        {
+          "path": "README.md",
+          "bytes": 8246,
+          "sha256": "02512d3b0331757ff7000d84e7ec9f892b669b0c6f21f726ed6a1d4ea38530ca"
+        },
+        {
+          "path": "corpus.jsonl",
+          "bytes": 8023638,
+          "sha256": "f0d32db0d156b526d75921ed7a76f2cb912902631c87248c5c97c617bad0b60c"
+        },
+        {
+          "path": "queries.jsonl",
+          "bytes": 129085,
+          "sha256": "9db7df096f7414435d52bafcbacf814c30cea50eb565c1e8fa6d11440759bba8"
+        },
+        {
+          "path": "qrels/train.jsonl",
+          "bytes": 53993,
+          "sha256": "6b678c672279ba5baa4ca3ef767152a1f7ef6af5e7a203c33f5ecf2c1f8d7e02"
+        },
+        {
+          "path": "qrels/test.jsonl",
+          "bytes": 19940,
+          "sha256": "da33fc0edc7447d43908ea92bf11de010e361ac43228295f09bdcd33ce14730c"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "3d755a673af07d1fc20dc4a72d8ba94047ea76f609fc1f70648fc31d04d59927",
+        "backend/rag/sparse/bm25.py": "576cf3ae16a4719516642b7a03e2151a534684545a4a5802f74cc2976f29e26a",
+        "backend/rag/sparse/store.py": "423e25b1917b4ccf9b842b362e68589aa44fad59098eb6a50b61f54cca1758f8"
+      },
+      "metrics": {
+        "query_count": 300,
+        "Recall@1": 0.52,
+        "Recall@5": 0.7127777777777777,
+        "Recall@10": 0.7721666666666667,
+        "Recall@20": 0.81,
+        "MRR@100": 0.622525816345066,
+        "nDCG@10": 0.6519307721144144,
+        "retrieval_p50_ms": 18.43484997516498,
+        "retrieval_p95_ms": 31.602014976670038
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 139,
+          "Recall@1": 0.5275779376498801,
+          "Recall@5": 0.7176258992805755,
+          "Recall@10": 0.7829736211031175,
+          "Recall@20": 0.8189448441247003,
+          "MRR@100": 0.6244504198893912,
+          "nDCG@10": 0.6575340234699865,
+          "retrieval_p50_ms": 19.734400033485144,
+          "retrieval_p95_ms": 32.02685998985544
+        },
+        "term": {
+          "query_count": 161,
+          "Recall@1": 0.5134575569358178,
+          "Recall@5": 0.7085921325051759,
+          "Recall@10": 0.7628364389233955,
+          "Recall@20": 0.8022774327122153,
+          "MRR@100": 0.6208642021049344,
+          "nDCG@10": 0.647093182434759,
+          "retrieval_p50_ms": 17.888300004415214,
+          "retrieval_p95_ms": 31.311099999584258
+        }
+      }
+    },
+    "scifact-test-current": {
+      "dataset": "mteb/scifact",
+      "revision": "cf10ab6856b15b0e670ef8ae5dae4e266c12d035",
+      "split": "test",
+      "implementation": "current",
+      "baseline_commit": null,
+      "recorded_at_utc": "2026-09-30T02:57:55.771880+00:00",
+      "corpus_count": 5183,
+      "judgment_rows": 339,
+      "query_limit": null,
+      "tokenizer_version": "scientific-v2",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "retrieval_top_k": 100,
+      "index_build_seconds": 2.4191875000251457,
+      "index_json_bytes": 11396460,
+      "data_files": [
+        {
+          "path": "README.md",
+          "bytes": 8246,
+          "sha256": "02512d3b0331757ff7000d84e7ec9f892b669b0c6f21f726ed6a1d4ea38530ca"
+        },
+        {
+          "path": "corpus.jsonl",
+          "bytes": 8023638,
+          "sha256": "f0d32db0d156b526d75921ed7a76f2cb912902631c87248c5c97c617bad0b60c"
+        },
+        {
+          "path": "queries.jsonl",
+          "bytes": 129085,
+          "sha256": "9db7df096f7414435d52bafcbacf814c30cea50eb565c1e8fa6d11440759bba8"
+        },
+        {
+          "path": "qrels/train.jsonl",
+          "bytes": 53993,
+          "sha256": "6b678c672279ba5baa4ca3ef767152a1f7ef6af5e7a203c33f5ecf2c1f8d7e02"
+        },
+        {
+          "path": "qrels/test.jsonl",
+          "bytes": 19940,
+          "sha256": "da33fc0edc7447d43908ea92bf11de010e361ac43228295f09bdcd33ce14730c"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "fad0bea4a7dde1c4cb6318985747e582cefb41951d0b1d58dc1463e35e875c18",
+        "backend/rag/sparse/bm25.py": "0ee9b04269635ce6b1e5c7244122b4e1c8802a8995d4f8b2074b1f770b747bb0",
+        "backend/rag/sparse/store.py": "c658ef94a2ff42c73abd6193438818576703d66dd45bfdaa14a91b55b1514ab3"
+      },
+      "metrics": {
+        "query_count": 300,
+        "Recall@1": 0.5283333333333333,
+        "Recall@5": 0.7094444444444444,
+        "Recall@10": 0.7688333333333334,
+        "Recall@20": 0.81,
+        "MRR@100": 0.6274366700637993,
+        "nDCG@10": 0.6539748816592846,
+        "retrieval_p50_ms": 11.85375003842637,
+        "retrieval_p95_ms": 16.651705023832623
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 139,
+          "Recall@1": 0.5455635491606715,
+          "Recall@5": 0.710431654676259,
+          "Recall@10": 0.7757793764988009,
+          "Recall@20": 0.8189448441247003,
+          "MRR@100": 0.6371906367516493,
+          "nDCG@10": 0.6636929467613564,
+          "retrieval_p50_ms": 12.448700028471649,
+          "retrieval_p95_ms": 16.633880051085725
+        },
+        "term": {
+          "query_count": 161,
+          "Recall@1": 0.5134575569358178,
+          "Recall@5": 0.7085921325051759,
+          "Recall@10": 0.7628364389233955,
+          "Recall@20": 0.8022774327122153,
+          "MRR@100": 0.6190155435444753,
+          "nDCG@10": 0.6455847509189866,
+          "retrieval_p50_ms": 11.429600010160357,
+          "retrieval_p95_ms": 16.925400006584823
+        }
+      }
+    },
+    "medical-dev-current": {
+      "dataset": "mteb/MedicalRetrieval",
+      "revision": "bc05e883de33f26fb745fe57092796ceb65a48bb",
+      "split": "dev",
+      "implementation": "current",
+      "baseline_commit": null,
+      "recorded_at_utc": "2026-09-30T03:02:46.711968+00:00",
+      "corpus_count": 100999,
+      "judgment_rows": 1000,
+      "query_limit": null,
+      "tokenizer_version": "scientific-v2",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "retrieval_top_k": 100,
+      "index_build_seconds": 15.88832910003839,
+      "index_json_bytes": 105855182,
+      "data_files": [
+        {
+          "path": "README.md",
+          "bytes": 7209,
+          "sha256": "9fcafb14674b0649af207400e9c1b879518076bc6642c1900970461d9e8b6fc4"
+        },
+        {
+          "path": "corpus/dev-00000-of-00001.parquet",
+          "bytes": 25049177,
+          "sha256": "ac480b58f2b3668585b5a544440af29d46a5070740b9f8088d3db81c6fbcb900"
+        },
+        {
+          "path": "queries/dev-00000-of-00001.parquet",
+          "bytes": 48477,
+          "sha256": "772c356849c5a7ff8a4348bdc9dc9a07e4e0a80899c33f66a143c20c21259c7f"
+        },
+        {
+          "path": "data/dev-00000-of-00001.parquet",
+          "bytes": 12277,
+          "sha256": "cf879a5802402a31f541b21d6f70cb878575e901fc1594b645c8ef7bbf66e2db"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "fad0bea4a7dde1c4cb6318985747e582cefb41951d0b1d58dc1463e35e875c18",
+        "backend/rag/sparse/bm25.py": "0ee9b04269635ce6b1e5c7244122b4e1c8802a8995d4f8b2074b1f770b747bb0",
+        "backend/rag/sparse/store.py": "c658ef94a2ff42c73abd6193438818576703d66dd45bfdaa14a91b55b1514ab3"
+      },
+      "metrics": {
+        "query_count": 1000,
+        "Recall@1": 0.279,
+        "Recall@5": 0.378,
+        "Recall@10": 0.416,
+        "Recall@20": 0.457,
+        "MRR@100": 0.3263594444263435,
+        "nDCG@10": 0.3439125883151786,
+        "retrieval_p50_ms": 264.3377500062343,
+        "retrieval_p95_ms": 452.3036899947328
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 1,
+          "Recall@1": 0.0,
+          "Recall@5": 0.0,
+          "Recall@10": 0.0,
+          "Recall@20": 0.0,
+          "MRR@100": 0.010526315789473684,
+          "nDCG@10": 0.0,
+          "retrieval_p50_ms": 106.01930000120774,
+          "retrieval_p95_ms": 106.01930000120774
+        },
+        "term": {
+          "query_count": 999,
+          "Recall@1": 0.27927927927927926,
+          "Recall@5": 0.3783783783783784,
+          "Recall@10": 0.4164164164164164,
+          "Recall@20": 0.4574574574574575,
+          "MRR@100": 0.3266755937042583,
+          "nDCG@10": 0.344256845160339,
+          "retrieval_p50_ms": 264.3604000331834,
+          "retrieval_p95_ms": 452.38547999761073
+        }
+      }
+    },
+    "medical-dev-s00-limit100": {
+      "dataset": "mteb/MedicalRetrieval",
+      "revision": "bc05e883de33f26fb745fe57092796ceb65a48bb",
+      "split": "dev",
+      "implementation": "s00",
+      "baseline_commit": "3f39f81b377aa6e4618ee88ab0a25be8569a03c5",
+      "recorded_at_utc": "2026-09-30T03:09:18.455916+00:00",
+      "corpus_count": 100999,
+      "judgment_rows": 1000,
+      "query_limit": 100,
+      "query_subset_seed": 42,
+      "tokenizer_version": "unversioned",
+      "bm25_k1": 1.5,
+      "bm25_b": 0.75,
+      "retrieval_top_k": 100,
+      "index_build_seconds": 10.188050800003111,
+      "index_json_bytes": 105855141,
+      "data_files": [
+        {
+          "path": "README.md",
+          "bytes": 7209,
+          "sha256": "9fcafb14674b0649af207400e9c1b879518076bc6642c1900970461d9e8b6fc4"
+        },
+        {
+          "path": "corpus/dev-00000-of-00001.parquet",
+          "bytes": 25049177,
+          "sha256": "ac480b58f2b3668585b5a544440af29d46a5070740b9f8088d3db81c6fbcb900"
+        },
+        {
+          "path": "queries/dev-00000-of-00001.parquet",
+          "bytes": 48477,
+          "sha256": "772c356849c5a7ff8a4348bdc9dc9a07e4e0a80899c33f66a143c20c21259c7f"
+        },
+        {
+          "path": "data/dev-00000-of-00001.parquet",
+          "bytes": 12277,
+          "sha256": "cf879a5802402a31f541b21d6f70cb878575e901fc1594b645c8ef7bbf66e2db"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "3d755a673af07d1fc20dc4a72d8ba94047ea76f609fc1f70648fc31d04d59927",
+        "backend/rag/sparse/bm25.py": "576cf3ae16a4719516642b7a03e2151a534684545a4a5802f74cc2976f29e26a",
+        "backend/rag/sparse/store.py": "423e25b1917b4ccf9b842b362e68589aa44fad59098eb6a50b61f54cca1758f8"
+      },
+      "metrics": {
+        "query_count": 100,
+        "Recall@1": 0.29,
+        "Recall@5": 0.41,
+        "Recall@10": 0.43,
+        "Recall@20": 0.44,
+        "MRR@100": 0.34148110896293493,
+        "nDCG@10": 0.36130586170605034,
+        "retrieval_p50_ms": 928.2828499854077,
+        "retrieval_p95_ms": 1731.7667349794642
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 0,
+          "Recall@1": null,
+          "Recall@5": null,
+          "Recall@10": null,
+          "Recall@20": null,
+          "MRR@100": null,
+          "nDCG@10": null,
+          "retrieval_p50_ms": 0.0,
+          "retrieval_p95_ms": 0.0
+        },
+        "term": {
+          "query_count": 100,
+          "Recall@1": 0.29,
+          "Recall@5": 0.41,
+          "Recall@10": 0.43,
+          "Recall@20": 0.44,
+          "MRR@100": 0.34148110896293493,
+          "nDCG@10": 0.36130586170605034,
+          "retrieval_p50_ms": 928.2828499854077,
+          "retrieval_p95_ms": 1731.7667349794642
+        }
+      }
+    },
+    "qasper-validation-s00": {
+      "dataset": "QASPER validation frozen S00 dev100, known-paper filtered",
+      "implementation": "s00",
+      "baseline_commit": "3f39f81b377aa6e4618ee88ab0a25be8569a03c5",
+      "retrieval_top_k": 100,
+      "query_count_total": 100,
+      "corpus_count": 1312,
+      "tokenizer_version": "unversioned",
+      "index_build_seconds": 0.5488038000185043,
+      "index_json_bytes": 8759215,
+      "metrics": {
+        "query_count": 87,
+        "Recall@1": 0.17471264367816092,
+        "Recall@5": 0.6804597701149425,
+        "Recall@10": 0.906896551724138,
+        "Recall@20": 0.9655172413793104,
+        "MRR@100": 0.4138957411071354,
+        "nDCG@10": 0.5198656257786001,
+        "retrieval_p50_ms": 3.5358999739401042,
+        "retrieval_p95_ms": 5.298759980360046
+      },
+      "retrieval_p95_all_queries_ms": 5.568320013117045,
+      "data_files": [
+        {
+          "path": "D:\\AITrans\\data\\benchmarks\\qasper\\s03-3-vector-only\\indexes\\efd58334020d29892171d018b9e98f0b522c392f2514a669cfbf81f9926c4e24\\bm25_index.json",
+          "sha256": "084c020ce9b601e9cc282b67e447aade7f18f2508df74629549d83e708487c36"
+        },
+        {
+          "path": "D:\\AITrans\\data\\benchmarks\\qasper\\s03-3-vector-only\\qrels\\1a38cf16e937d258582166e09a8cdb8edc669318d3ee81de0e0d50e46ab7e45d.jsonl",
+          "sha256": "d4ee8cb111567ddd0ff66d8feb48a4ccf5f6cbb14ba8eec3febd09dfa6941929"
+        },
+        {
+          "path": "D:\\AITrans\\data\\benchmarks\\qasper\\frozen_s00\\dev-question-ids.txt",
+          "sha256": "217baa80d7d2802a428074fe660d1278902db5f7cba9144b52439dad5f76a37c"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "3d755a673af07d1fc20dc4a72d8ba94047ea76f609fc1f70648fc31d04d59927",
+        "backend/rag/sparse/bm25.py": "576cf3ae16a4719516642b7a03e2151a534684545a4a5802f74cc2976f29e26a",
+        "backend/rag/sparse/store.py": "423e25b1917b4ccf9b842b362e68589aa44fad59098eb6a50b61f54cca1758f8"
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 10,
+          "Recall@1": 0.2,
+          "Recall@5": 0.6,
+          "Recall@10": 0.9,
+          "Recall@20": 1.0,
+          "MRR@100": 0.36936507936507934,
+          "nDCG@10": 0.4929485193775153,
+          "retrieval_p50_ms": 3.5942000104114413,
+          "retrieval_p95_ms": 6.465540005592631
+        },
+        "term": {
+          "query_count": 77,
+          "Recall@1": 0.17142857142857143,
+          "Recall@5": 0.6909090909090909,
+          "Recall@10": 0.9077922077922078,
+          "Recall@20": 0.961038961038961,
+          "MRR@100": 0.41967894393077904,
+          "nDCG@10": 0.523361353882637,
+          "retrieval_p50_ms": 3.4817999694496393,
+          "retrieval_p95_ms": 5.20727998809889
+        }
+      }
+    },
+    "qasper-validation-current": {
+      "dataset": "QASPER validation frozen S00 dev100, known-paper filtered",
+      "implementation": "current",
+      "baseline_commit": null,
+      "retrieval_top_k": 100,
+      "query_count_total": 100,
+      "corpus_count": 1312,
+      "tokenizer_version": "scientific-v2",
+      "index_build_seconds": 0.6635245999787003,
+      "index_json_bytes": 8759256,
+      "metrics": {
+        "query_count": 87,
+        "Recall@1": 0.1839080459770115,
+        "Recall@5": 0.6804597701149425,
+        "Recall@10": 0.906896551724138,
+        "Recall@20": 0.9655172413793104,
+        "MRR@100": 0.4159391638402133,
+        "nDCG@10": 0.5237293118255812,
+        "retrieval_p50_ms": 2.4117999710142612,
+        "retrieval_p95_ms": 3.7049999635200948
+      },
+      "retrieval_p95_all_queries_ms": 3.729639956145547,
+      "data_files": [
+        {
+          "path": "D:\\AITrans\\data\\benchmarks\\qasper\\s03-3-vector-only\\indexes\\efd58334020d29892171d018b9e98f0b522c392f2514a669cfbf81f9926c4e24\\bm25_index.json",
+          "sha256": "084c020ce9b601e9cc282b67e447aade7f18f2508df74629549d83e708487c36"
+        },
+        {
+          "path": "D:\\AITrans\\data\\benchmarks\\qasper\\s03-3-vector-only\\qrels\\1a38cf16e937d258582166e09a8cdb8edc669318d3ee81de0e0d50e46ab7e45d.jsonl",
+          "sha256": "d4ee8cb111567ddd0ff66d8feb48a4ccf5f6cbb14ba8eec3febd09dfa6941929"
+        },
+        {
+          "path": "D:\\AITrans\\data\\benchmarks\\qasper\\frozen_s00\\dev-question-ids.txt",
+          "sha256": "217baa80d7d2802a428074fe660d1278902db5f7cba9144b52439dad5f76a37c"
+        }
+      ],
+      "code_sha256": {
+        "backend/rag/sparse/tokenizer.py": "fad0bea4a7dde1c4cb6318985747e582cefb41951d0b1d58dc1463e35e875c18",
+        "backend/rag/sparse/bm25.py": "0ee9b04269635ce6b1e5c7244122b4e1c8802a8995d4f8b2074b1f770b747bb0",
+        "backend/rag/sparse/store.py": "c658ef94a2ff42c73abd6193438818576703d66dd45bfdaa14a91b55b1514ab3"
+      },
+      "slices": {
+        "identifier": {
+          "query_count": 10,
+          "Recall@1": 0.2,
+          "Recall@5": 0.6,
+          "Recall@10": 0.9,
+          "Recall@20": 1.0,
+          "MRR@100": 0.36936507936507934,
+          "nDCG@10": 0.4929485193775153,
+          "retrieval_p50_ms": 2.489550010068342,
+          "retrieval_p95_ms": 3.7253299989970405
+        },
+        "term": {
+          "query_count": 77,
+          "Recall@1": 0.18181818181818182,
+          "Recall@5": 0.6909090909090909,
+          "Recall@10": 0.9077922077922078,
+          "Recall@20": 0.961038961038961,
+          "MRR@100": 0.42198774623958135,
+          "nDCG@10": 0.5277268173383171,
+          "retrieval_p50_ms": 2.3968000314198434,
+          "retrieval_p95_ms": 3.6724999779835343
+        }
+      }
+    }
+  },
+  "notes": [
+    "BM25 only; full corpus; no paper-ID filter on HF datasets.",
+    "SciFact train is development; test was evaluated after tokenizer was fixed.",
+    "Medical dev is a diagnostic proxy, not a blind production holdout.",
+    "MRR is truncated at top 100. Index size is serialized JSON catalogue; postings are in memory.",
+    "QASPER backfills S00 sparse source code on the frozen dev100; known-paper filtering; 87 mapped cases."
+  ],
+  "validation": {
+    "s04_targeted": "24 passed",
+    "rag_and_api_contracts": "443 passed, 3 opt-in model/Docling tests skipped",
+    "ruff": "passed"
+  },
+  "production_gate": "BLOCKED",
+  "medical_paired_seed42_100": {
+    "baseline": {
+      "query_count": 100,
+      "Recall@1": 0.29,
+      "Recall@5": 0.41,
+      "Recall@10": 0.43,
+      "Recall@20": 0.44,
+      "MRR@100": 0.34148110896293493,
+      "nDCG@10": 0.36130586170605034,
+      "retrieval_p50_ms": 928.2828499854077,
+      "retrieval_p95_ms": 1731.7667349794642
+    },
+    "current": {
+      "query_count": 100,
+      "Recall@1": 0.29,
+      "Recall@5": 0.41,
+      "Recall@10": 0.43,
+      "Recall@20": 0.44,
+      "MRR@100": 0.34148110896293493,
+      "nDCG@10": 0.36130586170605034,
+      "retrieval_p50_ms": 274.2022500024177,
+      "retrieval_p95_ms": 452.62031999009196
+    },
+    "note": "Current values selected by exactly matching the 100 baseline query IDs in the full 1000-query run."
+  },
+  "identifier_fixture": {
+    "n": 7,
+    "before_hit_at_1": 0.7142857142857143,
+    "after_hit_at_1": 1.0,
+    "fixed_ids": [
+      "S04-ID-02",
+      "S04-ID-03"
+    ]
+  },
+  "scifact_test_recall5_regression_ids": [
+    "768"
+  ],
+  "miss_counts_at_5": {
+    "scifact-train-s00": 217,
+    "scifact-train-current": 217,
+    "scifact-test-s00": 81,
+    "scifact-test-current": 82,
+    "medical-dev-current": 622,
+    "medical-dev-s00-limit100": 59,
+    "qasper-validation-s00": 24,
+    "qasper-validation-current": 24
+  },
+  "bad_cases_sha256": "d9bc560ff62017c75b3432148bd61aa9b357b2257a1a043ab7565764093c6173",
+  "download_manifest_sha256": "a1a36e8ceb0ef918a1b885f2bc6c0cc40b2495057284adfdae9bba34ad56f786",
+  "code_commit": "6885677b860a5861fd9d0000ecc501d00e2820d0",
+  "dataset_license_metadata": {
+    "mteb/scifact": "unknown in pinned MTEB dataset card",
+    "mteb/MedicalRetrieval": "not declared in pinned MTEB dataset card"
+  },
+  "gate": {
+    "S04.1": "PASS",
+    "S04.2_engineering": "PASS",
+    "relative_sparse_and_scope": "PASS",
+    "complete_stage": "BLOCKED: manual Debug Studio UI and open-retrieval quality acceptance incomplete",
+    "production": "BLOCKED"
+  },
+  "qasper_original_s00_consistency": {
+    "chunk_ids_equal": true,
+    "document_ids_equal": true,
+    "search_texts_equal": true,
+    "qrels_equal": true,
+    "chunks": 1312,
+    "qrels": 100,
+    "baseline_index_sha256": "b7e3514f6dc9af5e6944d1451bc192e02296434f4c763b010ef78c4955a7c390",
+    "baseline_qrels_sha256": "d4ee8cb111567ddd0ff66d8feb48a4ccf5f6cbb14ba8eec3febd09dfa6941929"
+  }
+}
