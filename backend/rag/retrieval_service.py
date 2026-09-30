@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from time import perf_counter
 
 from backend.rag.config import RagRetrievalConfig
@@ -10,6 +11,9 @@ from backend.rag.fusion import rrf_fuse
 from backend.rag.index_manifest import IndexManifest
 from backend.rag.models import RetrievalCandidate, RetrievalResult
 from backend.rag.rerankers.base import RerankerProvider
+from backend.rag.retrievers.base import RetrievalRequest, record_channel_hits
+from backend.rag.retrievers.bm25 import BM25Retriever
+from backend.rag.retrievers.vector import VectorRetriever
 from backend.rag.small_to_big import SmallToBigContextExpander
 from backend.rag.sparse.store import SparseRetriever
 from backend.rag.stores.base import VectorSearchFilter, VectorStore
@@ -61,6 +65,13 @@ class RetrievalService:
                 update={"exclude_references": False}
             )
         active_generations = self._resolve_active_generations(effective_filters)
+        request = RetrievalRequest(
+            query=query,
+            top_k=self._config.dense_top_k,
+            filters=effective_filters,
+            active_generations=active_generations,
+        )
+        effective_filters = request.search_filters()
 
         dense: list[RetrievalCandidate] = []
         sparse: list[RetrievalCandidate] = []
@@ -106,18 +117,13 @@ class RetrievalService:
                         raise RagRetrievalError(
                             "embedding fingerprint changed; reindex required"
                         )
-                search_kwargs = {
-                    "top_k": self._config.dense_top_k,
-                    "filters": effective_filters,
-                }
-                if active_generations is not None:
-                    dense = self._vector_store.search(
-                        vector,
-                        **search_kwargs,
+                dense = VectorRetriever(self._vector_store).retrieve(
+                    replace(
+                        request,
+                        query_vector=tuple(vector),
                         active_generations=dense_generations,
                     )
-                else:
-                    dense = self._vector_store.search(vector, **search_kwargs)
+                )
                 dense_ms = (perf_counter() - dense_started) * 1000
             except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
                 dense_error = str(exc) or exc.__class__.__name__
@@ -125,19 +131,9 @@ class RetrievalService:
         if sparse_enabled:
             sparse_started = perf_counter()
             try:
-                if active_generations is not None:
-                    sparse = self._sparse.search(
-                        query,
-                        self._config.sparse_top_k,
-                        effective_filters,
-                        active_generations=active_generations,
-                    )
-                else:
-                    sparse = self._sparse.search(
-                        query,
-                        self._config.sparse_top_k,
-                        effective_filters,
-                    )
+                sparse = BM25Retriever(self._sparse).retrieve(
+                    replace(request, top_k=self._config.sparse_top_k)
+                )
             except Exception as exc:  # noqa: BLE001 - intentional degraded retrieval
                 sparse_error = str(exc) or exc.__class__.__name__
             sparse_ms = (perf_counter() - sparse_started) * 1000
@@ -163,6 +159,12 @@ class RetrievalService:
                         max(self._config.fusion_top_k, desired_top_k),
                         effective_filters,
                     )
+                structural = record_channel_hits(
+                    request,
+                    structural,
+                    channel="structural",
+                    score_field="sparse_score",
+                )
             except Exception as exc:  # noqa: BLE001 - structural recall is additive
                 structural_error = str(exc) or exc.__class__.__name__
             structural_ms = (perf_counter() - structural_started) * 1000
@@ -263,6 +265,7 @@ class RetrievalService:
             retrieval_strategy=strategy,
             elapsed_ms=(perf_counter() - started) * 1000,
             metadata={
+                "trace_id": request.trace_id,
                 "dense_count": len(dense),
                 "dense_incompatible_document_ids": dense_incompatible_document_ids,
                 "sparse_count": len(sparse),

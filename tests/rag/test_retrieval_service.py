@@ -135,6 +135,13 @@ def test_hybrid_retrieval_fuses_and_deduplicates() -> None:
     assert result.metadata["pre_rerank_chunk_ids"] == ["shared", "dense", "sparse"]
     assert result.metadata["dense_chunk_ids"] == ["shared", "dense"]
     assert result.metadata["sparse_chunk_ids"] == ["shared", "sparse"]
+    shared = result.candidates[0]
+    assert [hit.channel for hit in shared.channel_hits] == ["vector", "bm25"]
+    assert [hit.raw_score for hit in shared.channel_hits] == [0.8, 3.0]
+    assert all(
+        candidate.trace_id == result.metadata["trace_id"]
+        for candidate in result.candidates
+    )
 
 
 @pytest.mark.parametrize("dense_enabled", [True, False])
@@ -157,8 +164,9 @@ def test_filters_are_pushed_to_both_stores() -> None:
 
     retrieval.retrieve("query", filters=filters)
 
-    assert vector.filters is filters
-    assert sparse.filters is filters
+    assert vector.filters == filters
+    assert sparse.filters == filters
+    assert vector.filters is not sparse.filters
 
 
 def test_retrieval_channels_can_be_disabled_for_ablation_profiles() -> None:

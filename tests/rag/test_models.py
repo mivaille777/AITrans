@@ -6,13 +6,16 @@ import pytest
 from pydantic import ValidationError
 
 from backend.rag.models import (
+    ChannelHit,
     DocumentChunk,
+    GraphPath,
     KnowledgeDocument,
     RetrievalCandidate,
     RetrievalContextWindow,
     RetrievalResult,
     build_stable_chunk_id,
 )
+from backend.rag.source_span import SourceSpan
 
 
 def make_chunk(**overrides: object) -> DocumentChunk:
@@ -143,3 +146,40 @@ def test_retrieval_result_round_trip_preserves_small_to_big_window() -> None:
     assert window.anchor_chunk_id == "anchor"
     assert [chunk.chunk_id for chunk in window.chunks] == ["anchor", "neighbor"]
     assert "following paragraph" in window.text
+
+
+def test_legacy_candidate_json_has_empty_provenance() -> None:
+    payload = {"chunk": make_chunk().model_dump(), "dense_score": 0.81, "rank": 1}
+    restored = RetrievalCandidate.model_validate_json(json.dumps(payload))
+
+    assert restored.dense_score == 0.81
+    assert restored.channel_hits == []
+    assert restored.graph_paths == []
+    assert restored.index_generation is None
+    assert restored.trace_id is None
+
+
+def test_candidate_round_trip_preserves_channel_and_graph_provenance() -> None:
+    span = SourceSpan.from_text(
+        "original evidence", start_char=0, end_char=17, document_hash="doc_hash"
+    )
+    candidate = RetrievalCandidate(
+        chunk=make_chunk(),
+        channel_hits=[ChannelHit(channel="vector", raw_score=0.81, rank=3)],
+        graph_paths=[
+            GraphPath(
+                node_ids=["entity_a", "entity_b"],
+                edge_ids=["relation"],
+                source_span=span,
+            )
+        ],
+        index_generation="generation_1",
+        trace_id="trace_1",
+    )
+
+    restored = RetrievalCandidate.model_validate_json(candidate.model_dump_json())
+
+    assert restored == candidate
+    assert restored.channel_hits[0].rank == 3
+    assert restored.graph_paths[0].source_span == span
+    assert RetrievalCandidate(chunk=make_chunk()).channel_hits == []

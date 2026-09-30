@@ -179,6 +179,18 @@ class RetrievalContextWindow(RagContractModel):
         return self
 
 
+class ChannelHit(RagContractModel):
+    channel: str = Field(min_length=1)
+    raw_score: float | None = None
+    rank: int = Field(ge=1)
+
+
+class GraphPath(RagContractModel):
+    node_ids: list[str] = Field(min_length=1)
+    edge_ids: list[str] = Field(default_factory=list)
+    source_span: SourceSpan
+
+
 class RetrievalCandidate(RagContractModel):
     chunk: DocumentChunk
     dense_score: float | None = None
@@ -188,6 +200,10 @@ class RetrievalCandidate(RagContractModel):
     rank: int | None = Field(default=None, ge=1)
     context_window: RetrievalContextWindow | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    channel_hits: list[ChannelHit] = Field(default_factory=list)
+    graph_paths: list[GraphPath] = Field(default_factory=list)
+    index_generation: str | None = None
+    trace_id: str | None = None
 
 
 class RetrievalResult(RagContractModel):
@@ -226,11 +242,13 @@ def build_stable_chunk_id(
 
 
 __all__ = [
+    "ChannelHit",
     "DocumentChunk",
     "DocumentElement",
     "DocumentModality",
     "DocumentPage",
     "DocumentSection",
+    "GraphPath",
     "KnowledgeDocument",
     "NormalizedDocument",
     "RagContractModel",

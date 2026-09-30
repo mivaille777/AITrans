@@ -11,16 +11,23 @@ def rrf_fuse(
 ) -> list[RetrievalCandidate]:
     if limit <= 0 or k <= 0:
         raise ValueError("RRF limit and k must be positive")
-    merged: dict[str, RetrievalCandidate] = {}
-    scores: dict[str, float] = {}
+    merged: dict[tuple[str, str], RetrievalCandidate] = {}
+    scores: dict[tuple[str, str], float] = {}
     for ranked in ranked_lists:
         for position, candidate in enumerate(ranked, start=1):
-            chunk_id = candidate.chunk.chunk_id
+            generation = (
+                candidate.index_generation
+                or candidate.chunk.metadata.get("index_generation")
+                or ""
+            )
+            key = (generation, candidate.chunk.chunk_id)
             rank = candidate.rank or position
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank)
-            existing = merged.get(chunk_id)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
+            existing = merged.get(key)
             if existing is None:
-                merged[chunk_id] = candidate.model_copy(deep=True)
+                merged[key] = candidate.model_copy(
+                    deep=True, update={"index_generation": generation or None}
+                )
             else:
                 updates = {
                     "dense_score": existing.dense_score
@@ -32,17 +39,16 @@ def rrf_fuse(
                     "context_window": existing.context_window
                     if existing.context_window is not None
                     else candidate.context_window,
+                    "channel_hits": [*existing.channel_hits, *candidate.channel_hits],
+                    "graph_paths": [*existing.graph_paths, *candidate.graph_paths],
+                    "trace_id": existing.trace_id or candidate.trace_id,
                 }
-                merged[chunk_id] = existing.model_copy(update=updates)
+                merged[key] = existing.model_copy(update=updates)
 
-    ordered_ids = sorted(scores, key=lambda chunk_id: (-scores[chunk_id], chunk_id))[
-        :limit
-    ]
+    ordered_ids = sorted(scores, key=lambda key: (-scores[key], key[1], key[0]))[:limit]
     return [
-        merged[chunk_id].model_copy(
-            update={"fusion_score": scores[chunk_id], "rank": rank}
-        )
-        for rank, chunk_id in enumerate(ordered_ids, start=1)
+        merged[key].model_copy(update={"fusion_score": scores[key], "rank": rank})
+        for rank, key in enumerate(ordered_ids, start=1)
     ]
 
 
