@@ -62,6 +62,8 @@ class IndexManifestRecord(BaseModel):
     reindex_recommended: bool = False
     chunk_ids: list[str] = Field(default_factory=list)
     generation_id: str = ""
+    graph_scope_id: str = ""
+    graph_index_version: str = ""
     status: IndexStatus = IndexStatus.PENDING
     indexed_at: datetime | None = None
     error: str = ""
@@ -75,6 +77,8 @@ class IndexGenerationRecord(BaseModel):
     status: IndexGenerationStatus = IndexGenerationStatus.BUILDING
     chunk_ids: list[str] = Field(min_length=1)
     previous_generation_id: str = ""
+    graph_scope_id: str = ""
+    graph_index_version: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     validated_at: datetime | None = None
     published_at: datetime | None = None
@@ -173,6 +177,10 @@ class IndexManifest:
         document_id: str,
         generation_id: str,
         observed_chunk_ids: list[str] | set[str] | tuple[str, ...],
+        *,
+        graph_chunk_ids: list[str] | None = None,
+        graph_scope_id: str = "",
+        graph_index_version: str = "",
     ) -> IndexGenerationRecord:
         """Move a building generation to validating after exact ID comparison."""
 
@@ -188,6 +196,19 @@ class IndexManifest:
                     "generation chunk IDs failed validation; "
                     f"missing={missing}, unexpected={unexpected}"
                 )
+            if graph_chunk_ids is not None or graph_scope_id or graph_index_version:
+                if (
+                    not graph_scope_id.strip()
+                    or not graph_index_version.strip()
+                    or graph_chunk_ids is None
+                    or len(graph_chunk_ids) != len(record.chunk_ids)
+                    or set(graph_chunk_ids) != expected
+                ):
+                    raise RagInvariantError(
+                        "graph generation scope/version/chunk IDs failed validation"
+                    )
+                record.graph_scope_id = graph_scope_id
+                record.graph_index_version = graph_index_version
             record.status = IndexGenerationStatus.VALIDATING
             record.validated_at = datetime.now(UTC)
             self._save()
@@ -217,6 +238,14 @@ class IndexManifest:
                     "published manifest record does not match generation identity"
                 )
             document_record = self._data.documents.get(normalized_document_id)
+            if record.graph_index_version and (
+                manifest_record is None
+                or manifest_record.graph_scope_id != record.graph_scope_id
+                or manifest_record.graph_index_version != record.graph_index_version
+            ):
+                raise RagInvariantError(
+                    "published graph identity does not match validated generation"
+                )
             previous_generation_id = (
                 document_record.generation_id if document_record else ""
             )

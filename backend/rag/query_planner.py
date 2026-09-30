@@ -5,12 +5,17 @@ import re
 from time import perf_counter
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.ai.errors import AIError
 from app.ai.prompt_registry import PromptRegistry, PromptSpec
 from backend.rag.fusion import rrf_fuse
 from backend.rag.models import RetrievalResult
+from backend.rag.query_router import (
+    RagQueryType,
+    classify_query,
+    normalize_query,
+    protected_query_terms,
+)
 
 MAX_RAG_SUBQUERIES = 3
 MAX_RAG_RETRIEVAL_QUERIES = 3
@@ -18,7 +23,7 @@ MAX_RAG_HISTORY_MESSAGES = 8
 MAX_RAG_HISTORY_CHARS = 6_000
 RAG_QUERY_PLANNER_PROMPT = PromptSpec(
     name="rag.query_planner",
-    version="1.3.0",
+    version="1.4.0",
     system_prompt=(
         "Rewrite the current knowledge-retrieval request into a standalone search query. "
         "Use the bounded conversation history only to resolve pronouns, ellipsis, document "
@@ -32,7 +37,9 @@ RAG_QUERY_PLANNER_PROMPT = PromptSpec(
         "references, bibliography, tables, figures, equations, or formulas, include the "
         "corresponding English structural retrieval terms even when the user asks in another "
         "language. Add subqueries only when they improve recall, keep retrieval non-recursive, "
-        "and never answer the user's question."
+        "and never answer the user's question. Preserve literal acronyms, identifiers and "
+        "quoted titles in the rewritten query; do not replace them with guessed expansions. "
+        "The caller reserves one retrieval round for the original query."
     ),
     temperature=0.0,
     max_tokens=512,
@@ -45,6 +52,11 @@ class RagQueryPlan(BaseModel):
     original_query: str = Field(min_length=1, max_length=4_000)
     rewritten_query: str = Field(min_length=1, max_length=4_000)
     subqueries: list[str] = Field(default_factory=list, max_length=MAX_RAG_SUBQUERIES)
+    fallback_reason: str = ""
+    planning_ms: float = Field(default=0.0, ge=0)
+    normalized_query: str = ""
+    rewrites: list[str] = Field(default_factory=list, max_length=MAX_RAG_SUBQUERIES + 1)
+    query_type: RagQueryType = "semantic"
 
     @model_validator(mode="after")
     def normalize_subqueries(self) -> RagQueryPlan:
@@ -57,11 +69,19 @@ class RagQueryPlan(BaseModel):
                 normalized.append(query[:4_000])
                 seen.add(key)
         self.subqueries = normalized[:MAX_RAG_SUBQUERIES]
+        self.normalized_query = normalize_query(self.original_query)
+        self.query_type = classify_query(self.original_query)
+        seen = {self.original_query.casefold()}
+        self.rewrites = []
+        for query in (self.rewritten_query, *self.subqueries):
+            if query.casefold() not in seen:
+                seen.add(query.casefold())
+                self.rewrites.append(query)
         return self
 
     @property
     def retrieval_queries(self) -> tuple[str, ...]:
-        queries = [self.rewritten_query, *self.subqueries]
+        queries = [self.original_query, self.rewritten_query, *self.subqueries]
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in queries:
@@ -163,7 +183,17 @@ class RagQueryPlanner:
         if isinstance(raw_subqueries, list):
             decoded["subqueries"] = raw_subqueries[:MAX_RAG_SUBQUERIES]
         decoded["original_query"] = original_query
-        return RagQueryPlan.model_validate(decoded)
+        decoded["fallback_reason"] = ""
+        decoded["planning_ms"] = 0.0
+        plan = RagQueryPlan.model_validate(decoded)
+        rewritten = normalize_query(plan.rewritten_query).casefold()
+        for term in protected_query_terms(original_query):
+            if not re.search(
+                r"(?<![A-Za-z0-9_])" + re.escape(term.casefold()) + r"(?![A-Za-z0-9_])",
+                rewritten,
+            ):
+                raise ValueError(f"rewrite omitted protected term: {term}")
+        return plan
 
     def plan(
         self,
@@ -172,13 +202,14 @@ class RagQueryPlanner:
         history: tuple[tuple[str, str], ...] | list[tuple[str, str]] = (),
     ) -> RagQueryPlan:
         fallback = _fallback_plan(query)
+        started = perf_counter()
         spec = self._prompt_registry.get("rag.query_planner")
         prompt = json.dumps(
             {
                 "current_query": fallback.original_query,
                 "conversation_history": _bounded_history(history),
                 "max_retrieval_queries": MAX_RAG_RETRIEVAL_QUERIES,
-                "max_subqueries": MAX_RAG_RETRIEVAL_QUERIES - 1,
+                "max_subqueries": MAX_RAG_RETRIEVAL_QUERIES - 2,
                 "policy": {
                     "standalone_rewrite": True,
                     "resolve_follow_up_references": True,
@@ -186,6 +217,7 @@ class RagQueryPlanner:
                     "decompose": _complex_query(query),
                     "recursive_decomposition": False,
                     "answer_generation": False,
+                    "original_query_participates": True,
                 },
             },
             ensure_ascii=False,
@@ -207,22 +239,22 @@ class RagQueryPlanner:
                 "fallback": False,
                 "retrieval_query_count": len(plan.retrieval_queries),
             }
-            return plan
-        except (
-            AIError,
-            OSError,
-            TimeoutError,
-            TypeError,
-            ValueError,
-            ValidationError,
-        ) as exc:
+            return plan.model_copy(
+                update={"planning_ms": (perf_counter() - started) * 1000}
+            )
+        except Exception as exc:  # noqa: BLE001 - optional rewrite preserves the original query
             self.last_plan_metadata = {
                 "status": "fallback",
                 "fallback": True,
                 "reason_code": f"planner_{exc.__class__.__name__.casefold()}",
                 "retrieval_query_count": 1,
             }
-            return fallback
+            return fallback.model_copy(
+                update={
+                    "fallback_reason": str(exc) or exc.__class__.__name__,
+                    "planning_ms": (perf_counter() - started) * 1000,
+                }
+            )
 
 
 def merge_query_results(

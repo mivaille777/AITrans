@@ -34,6 +34,109 @@ def test_absolute_rag_storage_path_is_preserved(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("enabled", "disable_after_build"), [(False, False), (True, False), (True, True)]
+)
+def test_optional_graph_runtime_shares_index_and_query_lifecycle(
+    tmp_path, monkeypatch, enabled, disable_after_build
+):
+    from types import SimpleNamespace
+
+    from backend.rag.index_manifest import IndexStatus
+    from tests.rag.graph.test_indexer import ControlledExtractor, Embedding
+
+    settings = {
+        "rag": {
+            "embedding": {"dimension": 4},
+            "vector_store": {"storage_path": str(tmp_path / "qdrant")},
+            "graph": {"enabled": enabled},
+        }
+    }
+    monkeypatch.setattr(
+        knowledge_dependencies,
+        "SettingsManager",
+        lambda: SimpleNamespace(data=settings),
+    )
+    monkeypatch.setattr(knowledge_dependencies, "get_rag_model_manager", lambda: None)
+    monkeypatch.setattr(
+        knowledge_dependencies,
+        "create_embedding_provider",
+        lambda *a, **kw: Embedding(),
+    )
+    monkeypatch.setattr(
+        knowledge_dependencies, "Qwen3RerankerProvider", lambda *a, **kw: None
+    )
+    source = ControlledExtractor()
+    closed = []
+    source.close = lambda: closed.append(True)
+    calls = []
+
+    def create_source():
+        calls.append(True)
+        return source
+
+    monkeypatch.setattr(
+        knowledge_dependencies, "_create_graph_extraction_service", create_source
+    )
+    runtime = knowledge_dependencies._build_runtime()
+    monkeypatch.setattr(knowledge_dependencies, "_runtime", runtime)
+    try:
+        paper = tmp_path / "paper.txt"
+        paper.write_text("Alpha uses Beta. Beta uses Gamma.")
+        indexed = runtime.index_service.index_document(paper)
+        assert indexed.status is IndexStatus.READY
+        assert calls == ([True] if enabled else [])
+        assert (tmp_path / "graph.sqlite3").exists() is enabled
+        result = runtime.retrieval_service.retrieve(
+            "Alpha",
+            dense_enabled=False,
+            graph_enabled=enabled,
+            small_to_big_enabled=False,
+        )
+        assert result.metadata["graph_hits"] == (1 if enabled else 0)
+        if enabled:
+            assert any(path.edge_ids for path in result.candidates[0].graph_paths)
+            previous = runtime.manifest.get(indexed.document_id).generation_id
+            replaced = runtime.index_service.reindex_document(paper)
+            assert replaced.status is IndexStatus.READY
+            assert runtime.manifest.get(indexed.document_id).generation_id != previous
+        if disable_after_build:
+            knowledge_dependencies.close_rag_runtime()
+            settings["rag"]["graph"]["enabled"] = False
+            runtime = knowledge_dependencies._build_runtime()
+            monkeypatch.setattr(knowledge_dependencies, "_runtime", runtime)
+            assert runtime.graph_extraction_service is None
+            assert (
+                runtime.index_service.reindex_document(paper).status is IndexStatus.READY
+            )
+            assert calls == [True]
+        assert runtime.index_service.delete_document(indexed.document_id)
+        if enabled:
+            import sqlite3
+
+            with sqlite3.connect(tmp_path / "graph.sqlite3") as connection:
+                for table in (
+                    "entity",
+                    "alias",
+                    "relation",
+                    "relation_span",
+                    "chunk_entity",
+                    "graph_generation",
+                ):
+                    assert (
+                        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                        == 0
+                    )
+        after = runtime.retrieval_service.retrieve(
+            "Alpha", dense_enabled=False, graph_enabled=runtime.config.graph.enabled
+        )
+        assert after.candidates == []
+        assert after.metadata["graph_hits"] == 0
+    finally:
+        knowledge_dependencies.close_rag_runtime()
+    assert closed == ([True] if enabled else [])
+
+
 def test_runtime_document_parser_binds_advanced_pdf_profile() -> None:
     config = RagConfig(
         advanced_parsing=RagAdvancedParsingConfig(

@@ -70,11 +70,19 @@ class ResearchMemoryExtraction(ResearchMemoryContract):
                 for alias in entity.aliases
                 if alias.strip()
             )
-        for relation in self.relations:
+        for index, relation in enumerate(self.relations):
             subject = " ".join(relation.subject.casefold().split())
             target = " ".join(relation.object.casefold().split())
             if subject not in names or target not in names:
-                raise ValueError("Relation subject/object must reference extracted entities.")
+                missing = [
+                    name
+                    for name, normalized in ((relation.subject, subject), (relation.object, target))
+                    if normalized not in names
+                ]
+                raise ValueError(
+                    "Relation subject/object must reference extracted entities. "
+                    f"Relation {index} has undeclared endpoints: {missing!r}."
+                )
             if relation.claim_index is not None and relation.claim_index >= len(self.claims):
                 raise ValueError("Relation claim_index must reference an extracted claim.")
         return self

@@ -77,14 +77,6 @@ class KnowledgeScopeResolver:
                 reason="Explicit document scope is the highest-priority access boundary.",
             )
 
-        if requested is KnowledgeScopeStrategy.RESEARCH_WORKSPACE and workspace:
-            return self._workspace_scope(
-                workspace,
-                workspace_documents,
-                research_sources,
-                reason="The knowledge decision explicitly selected the Research Workspace.",
-            )
-
         if mode == "research" and workspace:
             return self._workspace_scope(
                 workspace,
@@ -100,15 +92,22 @@ class KnowledgeScopeResolver:
                 reason="The attached Reading document is the preferred scope for this task.",
             )
 
-        if legacy_workspace_fallback and workspace:
+        if workspace and (
+            legacy_workspace_fallback
+            or requested is KnowledgeScopeStrategy.RESEARCH_WORKSPACE
+        ):
             return self._workspace_scope(
                 workspace,
                 workspace_documents,
                 research_sources,
-                reason="Legacy request preserved its explicit workspace boundary.",
+                reason=(
+                    "Legacy request preserved its explicit workspace boundary."
+                    if legacy_workspace_fallback
+                    else "A workspace scope was requested without an attached document."
+                ),
             )
 
-        if requested is KnowledgeScopeStrategy.GLOBAL_KNOWLEDGE or global_allowed:
+        if global_allowed:
             return ResolvedKnowledgeScope(
                 strategy=KnowledgeScopeStrategy.GLOBAL_KNOWLEDGE,
                 allow_global=True,

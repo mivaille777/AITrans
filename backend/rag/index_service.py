@@ -7,6 +7,7 @@ from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 from uuid import uuid4
@@ -40,6 +41,9 @@ from backend.rag.vision import (
     visual_description_index_version,
 )
 
+if TYPE_CHECKING:
+    from backend.rag.graph.indexer import GraphIndexer
+
 ParseDocument = Callable[[str | Path], NormalizedDocument]
 
 
@@ -69,6 +73,8 @@ class IndexService:
         sparse_retriever: SparseRetriever | None = None,
         visual_description_provider: VisualDescriptionProvider | None = None,
         visual_understanding_config: RagVisualUnderstandingConfig | None = None,
+        graph_indexer: GraphIndexer | None = None,
+        graph_document_deleter: Callable[[str], None] | None = None,
     ) -> None:
         self._chunker = chunker
         self._embedding_provider = embedding_provider
@@ -76,6 +82,10 @@ class IndexService:
         self._manifest = manifest
         self._parser = parser
         self._sparse_retriever = sparse_retriever
+        self._graph_indexer = graph_indexer
+        self._graph_document_deleter = graph_document_deleter
+        if graph_indexer is not None:
+            graph_indexer.recover(manifest)
         self._visual_description_provider = visual_description_provider
         self._visual_understanding_config = (
             visual_understanding_config.model_copy(deep=True)
@@ -115,6 +125,10 @@ class IndexService:
         record = self._manifest.get(document_id)
         if record is None:
             return False
+        if self._graph_indexer is not None:
+            self._graph_indexer.delete_document(document_id)
+        elif self._graph_document_deleter is not None:
+            self._graph_document_deleter(document_id)
         self._vector_store.delete_document(document_id)
         if self._sparse_retriever is not None:
             self._sparse_retriever.delete_document(document_id)
@@ -281,10 +295,21 @@ class IndexService:
                         f"vector={sorted(vector_chunk_ids)}, "
                         f"BM25={sorted(sparse_chunk_ids)}"
                     )
+            graph_validation = {}
+            if self._graph_indexer is not None:
+                graph = self._graph_indexer.build_generation(
+                    normalized, chunks, generation_id
+                )
+                graph_validation = {
+                    "graph_chunk_ids": graph.generation.chunk_ids,
+                    "graph_scope_id": graph.generation.scope_id,
+                    "graph_index_version": graph.generation.index_version,
+                }
             self._manifest.validate_generation(
                 document_id,
                 generation_id,
                 vector_chunk_ids,
+                **graph_validation,
             )
 
             record = ready_manifest_record(
@@ -301,7 +326,13 @@ class IndexService:
                 structure_quality=structure_quality,
                 section_count=len(normalized.sections),
                 reindex_recommended=reindex_recommended,
-            ).model_copy(update={"generation_id": generation_id})
+            ).model_copy(
+                update={
+                    "generation_id": generation_id,
+                    "graph_scope_id": graph_validation.get("graph_scope_id", ""),
+                    "graph_index_version": graph_validation.get("graph_index_version", ""),
+                }
+            )
             self._manifest.publish_generation(
                 document_id,
                 generation_id,
@@ -318,6 +349,16 @@ class IndexService:
             error = str(exc) or exc.__class__.__name__
             if generation_started:
                 cleanup_errors: list[str] = []
+                if self._graph_indexer is not None:
+                    try:
+                        self._graph_indexer.delete_generation(
+                            document_id, generation_id
+                        )
+                    except Exception as cleanup_exc:  # noqa: BLE001 - preserve root cause
+                        cleanup_errors.append(
+                            "Graph cleanup: "
+                            + (str(cleanup_exc) or cleanup_exc.__class__.__name__)
+                        )
                 try:
                     self._vector_store.delete_document(
                         document_id,
@@ -415,6 +456,9 @@ class IndexService:
             and record.embedding_dimension == self._embedding_provider.dimension
             and record.embedding_fingerprint
             == embedding_fingerprint(self._embedding_provider).as_dict()
+            and (
+                self._graph_indexer is None or self._graph_indexer.can_reuse(record)
+            )
         )
 
     @staticmethod

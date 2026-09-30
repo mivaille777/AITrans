@@ -76,6 +76,22 @@ def test_global_scope_requires_explicit_permission() -> None:
     assert global_scope.allow_global is True
 
 
+def test_router_proposal_cannot_grant_global_or_expand_attached_document():
+    resolver = KnowledgeScopeResolver()
+    denied = resolver.resolve(context_mode="general", requested_strategy="global_knowledge")
+    assert denied.allow_global is False
+    assert denied.strategy is KnowledgeScopeStrategy.NONE
+    reading = resolver.resolve(
+        context_mode="reading",
+        attached_document_id="doc-A",
+        workspace_id="workspace-X",
+        workspace_document_ids=["private-B"],
+        requested_strategy="research_workspace",
+    )
+    assert reading.document_ids == ("doc-A",)
+    assert reading.workspace_id == ""
+
+
 def _services(tmp_path: Path) -> tuple[
     ResearchWorkspaceService,
     ResearchNoteService,

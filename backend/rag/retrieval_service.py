@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from time import perf_counter
+from typing import TYPE_CHECKING
 
 from backend.rag.config import RagRetrievalConfig
 from backend.rag.embeddings.base import EmbeddingFingerprint, EmbeddingProvider
@@ -19,6 +20,9 @@ from backend.rag.sparse.store import SparseRetriever
 from backend.rag.stores.base import VectorSearchFilter, VectorStore
 from backend.rag.structure_retrieval import order_structural_candidates
 
+if TYPE_CHECKING:
+    from backend.rag.graph_retriever import GraphRetriever
+
 
 class RetrievalService:
     def __init__(
@@ -30,6 +34,7 @@ class RetrievalService:
         config: RagRetrievalConfig | None = None,
         reranker: RerankerProvider | None = None,
         manifest: IndexManifest | None = None,
+        graph_retriever: GraphRetriever | None = None,
     ) -> None:
         self._embedding = embedding_provider
         self._vector_store = vector_store
@@ -37,6 +42,7 @@ class RetrievalService:
         self._config = config or RagRetrievalConfig()
         self._reranker = reranker
         self._manifest = manifest
+        self._graph_retriever = graph_retriever
 
     def retrieve(
         self,
@@ -51,6 +57,7 @@ class RetrievalService:
         structural_enabled: bool = True,
         reranker_enabled: bool = True,
         small_to_big_enabled: bool | None = None,
+        graph_enabled: bool | None = None,
     ) -> RetrievalResult:
         if not query or not query.strip():
             raise RagRetrievalError("retrieval query must not be empty")
@@ -76,17 +83,31 @@ class RetrievalService:
         dense: list[RetrievalCandidate] = []
         sparse: list[RetrievalCandidate] = []
         structural: list[RetrievalCandidate] = []
+        graph: list[RetrievalCandidate] = []
+        graph_trace: dict = {}
+        use_graph = (
+            self._graph_retriever is not None
+            if graph_enabled is None
+            else graph_enabled
+        )
         use_structural = structural_enabled and bool(section_hints)
         use_small_to_big = (
             self._config.small_to_big_enabled
             if small_to_big_enabled is None
             else small_to_big_enabled
         )
-        if not dense_enabled and not sparse_enabled and not use_structural:
+        if (
+            not dense_enabled
+            and not sparse_enabled
+            and not use_structural
+            and not use_graph
+        ):
             raise ValueError("at least one retrieval channel must be enabled")
         dense_error = ""
         sparse_error = ""
         structural_error = ""
+        graph_error = ""
+        graph_ms = 0.0
         embedding_ms = 0.0
         dense_ms = 0.0
         sparse_ms = 0.0
@@ -169,19 +190,36 @@ class RetrievalService:
                 structural_error = str(exc) or exc.__class__.__name__
             structural_ms = (perf_counter() - structural_started) * 1000
 
+        if use_graph:
+            graph_started = perf_counter()
+            try:
+                if self._graph_retriever is None:
+                    raise RagRetrievalError("graph channel is not configured")
+                graph_result = self._graph_retriever.retrieve_with_trace(
+                    replace(request, top_k=self._config.fusion_top_k)
+                )
+                graph, graph_trace = graph_result.candidates, graph_result.metadata
+                if graph_trace.get("reason") == "deadline_exceeded":
+                    graph_error = "graph query deadline exceeded"
+            except Exception as exc:  # noqa: BLE001 - graph is an optional channel
+                graph_error = str(exc) or exc.__class__.__name__
+            graph_ms = (perf_counter() - graph_started) * 1000
+
         if (
-            (dense_error or sparse_error or structural_error)
+            (dense_error or sparse_error or structural_error or graph_error)
             and (not dense_enabled or dense_error)
             and (not sparse_enabled or sparse_error)
+            and (not use_graph or graph_error)
             and not structural
         ):
             raise RagRetrievalError(
                 "all enabled retrieval channels failed (dense and sparse): "
                 f"dense={dense_error}; sparse={sparse_error}; structural={structural_error}"
+                + (f"; graph={graph_error}" if use_graph else "")
             )
         fusion_started = perf_counter()
         candidates = rrf_fuse(
-            [ranked for ranked in (dense, sparse, structural) if ranked],
+            [ranked for ranked in (dense, sparse, structural, graph) if ranked],
             limit=max(self._config.fusion_top_k, desired_top_k),
         )
         fusion_ms = (perf_counter() - fusion_started) * 1000
@@ -198,8 +236,18 @@ class RetrievalService:
             sparse_enabled=sparse_enabled,
         )
         fallback_reason = "; ".join(
-            item for item in (dense_error, sparse_error, structural_error) if item
+            item
+            for item in (dense_error, sparse_error, structural_error, graph_error)
+            if item
         )
+        if graph:
+            strategy = (
+                "graph-only"
+                if not (dense or sparse or structural)
+                else strategy + "+graph"
+            )
+        elif use_graph and not (dense_enabled or sparse_enabled or use_structural):
+            strategy = "graph-only"
         reranker_applied = False
         reranker_fallback_reason = ""
         rerank_ms = 0.0
@@ -270,6 +318,11 @@ class RetrievalService:
                 "dense_incompatible_document_ids": dense_incompatible_document_ids,
                 "sparse_count": len(sparse),
                 "structural_count": len(structural),
+                "graph_count": len(graph),
+                "graph_hits": len(graph),
+                "graph_enabled": use_graph,
+                "graph_trace": graph_trace,
+                "graph_search_ms": graph_ms,
                 "dense_enabled": dense_enabled,
                 "sparse_enabled": sparse_enabled,
                 "structural_enabled": use_structural,

@@ -31,3 +31,64 @@ def graph_chunk(graph_document):
         return document, StructureAwareChunker().chunk(document)[0]
 
     return make
+
+
+@pytest.fixture
+def retrieval_graph(tmp_path, graph_chunk):
+    from backend.rag.graph.models import (
+        GraphEntity,
+        GraphGeneration,
+        GraphRelation,
+        RelationSource,
+    )
+    from backend.rag.graph.repository import GraphRepository
+
+    repository = GraphRepository(tmp_path / "retrieval.sqlite3")
+    chunks, active = {}, {}
+
+    def add(subject, target, *, scope="knowledge", generation="g1", document_id=None):
+        doc = document_id or f"paper-{subject}-{target}"
+        _, chunk = graph_chunk(f"{subject} uses {target}.", doc)
+        chunk = chunk.model_copy(update={"metadata": {"index_generation": generation}})
+        chunks[chunk.chunk_id, generation] = chunk
+        active[doc] = generation
+        entities = [
+            GraphEntity(
+                entity_id=name, scope_id=scope, canonical_name=name, entity_type="model"
+            )
+            for name in (subject, target)
+        ]
+        relation = GraphRelation(
+            relation_id=f"{subject}-{target}",
+            scope_id=scope,
+            document_id=doc,
+            generation_id=generation,
+            source_entity_id=subject,
+            target_entity_id=target,
+            predicate="uses",
+            confidence=0.9,
+            extractor_version="labelled-v1",
+            sources=[
+                RelationSource(chunk_id=chunk.chunk_id, source_span=chunk.source_span)
+            ],
+        )
+        repository.write_generation(
+            GraphGeneration(
+                scope_id=scope,
+                document_id=doc,
+                generation_id=generation,
+                index_version="labelled-v1",
+                chunk_ids=[chunk.chunk_id],
+            ),
+            entities=entities,
+            relations=[relation],
+            chunk_entities={chunk.chunk_id: [subject, target]},
+            chunks=[chunk],
+        )
+        return chunk
+
+    class Store:
+        def get_chunk(self, chunk_id, *, generation_id=None):
+            return chunks.get((chunk_id, generation_id))
+
+    return repository, Store(), active, add, chunks

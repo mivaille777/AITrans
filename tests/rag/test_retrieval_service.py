@@ -9,6 +9,45 @@ from backend.rag.retrieval_service import RetrievalService
 from backend.rag.stores.base import VectorSearchFilter
 
 
+def test_graph_only_and_graph_failure_degradation():
+    from backend.rag.graph_retriever import GraphRetrievalResult
+    from backend.rag.models import ChannelHit
+
+    class Graph:
+        fail = False
+
+        def retrieve_with_trace(self, request):
+            if self.fail:
+                raise RuntimeError("graph unavailable")
+            candidate = item("graph-source")
+            candidate.channel_hits = [
+                ChannelHit(channel="graph", raw_score=0.9, rank=1)
+            ]
+            return GraphRetrievalResult(
+                [candidate], {"reason": "grounded", "seed_ids": ["Alpha"]}
+            )
+
+    graph = Graph()
+    retrieval = RetrievalService(
+        embedding_provider=Embedding(),
+        vector_store=VectorStore(),
+        sparse_retriever=Sparse([item("sparse", sparse=True)]),
+        graph_retriever=graph,
+    )
+    only = retrieval.retrieve("Alpha", dense_enabled=False, sparse_enabled=False)
+    assert only.retrieval_strategy == "graph-only"
+    assert only.metadata["graph_hits"] == 1
+    assert only.candidates[0].channel_hits[0].channel == "graph"
+    graph.fail = True
+    degraded = retrieval.retrieve("Alpha", dense_enabled=False)
+    assert degraded.candidates[0].chunk.chunk_id == "sparse"
+    assert "graph unavailable" in degraded.metadata["fallback_reason"]
+    with pytest.raises(RagRetrievalError, match="graph unavailable"):
+        retrieval.retrieve("Alpha", dense_enabled=False, sparse_enabled=False)
+    disabled = retrieval.retrieve("Alpha", dense_enabled=False, graph_enabled=False)
+    assert disabled.metadata["graph_enabled"] is False
+
+
 def item(
     chunk_id: str,
     *,

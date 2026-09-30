@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
+from time import perf_counter
 
 from backend.rag.graph.models import (
     GRAPH_SCHEMA_VERSION,
@@ -78,11 +79,22 @@ class GraphRepository:
             """)
             connection.execute(f"PRAGMA user_version = {GRAPH_SCHEMA_VERSION}")
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
+    def _connect(self, *, deadline: float | None = None) -> sqlite3.Connection:
+        timeout = 5.0 if deadline is None else min(5.0, deadline - perf_counter())
+        if timeout <= 0:
+            raise TimeoutError("graph query deadline exceeded")
+        connection = sqlite3.connect(self.path, timeout=timeout)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA journal_mode = WAL")
+            if deadline is not None:
+                connection.set_progress_handler(
+                    lambda: int(perf_counter() >= deadline), 100
+                )
+        except Exception:
+            connection.close()
+            raise
         return connection
 
     def write_generation(
@@ -262,7 +274,7 @@ class GraphRepository:
         scope_id: str,
         allowed_document_ids: tuple[str, ...],
         active_generations: Mapping[str, str | None],
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str | int]]:
         if not scope_id.strip():
             raise ValueError("graph scope must be explicit")
         if allowed_document_ids is None or active_generations is None:
@@ -287,14 +299,28 @@ class GraphRepository:
         scope_id: str,
         allowed_document_ids: tuple[str, ...],
         active_generations: Mapping[str, str | None],
+        entity_ids: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        deadline: float | None = None,
     ) -> list[GraphRelation]:
         clause, params = self._scope_filter(
             scope_id, allowed_document_ids, active_generations
         )
-        with closing(self._connect()) as connection:
+        if limit is not None and limit <= 0:
+            raise ValueError("graph relation limit must be positive")
+        if entity_ids is not None:
+            clause += (
+                " AND (r.source_entity_id IN (SELECT value FROM json_each(?))"
+                " OR r.target_entity_id IN (SELECT value FROM json_each(?)))"
+            )
+            params.extend([json.dumps(entity_ids), json.dumps(entity_ids)])
+        bound = " LIMIT ?" if limit is not None else ""
+        if limit is not None:
+            params.append(limit)
+        with closing(self._connect(deadline=deadline)) as connection:
             rows = connection.execute(
                 f"""SELECT r.* FROM relation r JOIN graph_generation g
-                USING(scope_id, document_id, generation_id) WHERE {clause} ORDER BY r.relation_id""",
+                USING(scope_id, document_id, generation_id) WHERE {clause} ORDER BY r.relation_id{bound}""",
                 params,
             )
             relations = []
@@ -325,13 +351,14 @@ class GraphRepository:
         allowed_document_ids: tuple[str, ...],
         active_generations: Mapping[str, str | None],
         limit: int = 20,
+        deadline: float | None = None,
     ) -> list[GraphEntity]:
         if limit <= 0:
             raise ValueError("graph entity limit must be positive")
         clause, params = self._scope_filter(
             scope_id, allowed_document_ids, active_generations
         )
-        with closing(self._connect()) as connection:
+        with closing(self._connect(deadline=deadline)) as connection:
             rows = connection.execute(
                 f"""SELECT DISTINCT e.* FROM entity e JOIN alias a USING(scope_id, entity_id)
                 JOIN chunk_entity c ON (c.scope_id=a.scope_id AND c.document_id=a.document_id AND c.generation_id=a.generation_id AND c.entity_id=a.entity_id)
@@ -352,6 +379,32 @@ class GraphRepository:
                     ],
                 )
                 for row in rows
+            ]
+
+    def entity_chunks(
+        self,
+        entity_id: str,
+        *,
+        scope_id: str,
+        allowed_document_ids: tuple[str, ...],
+        active_generations: Mapping[str, str | None],
+        limit: int,
+        deadline: float | None = None,
+    ) -> list[tuple[str, str, str]]:
+        if limit <= 0:
+            raise ValueError("graph source limit must be positive")
+        clause, params = self._scope_filter(
+            scope_id, allowed_document_ids, active_generations
+        )
+        with closing(self._connect(deadline=deadline)) as connection:
+            return [
+                tuple(row)
+                for row in connection.execute(
+                    f"""SELECT c.document_id, c.generation_id, c.chunk_id FROM chunk_entity c
+                JOIN graph_generation g USING(scope_id, document_id, generation_id)
+                WHERE {clause} AND c.entity_id=? ORDER BY c.document_id, c.chunk_id LIMIT ?""",
+                    [*params, entity_id, limit],
+                )
             ]
 
     def delete_generation(

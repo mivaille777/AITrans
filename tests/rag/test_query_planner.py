@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.query_planner import (
     MAX_RAG_RETRIEVAL_QUERIES,
@@ -80,12 +82,12 @@ def test_complex_query_returns_typed_bounded_plan() -> None:
     ]
     assert len(plan.subqueries) == MAX_RAG_SUBQUERIES
     assert plan.retrieval_queries == (
+        "论文里为什么 M10 比 C8 好？",
         "M10 and C8 comparison",
         "M10 mechanism",
-        "C8 mechanism",
     )
     assert len(plan.retrieval_queries) == MAX_RAG_RETRIEVAL_QUERIES
-    assert planner.prompt_id.endswith("@1.3.0")
+    assert planner.prompt_id.endswith("@1.4.0")
     assert len(client.calls) == 1
     prompt = json.loads(client.calls[0]["user_prompt"])
     assert prompt["policy"]["recursive_decomposition"] is False
@@ -114,11 +116,11 @@ def test_simple_query_is_rewritten_before_retrieval() -> None:
 
     assert plan.original_query == "What is M10?"
     assert plan.rewritten_query == "M10 definition and role"
-    assert plan.retrieval_queries == ("M10 definition and role",)
+    assert plan.retrieval_queries == ("What is M10?", "M10 definition and role")
     assert planner.last_plan_metadata == {
         "status": "planned",
         "fallback": False,
-        "retrieval_query_count": 1,
+        "retrieval_query_count": 2,
     }
     assert len(client.calls) == 1
     prompt = json.loads(client.calls[0]["user_prompt"])
@@ -181,6 +183,43 @@ def test_planner_failure_and_malformed_output_fall_back_to_original_query() -> N
         "reason_code": "planner_oserror",
         "retrieval_query_count": 1,
     }
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("deadline"), RuntimeError("broken client")])
+def test_optional_planner_failure_preserves_original_and_records_error(failure):
+    plan = _planner(Client(failure=failure)).plan("What is GP?")
+    assert plan.retrieval_queries == ("What is GP?",)
+    assert str(failure) in plan.fallback_reason
+    assert plan.planning_ms >= 0
+
+
+def test_normalized_query_and_rewrites_are_derived_from_trusted_input():
+    plan = RagQueryPlan(
+        original_query="What is ＧＰ?",
+        rewritten_query="GP definition",
+        subqueries=["GP definition", "GP evidence"],
+    )
+    payload = plan.model_dump(mode="json")
+    assert payload["original_query"] == "What is ＧＰ?"
+    assert payload["normalized_query"] == "What is GP?"
+    assert payload["rewrites"] == ["GP definition", "GP evidence"]
+    assert payload["query_type"] == "keyword"
+    assert plan.retrieval_queries[0] == plan.original_query
+    assert RagQueryPlan.model_validate(payload) == plan
+    assert RagQueryPlan.model_validate_json(plan.model_dump_json()) == plan
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"rewritten_query": "Gaussian process definition", "subqueries": []},
+        {"rewritten_query": "GP definition", "subqueries": [], "document_ids": ["private"]},
+    ],
+)
+def test_lost_identifier_or_scope_injection_falls_back(response):
+    plan = _planner(Client(json.dumps(response))).plan("What is GP?")
+    assert plan.retrieval_queries == ("What is GP?",)
+    assert plan.fallback_reason
 
 
 def test_multi_query_merge_dedupes_chunks_and_applies_result_limit() -> None:

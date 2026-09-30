@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -160,27 +162,64 @@ def test_predicate_in_another_clause_cannot_ground_a_relation(graph_chunk):
 
 
 @pytest.mark.parametrize("persistent", [False, True])
-def test_invalid_model_evidence_has_one_bounded_retry(graph_chunk, persistent):
-    class InvalidEvidenceExtractor(DraftExtractor):
-        def extract(self, note):
-            self.calls += 1
-            if self.calls == 1 or persistent:
-                raise AIResponseError(
-                    "Research-memory claim 0 evidence is not a verbatim source excerpt."
-                )
-            return self.draft
-
+@pytest.mark.parametrize("invalid", ["endpoint", "evidence", "json"])
+def test_invalid_model_output_has_one_feedback_retry(graph_chunk, persistent, invalid):
     document, chunk = graph_chunk()
-    source = InvalidEvidenceExtractor(draft())
+    valid = {
+        "claims": [{"text": chunk.text, "evidence_excerpt": chunk.text}],
+        "entities": [{"canonical_name": name} for name in ("Alpha", "Beta")],
+        "relations": [
+            {"subject": "Alpha", "predicate": "uses", "object": "Beta", "claim_index": 0}
+        ],
+    }
+    broken = json.loads(json.dumps(valid))
+    if invalid == "endpoint":
+        broken["relations"][0]["object"] = "Invented"
+    elif invalid == "evidence":
+        broken["claims"][0]["evidence_excerpt"] = "Alpha improves Beta."
+    broken_raw = "{invalid json" if invalid == "json" else json.dumps(broken)
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return broken_raw if len(calls) == 1 or persistent else json.dumps(valid)
+
+    source = GraphExtractionService(
+        SimpleNamespace(provider=SimpleNamespace(client=SimpleNamespace(complete=complete)))
+    )
     extractor = GraphExtractor(source)
     if persistent:
-        with pytest.raises(AIResponseError, match="verbatim"):
+        with pytest.raises(AIResponseError, match="verbatim|invalid structured"):
             extractor.extract(chunk, document)
     else:
         result = extractor.extract(chunk, document)
         assert len(result.relations) == 1
-        assert "extraction_validation_retry" in result.rejected
-    assert source.calls == 2
+        assert resolve_source_span(result.relations[0].source_span, document.text) == chunk.text
+    assert len(calls) == 2
+    first, repair = (json.loads(call["user_prompt"]) for call in calls)
+    assert "validation_feedback" not in first
+    assert repair["source_text"] == first["source_text"] == chunk.text
+    assert repair["validation_feedback"]["error"]
+    assert repair["validation_feedback"]["previous_output"] == broken_raw
+    if invalid == "endpoint":
+        assert "reference extracted entities" in repair["validation_feedback"]["details"]
+        assert "Invented" in repair["validation_feedback"]["details"]
+
+
+def test_graph_validation_repair_does_not_retry_provider_errors(graph_chunk):
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("provider unavailable")
+
+    source = GraphExtractionService(
+        SimpleNamespace(provider=SimpleNamespace(client=SimpleNamespace(complete=complete)))
+    )
+    document, chunk = graph_chunk()
+    with pytest.raises(AIResponseError, match="provider failed"):
+        GraphExtractor(source).extract(chunk, document)
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

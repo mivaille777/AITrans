@@ -71,6 +71,7 @@ class KnowledgeAccessRouter:
     def __init__(self, semantic_router: Any | None = None) -> None:
         self._semantic_router = semantic_router
         self.semantic_calls = 0
+        self.last_route_metadata: dict[str, Any] = {"status": "not_run"}
 
     def deterministic_route(
         self,
@@ -198,6 +199,17 @@ class KnowledgeAccessRouter:
         context_summary: str = "",
     ) -> KnowledgeAccessDecision:
         mode = KnowledgeAccessPolicy(policy)
+        if mode is not KnowledgeAccessPolicy.AUTO:
+            return self.route(
+                user_message=user_message,
+                context_mode=context_mode,
+                policy=mode,
+                reading_context_available=reading_context_available,
+                attached_document=attached_document,
+                explicit_scope_count=explicit_scope_count,
+                workspace_available=workspace_available,
+                knowledge_available=knowledge_available,
+            )
         if self._semantic_router is not None:
             self.semantic_calls += 1
             payload = {
@@ -220,27 +232,31 @@ class KnowledgeAccessRouter:
                 if hasattr(raw, "model_dump"):
                     raw = raw.model_dump()
                 if isinstance(raw, Mapping):
-                    return KnowledgeAccessDecision.model_validate(
+                    decision = KnowledgeAccessDecision.model_validate(
                         {
-                            "mode": raw.get("mode", mode.value),
-                            "should_retrieve": bool(raw.get("should_retrieve", False)),
+                            "mode": mode.value,
+                            "should_retrieve": raw.get("should_retrieve", False),
                             "reason_code": raw.get("reason_code", "semantic_router_required"),
-                            "scope_strategy": raw.get(
-                                "scope_strategy",
-                                _scope_strategy(
-                                    context_mode=payload["context_mode"],
-                                    attached_document=payload["attached_document"],
-                                    explicit_scope_count=payload["explicit_scope_count"],
-                                    workspace_available=payload["workspace_available"],
-                                ).value,
-                            ),
+                            "scope_strategy": _scope_strategy(
+                                context_mode=payload["context_mode"],
+                                attached_document=payload["attached_document"],
+                                explicit_scope_count=payload["explicit_scope_count"],
+                                workspace_available=payload["workspace_available"],
+                            ).value,
                             "confidence": raw.get("confidence"),
-                            "query": raw.get("query", payload["user_message"]),
+                            "query": payload["user_message"],
                         }
                     )
-            except Exception:
-                # A failed semantic call must never make the run fail.
-                pass
+                    self.last_route_metadata = {"status": "planned"}
+                    return decision if decision.should_retrieve else decision.model_copy(
+                        update={"scope_strategy": KnowledgeScopeStrategy.NONE}
+                    )
+                raise TypeError("semantic router returned non-object output")
+            except Exception as exc:
+                self.last_route_metadata = {
+                    "status": "fallback",
+                    "error": str(exc) or exc.__class__.__name__,
+                }
 
         return self._failure_fallback(
             user_message=user_message,
@@ -248,6 +264,7 @@ class KnowledgeAccessRouter:
             policy=mode,
             attached_document=attached_document,
             workspace_available=workspace_available,
+            explicit_scope_count=explicit_scope_count,
         )
 
     def route(self, **kwargs: Any) -> KnowledgeAccessDecision:
@@ -266,6 +283,7 @@ class KnowledgeAccessRouter:
         policy: KnowledgeAccessPolicy,
         attached_document: str,
         workspace_available: bool,
+        explicit_scope_count: int = 0,
     ) -> KnowledgeAccessDecision:
         mode = _text(context_mode, limit=64).lower() or "general"
         if policy is KnowledgeAccessPolicy.NEVER:
@@ -276,7 +294,11 @@ class KnowledgeAccessRouter:
                 scope_strategy=KnowledgeScopeStrategy.NONE,
                 query=_text(user_message),
             )
-        if mode == "research" and workspace_available:
+        if explicit_scope_count > 0:
+            strategy = KnowledgeScopeStrategy.EXPLICIT_DOCUMENTS
+            reason = "document_grounding_required"
+            retrieve = True
+        elif mode == "research" and workspace_available:
             strategy = KnowledgeScopeStrategy.RESEARCH_WORKSPACE
             reason = "research_grounding_required"
             retrieve = True

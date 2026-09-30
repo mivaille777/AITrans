@@ -1,6 +1,6 @@
 # 未解决问题与待用户决策
 
-此文件记录经仓库核验、基准测试和成熟开源项目对照后，仍需要产品/数据所有者提供依据的事项。任务范围内可由代码和故障注入解决的问题继续由后续 Stage 推进。
+此文件记录经仓库核验、基准测试和成熟开源项目对照后的功能缺陷、验收缺口和产品/数据决策。2026-09-30 按用户“先解决问题清单中的问题”完成有限抽取修复与路由诊断修复；当前结论及证据见 [问题修复报告](OPEN-ISSUES-REMEDIATION.md)。
 
 ## OI-001：真实生产语料与证据金标缺失
 
@@ -22,12 +22,11 @@
 
 **2026-09-30 功能修复：运行时身份与防混用已解决。** 实际权重/配置/输入上限/精度的内容摘要进入 provider 指纹，IndexService 写入并比较真实指纹；Dense 拒绝不匹配的 generation，Hybrid 可降级 BM25。加载绑定相同解析目录，旧索引重新导入会重建。见 [功能修复报告](S00-S04-REMEDIATION.md)。以下保留原审计；“选定默认发布 snapshot”是后续发布政策，不再作为未检测同名权重变化的缺陷。
 
-- 影响：当前索引指纹记录模型 ID、维度、归一化和 prompt 前缀，但未记录不可变模型权重 revision。相同模型 ID 若解析到新 snapshot，索引复用检查仍可能认为可复用。
-- 仓库证据：`backend/rag/model_manager.py` 调用 Hugging Face `snapshot_download` 时没有传 `revision`；当前 S00 基线只在外部 manifest 留有 snapshot `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`，不是运行时索引合同。
+- 原审计缺陷已修复：当前运行时记录实际权重内容摘要；相同模型 ID 下权重变化会导致重建/拒绝混用，不再仅凭模型名复用。
+- 剩余发布政策：`backend/rag/model_manager.py` 下载未指定默认 `revision`；S00 实测 snapshot 为 `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`，可作为候选发布版本，尚未获得默认发布版本确认。
 - 开源方案核对：Hugging Face 官方文档说明 `snapshot_download` 默认下载最新 revision，可通过完整 commit hash 的 `revision` 固定模型快照：[Download files from the Hub](https://huggingface.co/docs/huggingface_hub/en/guides/download)。
-- 建议：扩展模型下载与 provider 合同，把解析后的 commit hash 纳入 fingerprint；模型 revision 变化时必须重建 vector generation。当前任务 S03.1 文件范围没有包含 `model_manager.py`、配置和 Qwen 模型加载合同。
-- 需要决策：是否将当前开发基线 snapshot 固定为默认模型版本，或由产品指定另一个已验证的完整 commit hash。确认后可在 S03 Stage 门禁前补齐；在此之前不能声称同 ID 权重变更已被检测。
-- 阻塞：S03 Stage 的模型版本迁移门；不阻塞独立的 S03.2 scope 实现与验证。
+- 需要决策：是否将当前开发基线 snapshot 固定为默认发布版本，或指定另一个已验证的完整 commit hash。已有实际权重指纹保护无需重复实现。
+- 影响范围：发布版本选择待确认；模型身份与防混用功能缺陷已关闭。
 
 ## OI-004：S03 Vector Only 门禁低于 S00 Hybrid 基线
 
@@ -58,20 +57,40 @@
 - 冻结 QASPER V/B/VB 各 100 查询功能回归完成，87 题有效 gold 的排名与基准一致；Hybrid Recall@5=0.7184、MRR=0.4753，仍未达到候选 0.80/0.70，不能标为生产 PASS。
 - 保留 16 个已有 RRF 坏例。示例 `4eaf9787f51cd7cdc45eb85cf223d752328c6ee4`：gold 在 Vector 第 2、BM25 第 14，被 RRF 排到第 7。全量原始分数/rank 与 trace 位于本机 `data/benchmarks/s05/hybrid-results.json`。
 - 可行后续方案：恢复效果优化后，用冻结开发集比较现有 reranker 的候选池与融合排序；结合完整公开全库 V/B/VB 和真实用户金标验证。当前证据不足以直接修改权重、阈值或推广 Graph；保留默认配置，依照 S09 的配对评测决定。
-- 未运行：完整 SciFact/MedicalRetrieval Dense/Hybrid、人工 Debug Studio UI、回答引用质量和 holdout。用户当前功能优先的约束下不进行这些效果实验；上述事项与 OI-001/002 共同阻塞完整 S05/最终生产质量验收。S06 未开始。
+- 未运行：完整 SciFact/MedicalRetrieval Dense/Hybrid、人工 Debug Studio UI、回答引用质量和 holdout。用户当前功能优先的约束下不进行这些效果实验；上述事项与 OI-001/002 共同阻塞完整 S05/最终生产质量验收。S06–S08 工程随后已推进，见相应报告。
 
-## OI-007：S06 完整论文模型抽取失败，生产验收未通过
+## OI-007：完整论文抽取功能已修复，生产质量验收仍保留
 
-- 用户授权继续 S06。S06.1–S06.3 工程完成；S06.4 的可选接线和故障测试完成，但完整论文验收 BLOCKED，不进入 S07。报告、实际文件/指标指纹见 [S06.md](S06.md)、[S06-benchmark-manifest.json](S06-benchmark-manifest.json)。
+**2026-09-30 本轮修复完成。** 沿用现有模型/客户端，Graph 专用提示升级为 `graph-1.1.1`；校验反馈包含具体缺失端点和上一份输出，仅修复一次，第二次仍严格校验。两篇固定 PDF 均 READY：BERT 70 chunk / 6 条关系，Attention 26 chunk / 2 条关系；8 条关系全部精确回源，复用无模型调用，重建切换 generation，删除后六表零行。下文保留原失败实验和方案；完整论文功能阻塞已解除，真实实体/关系金标、质量与预算仍缺。详见 [本轮修复及实测](OPEN-ISSUES-REMEDIATION.md)。
+
+- 用户授权继续 S06。S06.1–S06.3 工程完成；S06.4 的可选接线和故障测试完成，但完整论文验收 BLOCKED。建立本问题时停止在 S06.4；随后用户明确要求继续后续开发，已实现默认关闭的 S07 工程通道，原生产门仍 BLOCKED。报告、实际文件/指标指纹见 [S06.md](S06.md)、[S06-benchmark-manifest.json](S06-benchmark-manifest.json) 和 [S07.md](S07.md)。
 - 已解决：图关系的原文定位、被动语态方向、跨分句误连、唯一空白映射、权限/版本/私有别名隔离、事务回滚和中断恢复。90 个不同的直接/调用方测试通过。
-- 剩余实测问题：`deepseek-v4-flash` + `research.memory.extract@graph-1.0.0` 对 Attention 训练/Adam 段落反复返回未声明的关系端点；BERT 返回非原文引文。两篇 PDF 均图导入失败，重试一次仍失败；未发布边可见数 0，旧 READY 索引保留。删除后六表 0 行。不能用小型合成集 precision/recall=1.0 宣称已解决真实论文问题。
+- 原失败实验：`deepseek-v4-flash` + `research.memory.extract@graph-1.0.0` 对 Attention 训练/Adam 段落反复返回未声明的关系端点；BERT 返回非原文引文。两篇 PDF 当时均图导入失败，重试一次仍失败；未发布边可见数 0，旧 READY 索引保留。删除后六表 0 行。原报告/manifest 保留，未被本轮成功结果覆盖。
 - 已尝试：复用已有 schema/提示服务、Graph 专用短句与端点声明约束、仅空白差异的唯一原文匹配及一次有限重试；仍保持严格端点/证据校验。未通过丢边、忽略失败 chunk 或发布空图实现假成功。
 - 开源对照：[Microsoft GraphRAG 模型选择说明](https://microsoft.github.io/graphrag/config/models/) 要求可靠结构化输出，并明确非标准模型存在格式错误；[索引 dataflow](https://microsoft.github.io/graphrag/index/default_dataflow/) 提供 TextUnit 关联来源设计。未安装新框架或复制源码。
 - 可行路径 A：指定能稳定满足 schema 的图抽取模型，在现有服务注入点替换后重跑固定文件；模型变化记录新图版本和成本。
-- 可行路径 B：扩展现有 AI 客户端的结构化输出能力，并为不合格输出加入带验证错误反馈的有限修复，修复后仍执行相同 schema/原文/span 校验。当前 complete 不提供 response_format；这会扩大任务修改范围，未擅自改公共 AI 接口。
-- 需要决策：图抽取模型/上述修复路径和调用预算。OI-001/002 还需真实用户实体关系金标及抽取/消歧阈值；当前保守谓词支持和同定义跨文档合并规则可能漏召回。不能默认启用 Graph 或推进生产 PASS。
+- 本轮实施路径 B 的最小部分：复用现有 AI 客户端和 schema，增加具体错误/上一份输出反馈，限制一次修复。未改变公共 `complete` 接口；JSON mode 只能保证 JSON 格式，不能保证引用原文和声明端点，本轮未增加接口/依赖。
+- 剩余输入：OI-001/002 的真实用户实体关系金标、质量阈值和调用预算；当前保守谓词支持和同定义跨文档合并规则可能漏召回。Graph 继续默认关闭；两篇成功不等于生产质量 PASS。
 - 复跑产物：本机 `data/benchmarks/s06/evaluate_graph.py`、`graph-results.json`、`extractor-results.json`、`last-failed-note.json`；原文件 hash、模型/配置/机器、产物 SHA 见 manifest。原文件/缓存不入 Git；最后一轮 24 次新调用的 token/账单未返回，不能当作 0 成本。
-- 当前指针 S06.4 BLOCKED；成功完成两篇固定 PDF 的导入/复用/重导入/删除后，再提交这 5 个待验收文件并处理 S07。
+- S06.4 的两篇固定 PDF 生命周期功能门已通过；S06/S07/S08 的完整质量门仍保留。修复结束时前置改动与修复保留工作区；随后用户明确授权远端提交推送，范围及状态见 STATUS.md。
+
+## OI-008：S07 工程通过，完整多跳验收未完成
+
+- 证据：139 个不同的相关测试通过；真实模型处理合成 51 字符 TXT，3 条严格回源关系；真实 Qdrant/BM25/图通道的 G/GV/GVB 共 9 个查询均 graph_hits=1，越权交集为空时返回 0，删除后六张图表均 0 行。固定标注小图 1/2-hop、PPR 与证据保留已验证，详见 S07.md / S07-benchmark-manifest.json。
+- 未测：真实跨文档多跳金标、同名/类型/定义消歧的生产 recall、总体/实体切片相对 S05 增益、完整论文索引 token/成本、人工 Trace/UI 点击及生产 P95。合成单 chunk 没有排名区分，不能产出这些验收结论；181 题 holdout 未用。
+- 时间边界：SQLite 有 bounded wait/进度回调，循环读源前后检查截止时间；同步 get_chunk 已经阻塞时只能等待返回后丢弃结果。当前 VectorStore 合同没有取消/超时参数，硬中断需在后续资源隔离/超时任务解决，不将 250 ms 配置当作生产上限。
+- 已解决的生命周期缺陷：ON→OFF→重建→删除曾残留 3 个实体，新增回归先失败；在现有删除入口绑定无需模型服务的同 scope 存储清理后通过。局部 31 项测试通过，六表零残留；OFF 无图时不创建图库，错误继续传播。未将可解决的功能缺陷留待用户决策。
+- 后续：OI-007 的两篇完整论文抽取功能已修复；本轮实测 token 已记录，账单金额仍未知。OI-001/002 的真实标注/成本门槛与本节硬中断/UI 缺口保留。Graph 默认关闭，不因功能通过而推广 PPR 或增加通道权重。
+
+## OI-009：S08 工程通过，真实查询路由与改写收益未验收
+
+- 用户明确授权进入 S08。112 项相关测试通过，真实 DeepSeek/Qwen3/Qdrant/BM25 四组开关的合成功能配对完成；16 次调用范围漂移 0，原文固定先检索。应用开关已接线，新路由默认关闭，改写保留已有默认 true；见 S08.md / S08-benchmark-manifest.json。
+- 已修复：原始查询被改写挤出、原始标识符被丢掉、模型 policy/query/scope 提权、Reading 被模型 proposal 扩到 workspace、失败时丢失选定文档范围、路由通道失败及计划 JSON 往返不兼容。严格额外字段拒绝与实际错误诊断保留。
+- 本轮补修：语义路由返回非对象时曾继续沿用上一轮 `planned` 诊断；现在明确记录 `fallback` 和错误，并保持原来的选定文档范围。新增回归先失败后通过，见修复报告。
+- 剩余质量边界：keyword/semantic/comparison 各只有 1 个合成问题，限定 1–2 篇文档；空请求负例不是语料无答案题。真实不确定缩写展开、误路由/漏召回、完整证据覆盖、错误拒答/漏拒答仍缺代表性金标。原文参与能保留词面信号，不能证明所有改写语义正确。
+- 指标：每组功能 Recall@5/MRR=1.0，不能作为生产分数。首组有冷启动，末组有真实计划缓存，时延不用于默认策略推广。3 次真实 complete 调用的 token/账单未返回，成本记录 null。
+- 方案：按 OI-001/002 冻结真实 keyword/semantic/multi-hop/no-answer 金标、门槛和预算；届时在同缓存/冷暖条件下对关闭/启用做配对评测，只有有净收益的策略才启用。当前用户要求功能优先，不在小型 smoke 上调阈值/权重，也不使用 holdout。
+- 同步调用仍复用客户端 timeout/retry，未添加硬中断；人工 Trace/UI 未核验。现有检索全失败/无证据提示的知识专属拒答和 claim-level 验证属于 S10。OI-007/008 原问题保留，S08 完整 Stage/最终生产 Go/No-Go 继续 BLOCKED。
 
 ## 历史后续问题（结合上述更新读取）
 
@@ -79,5 +98,5 @@
 - 注入 Qdrant/BM25/manifest 中途失败、崩溃恢复和 generation 发布检查在 S01 中实现；当前快照三存储均为 1312 个 chunk ID，差集为 0，不代表故障路径已经验证。
 - Debug Studio 后端能按 run/case 返回 Trace，但尚未完成人工桌面 UI 点选核查。
 - S03.3 配置改造、Vector Only 基准、冷启动/内存、缩写/跨语言 probe 及 generation 排序 smoke 已完成；Vector Only 质量低于 S00 Hybrid，详见 `S03.3.md`。
-- S03 Stage 门禁 BLOCKED：OI-004 门禁基准需确认；OI-003 模型 snapshot revision 未进入 runtime fingerprint；RetrievalService/BM25/Graph 的应用级 scope 接线仍未完成。不能宣称 S03 或生产 Go/No-Go 通过。
-- 已按用户明确指示完成 S04.1/S04.2 工程任务和 HF 评测，随后完成 S05 及 S06.1–S06.3 工程；S03 原门禁、S04/S05 完整质量门仍 BLOCKED。S06.4 因完整论文模型抽取失败而 BLOCKED，见 OI-007。
+- 当前状态：OI-003 模型实际权重身份保护已修复；S05–S08 的应用级 scope 已接线并通过功能验证。OI-004 原质量门、真实权限场景及最终生产质量验收仍保留，不能用历史未实现清单覆盖最新工程状态。
+- 已按用户明确指示完成 S04.1/S04.2 工程任务和 HF 评测，随后推进 S05–S08 工程。本轮解除 OI-007 的完整论文功能阻塞；S03 原质量门、S04–S08 完整生产质量门仍 BLOCKED，剩余事项按 OI-001/002/004/005/006/008/009 读取。

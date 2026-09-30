@@ -181,6 +181,63 @@ def test_semantic_router_failure_is_conservative_and_does_not_fail_run() -> None
     assert general.reason_code == "current_context_sufficient"
 
 
+def test_semantic_proposal_cannot_replace_scope_policy_or_query():
+    router = KnowledgeAccessRouter(
+        semantic_router=lambda **kwargs: {
+            "mode": "always",
+            "should_retrieve": True,
+            "scope_strategy": "global_knowledge",
+            "reason_code": "semantic_router_required",
+            "query": "private document search",
+        }
+    )
+    decision = router.route(
+        user_message="Is this method reliable?",
+        context_mode="reading",
+        attached_document="doc-A",
+        explicit_scope_count=1,
+    )
+    assert decision.mode.value == "auto"
+    assert decision.scope_strategy.value == "explicit_documents"
+    assert decision.query == "Is this method reliable?"
+
+
+def test_semantic_failure_keeps_selected_document_boundary():
+    def fail(**kwargs):
+        raise TimeoutError("semantic deadline")
+
+    router = KnowledgeAccessRouter(semantic_router=fail)
+    decision = router.route(user_message="Is this method reliable?", explicit_scope_count=1)
+    assert decision.should_retrieve
+    assert decision.scope_strategy.value == "explicit_documents"
+    assert "semantic deadline" in router.last_route_metadata["error"]
+
+
+def test_non_object_semantic_output_replaces_previous_success_diagnostics():
+    outputs = [{"should_retrieve": True}, None]
+    router = KnowledgeAccessRouter(semantic_router=lambda **kwargs: outputs.pop(0))
+    router.semantic_route(user_message="Is this method reliable?", explicit_scope_count=1)
+    assert router.last_route_metadata["status"] == "planned"
+
+    decision = router.semantic_route(
+        user_message="Is this method reliable?", explicit_scope_count=1
+    )
+    assert decision.should_retrieve
+    assert decision.scope_strategy.value == "explicit_documents"
+    assert router.last_route_metadata["status"] == "fallback"
+    assert "non-object" in router.last_route_metadata["error"]
+
+
+def test_explicit_never_does_not_call_semantic_router_directly():
+    def forbidden(**kwargs):
+        raise AssertionError("explicit never must not call the model")
+
+    router = KnowledgeAccessRouter(semantic_router=forbidden)
+    decision = router.semantic_route(user_message="Search papers", policy="never")
+    assert decision.should_retrieve is False
+    assert router.semantic_calls == 0
+
+
 class _RouteService:
     def __init__(self) -> None:
         self.payloads: list[dict] = []

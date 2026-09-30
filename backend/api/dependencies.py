@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Literal
 
+from app.infrastructure.settings import SettingsManager
 from backend.agent_tools.base import TypedAgentToolDefinition
 from backend.api.knowledge_dependencies import (
     get_knowledge_library_service,
@@ -231,12 +232,17 @@ def get_companion_chat_service() -> CompanionChatService:
         return _companion_chat_service
     with _companion_chat_service_lock:
         if _companion_chat_service is None:
+            rag_settings = SettingsManager().data.get("rag", {})
+            if not isinstance(rag_settings, dict):
+                rag_settings = {}
             _companion_chat_service = CompanionChatService(
                 query_router=CompanionQueryRouter(),
                 reading_resolver_factory=get_reading_selection_resolver,
                 retrieval_service_factory=get_retrieval_service,
                 query_planner_factory=build_rag_query_planner,
                 knowledge_library_service_factory=get_knowledge_library_service,
+                rag_rewrite_enabled=rag_settings.get("query_rewrite_enabled", True),
+                rag_router_enabled=rag_settings.get("query_router_enabled", False),
             )
         return _companion_chat_service
 

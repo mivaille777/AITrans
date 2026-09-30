@@ -1,0 +1,524 @@
+{
+  "stage": "S08",
+  "date": "2026-09-30",
+  "baseline_commit": "b1bbbd69777ec120e984492036be86e2e60b16fd",
+  "branch": "electronrebuild",
+  "stage_gate": "BLOCKED_PRODUCTION_QUALITY",
+  "tasks": {
+    "S08.1": "PASS_ENGINEERING",
+    "S08.2": "PASS_ENGINEERING",
+    "S08.3": "PASS_SYNTHETIC_PAIRED_FUNCTIONAL_ONLY"
+  },
+  "production_defaults": {
+    "query_rewrite_enabled": true,
+    "query_router_enabled": false,
+    "graph_enabled": false
+  },
+  "files": [
+    {
+      "path": "backend/rag/query_planner.py",
+      "sha256": "6e90c6619085db1643dc4e410c2eeb1e7f9e462eccac474dea849df8bd0f2e2f"
+    },
+    {
+      "path": "backend/rag/query_router.py",
+      "sha256": "739bc6df12d03d22860a0deeccdb9716caa8ceef8e2ec1af187668e1949f92b6"
+    },
+    {
+      "path": "backend/services/knowledge_access_router.py",
+      "sha256": "cd45b9871fc99066b4780f523fac43b98dd94c75baab26a0760f62c151f0e81d"
+    },
+    {
+      "path": "backend/services/knowledge_scope_resolver.py",
+      "sha256": "fc8c2542acbaffa8929429b09f35841b7bf9d815ec85f1492062c145291232e7"
+    },
+    {
+      "path": "backend/services/companion_chat_service.py",
+      "sha256": "46223edc02fc55f7f1eadf694ec40daa533d703ecd92adf2429c4b47a6304980"
+    },
+    {
+      "path": "backend/api/dependencies.py",
+      "sha256": "7130bbea59b78f4f443e00cb08423e6751da157293b9d82d1a1a9bb2c1ab673f"
+    },
+    {
+      "path": "tests/rag/test_query_planner.py",
+      "sha256": "b98d1c2923e7f3d75ac9e6e7114ce6cb08e8fdf66abd1e9b2edede728d8c35a7"
+    },
+    {
+      "path": "tests/rag/test_query_router.py",
+      "sha256": "9b54d6a1fe6df9a0ff804ff20f16017868e2736bdcaabd409eb43162967ddc71"
+    },
+    {
+      "path": "tests/agent/test_knowledge_access_router.py",
+      "sha256": "febeca379149debcc1276fc8d9252bfbb255a6ec22aba094bb4b3e9c5f8aeae7"
+    },
+    {
+      "path": "tests/agent/test_knowledge_scope_resolver.py",
+      "sha256": "2260409c5752ca5da4da8978af0582606ec2a67cc385fe364516988dbe08b3d8"
+    },
+    {
+      "path": "tests/rag/test_companion_rag.py",
+      "sha256": "93076a6f6f48fda0d2d878ad4c16c60d0d8ba7baad94e156f382eb874b746679"
+    },
+    {
+      "path": "tests/agent/test_agent_multi_query_retrieval.py",
+      "sha256": "6ef1fa5fc12a1645704e2fea460ffcd9177d7ae357e1a39e7354f566530145f0"
+    },
+    {
+      "path": "tests/agent/test_agent_runtime_config.py",
+      "sha256": "b15b78130f83b6653836128ac7c950f154500e1bebebcdbdc3d1fe5ac41eb9b6"
+    },
+    {
+      "path": "tests/test_backend_dependencies.py",
+      "sha256": "b1d0f8f2dae52880ec0e5131be690306e5e550cbfa57a37e318a4257475c22b8"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "data/benchmarks/s08/smoke_queries.py",
+      "sha256": "f8ea6f9ceeacd7b0e85fb7b20883f593d146a370129e50a6c1f844aaea197a76"
+    },
+    {
+      "path": "data/benchmarks/s08/smoke-results.json",
+      "sha256": "5e0c027e44a7d8273040c37f6cc25a547a045d1add67f32e5f7d376fdf78f5f0"
+    },
+    {
+      "path": "data/benchmarks/s08/evolution.txt",
+      "sha256": "dcf071411bf78d21764b8529e96063f512c82678a39fe45152760f970712c8dd"
+    },
+    {
+      "path": "data/benchmarks/s08/gp.txt",
+      "sha256": "01ff6043beb5eb204c61da78b34082b910e463de8912a85156ba4636d0aed354"
+    },
+    {
+      "path": "data/benchmarks/s08/uncertainty.txt",
+      "sha256": "70d71216596e3db6c6b558eb8f2fad7ac0e407360f9a71563aeb61c6f62e23be"
+    }
+  ],
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "prompt_id": "rag.query_planner@1.4.0",
+  "embedding_fingerprint": {
+    "schema_version": 1,
+    "model_id": "Qwen/Qwen3-Embedding-0.6B",
+    "dimension": 1024,
+    "normalized": true,
+    "query_prefix": "query",
+    "document_prefix": "",
+    "model_revision": "sha256:c86598140f103f7b29610a999268bde1d3191023b9e0634db9099d5e260514fa",
+    "digest": "800f5c653e0643850007263a28309a536b7b3b678edc55d71eea48a61beab147"
+  },
+  "config": {
+    "enabled": true,
+    "jit_search_read_enabled": false,
+    "graph": {
+      "enabled": false,
+      "scope_id": "knowledge",
+      "top_k": 12,
+      "max_hops": 2,
+      "max_seeds": 8,
+      "max_nodes": 64,
+      "max_paths": 128,
+      "max_edges": 256,
+      "deadline_ms": 250.0,
+      "entity_types": []
+    },
+    "advanced_parsing": {
+      "enabled": false,
+      "provider": "docling",
+      "device": "cpu",
+      "layout_enabled": true,
+      "table_enabled": false,
+      "ocr_enabled": false,
+      "formula_enabled": false,
+      "document_timeout_seconds": 120.0
+    },
+    "visual_understanding": {
+      "enabled": false,
+      "provider": "openai_compatible",
+      "model": "",
+      "base_url": "",
+      "inherit_ai_settings": true,
+      "detail": "auto",
+      "timeout_seconds": 30.0,
+      "max_retries": 1,
+      "max_images_per_document": 24,
+      "max_asset_bytes": 8388608,
+      "max_output_tokens": null
+    },
+    "visual_retrieval": {
+      "enabled": false,
+      "provider": "colpali_engine",
+      "model_family": "colqwen2_5",
+      "model": "tsystems/colqwen2.5-3b-multilingual-v1.0",
+      "model_path": "",
+      "device": "auto",
+      "precision": "default",
+      "dimension": 128,
+      "batch_size": 1,
+      "local_files_only": false,
+      "query_prefix": "Query: ",
+      "collection_name": "aitrans_knowledge_visual",
+      "storage_path": "config/rag/qdrant",
+      "distance": "dot",
+      "on_disk": false,
+      "asset_storage_path": "config/rag/visual_pages",
+      "render_dpi": 144,
+      "max_pages_per_document": 64,
+      "max_visual_items_per_document": 96,
+      "text_candidate_pool": 20,
+      "visual_top_k": 12,
+      "prefetch_enabled": true,
+      "prefetch_top_k": 48,
+      "prefetch_fallback_to_full_scan": true,
+      "fusion_top_k": 20,
+      "rrf_k": 60,
+      "text_weight": 1.0,
+      "visual_weight": 1.0
+    },
+    "chunking": {
+      "target_tokens": 512,
+      "preferred_max_tokens": null,
+      "hard_max_tokens": null,
+      "overlap_tokens": 80,
+      "minimum_tokens": 100
+    },
+    "semantic_chunking": {
+      "enabled": false,
+      "merge_similarity": 0.72,
+      "strong_merge_similarity": 0.82,
+      "strong_split_similarity": 0.58,
+      "small_chunk_merge_similarity": 0.78,
+      "adaptive_threshold_enabled": true,
+      "adaptive_std_factor": 1.0,
+      "min_paragraphs_for_adaptive": 4,
+      "centroid_window": 4,
+      "semantic_sentence_fallback": false
+    },
+    "embedding": {
+      "provider": "qwen3",
+      "model": "Qwen/Qwen3-Embedding-0.6B",
+      "device": "auto",
+      "dimension": 1024,
+      "batch_size": 8,
+      "normalize": true,
+      "max_input_tokens": 2048,
+      "warmup": true,
+      "precision": "default",
+      "local_files_only": false,
+      "model_path": ""
+    },
+    "vector_store": {
+      "provider": "qdrant_local",
+      "collection_name": "aitrans_benchmark_0b512f2440b3",
+      "distance": "cosine",
+      "storage_path": "D:\\AITrans\\data\\benchmarks\\s08\\runtime\\qdrant"
+    },
+    "retrieval": {
+      "dense_top_k": 30,
+      "sparse_top_k": 30,
+      "fusion_top_k": 20,
+      "rerank_candidate_k": null,
+      "final_top_k": 8,
+      "fusion": "rrf",
+      "small_to_big_enabled": true,
+      "small_to_big_top_k": 4,
+      "small_to_big_neighbor_radius": 1,
+      "small_to_big_max_tokens_per_anchor": 1200
+    },
+    "reranker": {
+      "provider": "qwen3",
+      "model": "Qwen/Qwen3-Reranker-0.6B",
+      "device": "auto",
+      "batch_size": 8,
+      "lazy_load": true,
+      "local_files_only": false,
+      "model_path": ""
+    }
+  },
+  "machine": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.7",
+    "pytorch": "2.13.0+cu130",
+    "cuda": "13.0",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "gpu_total_bytes": 8585216000
+  },
+  "live_smoke": {
+    "status": "PASS_FUNCTIONAL_ONLY",
+    "input_kind": "synthetic_scoped_functional_fixture",
+    "documents": 3,
+    "cases": 4,
+    "profiles": [
+      {
+        "rewrite_enabled": false,
+        "router_enabled": false,
+        "scored_cases": 3,
+        "empty_query_guards": 1,
+        "functional_recall_at_5": 1.0,
+        "functional_mrr": 1.0,
+        "descriptive_p95_ms": 4700.455080030952,
+        "new_complete_calls": 0,
+        "cached_plan_hits": 0,
+        "retrieval_attempts": 3,
+        "per_type": {
+          "keyword": {
+            "case_id": "keyword-gp",
+            "elapsed_ms": 5179.431900032796,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "semantic": {
+            "case_id": "semantic-quantity",
+            "elapsed_ms": 288.29979995498434,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "multi-hop": {
+            "case_id": "multi-hop-compare",
+            "elapsed_ms": 389.6637000143528,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "no-answer": {
+            "case_id": "empty-query",
+            "elapsed_ms": 0.09229994611814618,
+            "recall_at_5": null,
+            "mrr": null,
+            "retrieval_attempts": 0,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          }
+        }
+      },
+      {
+        "rewrite_enabled": true,
+        "router_enabled": false,
+        "scored_cases": 3,
+        "empty_query_guards": 1,
+        "functional_recall_at_5": 1.0,
+        "functional_mrr": 1.0,
+        "descriptive_p95_ms": 3305.1732500258368,
+        "new_complete_calls": 3,
+        "cached_plan_hits": 0,
+        "retrieval_attempts": 5,
+        "per_type": {
+          "keyword": {
+            "case_id": "keyword-gp",
+            "elapsed_ms": 3522.8371000266634,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 1,
+            "cached_plan_hits": 0
+          },
+          "semantic": {
+            "case_id": "semantic-quantity",
+            "elapsed_ms": 745.6862999824807,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 1,
+            "cached_plan_hits": 0
+          },
+          "multi-hop": {
+            "case_id": "multi-hop-compare",
+            "elapsed_ms": 1346.198600018397,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 3,
+            "actual_new_complete_calls": 1,
+            "cached_plan_hits": 0
+          },
+          "no-answer": {
+            "case_id": "empty-query",
+            "elapsed_ms": 0.08150003850460052,
+            "recall_at_5": null,
+            "mrr": null,
+            "retrieval_attempts": 0,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          }
+        }
+      },
+      {
+        "rewrite_enabled": false,
+        "router_enabled": true,
+        "scored_cases": 3,
+        "empty_query_guards": 1,
+        "functional_recall_at_5": 1.0,
+        "functional_mrr": 1.0,
+        "descriptive_p95_ms": 289.4233899656683,
+        "new_complete_calls": 0,
+        "cached_plan_hits": 0,
+        "retrieval_attempts": 3,
+        "per_type": {
+          "keyword": {
+            "case_id": "keyword-gp",
+            "elapsed_ms": 140.56369999889284,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "semantic": {
+            "case_id": "semantic-quantity",
+            "elapsed_ms": 269.66649998212233,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "multi-hop": {
+            "case_id": "multi-hop-compare",
+            "elapsed_ms": 291.6185999638401,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "no-answer": {
+            "case_id": "empty-query",
+            "elapsed_ms": 0.12619997141882777,
+            "recall_at_5": null,
+            "mrr": null,
+            "retrieval_attempts": 0,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          }
+        }
+      },
+      {
+        "rewrite_enabled": true,
+        "router_enabled": true,
+        "scored_cases": 3,
+        "empty_query_guards": 1,
+        "functional_recall_at_5": 1.0,
+        "functional_mrr": 1.0,
+        "descriptive_p95_ms": 765.5540599836968,
+        "new_complete_calls": 0,
+        "cached_plan_hits": 2,
+        "retrieval_attempts": 5,
+        "per_type": {
+          "keyword": {
+            "case_id": "keyword-gp",
+            "elapsed_ms": 159.6805999870412,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          },
+          "semantic": {
+            "case_id": "semantic-quantity",
+            "elapsed_ms": 294.3578000413254,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 1,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 1
+          },
+          "multi-hop": {
+            "case_id": "multi-hop-compare",
+            "elapsed_ms": 817.9091999772936,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "retrieval_attempts": 3,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 1
+          },
+          "no-answer": {
+            "case_id": "empty-query",
+            "elapsed_ms": 0.0743999844416976,
+            "recall_at_5": null,
+            "mrr": null,
+            "retrieval_attempts": 0,
+            "actual_new_complete_calls": 0,
+            "cached_plan_hits": 0
+          }
+        }
+      }
+    ],
+    "logical_complete_calls": 3,
+    "input_chars": 4865,
+    "output_chars": 521,
+    "cached_plan_hits": 2,
+    "scope_drift_count": 0,
+    "tokens": null,
+    "cost": null
+  },
+  "tests": {
+    "passed": 112,
+    "command": "python -m pytest tests/rag/test_query_planner.py tests/rag/test_query_router.py tests/agent/test_knowledge_access_router.py tests/agent/test_knowledge_scope_resolver.py tests/rag/test_companion_rag.py tests/agent/test_agent_multi_query_retrieval.py tests/agent/test_agent_runtime_config.py tests/agent/test_knowledge_access_contract.py tests/rag/test_rag_observability.py tests/test_backend_dependencies.py tests/test_backend_companion_stream.py tests/test_companion_capability_routing_matrix.py tests/rag/benchmarks/test_qasper_runner.py -q",
+    "exit_code": 0,
+    "seconds": 32.77
+  },
+  "ruff": {
+    "new_diagnostics": 0,
+    "unchanged_or_reduced_baseline_violations": {
+      "backend/services/knowledge_access_router.py": 5,
+      "backend/services/knowledge_scope_resolver.py": 1,
+      "backend/services/companion_chat_service.py": 5,
+      "tests/agent/test_agent_runtime_config.py": 1
+    },
+    "full_changed_file_command_exit_code": 1,
+    "other_changed_files_exit_code": 0
+  },
+  "limitations": [
+    "closed scoped synthetic fixture cannot establish production recall or routing benefit",
+    "one scored query per type; timings contain cold startup and cached plans",
+    "no unanswerable-question quality or answer generation evaluated",
+    "token and billed cost unavailable",
+    "no custom hard rewrite timeout added; existing provider timeout/retry and explicit exception fallback reused",
+    "manual UI not validated; trace metadata is available to existing companion trace persistence",
+    "S06.4 and S07 production blockers unchanged"
+  ],
+  "bad_cases": [
+    {
+      "id": "S08-BC-01",
+      "kind": "acronym_dropped",
+      "status": "fixed_by_original_query_fallback",
+      "replay": "tests/rag/test_query_planner.py::test_lost_identifier_or_scope_injection_falls_back"
+    },
+    {
+      "id": "S08-BC-02",
+      "kind": "semantic_scope_or_policy_escalation",
+      "status": "fixed_by_trusted_input_scope",
+      "replay": "tests/agent/test_knowledge_access_router.py::test_semantic_proposal_cannot_replace_scope_policy_or_query"
+    },
+    {
+      "id": "S08-BC-03",
+      "kind": "router_scope_drift",
+      "status": "fixed_by_original_query_fallback",
+      "replay": "tests/rag/test_companion_rag.py::test_router_scope_drift_falls_back_to_original_before_retrieval"
+    },
+    {
+      "id": "S08-BC-04",
+      "kind": "keyword_channel_failure",
+      "status": "fixed_by_bounded_existing_channel_fallback",
+      "replay": "tests/rag/test_companion_rag.py::test_keyword_channel_failure_retries_original_with_existing_channels_and_scope"
+    },
+    {
+      "id": "S08-BC-05",
+      "kind": "query_plan_json_roundtrip",
+      "status": "fixed_without_relaxing_extra_field_validation",
+      "replay": "tests/rag/test_query_planner.py::test_normalized_query_and_rewrites_are_derived_from_trusted_input"
+    }
+  ],
+  "holdout_used": false,
+  "holdout_questions": 181,
+  "production_quality_evaluated": false,
+  "committed": false,
+  "pushed": false
+}

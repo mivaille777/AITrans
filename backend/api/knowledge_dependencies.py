@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qdrant_client import QdrantClient
 
@@ -50,6 +50,11 @@ from backend.services.knowledge_library_service import (
     KnowledgeLibraryService,
 )
 
+if TYPE_CHECKING:
+    from backend.services.research_memory_extraction_service import (
+        ResearchMemoryExtractionService,
+    )
+
 
 @dataclass(slots=True)
 class RagRuntime:
@@ -65,6 +70,7 @@ class RagRuntime:
     visual_embedding_provider: VisualEmbeddingProvider | None = None
     visual_vector_store: QdrantVisualMultiVectorStore | None = None
     shared_qdrant_client: QdrantClient | None = None
+    graph_extraction_service: ResearchMemoryExtractionService | None = None
 
 
 _runtime: RagRuntime | None = None
@@ -211,6 +217,21 @@ def _resolve_visual_retrieval_config(
     return config.model_copy(update=updates, deep=True)
 
 
+def _create_graph_extraction_service() -> ResearchMemoryExtractionService:
+    from app.ai.service import AITextService
+    from backend.rag.graph.extractor import GraphExtractionService
+
+    return GraphExtractionService(AITextService())
+
+
+def _delete_stored_graph_document(path: Path, scope_id: str, document_id: str) -> None:
+    if not path.is_file():
+        return
+    from backend.rag.graph.repository import GraphRepository
+
+    GraphRepository(path).delete_document(scope_id, document_id)
+
+
 def _build_runtime() -> RagRuntime:
     settings = SettingsManager().data
     raw_rag = settings.get("rag", {})
@@ -283,6 +304,26 @@ def _build_runtime() -> RagRuntime:
     manifest = IndexManifest(state_directory / "index_manifest.json")
     manifest.recover_interrupted_operations()
 
+    graph_indexer = None
+    graph_retriever = None
+    graph_extraction_service = None
+    if config.graph.enabled:
+        from backend.rag.graph.extractor import GraphExtractor
+        from backend.rag.graph.indexer import GraphIndexer
+        from backend.rag.graph.repository import GraphRepository
+        from backend.rag.graph_retriever import GraphRetriever
+
+        graph_repository = GraphRepository(state_directory / "graph.sqlite3")
+        graph_extraction_service = _create_graph_extraction_service()
+        graph_indexer = GraphIndexer(
+            repository=graph_repository,
+            extractor=GraphExtractor(graph_extraction_service),
+            scope_id=config.graph.scope_id,
+        )
+        graph_retriever = GraphRetriever(
+            repository=graph_repository, store=vector_store, config=config.graph
+        )
+
     base_retrieval = RetrievalService(
         embedding_provider=embedding,
         vector_store=vector_store,
@@ -293,6 +334,7 @@ def _build_runtime() -> RagRuntime:
             model_manager=model_manager,
         ),
         manifest=manifest,
+        graph_retriever=graph_retriever,
     )
     retrieval: RetrievalService | VisualRetrievalService = base_retrieval
     if visual_retrieval.enabled and visual_embedding_provider and visual_vector_store:
@@ -319,6 +361,12 @@ def _build_runtime() -> RagRuntime:
         parser=_build_document_parser(config),
         visual_description_provider=visual_description_provider,
         visual_understanding_config=visual_understanding,
+        graph_indexer=graph_indexer,
+        graph_document_deleter=partial(
+            _delete_stored_graph_document,
+            state_directory / "graph.sqlite3",
+            config.graph.scope_id,
+        ),
     )
     index: IndexService | VisualAwareIndexService = base_index
     if visual_retrieval.enabled and visual_embedding_provider and visual_vector_store:
@@ -351,6 +399,7 @@ def _build_runtime() -> RagRuntime:
         visual_embedding_provider=visual_embedding_provider,
         visual_vector_store=visual_vector_store,
         shared_qdrant_client=shared_qdrant_client,
+        graph_extraction_service=graph_extraction_service,
     )
 
 
@@ -383,6 +432,7 @@ def close_rag_runtime() -> None:
     for provider in (
         runtime.visual_description_provider,
         runtime.visual_embedding_provider,
+        runtime.graph_extraction_service,
     ):
         close = getattr(provider, "close", None)
         if callable(close):

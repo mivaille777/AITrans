@@ -86,9 +86,9 @@ def test_agent_runs_bounded_rewritten_query_and_subqueries_then_merges_one_evide
     assert planner.calls == [original]
     assert retrieval.calls == list(plan.retrieval_queries)
     assert retrieval.calls == [
+        original,
         "M10 and C8 comparison",
         "M10 mechanism",
-        "C8 mechanism",
     ]
     assert result.data is not None
     assert result.data["query"] == original

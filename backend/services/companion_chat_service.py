@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from time import perf_counter
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,7 +28,12 @@ from backend.rag.citation_service import build_evidence_citations
 from backend.rag.context_builder import GroundedContextBuilder
 from backend.rag.evidence_builder import build_agent_evidence
 from backend.rag.models import RetrievalCandidate
-from backend.rag.query_planner import RagQueryPlan, merge_query_results
+from backend.rag.query_planner import (
+    MAX_RAG_RETRIEVAL_QUERIES,
+    RagQueryPlan,
+    merge_query_results,
+)
+from backend.rag.query_router import RagQueryRoute, RagQueryRouter
 from backend.rag.stores.base import VectorSearchFilter
 from backend.rag.structure_retrieval import (
     build_structural_queries,
@@ -99,6 +105,9 @@ class CompanionChatService:
         knowledge_library_service_factory: Callable[[], Any] | None = None,
         knowledge_access_router: KnowledgeAccessRouter | Any | None = None,
         system_context: SystemContext | Any | None = None,
+        rag_rewrite_enabled: bool = True,
+        rag_router_enabled: bool = False,
+        rag_query_router: RagQueryRouter | Any | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -115,6 +124,14 @@ class CompanionChatService:
         self._knowledge_access_router = knowledge_access_router or KnowledgeAccessRouter()
         self._system_context = system_context or SYSTEM_CONTEXT
         self._grounded_context_builder = GroundedContextBuilder()
+        if not isinstance(rag_rewrite_enabled, bool) or not isinstance(
+            rag_router_enabled, bool
+        ):
+            raise TypeError("RAG rewrite/router settings must be boolean")
+        self._rag_rewrite_enabled = rag_rewrite_enabled
+        self._rag_query_router = rag_query_router or RagQueryRouter(
+            enabled=rag_router_enabled
+        )
 
     @staticmethod
     def _resolve_optional_dependency(
@@ -329,33 +346,77 @@ class CompanionChatService:
             if normalized_ids
             else None
         )
+        scope = normalized_ids or None
+        router_error = ""
         try:
-            query_planner = self._ensure_query_planner()
-        except Exception:
-            query_planner = None
-        plan = (
-            query_planner.plan(query, history=history)
-            if query_planner is not None
-            else RagQueryPlan(
-                original_query=query,
-                rewritten_query=query,
-                subqueries=[],
+            route = self._rag_query_router.route(query, allowed_document_ids=scope)
+            if not isinstance(route, RagQueryRoute):
+                raise TypeError("query router must return a RagQueryRoute")
+            if route.document_ids != scope:
+                raise ValueError("query router changed the document scope")
+            if route.should_retrieve and not (
+                1 <= route.max_queries <= route.max_retrieval_attempts
+                <= MAX_RAG_RETRIEVAL_QUERIES
+            ):
+                raise ValueError("query router exceeded the retrieval budget")
+        except Exception as exc:  # noqa: BLE001 - optional route fails back within the same scope
+            router_error = str(exc) or exc.__class__.__name__
+            route = RagQueryRouter().route(query, allowed_document_ids=scope)
+        if not route.should_retrieve:
+            return CompanionKnowledgeGrounding(
+                fallback_reason=route.reason,
+                debug_metadata={"query_route": asdict(route), "original_query": query},
             )
-        )
+        plan = RagQueryPlan(original_query=query, rewritten_query=query)
+        planning_started = perf_counter()
+        if self._rag_rewrite_enabled and route.max_queries > 1 and not router_error:
+            try:
+                query_planner = self._ensure_query_planner()
+                if query_planner is not None:
+                    proposed = query_planner.plan(query, history=history)
+                    if not isinstance(proposed, RagQueryPlan):
+                        raise TypeError("query planner must return a RagQueryPlan")
+                    plan = RagQueryPlan.model_validate(
+                        {**proposed.model_dump(), "original_query": query}
+                    )
+            except Exception as exc:  # noqa: BLE001 - optional rewrite preserves the original query
+                plan = plan.model_copy(
+                    update={"fallback_reason": str(exc) or exc.__class__.__name__}
+                )
+        planning_ms = (perf_counter() - planning_started) * 1000
         structural_intent = (
             detect_structural_intent(query)
             or detect_structural_intent(plan.rewritten_query)
         )
-        retrieval_queries = build_structural_queries(
-            plan.retrieval_queries,
-            original_query=query,
-            intent=structural_intent,
+        expanded_queries = (
+            build_structural_queries(
+                plan.rewrites or (query,),
+                original_query=query,
+                intent=structural_intent,
+                max_queries=route.max_queries - 1,
+            )
+            if self._rag_rewrite_enabled and not (router_error or plan.fallback_reason)
+            else ()
         )
+        retrieval_queries = tuple(dict.fromkeys((query, *expanded_queries)))[
+            :route.max_queries
+        ]
+        debug_plan = {
+            "query_plan": plan.model_dump(mode="json"),
+            "query_route": asdict(route),
+            "retrieval_queries": list(retrieval_queries),
+            "rewrite_enabled": self._rag_rewrite_enabled,
+            "router_fallback_reason": router_error,
+            "query_planning_ms": planning_ms,
+        }
         retrievals = []
         retrieval_errors: list[str] = []
         for retrieval_query in retrieval_queries:
             try:
-                retrieve_kwargs: dict[str, Any] = {"filters": filters}
+                retrieve_kwargs: dict[str, Any] = {
+                    "filters": filters.model_copy(deep=True) if filters else None,
+                    **route.retrieval_kwargs,
+                }
                 if structural_intent is not None:
                     retrieve_kwargs.update(
                         {
@@ -373,11 +434,27 @@ class CompanionChatService:
                 )
             except Exception as exc:  # noqa: BLE001 - degrade per retrieval query
                 retrieval_errors.append(str(exc) or exc.__class__.__name__)
+        if (
+            route.enabled
+            and not retrievals
+            and len(retrieval_queries) < route.max_retrieval_attempts
+        ):
+            debug_plan["router_fallback_reason"] = "routed_channels_failed"
+            debug_plan["retrieval_queries"].append(query)
+            try:
+                retrievals.append(
+                    retrieval_service.retrieve(
+                        query, filters=filters.model_copy(deep=True) if filters else None
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - preserve failures from the original-query fallback
+                retrieval_errors.append(str(exc) or exc.__class__.__name__)
         if not retrievals:
             detail = "; ".join(retrieval_errors) or "retrieval_failed"
             return CompanionKnowledgeGrounding(
                 tool_context="Knowledge retrieval was unavailable. Answer generally if possible and do not cite a source.",
                 fallback_reason=detail,
+                debug_metadata=debug_plan,
             )
 
         default_limit = max(
@@ -405,6 +482,7 @@ class CompanionChatService:
             return CompanionKnowledgeGrounding(
                 tool_context="No relevant knowledge evidence was found. Answer generally if possible and do not cite a source.",
                 fallback_reason="no_relevant_evidence",
+                debug_metadata=debug_plan,
             )
         context_overrides = {
             f"evidence:{candidate.chunk.chunk_id}": supplemental
@@ -442,6 +520,7 @@ class CompanionChatService:
                 else "context_budget_exhausted"
             ),
             debug_metadata={
+                **debug_plan,
                 "retrieval_strategy": str(result.retrieval_strategy or ""),
                 "dense_candidates": sum(
                     int(item.metadata.get("dense_count", 0) or 0)

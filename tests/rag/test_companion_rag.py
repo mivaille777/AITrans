@@ -20,6 +20,7 @@ class RetrievalStub:
         filters=None,
         section_hints=(),
         final_top_k=None,
+        **channels,
     ):
         self.filters = filters
         self.queries.append(query)
@@ -29,6 +30,7 @@ class RetrievalStub:
                 "filters": filters,
                 "section_hints": section_hints,
                 "final_top_k": final_top_k,
+                "channels": channels,
             }
         )
         return RetrievalResult(
@@ -118,9 +120,9 @@ def test_companion_rag_uses_planned_queries_history_document_scope_and_structure
 
     assert retrieval.filters.document_ids == ["doc-1"]
     assert retrieval.queries == [
+        "What did the authors conclude?",
         "water tank paper final conclusions findings Conclusion Conclusions concluding remarks final findings",
         "Conclusion Conclusions concluding remarks final findings",
-        "water tank paper conclusion",
     ]
     assert planner.calls == [("What did the authors conclude?", history)]
     assert all("conclusion" in call["section_hints"] for call in retrieval.calls)
@@ -133,6 +135,88 @@ def test_companion_rag_uses_planned_queries_history_document_scope_and_structure
     assert result.knowledge_fallback_reason == ""
     assert chat.request.tool_name == "search_knowledge_base"
     assert "ALLOWED CITATIONS" in chat.request.tool_context
+
+
+def test_rewrite_and_router_can_be_disabled_independently():
+    for rewrite_enabled in (False, True):
+        for router_enabled in (False, True):
+            retrieval, planner = RetrievalStub(), PlannerStub()
+            service = CompanionChatService(
+                retrieval_service=retrieval,
+                query_planner=planner,
+                rag_rewrite_enabled=rewrite_enabled,
+                rag_router_enabled=router_enabled,
+            )
+            grounding = service.prepare_knowledge("Explain the mechanism", ("doc-1",))
+            assert retrieval.queries[0] == "Explain the mechanism"
+            assert all(call["filters"].document_ids == ["doc-1"] for call in retrieval.calls)
+            assert len(planner.calls) == int(rewrite_enabled)
+            assert len(retrieval.calls) <= 3
+            assert bool(retrieval.calls[0]["channels"]) is router_enabled
+            assert grounding.debug_metadata["query_plan"]["original_query"] == "Explain the mechanism"
+            assert grounding.debug_metadata["query_route"]["enabled"] is router_enabled
+
+
+def test_keyword_budget_keeps_literal_acronym_without_model_expansion():
+    retrieval, planner = RetrievalStub(), PlannerStub()
+    service = CompanionChatService(
+        retrieval_service=retrieval, query_planner=planner, rag_router_enabled=True
+    )
+    result = service.prepare_knowledge("What is GP?", ("doc-1",))
+    assert retrieval.queries == ["What is GP?"]
+    assert planner.calls == []
+    assert result.debug_metadata["query_route"]["query_type"] == "keyword"
+
+
+def test_planner_exception_falls_back_to_original_with_same_scope():
+    class FailingPlanner:
+        def plan(self, *args, **kwargs):
+            raise TimeoutError("rewrite deadline")
+
+    retrieval = RetrievalStub()
+    result = CompanionChatService(
+        retrieval_service=retrieval, query_planner=FailingPlanner()
+    ).prepare_knowledge("Explain this mechanism", ("doc-1",))
+    assert retrieval.queries == ["Explain this mechanism"]
+    assert retrieval.filters.document_ids == ["doc-1"]
+    assert "rewrite deadline" in result.debug_metadata["query_plan"]["fallback_reason"]
+
+
+def test_router_scope_drift_falls_back_to_original_before_retrieval():
+    from backend.rag.query_router import RagQueryRoute
+
+    class BadRouter:
+        def route(self, *args, **kwargs):
+            return RagQueryRoute("semantic", "bad", True, ("private-B",))
+
+    retrieval = RetrievalStub()
+    result = CompanionChatService(
+        retrieval_service=retrieval,
+        query_planner=PlannerStub(),
+        rag_query_router=BadRouter(),
+    ).prepare_knowledge("Explain this mechanism", ("doc-1",))
+    assert retrieval.queries == ["Explain this mechanism"]
+    assert retrieval.filters.document_ids == ["doc-1"]
+    assert result.debug_metadata["router_fallback_reason"]
+
+
+def test_keyword_channel_failure_retries_original_with_existing_channels_and_scope():
+    class FailedKeyword(RetrievalStub):
+        def retrieve(self, query, **kwargs):
+            if kwargs.get("dense_enabled") is False:
+                self.queries.append(query)
+                raise OSError("BM25 unavailable")
+            return super().retrieve(query, **kwargs)
+
+    retrieval = FailedKeyword()
+    result = CompanionChatService(
+        retrieval_service=retrieval, rag_router_enabled=True
+    ).prepare_knowledge("What is GP?", ("doc-1",))
+    assert retrieval.queries == ["What is GP?", "What is GP?"]
+    assert retrieval.filters.document_ids == ["doc-1"]
+    assert result.evidence
+    assert result.debug_metadata["router_fallback_reason"] == "routed_channels_failed"
+    assert "BM25 unavailable" in result.fallback_reason
 
 
 def test_companion_rag_degrades_without_fabricating_evidence() -> None:

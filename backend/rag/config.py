@@ -249,6 +249,26 @@ class RagVectorStoreConfig(RagConfigModel):
     storage_path: str = "config/rag/qdrant"
 
 
+class RagGraphConfig(RagConfigModel):
+    enabled: bool = False
+    scope_id: str = Field(default="knowledge", min_length=1)
+    top_k: int = Field(default=12, ge=1, le=200)
+    max_hops: int = Field(default=2, ge=1, le=2)
+    max_seeds: int = Field(default=8, ge=1, le=32)
+    max_nodes: int = Field(default=64, ge=1, le=512)
+    max_paths: int = Field(default=128, ge=1, le=1024)
+    max_edges: int = Field(default=256, ge=1, le=2048)
+    deadline_ms: float = Field(default=250.0, gt=0, le=5000)
+    entity_types: list[str] = Field(default_factory=list)
+
+    @field_validator("scope_id")
+    @classmethod
+    def validate_scope_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("graph scope must be explicit")
+        return value.strip()
+
+
 class RagRetrievalConfig(RagConfigModel):
     dense_top_k: int = Field(default=30, ge=1)
     sparse_top_k: int = Field(default=30, ge=1)
@@ -298,6 +318,7 @@ class RagRerankerConfig(RagConfigModel):
 class RagConfig(RagConfigModel):
     enabled: bool = True
     jit_search_read_enabled: bool = False
+    graph: RagGraphConfig = Field(default_factory=RagGraphConfig)
     advanced_parsing: RagAdvancedParsingConfig = Field(default_factory=RagAdvancedParsingConfig)
     visual_understanding: RagVisualUnderstandingConfig = Field(default_factory=RagVisualUnderstandingConfig)
     visual_retrieval: RagVisualRetrievalConfig = Field(default_factory=RagVisualRetrievalConfig)
@@ -314,6 +335,7 @@ __all__ = [
     "RagChunkingConfig",
     "RagConfig",
     "RagEmbeddingConfig",
+    "RagGraphConfig",
     "RagRerankerConfig",
     "RagRetrievalConfig",
     "RagSemanticChunkingConfig",

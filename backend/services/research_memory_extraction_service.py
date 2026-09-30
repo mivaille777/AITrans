@@ -187,14 +187,13 @@ class ResearchMemoryExtractionService:
             ensure_ascii=False,
         )
 
-    def extract(self, note: ResearchNote) -> ResearchMemoryExtractionDraft:
-        if not note.source_text.strip():
-            raise ValueError("Structured research-memory extraction requires source text.")
-        spec = self._prompt_registry.get("research.memory.extract")
+    def _request_extraction(
+        self, note: ResearchNote, spec: PromptSpec, *, user_prompt: str | None = None
+    ) -> str:
         try:
             raw = self._client().complete(
                 system_prompt=spec.system_prompt,
-                user_prompt=self._payload(note),
+                user_prompt=self._payload(note) if user_prompt is None else user_prompt,
                 temperature=spec.temperature,
                 max_tokens=spec.max_tokens,
             )
@@ -202,9 +201,21 @@ class ResearchMemoryExtractionService:
             raise
         except Exception as exc:
             raise AIResponseError("Research-memory extraction provider failed.") from exc
+        return raw
 
+    def _extract_structured(
+        self, note: ResearchNote, spec: PromptSpec
+    ) -> ResearchMemoryExtraction:
+        raw = self._request_extraction(note, spec)
         extraction = self._decode(raw)
         self._verify_claim_evidence(extraction, source_text=note.source_text)
+        return extraction
+
+    def extract(self, note: ResearchNote) -> ResearchMemoryExtractionDraft:
+        if not note.source_text.strip():
+            raise ValueError("Structured research-memory extraction requires source text.")
+        spec = self._prompt_registry.get("research.memory.extract")
+        extraction = self._extract_structured(note, spec)
         return ResearchMemoryExtractionDraft(
             claims=tuple(
                 ResearchMemoryClaimDraft(

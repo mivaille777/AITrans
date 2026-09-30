@@ -30,6 +30,70 @@ def make_record(document_id: str = "doc_one"):
     )
 
 
+@pytest.mark.parametrize(
+    "chunks,scope,version",
+    [
+        (["wrong"], "workspace", "graph-v1"),
+        (["chunk_one"], "", "graph-v1"),
+        (["chunk_one"], "workspace", ""),
+    ],
+)
+def test_graph_validation_rejects_incomplete_or_mismatched_identity(
+    tmp_path, chunks, scope, version
+):
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    manifest.upsert(make_record())
+    manifest.begin_generation("doc_one", "new", ["chunk_one"])
+    with pytest.raises(RagInvariantError, match="graph generation"):
+        manifest.validate_generation(
+            "doc_one",
+            "new",
+            ["chunk_one"],
+            graph_chunk_ids=chunks,
+            graph_scope_id=scope,
+            graph_index_version=version,
+        )
+    assert (
+        manifest.get_generation("doc_one", "new").status
+        is IndexGenerationStatus.BUILDING
+    )
+
+
+def test_graph_publication_requires_validated_identity_and_keeps_previous_pointer(
+    tmp_path,
+):
+    path = tmp_path / "manifest.json"
+    manifest = IndexManifest(path)
+    manifest.upsert(make_record())
+    manifest.begin_generation("doc_one", "old", ["chunk_one"])
+    manifest.validate_generation("doc_one", "old", ["chunk_one"])
+    manifest.publish_generation("doc_one", "old")
+    manifest.begin_generation("doc_one", "new", ["chunk_one"])
+    manifest.validate_generation(
+        "doc_one",
+        "new",
+        ["chunk_one"],
+        graph_chunk_ids=["chunk_one"],
+        graph_scope_id="workspace",
+        graph_index_version="graph-v1",
+    )
+    with pytest.raises(RagInvariantError, match="published graph identity"):
+        manifest.publish_generation("doc_one", "new", manifest_record=make_record())
+    assert manifest.list_active_generations() == {"doc_one": "old"}
+    assert (
+        manifest.get_generation("doc_one", "old").status is IndexGenerationStatus.READY
+    )
+    record = make_record().model_copy(
+        update={"graph_scope_id": "workspace", "graph_index_version": "graph-v1"}
+    )
+    manifest.publish_generation("doc_one", "new", manifest_record=record)
+    restarted = IndexManifest(path)
+    assert restarted.list_active_generations() == {"doc_one": "new"}
+    assert restarted.get("doc_one").graph_index_version == "graph-v1"
+    assert restarted.get_generation("doc_one", "new").graph_scope_id == "workspace"
+    assert make_record().graph_index_version == ""
+
+
 def test_manifest_round_trip_and_source_lookup(tmp_path: Path) -> None:
     path = tmp_path / "index_manifest.json"
     first = IndexManifest(path)
