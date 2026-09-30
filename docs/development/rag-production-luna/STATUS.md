@@ -26,9 +26,13 @@
 - S04.2：PASS（tokenizer 版本迁移；重建/删除/重启/active scope；完整 SciFact 和中文 MedicalRetrieval 评测及坏例保存）
 - S04 相对 Sparse/安全门：PASS（补测 S00 Sparse 原代码，冻结 QASPER dev100 Recall@5/10 持平、MRR/nDCG 上升；过期/越权候选 0）
 - S04 完整 Stage 验收：BLOCKED（人工 Debug Studio UI 未核验；公开检索质量缺口见 OI-005；生产 Go/No-Go 仍 BLOCKED）
-- 当前工程任务：S00–S04 最小功能修复 PASS；首轮 464 passed / 3 skipped，定向组 56 passed，最终最小回放 8 passed。见 S00-S04-REMEDIATION.md；用户要求暂缓效果提升并收尾，S05.1 未开始
+- S05.1：PASS（候选来源/图路径/span/generation/trace 字段向后兼容）
+- S05.2：PASS（共享请求快照、Vector/BM25 适配、空范围拒绝、越权/过期候选过滤）
+- S05.3：PASS（现有入口接线、generation + chunk ID 去重、原始通道 rank/score 保留；冻结 V/B/VB 同配置排序无变化）
+- S05 完整 Stage：BLOCKED（工程完成；效果调优暂缓，公开全库 Dense/Hybrid、人工 UI 和生产质量门未验收，见 S05.md / OI-006）
+- 当前工程任务：S05 功能实现已完成；98 个定向/调用方测试通过，300 次查询无失败。代码提交 159472b6954480fcce87a1220f2ae30fd9dcbd42；S06.1 未开始。
 - Holdout：181 个问题、56 篇论文，已冻结、未运行、不得用于调参
-- GitHub 写入：S00–S04 已推送至 `570864be`；本次功能修复提交见本地 git log
+- GitHub 写入：S00–S04 已推送至 `570864be`；后续功能修复及 S05 为本地提交，尚未推送
 - 工作区原有用户修改：保留；提交时只暂存任务书当前允许的文件
 
 详细指标见 [S00.md](S00.md)、[S00.3.md](S00.3.md)、[baseline-manifest.json](baseline-manifest.json) 和 [gate.json](gate.json)。S01 汇总和子任务报告见 [S01.md](S01.md)、[S01.1.md](S01.1.md)、[S01.2.md](S01.2.md)、[S01.3.md](S01.3.md)、[S01.4.md](S01.4.md)、[S01.5.md](S01.5.md)；S02 汇总和子任务报告见 [S02.md](S02.md)、[S02.1.md](S02.1.md)、[S02.2.md](S02.2.md)、[S02.3.md](S02.3.md)；S03 子任务报告见 [S03.1.md](S03.1.md)、[S03.2.md](S03.2.md)、[S03.3.md](S03.3.md)；S04 汇总见 [S04.md](S04.md)、[S04.1.md](S04.1.md)、[S04.2.md](S04.2.md)、[S04-benchmark-manifest.json](S04-benchmark-manifest.json)。待用户提供/确认事项见 [OPEN-ISSUES.md](OPEN-ISSUES.md)。

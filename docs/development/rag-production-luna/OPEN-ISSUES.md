@@ -52,6 +52,14 @@
 
 2026-09-30 用户明确要求“暂时不做效果提升，以功能正常为主，并尽快收尾”，随后要求严格最小修改。本轮只保留真实指纹的写入/复用/检索保护、全已启用通道失败处理、Debug 的重排前排名及直接相关测试。BM25 性能优化和无关格式变化已撤回，效果实验已停止，默认配置保持原值。OI-001/002/004/005 与人工桌面 UI、回答质量、后续 GraphRAG 留待继续执行时处理；原生产门禁保持历史判定。
 
+## OI-006：S05 工程完成，RRF 排序坏例与完整质量验收保留
+
+- 2026-09-30 用户授权“继续 S05”；S05.1–S05.3 已完成，6 个生产模块和直接测试实现共享请求、候选来源和版本隔离，没有效果调参。详见 [S05.md](S05.md)。
+- 冻结 QASPER V/B/VB 各 100 查询功能回归完成，87 题有效 gold 的排名与基准一致；Hybrid Recall@5=0.7184、MRR=0.4753，仍未达到候选 0.80/0.70，不能标为生产 PASS。
+- 保留 16 个已有 RRF 坏例。示例 `4eaf9787f51cd7cdc45eb85cf223d752328c6ee4`：gold 在 Vector 第 2、BM25 第 14，被 RRF 排到第 7。全量原始分数/rank 与 trace 位于本机 `data/benchmarks/s05/hybrid-results.json`。
+- 可行后续方案：恢复效果优化后，用冻结开发集比较现有 reranker 的候选池与融合排序；结合完整公开全库 V/B/VB 和真实用户金标验证。当前证据不足以直接修改权重、阈值或推广 Graph；保留默认配置，依照 S09 的配对评测决定。
+- 未运行：完整 SciFact/MedicalRetrieval Dense/Hybrid、人工 Debug Studio UI、回答引用质量和 holdout。用户当前功能优先的约束下不进行这些效果实验；上述事项与 OI-001/002 共同阻塞完整 S05/最终生产质量验收。S06 未开始。
+
 ## 历史后续问题（结合上述更新读取）
 
 - Parser、错论文与 no-answer 的端到端坏例缺少真实样本；收到 OI-001 数据后补充标注并回放。
@@ -59,4 +67,4 @@
 - Debug Studio 后端能按 run/case 返回 Trace，但尚未完成人工桌面 UI 点选核查。
 - S03.3 配置改造、Vector Only 基准、冷启动/内存、缩写/跨语言 probe 及 generation 排序 smoke 已完成；Vector Only 质量低于 S00 Hybrid，详见 `S03.3.md`。
 - S03 Stage 门禁 BLOCKED：OI-004 门禁基准需确认；OI-003 模型 snapshot revision 未进入 runtime fingerprint；RetrievalService/BM25/Graph 的应用级 scope 接线仍未完成。不能宣称 S03 或生产 Go/No-Go 通过。
-- 已按用户明确指示进入并完成 S04.1/S04.2 工程任务和 HF 评测；S03 原门禁仍 BLOCKED，S04 相对 Sparse/安全门通过，完整 Stage 尚缺人工 Debug Studio UI 和公开场景质量验收。下一工程 ID S05.1 尚未执行。
+- 已按用户明确指示完成 S04.1/S04.2 工程任务和 HF 评测，随后完成 S05 工程接线；S03 原门禁、S04/S05 完整质量门仍 BLOCKED。S06.1 未开始。
