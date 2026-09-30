@@ -1,0 +1,12 @@
+[
+  {"id": "G01", "text": "Alpha uses Beta.", "gold": [["alpha", "uses", "beta"]]},
+  {"id": "G02", "text": "Alpha improves Beta.", "gold": [["alpha", "improves", "beta"]]},
+  {"id": "G03", "text": "Alpha does not use Beta.", "gold": []},
+  {"id": "G04", "text": "It is not true that Alpha uses Beta.", "gold": []},
+  {"id": "G05", "text": "Alpha may use Beta.", "gold": []},
+  {"id": "G06", "text": "Alpha and Beta are mentioned in this paper.", "gold": []},
+  {"id": "G07", "text": "Alpha uses Beta, while Gamma measures Delta.", "gold": [["alpha", "uses", "beta"], ["gamma", "measures", "delta"]]},
+  {"id": "G08", "text": "模型甲使用模型乙。", "gold": [["模型甲", "uses", "模型乙"]]},
+  {"id": "G09", "text": "Beta is used by Alpha.", "gold": [["alpha", "uses", "beta"]]},
+  {"id": "G10", "text": "Alpha | uses | Beta\nScore | 0.9 | 0.8", "chunk_type": "table_group", "gold": []}
+]
