@@ -5,6 +5,7 @@ from pathlib import Path
 
 from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import RagChunkingConfig
+from backend.rag.embeddings.base import EmbeddingFingerprint
 from backend.rag.index_manifest import (
     IndexGenerationStatus,
     IndexManifest,
@@ -319,6 +320,41 @@ def test_embedding_model_change_reindexes(tmp_path: Path) -> None:
     assert len(first_embedding.calls) == 1
     assert len(second_embedding.calls) == 1
     assert store.upsert_calls == 2
+
+
+def test_actual_embedding_fingerprint_is_persisted_and_change_reindexes(
+    tmp_path: Path,
+) -> None:
+    class VersionedEmbedding(FakeEmbeddingProvider):
+        prefix = "query-v1"
+
+        @property
+        def fingerprint(self) -> EmbeddingFingerprint:
+            return EmbeddingFingerprint(
+                model_id=self.model_name,
+                dimension=self.dimension,
+                normalized=True,
+                query_prefix=self.prefix,
+                document_prefix="",
+            )
+
+    path = tmp_path / "paper.txt"
+    path.write_text("Unchanged source with new embedding inputs.", encoding="utf-8")
+    embedding = VersionedEmbedding()
+    service, _, _, _, manifest = make_service(tmp_path, embedding=embedding)
+    first = service.index_document(path)
+    first_record = manifest.get(first.document_id)
+    assert first_record.embedding_fingerprint == embedding.fingerprint.as_dict()
+    assert service.index_document(path).reused_existing
+    embedding.prefix = "query-v2"
+    second = service.index_document(path)
+    assert second.status is IndexStatus.READY
+    assert not second.reused_existing
+    assert manifest.get(first.document_id).generation_id != first_record.generation_id
+    assert (
+        manifest.get(first.document_id).embedding_fingerprint
+        == embedding.fingerprint.as_dict()
+    )
 
 
 def test_embedding_dimension_change_reindexes(tmp_path: Path) -> None:

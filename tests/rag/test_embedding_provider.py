@@ -48,9 +48,10 @@ class DeferredModelManager:
         return self.model_path
 
 
-def test_qwen3_provider_satisfies_embedding_protocol() -> None:
+def test_qwen3_provider_satisfies_embedding_protocol(tmp_path: Path) -> None:
+    (tmp_path / "model.safetensors").write_bytes(b"fake model weights")
     provider = Qwen3EmbeddingProvider(
-        RagEmbeddingConfig(dimension=2, warmup=False),
+        RagEmbeddingConfig(dimension=2, warmup=False, model_path=str(tmp_path)),
         model_factory=lambda *_args, **_kwargs: MinimalModel(),
         torch_module=CpuTorch(),
     )
@@ -65,8 +66,38 @@ def test_qwen3_provider_satisfies_embedding_protocol() -> None:
         "normalized": True,
         "query_prefix": "query",
         "document_prefix": "",
+        "model_revision": provider.fingerprint.model_revision,
         "digest": provider.fingerprint.digest,
     }
+    assert provider.fingerprint.model_revision.startswith("sha256:")
+
+
+def test_same_model_name_and_dimension_detects_changed_weights(tmp_path: Path) -> None:
+    weights = tmp_path / "model.safetensors"
+    weights.write_bytes(b"old weights")
+    config = RagEmbeddingConfig(dimension=2, model_path=str(tmp_path))
+    first = Qwen3EmbeddingProvider(config).fingerprint
+    weights.write_bytes(b"new weights")
+    second = Qwen3EmbeddingProvider(config).fingerprint
+    assert first.model_id == second.model_id
+    assert first.dimension == second.dimension
+    assert first.digest != second.digest
+
+
+def test_fingerprint_is_location_independent_and_covers_token_limit(
+    tmp_path: Path,
+) -> None:
+    first_dir, second_dir = tmp_path / "one", tmp_path / "two"
+    for directory in (first_dir, second_dir):
+        directory.mkdir()
+        (directory / "model.safetensors").write_bytes(b"identical weights")
+        (directory / "config.json").write_text('{"hidden_size":2}', encoding="utf-8")
+    first_config = RagEmbeddingConfig(dimension=2, model_path=str(first_dir))
+    second_config = first_config.model_copy(update={"model_path": str(second_dir)})
+    first = Qwen3EmbeddingProvider(first_config).fingerprint
+    assert first == Qwen3EmbeddingProvider(second_config).fingerprint
+    changed = second_config.model_copy(update={"max_input_tokens": 128})
+    assert first.digest != Qwen3EmbeddingProvider(changed).fingerprint.digest
 
 
 def test_embedding_fingerprint_changes_when_prompt_prefix_changes() -> None:

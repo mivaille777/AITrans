@@ -188,6 +188,42 @@ def test_rag_debug_evaluation_forces_retrieval_instead_of_auto_gate(
         service.close()
 
 
+def test_debug_evaluation_uses_actual_pre_rerank_order(
+    monkeypatch, tmp_path: Path
+) -> None:
+    service = RagDebugService(
+        store=RagDebugStoreService(storage_path=tmp_path / "debug.sqlite3")
+    )
+    try:
+        dataset = service.store.create_dataset("rerank comparison")
+        service.store.save_case(
+            dataset.dataset_id,
+            RagDebugCase(
+                case_id="promoted", query="Find evidence", relevant_chunk_ids=["gold"]
+            ),
+        )
+        monkeypatch.setattr(
+            service,
+            "run_trace_sync",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                candidates=[SimpleNamespace(id="gold")],
+                metadata={"pre_rerank_chunk_ids": ["noise", "gold"]},
+            ),
+        )
+        report = service.evaluate_dataset(
+            dataset_id=dataset.dataset_id,
+            config_id="default",
+            top_k=10,
+            case_ids=[],
+            runtime=SimpleNamespace(config=RagConfig()),
+        )
+        assert report["reranker"]["mrr_before"] == 0.5
+        assert report["reranker"]["mrr_after"] == 1.0
+        assert report["reranker"]["mrr_delta"] == 0.5
+    finally:
+        service.close()
+
+
 def test_rag_debug_evaluation_computes_routing_scope_round_and_gate_metrics(
     monkeypatch, tmp_path: Path
 ) -> None:

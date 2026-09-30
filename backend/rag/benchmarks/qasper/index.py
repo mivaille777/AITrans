@@ -18,7 +18,7 @@ from backend.rag.benchmarks.runtime import (
     build_benchmark_rag_runtime,
 )
 from backend.rag.config import RagConfig
-from backend.rag.embeddings.base import EmbeddingProvider
+from backend.rag.embeddings.base import EmbeddingProvider, embedding_fingerprint
 from backend.rag.index_manifest import IndexStatus, ready_manifest_record
 from backend.rag.models import DocumentChunk
 from backend.rag.rerankers.base import RerankerProvider
@@ -105,6 +105,7 @@ def _valid_existing_document(
         and record.chunker_version == runtime.index_service.chunker_version
         and record.embedding_model == runtime.embedding_provider.model_name
         and record.embedding_dimension == runtime.embedding_provider.dimension
+        and record.embedding_fingerprint == embedding_fingerprint(runtime.embedding_provider).as_dict()
         and sparse_chunk_ids.get(document_id, set()) == expected_chunk_ids
         and runtime.vector_store.count_chunks([document_id]) == len(expected_chunk_ids)
     )
@@ -166,6 +167,7 @@ def _cache_is_valid(
             or record.chunker_version != runtime.index_service.chunker_version
             or record.embedding_model != runtime.embedding_provider.model_name
             or record.embedding_dimension != runtime.embedding_provider.dimension
+            or record.embedding_fingerprint != embedding_fingerprint(runtime.embedding_provider).as_dict()
             or runtime.vector_store.count_chunks([document_id]) != len(chunk_ids)
         ):
             return False
@@ -221,6 +223,7 @@ def _index_one_paper(
                 chunker_version=runtime.index_service.chunker_version,
                 embedding_model=runtime.embedding_provider.model_name,
                 embedding_dimension=runtime.embedding_provider.dimension,
+                embedding_fingerprint=embedding_fingerprint(runtime.embedding_provider),
                 chunk_ids=[chunk.chunk_id for chunk in chunks],
                 structure_quality="structured",
                 section_count=len(adapted.document.sections),

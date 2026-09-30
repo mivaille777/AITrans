@@ -137,6 +137,20 @@ def test_hybrid_retrieval_fuses_and_deduplicates() -> None:
     assert result.metadata["sparse_chunk_ids"] == ["shared", "sparse"]
 
 
+@pytest.mark.parametrize("dense_enabled", [True, False])
+def test_single_enabled_channel_failure_is_not_a_successful_empty_result(
+    dense_enabled: bool,
+) -> None:
+    retrieval, *_ = service(dense_fail=dense_enabled, sparse_fail=not dense_enabled)
+    with pytest.raises(RagRetrievalError, match="failed"):
+        retrieval.retrieve(
+            "query",
+            dense_enabled=dense_enabled,
+            sparse_enabled=not dense_enabled,
+            structural_enabled=False,
+        )
+
+
 def test_filters_are_pushed_to_both_stores() -> None:
     retrieval, vector, sparse = service()
     filters = VectorSearchFilter(document_ids=["doc"], language="en")

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from backend.rag.config import RagRetrievalConfig, RagVectorStoreConfig
+from backend.rag.embeddings.base import EmbeddingFingerprint
+from backend.rag.exceptions import RagRetrievalError
 from backend.rag.index_manifest import IndexManifest, ready_manifest_record
 from backend.rag.models import DocumentChunk
 from backend.rag.retrieval_service import RetrievalService
@@ -162,3 +166,83 @@ def test_online_retrieval_sees_only_published_generation(tmp_path: Path) -> None
         assert after_publish_ids == {"next-chunk", "legacy-chunk"}
     finally:
         vector_store.close()
+
+
+def test_dense_rejects_old_weight_fingerprint_but_sparse_remains_available(
+    tmp_path: Path,
+) -> None:
+    class VersionedQueryEmbedding(QueryEmbedding):
+        fingerprint = EmbeddingFingerprint(
+            model_id="test-model",
+            dimension=4,
+            normalized=True,
+            query_prefix="query",
+            document_prefix="",
+            model_revision="weights-v2",
+        )
+
+    vector = QdrantLocalVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")),
+        dimension=4,
+    )
+    sparse = BM25SparseRetriever(tmp_path / "bm25.json")
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    embedding = VersionedQueryEmbedding()
+    try:
+        for document_id, revision in (("old", "weights-v1"), ("new", "weights-v2")):
+            chunk = _chunk(document_id, "alpha evidence", document_id=document_id)
+            fp = EmbeddingFingerprint(
+                model_id="test-model",
+                dimension=4,
+                normalized=True,
+                query_prefix="query",
+                document_prefix="",
+                model_revision=revision,
+            )
+            manifest.upsert(
+                ready_manifest_record(
+                    document_id=document_id,
+                    content_hash="hash",
+                    source_uri=f"file:///{document_id}.txt",
+                    title=document_id,
+                    parser_version="parser",
+                    chunker_version="chunker",
+                    embedding_model="test-model",
+                    embedding_dimension=4,
+                    embedding_fingerprint=fp,
+                    chunk_ids=[document_id],
+                )
+            )
+            vector.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+            sparse.index_chunks([chunk])
+        service = RetrievalService(
+            embedding_provider=embedding,
+            vector_store=vector,
+            sparse_retriever=sparse,
+            manifest=manifest,
+        )
+        result = service.retrieve(
+            "alpha", reranker_enabled=False, small_to_big_enabled=False
+        )
+        assert result.metadata["dense_chunk_ids"] == ["new"]
+        assert set(result.metadata["sparse_chunk_ids"]) == {"old", "new"}
+        assert result.metadata["dense_incompatible_document_ids"] == ["old"]
+        fallback = service.retrieve(
+            "alpha",
+            filters=VectorSearchFilter(document_ids=["old"]),
+            reranker_enabled=False,
+            small_to_big_enabled=False,
+        )
+        assert fallback.retrieval_strategy == "sparse-only"
+        assert fallback.metadata["dense_chunk_ids"] == []
+        assert fallback.metadata["sparse_chunk_ids"] == ["old"]
+        assert "reindex required" in fallback.metadata["fallback_reason"]
+        with pytest.raises(RagRetrievalError, match="reindex required"):
+            service.retrieve(
+                "alpha",
+                filters=VectorSearchFilter(document_ids=["old"]),
+                sparse_enabled=False,
+                structural_enabled=False,
+            )
+    finally:
+        vector.close()

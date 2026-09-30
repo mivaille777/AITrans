@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from time import perf_counter
 
 from backend.rag.config import RagRetrievalConfig
-from backend.rag.embeddings.base import EmbeddingProvider
+from backend.rag.embeddings.base import EmbeddingFingerprint, EmbeddingProvider
 from backend.rag.exceptions import RagRetrievalError
 from backend.rag.fusion import rrf_fuse
 from backend.rag.index_manifest import IndexManifest
@@ -79,12 +79,33 @@ class RetrievalService:
         embedding_ms = 0.0
         dense_ms = 0.0
         sparse_ms = 0.0
+        dense_incompatible_document_ids: list[str] = []
         if dense_enabled:
             try:
                 embedding_started = perf_counter()
                 vector = self._embedding.embed_query(query)
                 embedding_ms = (perf_counter() - embedding_started) * 1000
                 dense_started = perf_counter()
+                dense_generations = active_generations
+                fingerprint = getattr(self._embedding, "fingerprint", None)
+                if (
+                    self._manifest is not None
+                    and active_generations is not None
+                    and isinstance(fingerprint, EmbeddingFingerprint)
+                ):
+                    dense_generations = dict(active_generations)
+                    for document_id in active_generations:
+                        record = self._manifest.get(document_id)
+                        if (
+                            record is None
+                            or record.embedding_fingerprint != fingerprint.as_dict()
+                        ):
+                            dense_incompatible_document_ids.append(document_id)
+                            dense_generations.pop(document_id)
+                    if dense_incompatible_document_ids and not dense_generations:
+                        raise RagRetrievalError(
+                            "embedding fingerprint changed; reindex required"
+                        )
                 search_kwargs = {
                     "top_k": self._config.dense_top_k,
                     "filters": effective_filters,
@@ -93,7 +114,7 @@ class RetrievalService:
                     dense = self._vector_store.search(
                         vector,
                         **search_kwargs,
-                        active_generations=active_generations,
+                        active_generations=dense_generations,
                     )
                 else:
                     dense = self._vector_store.search(vector, **search_kwargs)
@@ -146,9 +167,15 @@ class RetrievalService:
                 structural_error = str(exc) or exc.__class__.__name__
             structural_ms = (perf_counter() - structural_started) * 1000
 
-        if dense_error and sparse_error and not structural:
+        if (
+            (dense_error or sparse_error or structural_error)
+            and (not dense_enabled or dense_error)
+            and (not sparse_enabled or sparse_error)
+            and not structural
+        ):
             raise RagRetrievalError(
-                f"dense and sparse retrieval failed: dense={dense_error}; sparse={sparse_error}"
+                "all enabled retrieval channels failed (dense and sparse): "
+                f"dense={dense_error}; sparse={sparse_error}; structural={structural_error}"
             )
         fusion_started = perf_counter()
         candidates = rrf_fuse(
@@ -237,6 +264,7 @@ class RetrievalService:
             elapsed_ms=(perf_counter() - started) * 1000,
             metadata={
                 "dense_count": len(dense),
+                "dense_incompatible_document_ids": dense_incompatible_document_ids,
                 "sparse_count": len(sparse),
                 "structural_count": len(structural),
                 "dense_enabled": dense_enabled,

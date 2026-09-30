@@ -411,7 +411,7 @@ class RagDebugService:
                 RagEvaluationPrediction(
                     case_id=case.case_id,
                     ranked_chunk_ids=ranked,
-                    pre_rerank_chunk_ids=ranked,
+                    pre_rerank_chunk_ids=metadata.get("pre_rerank_chunk_ids", ranked),
                     latency=RagEvaluationLatency(
                         query_embedding_ms=float(metadata.get("embedding_ms", 0.0) or 0.0),
                         dense_search_ms=float(metadata.get("dense_search_ms", 0.0) or 0.0),
@@ -818,7 +818,12 @@ class RagDebugService:
             emit(event.event_type, "complete", event.payload)
 
         candidates = self._candidate_responses(merged, retrievals)
+        pre_rerank_scores: dict[str, float] = {}
+        for retrieval in retrievals:
+            for rank, chunk_id in enumerate(retrieval.metadata.get("pre_rerank_chunk_ids", []), 1):
+                pre_rerank_scores[chunk_id] = pre_rerank_scores.get(chunk_id, 0.0) + 1 / (60 + rank)
         metadata = {
+            "pre_rerank_chunk_ids": sorted(pre_rerank_scores, key=lambda key: (-pre_rerank_scores[key], key)),
             "total_rag_ms": (perf_counter() - started) * 1000,
             "embedding_ms": self._metric(retrievals, "embedding_ms"),
             "dense_search_ms": self._metric(retrievals, "dense_search_ms"),

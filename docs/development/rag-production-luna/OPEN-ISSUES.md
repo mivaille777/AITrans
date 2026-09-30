@@ -20,6 +20,8 @@
 
 ## OI-003：Embedding 权重 snapshot 未固定
 
+**2026-09-30 功能修复：运行时身份与防混用已解决。** 实际权重/配置/输入上限/精度的内容摘要进入 provider 指纹，IndexService 写入并比较真实指纹；Dense 拒绝不匹配的 generation，Hybrid 可降级 BM25。加载绑定相同解析目录，旧索引重新导入会重建。见 [功能修复报告](S00-S04-REMEDIATION.md)。以下保留原审计；“选定默认发布 snapshot”是后续发布政策，不再作为未检测同名权重变化的缺陷。
+
 - 影响：当前索引指纹记录模型 ID、维度、归一化和 prompt 前缀，但未记录不可变模型权重 revision。相同模型 ID 若解析到新 snapshot，索引复用检查仍可能认为可复用。
 - 仓库证据：`backend/rag/model_manager.py` 调用 Hugging Face `snapshot_download` 时没有传 `revision`；当前 S00 基线只在外部 manifest 留有 snapshot `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`，不是运行时索引合同。
 - 开源方案核对：Hugging Face 官方文档说明 `snapshot_download` 默认下载最新 revision，可通过完整 commit hash 的 `revision` 固定模型快照：[Download files from the Hub](https://huggingface.co/docs/huggingface_hub/en/guides/download)。
@@ -46,7 +48,11 @@
 - 待决依据：OI-002 尚未批准这些代理场景的可用下限及回归容差；候选 0.80 不能被降低后伪称已达标。代表性用户文档和中文科学术语问题仍需 OI-001。
 - 回放：`data/benchmarks/s04/results/s04-bad-cases.json`，dataset/code/结果 SHA-256 见 S04-benchmark-manifest.json；报告见 S04.1/S04.2/S04。人工 Debug Studio UI 未核验，完整 S04 Stage/生产质量结论保持 BLOCKED。
 
-## 后续代码可自行解决（非待用户裁决）
+## 当前收尾与后续安排
+
+2026-09-30 用户明确要求“暂时不做效果提升，以功能正常为主，并尽快收尾”，随后要求严格最小修改。本轮只保留真实指纹的写入/复用/检索保护、全已启用通道失败处理、Debug 的重排前排名及直接相关测试。BM25 性能优化和无关格式变化已撤回，效果实验已停止，默认配置保持原值。OI-001/002/004/005 与人工桌面 UI、回答质量、后续 GraphRAG 留待继续执行时处理；原生产门禁保持历史判定。
+
+## 历史后续问题（结合上述更新读取）
 
 - Parser、错论文与 no-answer 的端到端坏例缺少真实样本；收到 OI-001 数据后补充标注并回放。
 - 注入 Qdrant/BM25/manifest 中途失败、崩溃恢复和 generation 发布检查在 S01 中实现；当前快照三存储均为 1312 个 chunk ID，差集为 0，不代表故障路径已经验证。

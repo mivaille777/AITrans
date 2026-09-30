@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
+from hashlib import file_digest, sha256
+from pathlib import Path
 from threading import RLock
 from time import perf_counter
 from typing import Any
@@ -73,6 +75,8 @@ class Qwen3EmbeddingProvider:
         self._allocated_vram_mb: float | None = None
         self._reserved_vram_mb: float | None = None
         self._retry_when_managed_model_installed = False
+        self._resolved_model_path: str | None = None
+        self._model_revision = ""
 
     @property
     def dimension(self) -> int:
@@ -84,13 +88,54 @@ class Qwen3EmbeddingProvider:
 
     @property
     def fingerprint(self) -> EmbeddingFingerprint:
+        with self._lock:
+            self._resolve_model_identity()
         return EmbeddingFingerprint(
             model_id=self.model_name,
             dimension=self.dimension,
             normalized=self._config.normalize,
             query_prefix=QWEN3_QUERY_PREFIX,
             document_prefix=QWEN3_DOCUMENT_PREFIX,
+            model_revision=self._model_revision,
         )
+
+    def _resolve_model_identity(self) -> None:
+        if self._model_revision:
+            return
+        if self._config.model_path.strip():
+            path = Path(self._config.model_path).expanduser().resolve()
+        elif self._model_manager is not None:
+            path = self._model_manager.get_model_path(EMBEDDING_MODEL_ID)
+        else:
+            from huggingface_hub import snapshot_download
+
+            path = Path(
+                snapshot_download(
+                    repo_id=self.model_name,
+                    local_files_only=self._config.local_files_only,
+                )
+            )
+        artifacts = sorted(
+            item
+            for item in path.rglob("*")
+            if item.is_file()
+            and item.suffix in {".json", ".safetensors", ".bin", ".model", ".txt"}
+            and not any(part.startswith(".") for part in item.relative_to(path).parts)
+        )
+        if not any(item.suffix in {".safetensors", ".bin"} for item in artifacts):
+            raise RagEmbeddingError("embedding model has no fingerprintable weights")
+        # Content identity also covers mutable local/managed installs. Hash once
+        # per provider; loading uses this exact resolved directory, never `main`.
+        digest = sha256(
+            f"qwen3:{self._config.max_input_tokens}:{self._config.precision}".encode()
+        )
+        for item in artifacts:
+            digest.update(item.relative_to(path).as_posix().encode())
+            digest.update(b"\0")
+            with item.open("rb") as handle:
+                digest.update(file_digest(handle, "sha256").digest())
+        self._resolved_model_path = str(path)
+        self._model_revision = f"sha256:{digest.hexdigest()}"
 
     @property
     def runtime(self) -> EmbeddingRuntimeSnapshot:
@@ -160,7 +205,14 @@ class Qwen3EmbeddingProvider:
                     torch_module,
                 )
                 configured_path = self._config.model_path.strip()
-                if configured_path:
+                if (
+                    self._model_factory is _default_model_factory
+                    or self._resolved_model_path
+                ):
+                    self._resolve_model_identity()
+                    model_source = self._resolved_model_path
+                    local_files_only = True
+                elif configured_path:
                     model_source = configured_path
                     local_files_only = self._config.local_files_only
                 elif self._model_manager is not None:

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.rag.chunking import CHUNKER_VERSION, StructureAwareChunker
 from backend.rag.config import RagVisualUnderstandingConfig
-from backend.rag.embeddings.base import EmbeddingProvider
+from backend.rag.embeddings.base import EmbeddingProvider, embedding_fingerprint
 from backend.rag.exceptions import RagInvariantError
 from backend.rag.index_manifest import (
     IndexGenerationStatus,
@@ -296,6 +296,7 @@ class IndexService:
                 chunker_version=self.chunker_version,
                 embedding_model=self._embedding_provider.model_name,
                 embedding_dimension=self._embedding_provider.dimension,
+                embedding_fingerprint=embedding_fingerprint(self._embedding_provider),
                 chunk_ids=new_chunk_ids,
                 structure_quality=structure_quality,
                 section_count=len(normalized.sections),
@@ -412,6 +413,8 @@ class IndexService:
             and record.chunker_version == self.chunker_version
             and record.embedding_model == self._embedding_provider.model_name
             and record.embedding_dimension == self._embedding_provider.dimension
+            and record.embedding_fingerprint
+            == embedding_fingerprint(self._embedding_provider).as_dict()
         )
 
     @staticmethod
