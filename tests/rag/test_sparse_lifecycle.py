@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from hashlib import sha256
 from pathlib import Path
+
+import pytest
 
 from backend.rag.models import DocumentChunk
 from backend.rag.source_span import SourceSpan, resolve_source_span
@@ -84,6 +87,11 @@ def test_generations_coexist_are_queryable_and_delete_independently(
         reopened.get_chunk("chunk_shared", generation_id="generation-two").text
         == generation_two.text
     )
+    assert reopened.search("amber", 5, generation_id="generation-one") == []
+    assert (
+        BM25SparseRetriever(path).search("amber", 5, generation_id="generation-one")
+        == []
+    )
 
 
 def test_rebuild_replaces_only_requested_generation_and_neighbors_stay_scoped(
@@ -125,6 +133,7 @@ def test_rebuild_replaces_only_requested_generation_and_neighbors_stay_scoped(
     )
     neighbors = retriever.section_neighbors(other_anchor, radius=1)
     assert [chunk.text for chunk in neighbors] == [other_anchor.text, other_next.text]
+    assert retriever.search("neighbor", 5, generation_id="generation-one") == []
 
 
 def test_source_span_survives_bm25_json_restart(tmp_path: Path) -> None:
@@ -165,3 +174,52 @@ def test_source_span_survives_bm25_json_restart(tmp_path: Path) -> None:
     assert restored is not None
     assert restored.source_span == span
     assert resolve_source_span(restored.source_span, source_text) == selected_text
+
+
+@pytest.mark.parametrize("stored_version", [None, "scientific-v1"])
+def test_tokenizer_version_change_rebuilds_from_persisted_chunks(
+    tmp_path: Path,
+    stored_version: str | None,
+) -> None:
+    path = tmp_path / "bm25.json"
+    retriever = BM25SparseRetriever(path)
+    retriever.index_chunks([_chunk("formula", "The measured compound was H2SO4.")])
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if stored_version is None:
+        del data["tokenizer_version"]
+    else:
+        data["tokenizer_version"] = stored_version
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    reopened = BM25SparseRetriever(path)
+
+    assert reopened.search("H2SO4", 1)[0].chunk.chunk_id == "formula"
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated["tokenizer_version"] == "scientific-v2"
+
+
+def test_restart_search_excludes_inactive_and_unlisted_document_generations(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bm25.json"
+    retriever = BM25SparseRetriever(path)
+    old = _chunk("old", "shared evidence", generation_id="old")
+    active = _chunk("active", "shared evidence", generation_id="active")
+    unauthorized = _chunk(
+        "other", "shared evidence", generation_id="active"
+    ).model_copy(update={"document_id": "doc_other"})
+    retriever.index_chunks([old, active, unauthorized])
+    reopened = BM25SparseRetriever(path)
+    results = reopened.search(
+        "shared evidence", 10, active_generations={"doc_one": "active"}
+    )
+    assert [result.chunk.chunk_id for result in results] == ["active"]
+    assert reopened.search("shared evidence", 10, active_generations={}) == []
+    reopened.delete_document("doc_one")
+    assert (
+        BM25SparseRetriever(path).search(
+            "shared evidence", 10, active_generations={"doc_one": "active"}
+        )
+        == []
+    )

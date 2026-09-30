@@ -85,6 +85,7 @@ class _SparseData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = 1
+    tokenizer_version: str = ""
     chunks: dict[str, DocumentChunk] = Field(default_factory=dict)
 
 
@@ -99,9 +100,17 @@ class BM25SparseRetriever:
     ) -> None:
         self._path = Path(path).expanduser().resolve()
         self._tokenizer = tokenizer or SparseTokenizer()
+        version = getattr(self._tokenizer, "VERSION", "")
+        self._tokenizer_version = str(version).strip() or (
+            f"custom:{type(self._tokenizer).__module__}."
+            f"{type(self._tokenizer).__qualname__}:unversioned"
+        )
         self._index = BM25Index(k1=k1, b=b)
         self._data = self._load()
+        tokenizer_changed = self._data.tokenizer_version != self._tokenizer_version
         self._rebuild_index()
+        if tokenizer_changed and self._path.exists():
+            self._save()
 
     def index_chunks(
         self,
@@ -453,6 +462,7 @@ class BM25SparseRetriever:
                 for chunk_id, chunk in self._data.chunks.items()
             }
         )
+        self._data.tokenizer_version = self._tokenizer_version
 
     @staticmethod
     def _search_text(chunk: DocumentChunk) -> str:

@@ -10,46 +10,45 @@ class BM25Index:
             raise ValueError("BM25 requires k1 > 0 and 0 <= b <= 1")
         self.k1 = k1
         self.b = b
-        self._documents: dict[str, Counter[str]] = {}
+        self._postings: dict[str, dict[str, int]] = {}
         self._lengths: dict[str, int] = {}
-        self._document_frequency: Counter[str] = Counter()
+        self._document_count = 0
+        self._average_length = 0.0
 
     def rebuild(self, tokenized_documents: dict[str, list[str]]) -> None:
-        self._documents = {
-            document_id: Counter(tokens)
-            for document_id, tokens in tokenized_documents.items()
-        }
-        self._lengths = {
-            document_id: sum(frequencies.values())
-            for document_id, frequencies in self._documents.items()
-        }
-        frequency: Counter[str] = Counter()
-        for frequencies in self._documents.values():
-            frequency.update(frequencies.keys())
-        self._document_frequency = frequency
+        postings: defaultdict[str, dict[str, int]] = defaultdict(dict)
+        lengths: dict[str, int] = {}
+        for document_id, tokens in tokenized_documents.items():
+            frequencies = Counter(tokens)
+            lengths[document_id] = sum(frequencies.values())
+            for term, term_frequency in frequencies.items():
+                postings[term][document_id] = term_frequency
+
+        self._postings = dict(postings)
+        self._lengths = lengths
+        self._document_count = len(lengths)
+        self._average_length = (
+            sum(lengths.values()) / self._document_count if lengths else 0.0
+        )
 
     def score(self, query_tokens: list[str]) -> dict[str, float]:
-        if not query_tokens or not self._documents:
+        if not query_tokens or not self._document_count:
             return {}
-        average_length = sum(self._lengths.values()) / len(self._lengths)
         scores: defaultdict[str, float] = defaultdict(float)
-        document_count = len(self._documents)
         for term in dict.fromkeys(query_tokens):
-            document_frequency = self._document_frequency.get(term, 0)
-            if document_frequency == 0:
+            postings = self._postings.get(term)
+            if not postings:
                 continue
+            document_frequency = len(postings)
             inverse_frequency = math.log(
                 1
-                + (document_count - document_frequency + 0.5)
+                + (self._document_count - document_frequency + 0.5)
                 / (document_frequency + 0.5)
             )
-            for document_id, frequencies in self._documents.items():
-                term_frequency = frequencies.get(term, 0)
-                if term_frequency == 0:
-                    continue
+            for document_id, term_frequency in postings.items():
                 length = self._lengths[document_id]
                 denominator = term_frequency + self.k1 * (
-                    1 - self.b + self.b * length / max(average_length, 1)
+                    1 - self.b + self.b * length / max(self._average_length, 1)
                 )
                 scores[document_id] += inverse_frequency * (
                     term_frequency * (self.k1 + 1) / denominator
