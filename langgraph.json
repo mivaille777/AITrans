@@ -3,7 +3,8 @@
   "dependencies": ["."],
   "graphs": {
     "reading_agent": "./backend/agent_graph/studio.py:make_graph",
-    "root_agent": "./backend/agent_graph/studio.py:make_root_graph"
+    "root_agent": "./backend/agent_graph/studio.py:make_root_graph",
+    "root_agent_native": "./backend/agent_graph/studio.py:make_native_root_graph"
   },
   "env": ".env",
   "python_version": "3.11"

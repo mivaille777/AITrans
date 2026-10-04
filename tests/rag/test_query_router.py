@@ -13,6 +13,11 @@ from backend.rag.query_router import RagQueryRouter
         ("Explain the mechanism", "semantic", 3, True, False),
         ("比较 M10 与 C8", "multi-hop", 3, True, None),
         ("Compare papers across documents", "multi-hop", 3, True, None),
+        ("autotuned PID controller 和 MATLAB PID Tuner 有什么关系？", "multi-hop", 3, True, None),
+        ("两个控制器之间的关系是什么？", "multi-hop", 3, True, None),
+        ("控制器如何影响水位？", "multi-hop", 3, True, None),
+        ("What is the relationship between Alpha and Beta?", "multi-hop", 3, True, None),
+        ("How is Alpha related to Beta?", "multi-hop", 3, True, None),
     ],
 )
 def test_enabled_routes_have_bounded_channels_and_keep_exact_scope(

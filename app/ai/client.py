@@ -25,6 +25,7 @@ from app.ai.errors import (
 )
 from app.ai.runtime_status import track_llm_request
 from app.ai.secrets import ProviderCredentialStore, get_deepseek_api_key
+from app.ai.tool_calling import NativeToolCallingClient
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
@@ -39,7 +40,7 @@ DEFAULT_MAX_RETRIES = 1
 DEFAULT_TEMPERATURE = 0.2
 
 
-class DeepSeekClient:
+class DeepSeekClient(NativeToolCallingClient):
     """Small application-facing wrapper around the DeepSeek Chat API.
 
     The wrapper keeps SDK details below the application boundary, defaults to

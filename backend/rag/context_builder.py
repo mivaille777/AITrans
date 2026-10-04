@@ -90,6 +90,7 @@ class GroundedContextBuilder:
         text = preamble[: self.max_context_chars]
         included: list[str] = []
         omitted: list[str] = []
+        segments: dict[str, str] = {}
         for position, item in enumerate(_evidence_order(evidence), start=1):
             citation = citation_by_evidence.get(item.evidence_id)
             if citation is None:
@@ -112,7 +113,24 @@ class GroundedContextBuilder:
                 omitted.append(item.evidence_id)
                 continue
             text += segment
+            segments[item.evidence_id] = segment
             included.append(item.evidence_id)
+
+        # A label must never authorize omitted evidence, including partial groups.
+        included_set = set(included)
+        usable_citations = [
+            citation for citation in citations
+            if set(citation.evidence_ids).issubset(included_set)
+        ]
+        citable = {identifier for citation in usable_citations for identifier in citation.evidence_ids}
+        omitted.extend(identifier for identifier in included if identifier not in citable)
+        included = [identifier for identifier in included if identifier in citable]
+        bounded_allowed = "\n".join(
+            f"- {citation.citation_id} => {citation.label} => {', '.join(citation.evidence_ids)}"
+            for citation in usable_citations
+        )
+        text = preamble.replace(f"ALLOWED CITATIONS\n{allowed}\n", f"ALLOWED CITATIONS\n{bounded_allowed}\n")
+        text = text[:self.max_context_chars] + "".join(segments[identifier] for identifier in included)
 
         estimated_tokens = ceil(len(text) / self.chars_per_token) if text else 0
         return GroundedContext(

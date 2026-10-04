@@ -148,8 +148,10 @@ class ProductAgentService:
         planner: AgentPlannerService | Any | None = None,
         multi_step_planner: AgentMultiStepPlannerService | Any | None = None,
         grounded_synthesis_service: GroundedSynthesisService | Any | None = None,
+        function_calling_enabled: bool = False,
     ) -> None:
         self._registry = registry
+        self.function_calling_enabled = bool(function_calling_enabled)
         self._chat_service = chat_service
         self._router = router or AgentDeterministicRouterService()
         self._semantic_router = (
@@ -544,6 +546,7 @@ class ProductAgentService:
             "search_knowledge_base",
             "read_knowledge_chunk",
             "read_knowledge_section",
+            "list_knowledge_documents",
         }:
             trusted_document_ids = _trusted_scope_ids(
                 payload.get("knowledge_document_ids", ())
@@ -552,11 +555,13 @@ class ProductAgentService:
             execution_payload["knowledge_scope_allow_global"] = bool(
                 payload.get("knowledge_scope_allow_global", False)
             )
+            execution_payload["trace_id"] = str(payload.get("trace_id", "") or "").strip()
+            execution_payload["run_id"] = str(payload.get("run_id", "") or "").strip()
         if spec.name == "search_knowledge_base":
             trusted_document_ids = _trusted_scope_ids(
                 payload.get("knowledge_document_ids", ())
             )
-            if trusted_document_ids:
+            if trusted_document_ids and not validated_arguments.get("document_ids") and not validated_arguments.get("document_scope"):
                 execution_payload["document_ids"] = trusted_document_ids
                 execution_payload["document_scope"] = ""
         elif spec.name == "search_research_notes":
@@ -786,6 +791,7 @@ class ProductAgentService:
             context_mode=self._chat_context_mode(payload),
             evidence=evidence,
             citations=citations,
+            **({"knowledge_access_policy": "never"} if self.function_calling_enabled else {}),
         )
         answer = verified.answer
         verification = verified.verification
@@ -841,6 +847,8 @@ class ProductAgentService:
         control.checkpoint("synthesis")
         started = monotonic()
         kwargs: dict[str, Any] = {}
+        if self.function_calling_enabled:
+            kwargs["knowledge_access_policy"] = "never"
         if tool_name:
             kwargs["tool_name"] = tool_name
             kwargs["tool_context"] = tool_context

@@ -7,6 +7,7 @@ from typing import Literal
 
 from app.infrastructure.settings import SettingsManager
 from backend.agent_tools.base import TypedAgentToolDefinition
+from backend.agent_tools.knowledge import KnowledgeAgentTools
 from backend.api.knowledge_dependencies import (
     get_knowledge_library_service,
     get_rag_runtime,
@@ -236,6 +237,10 @@ def get_companion_chat_service() -> CompanionChatService:
             if not isinstance(rag_settings, dict):
                 rag_settings = {}
             _companion_chat_service = CompanionChatService(
+                function_calling_enabled=True,
+                knowledge_tools_factory=lambda: KnowledgeAgentTools(
+                    retrieval_service=get_retrieval_service(), chunk_store=get_rag_runtime().sparse_retriever,
+                    jit_search_read_enabled=True, library_service=get_knowledge_library_service()),
                 query_router=CompanionQueryRouter(),
                 reading_resolver_factory=get_reading_selection_resolver,
                 retrieval_service_factory=get_retrieval_service,
@@ -327,6 +332,7 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 query_planner=build_rag_query_planner(),
                 chunk_store=rag_runtime.sparse_retriever,
                 jit_search_read_enabled=rag_runtime.config.jit_search_read_enabled,
+                knowledge_library_service=get_knowledge_library_service(),
                 knowledge_workspace_service=get_knowledge_workspace_service(),
                 sandbox_manager=get_sandbox_manager(),
                 filesystem_workspace_service=get_filesystem_workspace_service(),

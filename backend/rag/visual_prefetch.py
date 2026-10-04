@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
+from uuid import uuid4
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
@@ -115,13 +116,15 @@ class QdrantTwoStageVisualStore(QdrantVisualMultiVectorStore):
         old_ids = self._document_point_ids(document_id)
         points: list[qdrant_models.PointStruct] = []
         new_ids = set()
+        build_id = uuid4().hex
         for chunk, vector in zip(chunks, vectors, strict=True):
             multivector = _validate_multivector(vector, self.dimension)
-            point_id = self._point_id(chunk.chunk_id)
+            point_id = self._point_id(f"{chunk.chunk_id}:{build_id}", chunk.metadata.get("index_generation"), index_version)
             new_ids.add(point_id)
             payload = chunk.model_dump(mode="json")
             payload["source_kind"] = str(chunk.metadata.get("source_kind", ""))
             payload["visual_index_version"] = index_version
+            payload["visual_published"] = False
             payload["visual_search_schema"] = TWO_STAGE_VISUAL_SCHEMA_VERSION
             points.append(
                 qdrant_models.PointStruct(
@@ -136,11 +139,7 @@ class QdrantTwoStageVisualStore(QdrantVisualMultiVectorStore):
 
         try:
             if points:
-                self._client.upsert(
-                    collection_name=self.collection_name,
-                    points=points,
-                    wait=True,
-                )
+                self._publish_points(points)
             stale = sorted(old_ids - new_ids, key=str)
             if stale:
                 self._client.delete(
@@ -159,12 +158,13 @@ class QdrantTwoStageVisualStore(QdrantVisualMultiVectorStore):
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise RagVectorStoreError("visual top_k must be positive")
         self.ensure_collection()
         multivector = _validate_multivector(query, self.dimension)
-        query_filter = self._build_filter(filters)
+        query_filter = self._build_filter(filters, active_generations)
 
         if not self._config.prefetch_enabled:
             return self._full_scan(
@@ -179,6 +179,7 @@ class QdrantTwoStageVisualStore(QdrantVisualMultiVectorStore):
             response = self._client.query_points(
                 collection_name=self.collection_name,
                 prefetch=qdrant_models.Prefetch(
+                    filter=query_filter,
                     query=pool_multivector(multivector, self.dimension),
                     using=COARSE_VECTOR_NAME,
                     limit=prefetch_limit,
@@ -257,6 +258,7 @@ class QdrantTwoStageVisualStore(QdrantVisualMultiVectorStore):
             payload = dict(point.payload or {})
             payload.pop("source_kind", None)
             payload.pop("visual_index_version", None)
+            payload.pop("visual_published", None)
             payload.pop("visual_search_schema", None)
             try:
                 chunk = DocumentChunk.model_validate(payload)

@@ -349,7 +349,18 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
 
 def _redacted_payload(event: AgentEvent) -> dict[str, object]:
     allowed = _ALLOWED_EVENT_FIELDS.get(event.event_type.value, frozenset())
-    return {key: event.payload[key] for key in allowed if key in event.payload}
+    if event.event_type.value.startswith("rag_"):
+        allowed = allowed | {"event_id", "parent_id", "trace_id", "scope_hash", "stage",
+            "started_at", "ended_at", "retrieval_spans", "spans", "cache_hit", "cache_source_span_ids",
+            "token_usage", "cost"}
+    payload = {key: event.payload[key] for key in allowed if key in event.payload}
+    for key in ("retrieval_spans", "spans"):
+        if key in payload:
+            safe_fields = {"trace_id", "span_id", "parent_id", "stage", "status",
+                           "started_at", "ended_at", "elapsed_ms"}
+            payload[key] = [{field: value for field, value in span.items() if field in safe_fields}
+                            for span in payload[key] if isinstance(span, dict)]
+    return payload
 
 
 class AgentTraceStoreService:

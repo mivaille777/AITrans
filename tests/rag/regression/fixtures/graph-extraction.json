@@ -1,0 +1,73 @@
+{
+  "claims": [
+    {
+      "text": "Alpha uses Beta.",
+      "claim_type": "finding",
+      "confidence": 0.9,
+      "evidence_excerpt": "Alpha uses Beta."
+    },
+    {
+      "text": "Beta uses Gamma.",
+      "claim_type": "finding",
+      "confidence": 0.9,
+      "evidence_excerpt": "Beta uses Gamma."
+    },
+    {
+      "text": "Gamma uses Delta.",
+      "claim_type": "finding",
+      "confidence": 0.9,
+      "evidence_excerpt": "Gamma uses Delta."
+    }
+  ],
+  "entities": [
+    {
+      "canonical_name": "Alpha",
+      "entity_type": "concept",
+      "aliases": [],
+      "description": "Entity that uses Beta."
+    },
+    {
+      "canonical_name": "Beta",
+      "entity_type": "concept",
+      "aliases": [],
+      "description": "Entity used by Alpha and that uses Gamma."
+    },
+    {
+      "canonical_name": "Gamma",
+      "entity_type": "concept",
+      "aliases": [],
+      "description": "Entity used by Beta and that uses Delta."
+    },
+    {
+      "canonical_name": "Delta",
+      "entity_type": "concept",
+      "aliases": [],
+      "description": "Entity used by Gamma."
+    }
+  ],
+  "relations": [
+    {
+      "subject": "Alpha",
+      "predicate": "uses",
+      "object": "Beta",
+      "claim_index": 0,
+      "confidence": 0.9
+    },
+    {
+      "subject": "Beta",
+      "predicate": "uses",
+      "object": "Gamma",
+      "claim_index": 1,
+      "confidence": 0.9
+    },
+    {
+      "subject": "Gamma",
+      "predicate": "uses",
+      "object": "Delta",
+      "claim_index": 2,
+      "confidence": 0.9
+    }
+  ],
+  "extractor_version": "graph-1.0.0",
+  "prompt_id": "research.memory.extract@graph-1.0.0"
+}

@@ -209,6 +209,26 @@ def _state():
     )
 
 
+def test_compiled_native_root_passes_trace_to_specialist_without_wrapper():
+    from backend.rag.observability import current_rag_trace
+
+    observed = []
+
+    def runner(task):
+        observed.append(current_rag_trace())
+        return TaskResult(task_id=task.task_id, attempt_id=f"{task.task_id}:1", status=TaskStatus.SUCCEEDED)
+
+    graph = _root(_registry(["trace-agent"], runner), [("task-a", "trace-agent", ())], calls=_NeverExecutor())
+    state = _state()
+    def sink(*_args):
+        return None
+    result = graph.compiled_graph.invoke({"agent_state": state.model_dump(mode="json")},
+        context={"event_sink": sink})
+    assert TaskResult.model_validate(result["task_results"][0]).status is TaskStatus.SUCCEEDED, result["task_results"][0]
+    assert observed == [(state.trace_id, sink)]
+    assert current_rag_trace() == (None, None)
+
+
 def test_native_send_runs_independent_tasks_in_parallel_and_waits_for_dependencies():
     barrier = Barrier(2, timeout=4)
     lock = Lock()

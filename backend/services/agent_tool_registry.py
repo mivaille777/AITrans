@@ -157,6 +157,7 @@ class AgentToolRegistry:
         query_planner: Any | None = None,
         chunk_store: KnowledgeChunkStore | None = None,
         jit_search_read_enabled: bool = False,
+        knowledge_library_service: Any | None = None,
         knowledge_workspace_service: KnowledgeWorkspaceService | None = None,
         sandbox_manager: Any | None = None,
         filesystem_workspace_service: Any | None = None,
@@ -241,6 +242,7 @@ class AgentToolRegistry:
             chunk_store=chunk_store,
             jit_search_read_enabled=self.jit_search_read_enabled,
             workspace_service=knowledge_workspace_service,
+            library_service=knowledge_library_service,
         )
         knowledge_definitions = build_knowledge_tool_definitions(knowledge_tools)
         sandbox_definitions = (

@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from backend.rag.evidence_builder import build_agent_evidence
+from backend.rag.exceptions import RagInvariantError
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
+from backend.rag.source_span import SourceSpan
 
 
 def _result(
@@ -40,6 +42,22 @@ def _result(
         retrieval_strategy="hybrid",
         elapsed_ms=2.5,
     )
+
+
+def test_versioned_evidence_preserves_span_and_rejects_changed_excerpt():
+    result = _result()
+    chunk = result.candidates[0].chunk
+    chunk.source_span = SourceSpan.from_text(
+        chunk.text, start_char=0, end_char=len(chunk.text), document_hash="source",
+    )
+    chunk.end_char = len(chunk.text)
+    result.candidates[0].index_generation = "generation-1"
+    evidence = build_agent_evidence(result)[0]
+    assert evidence.metadata["index_generation"] == "generation-1"
+    assert evidence.metadata["source_span"]["quote_hash"] == chunk.source_span.quote_hash
+    chunk.text = "Changed answer"
+    with pytest.raises(RagInvariantError, match="source span"):
+        build_agent_evidence(result)
 
 
 @pytest.mark.parametrize(

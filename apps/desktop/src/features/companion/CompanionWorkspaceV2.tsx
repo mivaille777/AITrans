@@ -64,8 +64,11 @@ function companionKnowledgeBehaviorLabel(message: CompanionRuntimeMessage): stri
     return "Knowledge · searched · no evidence"
   }
   if (!decision) return null
+  if (decision.reason_code === "catalog_request") {
+    return "Knowledge · directory"
+  }
   if (decision.reason_code === "current_context_sufficient") {
-    return "Knowledge · skipped / Reading context sufficient"
+    return "Knowledge · skipped / Current context sufficient"
   }
   if (decision.reason_code === "explicit_never") {
     return "Knowledge · skipped / Never search"

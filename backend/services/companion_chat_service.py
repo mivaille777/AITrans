@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass
+from threading import Event
 from time import perf_counter
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 from app.ai.chat.models import (
     ChatContext,
@@ -13,13 +15,19 @@ from app.ai.chat.models import (
     ChatRole,
     ReadingContext,
 )
-from app.ai.chat.service import AIChatService
+from app.ai.chat.service import CHAT_SYSTEM_PROMPT, AIChatService, build_chat_prompt
 from app.ai.chat.stream_service import ProviderStreamingAIChatService
 from app.ai.chat.system_context import SYSTEM_CONTEXT, SystemContext
-from app.ai.errors import AIConfigurationError
+from app.ai.errors import AIConfigurationError, AITimeoutError
 from app.ai.service import AITextService
+from backend.agent_core.exceptions import AgentBudgetExceededError
+from backend.agent_tools.knowledge import KnowledgeAgentTools
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
-from backend.models.companion_routing import CompanionExecutionPlan, CompanionQueryRoute
+from backend.models.companion_routing import (
+    CompanionExecutionPlan,
+    CompanionQueryRoute,
+    GroundingPolicy,
+)
 from backend.models.knowledge_access import (
     KnowledgeAccessDecision,
     KnowledgeAccessPolicy,
@@ -34,14 +42,22 @@ from backend.rag.query_planner import (
     merge_query_results,
 )
 from backend.rag.query_router import RagQueryRoute, RagQueryRouter
+from backend.rag.retrieval_service import RetrievalService
 from backend.rag.stores.base import VectorSearchFilter
 from backend.rag.structure_retrieval import (
     build_structural_queries,
     detect_structural_intent,
     promote_structural_candidates,
 )
+from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.companion_query_router import CompanionQueryRouter
 from backend.services.knowledge_access_router import KnowledgeAccessRouter
+from backend.services.knowledge_function_calling import (
+    KNOWLEDGE_FUNCTION_PROMPT,
+    KnowledgeFunctionState,
+    run_knowledge_functions,
+)
+from backend.services.knowledge_scope_resolver import KnowledgeScopeResolver
 from backend.services.reading_context_adapter import to_reading_context
 
 
@@ -108,6 +124,8 @@ class CompanionChatService:
         rag_rewrite_enabled: bool = True,
         rag_router_enabled: bool = False,
         rag_query_router: RagQueryRouter | Any | None = None,
+        function_calling_enabled: bool = False,
+        knowledge_tools_factory: Callable[[], KnowledgeAgentTools] | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -124,6 +142,8 @@ class CompanionChatService:
         self._knowledge_access_router = knowledge_access_router or KnowledgeAccessRouter()
         self._system_context = system_context or SYSTEM_CONTEXT
         self._grounded_context_builder = GroundedContextBuilder()
+        self.function_calling_enabled = bool(function_calling_enabled)
+        self._knowledge_tools_factory = knowledge_tools_factory
         if not isinstance(rag_rewrite_enabled, bool) or not isinstance(
             rag_router_enabled, bool
         ):
@@ -187,6 +207,7 @@ class CompanionChatService:
         context_mode: str = "general",
         source_text: str = "",
         phase_callback: Any | None = None,
+        trace_id: str | None = None,
     ) -> CompanionPreparedExecution:
         policy = self._resolve_knowledge_policy(
             knowledge_access_policy,
@@ -242,9 +263,15 @@ class CompanionChatService:
                 query,
                 plan.document_ids,
                 history=history,
+                trace_id=trace_id,
             )
             tool_name = "search_knowledge_base"
             tool_context = grounding.tool_context
+            if not grounding.evidence and (
+                plan.route is CompanionQueryRoute.DOCUMENT_SCOPED_SEARCH
+                or context_mode in {"knowledge", "research"}
+            ):
+                direct_output_text = "当前文档中没有足够的可用证据回答此问题，请补充资料或稍后重试。"
         return CompanionPreparedExecution(
             plan=plan,
             grounding=grounding,
@@ -325,18 +352,22 @@ class CompanionChatService:
         document_ids: tuple[str, ...] = (),
         *,
         history: tuple[tuple[str, str], ...] = (),
+        trace_id: str | None = None,
     ) -> CompanionKnowledgeGrounding:
+        trace_id = trace_id or f"companion_{uuid4().hex[:20]}"
         try:
             retrieval_service = self._ensure_retrieval_service()
         except Exception as exc:
             return CompanionKnowledgeGrounding(
                 tool_context="Knowledge retrieval was unavailable. Answer generally if possible and do not cite a source.",
                 fallback_reason=f"retrieval_init_failed:{str(exc) or exc.__class__.__name__}",
+                debug_metadata={"trace_id": trace_id},
             )
         if retrieval_service is None:
             return CompanionKnowledgeGrounding(
                 tool_context="No relevant knowledge evidence was found. Answer generally if possible and do not cite a source.",
                 fallback_reason="retrieval_unavailable",
+                debug_metadata={"trace_id": trace_id},
             )
         normalized_ids = tuple(
             dict.fromkeys(item.strip() for item in document_ids if item.strip())
@@ -365,7 +396,7 @@ class CompanionChatService:
         if not route.should_retrieve:
             return CompanionKnowledgeGrounding(
                 fallback_reason=route.reason,
-                debug_metadata={"query_route": asdict(route), "original_query": query},
+                debug_metadata={"trace_id": trace_id, "query_route": asdict(route), "original_query": query},
             )
         plan = RagQueryPlan(original_query=query, rewritten_query=query)
         planning_started = perf_counter()
@@ -384,10 +415,7 @@ class CompanionChatService:
                     update={"fallback_reason": str(exc) or exc.__class__.__name__}
                 )
         planning_ms = (perf_counter() - planning_started) * 1000
-        structural_intent = (
-            detect_structural_intent(query)
-            or detect_structural_intent(plan.rewritten_query)
-        )
+        structural_intent = detect_structural_intent(query)
         expanded_queries = (
             build_structural_queries(
                 plan.rewrites or (query,),
@@ -402,6 +430,7 @@ class CompanionChatService:
             :route.max_queries
         ]
         debug_plan = {
+            "trace_id": trace_id,
             "query_plan": plan.model_dump(mode="json"),
             "query_route": asdict(route),
             "retrieval_queries": list(retrieval_queries),
@@ -417,6 +446,10 @@ class CompanionChatService:
                     "filters": filters.model_copy(deep=True) if filters else None,
                     **route.retrieval_kwargs,
                 }
+                if isinstance(retrieval_service, RetrievalService) or callable(
+                    getattr(retrieval_service, "validate_evidence_candidates", None)
+                ):
+                    retrieve_kwargs["trace_id"] = trace_id
                 if structural_intent is not None:
                     retrieve_kwargs.update(
                         {
@@ -444,7 +477,10 @@ class CompanionChatService:
             try:
                 retrievals.append(
                     retrieval_service.retrieve(
-                        query, filters=filters.model_copy(deep=True) if filters else None
+                        query, filters=filters.model_copy(deep=True) if filters else None,
+                        **({"trace_id": trace_id} if isinstance(retrieval_service, RetrievalService) or callable(
+                            getattr(retrieval_service, "validate_evidence_candidates", None)
+                        ) else {}),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - preserve failures from the original-query fallback
@@ -476,7 +512,17 @@ class CompanionChatService:
             intent=structural_intent,
             limit=merge_limit,
         )
-        evidence = build_agent_evidence(result)
+        try:
+            validator = getattr(retrieval_service, "validate_evidence_candidates", None)
+            if callable(validator):
+                validator(result, filters=filters)
+            evidence = build_agent_evidence(result)
+        except Exception as exc:  # noqa: BLE001 - invalid provenance must fail closed
+            return CompanionKnowledgeGrounding(
+                tool_context="Knowledge evidence is unavailable. Do not claim a document-grounded answer or invent citations.",
+                fallback_reason=str(exc) or exc.__class__.__name__,
+                debug_metadata=debug_plan,
+            )
         citations = build_evidence_citations(evidence)
         if not evidence:
             return CompanionKnowledgeGrounding(
@@ -521,6 +567,9 @@ class CompanionChatService:
             ),
             debug_metadata={
                 **debug_plan,
+                "retrieval_spans": [item.metadata["retrieval_span"] for item in retrievals
+                                    if "retrieval_span" in item.metadata],
+                "stage_timings": [item.metadata.get("stage_timings", {}) for item in retrievals],
                 "retrieval_strategy": str(result.retrieval_strategy or ""),
                 "dense_candidates": sum(
                     int(item.metadata.get("dense_count", 0) or 0)
@@ -536,6 +585,8 @@ class CompanionChatService:
                 ),
                 "reranked_candidates": len(result.candidates),
                 "evidence_count": len(bounded_evidence),
+                "evidence_status": "relevant_insufficient" if bounded_evidence else "absent",
+                "evidence_status_reason": "claim_verification_required" if bounded_evidence else "no_evidence",
                 "embedding_ms": round(
                     sum(float(item.metadata.get("embedding_ms", 0.0) or 0.0) for item in retrievals),
                     3,
@@ -770,26 +821,58 @@ class CompanionChatService:
 
     def send(self, **kwargs: Any) -> CompanionChatResult:
         payload = dict(kwargs)
+        phase_callback = payload.pop("phase_callback", None)
+        prepared_callback = payload.pop("prepared_callback", None)
+        verification_callback = payload.pop("verification_callback", None)
+        trace_id = payload.pop("trace_id", None)
         raw_policy = payload.pop("knowledge_access_policy", None)
         raw_legacy_enabled = payload.pop("knowledge_enabled", None)
         policy = self._resolve_knowledge_policy(raw_policy, raw_legacy_enabled)
         raw_document_ids = payload.pop("knowledge_document_ids", ())
         document_ids = tuple(str(item) for item in raw_document_ids)
         history = tuple(payload.get("history", ()) or ())
-        prepared = self.prepare_execution(
-            query=str(payload.get("user_message", "")),
-            knowledge_access_policy=policy,
-            knowledge_enabled=raw_legacy_enabled,
-            document_ids=document_ids,
-            history=history,
-            context_mode=str(payload.get("context_mode", "general") or "general"),
-            source_text=str(payload.get("source_text", "") or ""),
-        )
+        if self.function_calling_enabled:
+            parts: list[str] = []
+            native_prepared: list[CompanionPreparedExecution] = []
+
+            def capture_prepared(value):
+                native_prepared.append(value)
+                if callable(prepared_callback):
+                    prepared_callback(value)
+
+            parts.extend(self.run_functions(
+                **payload, knowledge_access_policy=policy,
+                knowledge_document_ids=document_ids, trace_id=trace_id,
+                phase_callback=phase_callback, prepared_callback=capture_prepared,
+                reset_output=parts.clear, stream=False,
+            ))
+            prepared = native_prepared[-1]
+            native_output = "".join(parts)
+        else:
+            prepared = self.prepare_execution(
+                query=str(payload.get("user_message", "")),
+                knowledge_access_policy=policy,
+                knowledge_enabled=raw_legacy_enabled,
+                document_ids=document_ids,
+                history=history,
+                context_mode=str(payload.get("context_mode", "general") or "general"),
+                source_text=str(payload.get("source_text", "") or ""),
+                phase_callback=phase_callback,
+                trace_id=trace_id,
+            )
+        if not self.function_calling_enabled and callable(prepared_callback):
+            prepared_callback(prepared)
         if prepared.tool_name:
             payload["tool_name"] = prepared.tool_name
             payload["tool_context"] = prepared.tool_context
         request = self._build_request(**self._with_resolved_reading(payload))
-        if prepared.direct_output_text:
+        if callable(phase_callback):
+            phase_callback("generating", prepared.plan)
+        if self.function_calling_enabled:
+            result = SimpleNamespace(session_id=request.session_id,
+                user_message=request.user_message, output_text=native_output,
+                provider=self.provider_name, model=self.model, request_id=request.request_id)
+        elif prepared.direct_output_text:
             result = SimpleNamespace(
                 session_id=request.session_id,
                 user_message=request.user_message,
@@ -801,10 +884,34 @@ class CompanionChatService:
         else:
             result = self._ensure_chat_service().execute(request)
         grounding = prepared.grounding
+        output_text = result.output_text
+        fallback_reason = grounding.fallback_reason
+        if prepared.plan.grounding_policy is GroundingPolicy.EVIDENCE:
+            from backend.services.grounded_synthesis_service import (
+                PARTIAL_GROUNDING_NOTICE,
+                evidence_only_grounding_fallback,
+            )
+
+            if callable(phase_callback):
+                phase_callback("verifying", prepared.plan)
+            verification = AgentClaimEvidenceVerifier().verify(
+                output_text=output_text, evidence=grounding.evidence, citations=grounding.citations,
+            )
+            if verification.partial_grounding and "cross_language_support_unscored" in verification.reason_codes:
+                output_text = f"{output_text.rstrip()}\n\n{PARTIAL_GROUNDING_NOTICE}"
+            elif not verification.passed:
+                output_text = evidence_only_grounding_fallback(
+                    evidence=list(grounding.evidence), citations=list(grounding.citations),
+                )
+                output_text = self._knowledge_failure_text(grounding) or output_text
+                fallback_reason = "; ".join(filter(None, (fallback_reason,
+                    "grounding_verification_failed:", ",".join(verification.reason_codes))))
+            if callable(verification_callback):
+                verification_callback(asdict(verification), not verification.passed)
         return CompanionChatResult(
             session_id=result.session_id,
             user_message=result.user_message,
-            output_text=result.output_text,
+            output_text=output_text,
             provider=result.provider,
             model=result.model,
             request_id=result.request_id,
@@ -812,9 +919,9 @@ class CompanionChatService:
             knowledge_access_policy=prepared.knowledge_policy,
             knowledge_decision=prepared.knowledge_decision,
             knowledge_retrieved=prepared.plan.use_knowledge,
-            knowledge_document_count=self._grounding_document_count(grounding),
+            knowledge_document_count=max(self._grounding_document_count(grounding), prepared.catalog_document_count),
             knowledge_chunk_count=self._grounding_chunk_count(grounding),
-            knowledge_fallback_reason=grounding.fallback_reason,
+            knowledge_fallback_reason=fallback_reason,
             evidence=grounding.evidence,
             citations=grounding.citations,
         )
@@ -856,6 +963,172 @@ class CompanionChatService:
     def stream(self, **kwargs: Any) -> Iterator[str]:
         request = self._build_request(**self._with_resolved_reading(kwargs))
         yield from self._ensure_stream_service().stream(request)
+
+    @staticmethod
+    def _function_prepared(state: KnowledgeFunctionState) -> CompanionPreparedExecution:
+        route = (
+            (
+                CompanionQueryRoute.DOCUMENT_SCOPED_SEARCH
+                if state.scope.document_ids
+                else CompanionQueryRoute.KNOWLEDGE_SEARCH
+            )
+            if state.searched
+            else (
+                CompanionQueryRoute.KNOWLEDGE_CATALOG
+                if state.catalog_used
+                else CompanionQueryRoute.GENERAL
+            )
+        )
+        policy = (
+            GroundingPolicy.EVIDENCE
+            if state.searched
+            else (GroundingPolicy.MANIFEST if state.catalog_used else GroundingPolicy.NONE)
+        )
+        plan = CompanionExecutionPlan(
+            route=route,
+            grounding_policy=policy,
+            use_knowledge=state.searched,
+            document_ids=state.scope.document_ids,
+            reason="LLM native function calling",
+        )
+        reason = (
+            "knowledge_request"
+            if state.searched
+            else ("catalog_request" if state.catalog_used else "current_context_sufficient")
+        )
+        if state.policy is KnowledgeAccessPolicy.NEVER:
+            reason = "explicit_never"
+        decision = KnowledgeAccessDecision(
+            mode=state.policy,
+            should_retrieve=state.searched,
+            reason_code=reason,
+            scope_strategy=state.scope.strategy,
+            query=state.query,
+        )
+        metadata = {
+            "trace_id": state.trace_id,
+            "function_calls": list(state.calls),
+            "observability": list(state.observability),
+            "selected_chunks": [
+                {
+                    "document_id": item.source_id,
+                    "chunk_id": item.metadata.get("chunk_id", ""),
+                }
+                for item in state.evidence
+            ],
+        }
+        return CompanionPreparedExecution(
+            plan=plan,
+            knowledge_policy=state.policy,
+            knowledge_decision=decision,
+            catalog_document_count=state.catalog_count,
+            grounding=CompanionKnowledgeGrounding(
+                evidence=tuple(state.evidence),
+                citations=tuple(state.citations),
+                fallback_reason=state.fallback_reason,
+                debug_metadata=metadata,
+            ),
+        )
+
+    def run_functions(
+        self,
+        *,
+        phase_callback=None,
+        prepared_callback=None,
+        reset_output=None,
+        trace_id=None,
+        cancel_event: Event | None = None,
+        stream=True,
+        **kwargs,
+    ) -> Iterator[str]:
+        payload = dict(kwargs)
+        policy = self._resolve_knowledge_policy(
+            payload.pop("knowledge_access_policy", None),
+            payload.pop("knowledge_enabled", None),
+        )
+        document_ids = tuple(payload.pop("knowledge_document_ids", ()) or ())
+        payload = self._with_resolved_reading(payload)
+        if (
+            policy is not KnowledgeAccessPolicy.NEVER
+            and not document_ids
+            and payload.get("source_kind") == "knowledge_document"
+        ):
+            # The reading document stays a closed scope even when an older client
+            # supplies only its source URI rather than its ID.
+            library = self._ensure_knowledge_library_service()
+            records = library.list_documents() if library is not None else ()
+            document_ids = tuple(
+                record.document_id
+                for record in records
+                if record.source_uri == payload.get("resource_url")
+            ) or ("__unresolved_reading_document__",)
+        scope = KnowledgeScopeResolver().resolve(
+            context_mode=payload.get("context_mode", "general"),
+            explicit_document_ids=document_ids,
+            global_allowed=not document_ids,
+        )
+        state = KnowledgeFunctionState(
+            scope=scope, policy=policy, trace_id=trace_id or f"companion_{uuid4().hex[:20]}"
+        )
+        request = self._build_request(**payload)
+        messages = [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT + KNOWLEDGE_FUNCTION_PROMPT},
+            {"role": "user", "content": build_chat_prompt(request)},
+        ]
+        messages[0]["content"] += (
+            f"\nKnowledge policy: {policy.value}. Permitted document IDs: {list(scope.document_ids)}."
+        )
+        client = getattr(self._ensure_text_service().provider, "client", None)
+        method = "stream_tools" if stream else "complete_tools"
+        if not callable(getattr(client, method, None)):
+            raise AIConfigurationError(
+                "The selected chat provider does not support native function calling."
+            )
+
+        def tools_factory():
+            if self._knowledge_tools_factory is not None:
+                return self._knowledge_tools_factory()
+            retrieval = self._ensure_retrieval_service()
+            return KnowledgeAgentTools(
+                retrieval_service=retrieval,
+                chunk_store=getattr(retrieval, "_sparse", None),
+                jit_search_read_enabled=True,
+                library_service=self._ensure_knowledge_library_service(),
+            )
+
+        def on_state(current):
+            prepared = self._function_prepared(current)
+            if callable(prepared_callback):
+                prepared_callback(prepared)
+
+        def on_phase(phase):
+            if callable(phase_callback):
+                phase_callback(phase, self._function_prepared(state).plan)
+
+        try:
+            yield from run_knowledge_functions(
+                client=client, messages=messages, state=state, tools_factory=tools_factory,
+                request_id=request.request_id, stream=stream, on_state=on_state,
+                reset_output=reset_output or (lambda: None), cancel_event=cancel_event, on_phase=on_phase,
+            )
+        except AgentBudgetExceededError as exc:
+            raise AITimeoutError("Local knowledge function calling exceeded its execution deadline.") from exc
+
+    @staticmethod
+    def _knowledge_failure_text(grounding: CompanionKnowledgeGrounding | None) -> str:
+        if grounding is None or grounding.evidence:
+            return ""
+        statuses = {
+            item.get("status")
+            for item in (grounding.debug_metadata or {}).get("function_calls", [])
+        }
+        if "tool_timeout" in statuses:
+            return "本地资料访问超时，暂时无法核验答案，请稍后重试。"
+        if "tool_unavailable" in statuses:
+            return "本地资料服务当前不可用，暂时无法核验答案，请检查服务状态后重试。"
+        if "scope_denied" in statuses:
+            return "请求的资料超出允许范围，或片段尚未通过检索定位，无法核验答案。"
+        return ""
 
     def close(self) -> None:
         service = self._text_service

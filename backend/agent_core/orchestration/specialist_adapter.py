@@ -5,11 +5,12 @@ import hashlib
 from collections.abc import Mapping
 from hashlib import sha256
 from time import perf_counter
-from typing import Any, TypedDict
+from typing import Any, NotRequired
 
 from langgraph.config import get_config
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
+from typing_extensions import TypedDict
 
 from backend.agent_core.events import AgentEventType
 from backend.agent_core.exceptions import AgentBudgetExceededError, AgentCancelledError
@@ -23,12 +24,14 @@ from backend.models.agent_tasks import (
     TaskStatus,
     utc_now,
 )
+from backend.rag.observability import bind_rag_trace, current_rag_trace
 
 
 class SpecialistDispatchInput(TypedDict):
     task: TaskSpec
     scope: ScopeContext
     dependency_results: dict[str, TaskResult]
+    trace_id: NotRequired[str]
 
 
 def specialist_node_name(agent_id: str) -> str:
@@ -244,6 +247,8 @@ def create_specialist_node(
                 )
             with manager.acquire(agent_spec.resource_class), bind_runtime_budget(
                 manager.budget
+            ), bind_rag_trace(
+                dispatch.get("trace_id") or current_rag_trace()[0], emit
             ):
                 if use_checkpointed_graph:
                     parent_config = get_config()

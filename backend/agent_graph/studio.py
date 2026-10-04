@@ -30,6 +30,7 @@ from backend.api.knowledge_board_dependencies import get_knowledge_board_service
 from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace_service
 from backend.api.memory_dependencies import get_memory_coordinator
 from backend.models.agent_tasks import TaskRole
+from backend.rag.exceptions import RagRetrievalError
 from backend.services.agent_conversation_service import AgentConversationService
 from backend.services.multi_agent_runtime_bridge import MultiAgentRuntimeBridge
 from backend.services.multi_agent_workspace_service import MultiAgentWorkspaceService
@@ -40,6 +41,18 @@ class _LazyRetrievalService:
     @staticmethod
     def retrieve(*args, **kwargs):
         return get_retrieval_service().retrieve(*args, **kwargs)
+
+    @staticmethod
+    def validate_evidence_candidates(*args, **kwargs):
+        validator = getattr(get_retrieval_service(), "validate_evidence_candidates", None)
+        if not callable(validator):
+            raise RagRetrievalError("retrieval provider does not support evidence source validation")
+        return validator(*args, **kwargs)
+
+    @staticmethod
+    def evidence_cache_version(*args, **kwargs):
+        getter = getattr(get_retrieval_service(), "evidence_cache_version", None)
+        return getter(*args, **kwargs) if callable(getter) else None
 
 
 class _LazyEvidenceReviewService:
@@ -71,6 +84,13 @@ def _build_conversation_service():
     )
 
 
+def _build_studio_adapter() -> ProductAgentRuntimeAdapter:
+    return ProductAgentRuntimeAdapter(
+        _LazyDependency(get_product_agent_service),
+        conversation_service=_LazyDependency(_build_conversation_service),
+    )
+
+
 def make_root_graph():
     """Build the production RootAgentGraph for LangSmith Studio.
 
@@ -80,13 +100,20 @@ def make_root_graph():
     ambiguous type-based injection during graph introspection.
     """
 
-    adapter = ProductAgentRuntimeAdapter(
-        _LazyDependency(get_product_agent_service),
-        conversation_service=_LazyDependency(_build_conversation_service),
-    )
+    adapter = _build_studio_adapter()
     if resolve_agent_graph_engine() == "native":
         return _build_native_studio_graph(adapter).compiled_graph
     return RootAgentGraph(adapter).compiled_graph
+
+
+def make_native_root_graph():
+    """Expose native planning and specialist subgraphs without changing rollout.
+
+    This explicit Studio entry uses the existing native implementation even
+    when production keeps the compatibility engine as its default.
+    """
+
+    return _build_native_studio_graph(_build_studio_adapter()).compiled_graph
 
 
 def _build_native_studio_graph(adapter: ProductAgentRuntimeAdapter) -> RootAgentGraph:
@@ -168,4 +195,4 @@ def make_graph():
     return make_root_graph()
 
 
-__all__ = ["make_graph", "make_root_graph"]
+__all__ = ["make_graph", "make_native_root_graph", "make_root_graph"]

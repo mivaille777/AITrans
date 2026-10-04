@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from typing_extensions import TypedDict
 
 from app.ai.errors import AIError
 from backend.agent_core.orchestration.coordinator_memory import role_memory_projection

@@ -6,7 +6,81 @@ from pathlib import Path
 import pytest
 
 from backend.api import knowledge_dependencies
-from backend.rag.config import RagAdvancedParsingConfig, RagConfig, RagEmbeddingConfig
+from backend.rag.config import (
+    RagAdvancedParsingConfig,
+    RagConfig,
+    RagEmbeddingConfig,
+    RagVisualUnderstandingConfig,
+)
+
+
+def test_runtime_qdrant_environment_selects_server_without_changing_default(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from tests.rag.graph.test_indexer import Embedding
+
+    configs = []
+    monkeypatch.setenv("AITRANS_QDRANT_URL", "http://127.0.0.1:6335/")
+    monkeypatch.setattr(knowledge_dependencies, "SettingsManager", lambda: SimpleNamespace(data={
+        "rag": {"embedding": {"dimension": 4}, "graph": {"enabled": False},
+            "vector_store": {"storage_path": str(tmp_path / "original-local")}}}))
+    monkeypatch.setattr(knowledge_dependencies, "get_rag_model_manager", lambda: None)
+    monkeypatch.setattr(knowledge_dependencies, "create_embedding_provider", lambda *a, **kw: Embedding())
+    monkeypatch.setattr(knowledge_dependencies, "Qwen3RerankerProvider", lambda *a, **kw: None)
+    def store(config, **kwargs):
+        configs.append(config)
+        return SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(knowledge_dependencies, "QdrantLocalVectorStore", store)
+    runtime = knowledge_dependencies._build_runtime()
+    assert configs[0].url == "http://127.0.0.1:6335"
+    assert configs[0].storage_path == str(tmp_path / "original-local")
+    assert runtime.config.vector_store.url == configs[0].url
+
+
+def test_native_visual_memory_overrides_are_validated(monkeypatch):
+    from backend.rag.config import RagVisualRetrievalConfig
+
+    original = RagVisualRetrievalConfig()
+    monkeypatch.setenv("AITRANS_RAG_VISUAL_QUANTIZATION", "nf4")
+    monkeypatch.setenv("AITRANS_RAG_VISUAL_MAX_IMAGE_TOKENS", "256")
+    monkeypatch.setenv("AITRANS_RAG_VISUAL_CACHE_DIR", "D:/visual-cache")
+    resolved = knowledge_dependencies._resolve_visual_retrieval_config(original)
+    assert resolved.quantization == "nf4" and resolved.max_image_tokens == 256
+    assert resolved.cache_dir == "D:/visual-cache"
+    assert original.quantization == "none"
+    monkeypatch.setenv("AITRANS_RAG_VISUAL_MAX_IMAGE_TOKENS", "-1")
+    with pytest.raises(ValueError):
+        knowledge_dependencies._resolve_visual_retrieval_config(original)
+
+
+@pytest.mark.parametrize("base_url", ["", "https://api.deepseek.com/"])
+def test_visual_config_inherits_chat_credentials_for_same_endpoint(base_url):
+    configured = RagVisualUnderstandingConfig(enabled=True, base_url=base_url)
+    resolved = knowledge_dependencies._resolve_visual_understanding_config(
+        configured,
+        {"ai": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com",
+        }},
+    )
+
+    assert resolved.credential_provider == "deepseek"
+    assert resolved.model == "deepseek-v4-flash"
+    assert resolved.base_url.rstrip("/") == "https://api.deepseek.com"
+    assert configured.credential_provider == "openai_compatible"
+
+
+def test_visual_config_does_not_forward_chat_credentials_to_another_endpoint():
+    configured = RagVisualUnderstandingConfig(
+        enabled=True, model="vision", base_url="https://vision.example/v1"
+    )
+    resolved = knowledge_dependencies._resolve_visual_understanding_config(
+        configured,
+        {"ai": {"provider": "deepseek", "base_url": "https://api.deepseek.com"}},
+    )
+
+    assert resolved == configured
 
 
 def test_relative_rag_storage_is_anchored_to_application_data_root(

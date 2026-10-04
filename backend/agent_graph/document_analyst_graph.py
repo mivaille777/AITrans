@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from typing_extensions import TypedDict
 
 from backend.agent_core.orchestration.coordinator_memory import role_memory_projection
 from backend.agent_core.orchestration.runtime_budget import reserve_runtime_resource
@@ -25,6 +27,7 @@ from backend.models.agent_artifacts import (
 )
 from backend.models.agent_evidence import EvidencePacket
 from backend.models.agent_tasks import ScopeContext, TaskResult, TaskSpec, TaskStatus
+from backend.rag.observability import bind_rag_trace, current_rag_trace
 
 _FIELD_TERMS = {
     "research_questions": ("research question", "objective", "aim", "研究问题", "目标"),
@@ -165,22 +168,26 @@ class DocumentAnalystGraph:
                 break
         return {"document_ids": document_ids, "queries": queries}
 
-    def _retrieve_evidence(self, state: DocumentAnalystState) -> dict[str, Any]:
+    def _retrieve_evidence(self, state: DocumentAnalystState, runtime: Runtime[Any]) -> dict[str, Any]:
         scope = state["scope"].model_copy(
             update={"allowed_document_ids": list(state["document_ids"])}
         )
         packets: dict[str, EvidencePacket] = {}
-        for query in state["queries"]:
-            reserve_runtime_resource("retrievals")
-            reserve_runtime_resource("tool_calls")
-            for packet in self._evidence.retrieve_packets(
-                query=query,
-                scope=scope,
-                limit=self._evidence_per_query,
-            ):
-                if packet.evidence_ref.source_id not in set(state["document_ids"]):
-                    continue
-                packets[packet.evidence_ref.evidence_id] = packet
+        trace_id, event_sink = current_rag_trace()
+        context = runtime.context if isinstance(runtime.context, Mapping) else {}
+        trace_id = trace_id or context.get("trace_id") or f"{state['task'].task_id}:rag:{uuid4().hex[:12]}"
+        with bind_rag_trace(trace_id, event_sink or context.get("event_sink")):
+            for query in state["queries"]:
+                reserve_runtime_resource("retrievals")
+                reserve_runtime_resource("tool_calls")
+                for packet in self._evidence.retrieve_packets(
+                    query=query,
+                    scope=scope,
+                    limit=self._evidence_per_query,
+                ):
+                    if packet.evidence_ref.source_id not in set(state["document_ids"]):
+                        continue
+                    packets[packet.evidence_ref.evidence_id] = packet
         return {"evidence": list(packets.values())}
 
     def _analyze_document(self, state: DocumentAnalystState) -> dict[str, Any]:

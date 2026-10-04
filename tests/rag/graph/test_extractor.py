@@ -222,6 +222,102 @@ def test_graph_validation_repair_does_not_retry_provider_errors(graph_chunk):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("unsupported", [False, True])
+def test_missing_source_endpoint_preserves_only_grounded_relations(graph_chunk, unsupported):
+    text = "Alpha uses Beta. Gamma remains deterministic."
+    document, chunk = graph_chunk(text)
+    payload = {
+        "claims": [{"text": text, "evidence_excerpt": text}],
+        "entities": [{"canonical_name": "Alpha"}, {"canonical_name": "Gamma"}],
+        "relations": [
+            {"subject": "Alpha", "predicate": "uses", "object": "Beta", "claim_index": 0}
+        ],
+    }
+    if unsupported:
+        payload["relations"].append(
+            {"subject": "Gamma", "predicate": "constrained_to_be",
+             "object": "deterministic", "claim_index": 0}
+        )
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(payload)
+
+    source = GraphExtractionService(
+        SimpleNamespace(provider=SimpleNamespace(client=SimpleNamespace(complete=complete)))
+    )
+    result = GraphExtractor(source).extract(chunk, document)
+
+    assert len(result.relations) == 1
+    relation = result.relations[0]
+    assert result.entities[relation.source_index].canonical_name == "Alpha"
+    assert result.entities[relation.target_index].canonical_name == "Beta"
+    assert resolve_source_span(relation.source_span, document.text) == text
+    assert len(calls) == 1
+    if unsupported:
+        assert "unsupported_predicate" in result.rejected
+
+
+@pytest.mark.parametrize("invalid", ["invented", "substring", "evidence", "capacity"])
+def test_endpoint_completion_cannot_bypass_source_or_schema_checks(graph_chunk, invalid):
+    text = "Alpha uses BetaX." if invalid == "substring" else "Alpha uses Beta."
+    document, chunk = graph_chunk(text)
+    payload = {
+        "claims": [{"text": text, "evidence_excerpt":
+                    "Invented evidence." if invalid == "evidence" else text}],
+        "entities": [{"canonical_name": "Alpha"}],
+        "relations": [{"subject": "Alpha", "predicate": "uses",
+                       "object": "Invented" if invalid == "invented" else "Beta",
+                       "claim_index": 0}],
+    }
+    if invalid == "capacity":
+        payload["entities"].extend({"canonical_name": f"Other{index}"} for index in range(39))
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(payload)
+
+    source = GraphExtractionService(
+        SimpleNamespace(provider=SimpleNamespace(client=SimpleNamespace(complete=complete)))
+    )
+    with pytest.raises(AIResponseError, match="verbatim|invalid structured"):
+        GraphExtractor(source).extract(chunk, document)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("quote_id", ["source_quote_0", "source_quote_999"])
+def test_graph_repair_resolves_only_supplied_verbatim_excerpt_ids(graph_chunk, quote_id):
+    document, chunk = graph_chunk()
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return json.dumps({
+            "claims": [{"text": "Alpha uses Beta.", "evidence_excerpt":
+                        "Invented evidence." if len(calls) == 1 else quote_id}],
+            "entities": [{"canonical_name": "Alpha", "entity_type": "model"},
+                         {"canonical_name": "Beta", "entity_type": "model"}],
+            "relations": [{"subject": "Alpha", "object": "Beta",
+                           "predicate": "uses", "claim_index": 0}],
+        })
+
+    source = GraphExtractionService(
+        SimpleNamespace(provider=SimpleNamespace(client=SimpleNamespace(complete=complete)))
+    )
+    if quote_id == "source_quote_0":
+        result = GraphExtractor(source).extract(chunk, document)
+        assert len(result.relations) == 1
+        assert resolve_source_span(result.relations[0].source_span, document.text) == chunk.text
+    else:
+        with pytest.raises(AIResponseError, match="verbatim"):
+            GraphExtractor(source).extract(chunk, document)
+    assert len(calls) == 2
+    feedback = json.loads(calls[1]["user_prompt"])["validation_feedback"]
+    assert feedback["source_excerpts"]["source_quote_0"] == chunk.text
+
+
 @pytest.mark.parametrize(
     "text,quote,expected",
     [

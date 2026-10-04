@@ -23,6 +23,7 @@ from backend.models.companion import (
     CompanionChatStreamStart,
 )
 from backend.models.companion_routing import GroundingPolicy
+from backend.rag.inference_worker import inference_cancellation
 from backend.services.agent_claim_evidence_verifier import AgentClaimEvidenceVerifier
 from backend.services.companion_chat_service import CompanionChatService
 from backend.services.companion_ownership_service import (
@@ -89,6 +90,8 @@ def _prepare_execution(service: Any, payload: Any, **kwargs: Any) -> Any:
     )
     if "knowledge_access_policy" not in parameters and not accepts_kwargs:
         kwargs.pop("knowledge_access_policy", None)
+    if "trace_id" not in parameters and not accepts_kwargs:
+        kwargs.pop("trace_id", None)
     return prepare(**kwargs)
 
 
@@ -184,6 +187,8 @@ async def stream_companion_chat(
     terminal_committed = False
     latest_text_lock = Lock()
     latest_text = ""
+    rag_debug = None
+    companion_trace_id = ""
 
     def current_text() -> str:
         with latest_text_lock:
@@ -215,6 +220,13 @@ async def stream_companion_chat(
                 error_code=error_code,
             )
             terminal_committed = True
+            if rag_debug is not None and companion_trace_id:
+                try:
+                    rag_debug.record_companion_event(companion_trace_id, stage="answer",
+                        status=terminal_status, metadata={"provider": provider, "model": model,
+                            "error_code": error_code, "output_characters": len(current_text() if content is None else content)})
+                except Exception:
+                    _logger.exception("Failed to finalize Companion lifecycle trace.")
             return True
 
     try:
@@ -329,10 +341,14 @@ async def stream_companion_chat(
             loop.call_soon_threadsafe(queue.put_nowait, event)
 
         def produce() -> None:
+            with inference_cancellation(cancel_event):
+                produce_core()
+
+        def produce_core() -> None:
+            nonlocal rag_debug, companion_trace_id
             accumulated: list[str] = []
             persisted_length = 0
             last_flush = monotonic()
-            rag_debug = None
             try:
                 # RAG Debug is observability only. Initialize it after the
                 # WebSocket handshake so local debug-store failures can never
@@ -341,10 +357,30 @@ async def stream_companion_chat(
                     rag_debug = get_rag_debug_service()
                 except Exception:  # noqa: BLE001 - observability must not break chat
                     _logger.exception("RAG Debug unavailable; continuing without chat tracing.")
+                if rag_debug is not None:
+                    try:
+                        companion_trace_id = rag_debug.record_companion_route(
+                            request_id=request_id, conversation_id=conversation_id, query=payload.user_message,
+                            knowledge_enabled=payload.knowledge_enabled,
+                            document_ids=tuple(payload.knowledge_document_ids), route="pending", route_reason="",
+                            grounding_policy="pending", retrieval_skipped=True, verification_skipped=True,
+                        )
+                        rag_debug.record_companion_event(companion_trace_id, stage="preparing", status="active")
+                    except Exception:
+                        _logger.exception("Failed to start Companion lifecycle trace.")
+                if cancel_event.is_set():
+                    if rag_debug is not None and companion_trace_id:
+                        rag_debug.record_companion_event(companion_trace_id, stage="answer", status="cancelled")
+                    return
 
                 stream_kwargs = _stream_kwargs(payload)
 
                 def emit_phase(phase: str, plan: Any) -> None:
+                    if rag_debug is not None and companion_trace_id:
+                        try:
+                            rag_debug.record_companion_event(companion_trace_id, stage=phase, status="active")
+                        except Exception:
+                            _logger.exception("Failed to record Companion lifecycle phase.")
                     route = getattr(getattr(plan, "route", ""), "value", "")
                     emit(
                         {
@@ -357,66 +393,101 @@ async def stream_companion_chat(
                         }
                     )
 
-                prepared = _prepare_execution(
-                    service,
-                    payload,
-                    query=payload.user_message,
-                    knowledge_access_policy=payload.knowledge_access_policy,
-                    knowledge_enabled=payload.knowledge_enabled,
-                    document_ids=tuple(payload.knowledge_document_ids),
-                    history=tuple(
-                        (item.role, item.content) for item in payload.history
-                    ),
-                    context_mode=payload.context_mode,
-                    source_text=payload.source_text,
-                    phase_callback=emit_phase,
-                )
-                grounding = prepared.grounding
-                evidence_route = (
-                    prepared.plan.grounding_policy is GroundingPolicy.EVIDENCE
-                )
-                companion_trace_id = ""
-                try:
-                    if rag_debug is not None:
-                        companion_trace_id = rag_debug.record_companion_route(
-                            request_id=request_id,
-                            conversation_id=conversation_id,
-                            query=payload.user_message,
-                            knowledge_enabled=payload.knowledge_enabled,
-                            document_ids=tuple(payload.knowledge_document_ids),
-                            route=prepared.plan.route.value,
-                            route_reason=prepared.plan.reason,
-                            grounding_policy=prepared.plan.grounding_policy.value,
-                            retrieval_skipped=not prepared.plan.use_knowledge,
-                            verification_skipped=not evidence_route,
-                            catalog_document_count=prepared.catalog_document_count,
-                            retrieval=dict(prepared.grounding.debug_metadata or {}),
-                            evidence=[
-                                item.model_dump(mode="json")
-                                for item in prepared.grounding.evidence
-                            ],
-                            citations=[
-                                item.model_dump(mode="json")
-                                for item in prepared.grounding.citations
-                            ],
-                        )
-                except Exception:  # noqa: BLE001 - observability must not break chat
-                    _logger.exception("Failed to record Companion routing trace.")
-                if prepared.tool_name:
-                    stream_kwargs["tool_name"] = prepared.tool_name
-                    stream_kwargs["tool_context"] = prepared.tool_context
-                stream_kwargs.pop("knowledge_enabled", None)
-                stream_kwargs.pop("knowledge_access_policy", None)
-                stream_kwargs.pop("knowledge_document_ids", None)
-                direct_output = str(prepared.direct_output_text or "")
-                response_provider = "local" if direct_output else service.provider_name
-                response_model = "deterministic" if direct_output else service.model
-                stream_parts = (
-                    (direct_output,)
-                    if direct_output
-                    else service.stream(**stream_kwargs)
-                )
-                emit_phase("generating", prepared.plan)
+                native_functions = isinstance(service, CompanionChatService) and service.function_calling_enabled
+
+                def record_prepared():
+                    nonlocal companion_trace_id
+                    try:
+                        if rag_debug is not None:
+                            companion_trace_id = rag_debug.record_companion_route(
+                                trace_id=companion_trace_id or None,
+                                request_id=request_id,
+                                conversation_id=conversation_id,
+                                query=payload.user_message,
+                                knowledge_enabled=payload.knowledge_enabled,
+                                document_ids=tuple(payload.knowledge_document_ids),
+                                route=prepared.plan.route.value,
+                                route_reason=prepared.plan.reason,
+                                grounding_policy=prepared.plan.grounding_policy.value,
+                                retrieval_skipped=not prepared.plan.use_knowledge,
+                                verification_skipped=not evidence_route,
+                                catalog_document_count=prepared.catalog_document_count,
+                                retrieval=dict(prepared.grounding.debug_metadata or {}),
+                                evidence=[
+                                    item.model_dump(mode="json")
+                                    for item in prepared.grounding.evidence
+                                ],
+                                citations=[
+                                    item.model_dump(mode="json")
+                                    for item in prepared.grounding.citations
+                                ],
+                            )
+                    except Exception:  # noqa: BLE001 - observability must not break chat
+                        _logger.exception("Failed to record Companion routing trace.")
+
+                if native_functions:
+                    prepared = None
+                    grounding = None
+                    evidence_route = False
+
+                    def capture_prepared(value):
+                        nonlocal prepared, grounding, evidence_route
+                        prepared = value
+                        grounding = value.grounding
+                        evidence_route = value.plan.grounding_policy is GroundingPolicy.EVIDENCE
+                        record_prepared()
+
+                    def reset_output():
+                        accumulated.clear()
+                        update_latest("")
+                        emit({"type": "delta", "request_id": request_id,
+                            "conversation_id": conversation_id, "message_id": assistant_message_id,
+                            "delta": "", "accumulated_text": ""})
+
+                    response_provider = service.provider_name
+                    response_model = service.model
+                    stream_parts = service.run_functions(**stream_kwargs,
+                        trace_id=companion_trace_id or None, cancel_event=cancel_event,
+                        phase_callback=emit_phase, prepared_callback=capture_prepared,
+                        reset_output=reset_output)
+                else:
+                    prepared = _prepare_execution(
+                        service,
+                        payload,
+                        query=payload.user_message,
+                        knowledge_access_policy=payload.knowledge_access_policy,
+                        knowledge_enabled=payload.knowledge_enabled,
+                        document_ids=tuple(payload.knowledge_document_ids),
+                        history=tuple(
+                            (item.role, item.content) for item in payload.history
+                        ),
+                        context_mode=payload.context_mode,
+                        source_text=payload.source_text,
+                        phase_callback=emit_phase,
+                        trace_id=companion_trace_id or None,
+                    )
+                    grounding = prepared.grounding
+                    evidence_route = (
+                        prepared.plan.grounding_policy is GroundingPolicy.EVIDENCE
+                    )
+                    record_prepared()
+                    if prepared.tool_name:
+                        stream_kwargs["tool_name"] = prepared.tool_name
+                        stream_kwargs["tool_context"] = prepared.tool_context
+                    stream_kwargs.pop("knowledge_enabled", None)
+                    stream_kwargs.pop("knowledge_access_policy", None)
+                    stream_kwargs.pop("knowledge_document_ids", None)
+                    direct_output = str(prepared.direct_output_text or "")
+                    if cancel_event.is_set():
+                        return
+                    response_provider = "local" if direct_output else service.provider_name
+                    response_model = "deterministic" if direct_output else service.model
+                    stream_parts = (
+                        (direct_output,)
+                        if direct_output
+                        else service.stream(**stream_kwargs)
+                    )
+                    emit_phase("generating", prepared.plan)
                 for delta in stream_parts:
                     if cancel_event.is_set():
                         return
@@ -427,7 +498,7 @@ async def stream_companion_chat(
                     )
                     accumulated.append(delta)
                     text = "".join(accumulated)
-                    if evidence_route:
+                    if evidence_route or native_functions:
                         # Evidence-grounded output is provisional until deterministic
                         # grounding verification completes. The desktop runtime
                         # renders accumulated_text as a replaceable streaming
@@ -516,6 +587,7 @@ async def stream_companion_chat(
                             evidence=list(grounding_evidence),
                             citations=list(grounding_citations),
                         )
+                        text = CompanionChatService._knowledge_failure_text(grounding) or text
                         grounding_fallback = "; ".join(
                             part
                             for part in (
@@ -577,7 +649,7 @@ async def stream_companion_chat(
                             knowledge_retrieved=bool(prepared.plan.use_knowledge),
                             knowledge_document_count=CompanionChatService._grounding_document_count(
                                 grounding
-                            ),
+                            ) or prepared.catalog_document_count,
                             knowledge_chunk_count=CompanionChatService._grounding_chunk_count(
                                 grounding
                             ),
@@ -613,7 +685,7 @@ async def stream_companion_chat(
                         "knowledge_retrieved": bool(prepared.plan.use_knowledge),
                         "knowledge_document_count": CompanionChatService._grounding_document_count(
                             grounding
-                        ),
+                        ) or prepared.catalog_document_count,
                         "knowledge_chunk_count": CompanionChatService._grounding_chunk_count(
                             grounding
                         ),

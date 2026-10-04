@@ -125,3 +125,35 @@ def test_restricted_review_scope_requires_both_exact_document_and_note_membershi
     )
 
     assert packets == ()
+
+
+def test_review_rejection_after_retrieval_is_effective_in_the_same_scope():
+    reviews = ReviewService()
+    snapshot = reviews.snapshot(workspace_id="workspace-a", query="alpha", limit=8)
+    reviews.snapshot = lambda **kwargs: snapshot
+    scope = ScopeContext.issue(
+        scope_revision="r1", workspace_id="workspace-a",
+        allowed_document_ids=["doc-a"], allowed_note_ids=["note-a"],
+    )
+    service = ScopedEvidenceService(evidence_review=reviews)
+    assert service.retrieve_packets(query="alpha", scope=scope)
+    snapshot.items[0].review.status = "rejected"
+    assert service.retrieve_packets(query="alpha", scope=scope) == ()
+
+
+def test_knowledge_item_edit_and_deletion_are_effective_in_the_same_scope():
+    item = SimpleNamespace(
+        item_id="item-a", item_type=SimpleNamespace(value="note"),
+        title="alpha", summary="old content", updated_at=SimpleNamespace(isoformat=lambda: "v1"),
+        source_uri="",
+    )
+    items = {"item-a": item}
+    service = ScopedEvidenceService(knowledge_workspace=SimpleNamespace(
+        get_item=items.get, list_relations=list,
+    ))
+    scope = ScopeContext.issue(scope_revision="r1", allowed_item_ids=["item-a"])
+    assert service.retrieve_packets(query="alpha", scope=scope)[0].text == "alpha\nold content"
+    item.summary = "updated content"
+    assert service.retrieve_packets(query="alpha", scope=scope)[0].text == "alpha\nupdated content"
+    items.clear()
+    assert service.retrieve_packets(query="alpha", scope=scope) == ()

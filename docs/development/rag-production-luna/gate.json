@@ -3,6 +3,22 @@
   "decision": "BLOCKED",
   "decision_date": "2026-09-30",
   "baseline_manifest": "baseline-manifest.json",
+  "technical_acceptance": {
+    "approved_by": "user",
+    "approved_at": "2026-09-30",
+    "scope": "public datasets; candidate thresholds approved for technical acceptance only",
+    "thresholds": {"recall_at_5": 0.80, "mrr": 0.70, "citation_accuracy": 0.90, "warm_retrieval_p95_ms": 800},
+    "unknown_is_pass": false,
+    "status": "FAIL_OR_UNMEASURED",
+    "report": "QUALITY-ACCEPTANCE.md",
+    "candidate_profile": "quality-rerank512.json",
+    "blockers": [
+      "QASPER candidate MRR=0.5424; SciFact test Recall@5=0.7821; MedicalRetrieval diagnostic Recall@5=0.63 and warm hybrid-rerank P95=2981.56ms.",
+      "Independent public-label judge calibration failed; semantic Citation Accuracy remains unmeasured.",
+      "2Wiki graph index is partial: 85 HTTP402 failures and one exact-source-quote failure; complete graph quality is blocked."
+    ],
+    "production_approval": false
+  },
   "policy": {
     "candidate_source": "GPT-6 Luna taskbook section 1.2 and its listed candidate thresholds",
     "owner_approval": "pending",

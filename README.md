@@ -304,7 +304,10 @@ Feature development should normally use a short-lived branch and a pull request 
 ## Architecture and Development Documents
 
 - [Multi-Agent system design](docs/development/multi-agent-system-design.md)
-- [Multi-Agent phased taskbook](docs/development/multi-agent-system-taskbook.md)
+- [Agent Runtime taskbook](<docs/development/Agent Runtime重构任务书.md>)
+- [Current RAG architecture and enabled features](docs/development/rag-production-luna/RAG-ARCHITECTURE-CURRENT.md)
+- [RAG production improvement taskbook](AITrans-RAG-Production-Improvement-Plan-GPT6-Luna.md)
+- [RAG execution status and open issues](docs/development/rag-production-luna/STATUS.md)
 - [MA10 deterministic report](docs/development/ma10-deterministic-report.json)
 - [Contributing guide](CONTRIBUTING.md)
 

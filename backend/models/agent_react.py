@@ -41,6 +41,7 @@ class AgentReActDecision(AgentReActContractModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     action_summary: str = ""
     final_answer: str = ""
+    native_tool_call_id: str = Field(default="", max_length=128)
 
     @model_validator(mode="after")
     def validate_decision_shape(self) -> "AgentReActDecision":

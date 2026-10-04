@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { StrictMode } from "react"
 
 vi.mock("../../api/rag-debug", () => {
   const config = {
@@ -142,7 +143,7 @@ vi.mock("../../desktop", () => ({
 
 import RagDebugStudioTrace from "./RagDebugStudioTrace"
 import { addKnowledgeDocument, deleteKnowledgeDocument, reindexKnowledgeDocument } from "../../api/knowledge"
-import { compareQasperDebugRuns, getQasperDebugCase, listQasperDebugCases, listQasperDebugRuns, listRagDebugChunks, startQasperDebugRun, startRagDebugRun } from "../../api/rag-debug"
+import { compareQasperDebugRuns, getQasperDebugCase, getRagDebugRun, listQasperDebugCases, listQasperDebugRuns, listRagDebugChunks, startQasperDebugRun, startRagDebugRun } from "../../api/rag-debug"
 import { desktop } from "../../desktop"
 
 afterEach(() => {
@@ -338,6 +339,18 @@ describe("RagDebugStudio", () => {
       expect(screen.getByText(label)).toBeTruthy()
     }
     expect(screen.getByText("Case Results")).toBeTruthy()
+  })
+
+  it("completes a trace after StrictMode remount and opens the graph source", async () => {
+    const candidate = { id: "c1", document_id: "d", source: "chain.txt", section: "", page: null, tokens: 4, dense: null, bm25: null, fusion: 1, rerank: null, before: 1, after: 1, text: "Alpha uses Beta.", chunk_type: "text", start: 0, end: 16, metadata: { graph_paths: [{ edge_ids: ["edge-1"] }] } }
+    vi.mocked(getRagDebugRun).mockResolvedValueOnce({ run_id: "run-1", trace_id: "t", status: "completed", query: "Alpha", config_id: "default", query_plan: {}, knowledge_decision: {}, knowledge_scope: {}, stages: [{ key: "graph", label: "Graph", status: "complete", elapsed_ms: 1, note: "", summary: { seed_ids: ["Alpha"], paths: ["edge-1"] }, candidate_count: 1 }], candidates: [{ ...candidate, id: "other", text: "Other source", metadata: {} }, candidate], context: { text: "", estimated_tokens: 0, included_evidence_ids: [], omitted_evidence_ids: [], source_count: 1 }, evidence: [], citations: [], answer: "", metadata: {}, error: "" })
+    render(<StrictMode><RagDebugStudioTrace /></StrictMode>)
+    fireEvent.change(screen.getByPlaceholderText(/Ask a question against/), { target: { value: "Alpha" } })
+    fireEvent.click(screen.getByRole("button", { name: "Run trace" }))
+    await waitFor(() => expect(screen.getByRole("region", { name: "Graph evidence trace" })).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", { name: "Inspect graph source: c1" }))
+    expect(screen.getByText("Alpha uses Beta.")).toBeTruthy()
+    expect((screen.getByRole("button", { name: "Run trace" }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it("runs a comparison and renders returned query details", async () => {

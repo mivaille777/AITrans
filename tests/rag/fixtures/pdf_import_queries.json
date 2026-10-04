@@ -1,0 +1,39 @@
+{
+  "description": "Source-page facts fixed before retrieval; authored engineering proxy, not a public QA benchmark or human business gold. All queries search both PDFs. Anchors are ordered source fragments within 300 canonical characters; formatting equivalence only.",
+  "documents": {
+    "bert": {"path": "data/benchmarks/s06/papers/1810.04805.pdf", "sha256": "5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e", "filename": "BERT论文.pdf"},
+    "attention": {"path": "data/benchmarks/s06/papers/1706.03762.pdf", "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697", "filename": "Attention.pdf"}
+  },
+  "cases": [
+    {"id":"b01","document":"bert","page":3,"language":"zh","query":"BERT基础模型的参数总量是多少？","anchors":["110M"]},
+    {"id":"b02","document":"bert","page":3,"language":"en","query":"How many parameters does BERT Large contain?","anchors":["340M"]},
+    {"id":"b03","document":"bert","page":4,"language":"zh","query":"BERT预训练随机选择多大比例的词元用于掩码预测？","anchors":["we mask","15%"]},
+    {"id":"b04","document":"bert","page":4,"language":"en","query":"How often is a selected BERT prediction token replaced by the mask symbol?","anchors":["the [MASK] token 80% of the time"]},
+    {"id":"b05","document":"bert","page":4,"language":"zh","query":"BERT使用什么分词词表，词表包含多少词元？","anchors":["We use WordPiece embeddings","30,000 token vocabulary"]},
+    {"id":"b06","document":"bert","page":5,"language":"en","query":"Which two corpora and word counts are used for BERT pretraining?","anchors":["BooksCorpus (800M words)","English Wikipedia (2,500M words)"]},
+    {"id":"b07","document":"bert","page":4,"language":"zh","query":"BERT下一句预测训练中，真实相邻句子占多少比例？","anchors":["50% of the time B is the actual next sentence"]},
+    {"id":"b08","document":"bert","page":13,"language":"en","query":"How many sequences are in a BERT pretraining batch?","anchors":["We train with batch size of","256 sequences"]},
+    {"id":"b09","document":"bert","page":13,"language":"zh","query":"BERT预训练共运行多少训练步骤？","anchors":["for 1,000,000 steps"]},
+    {"id":"b10","document":"bert","page":13,"language":"en","query":"What optimizer and initial learning rate are used to pretrain BERT?","anchors":["We use Adam with learning rate of 1e-4"]},
+    {"id":"b11","document":"bert","page":13,"language":"en","query":"What dropout probability does BERT apply across its layers?","anchors":["dropout prob- ability of 0.1 on all layers"]},
+    {"id":"b12","document":"bert","page":13,"language":"en","query":"Which activation does BERT use instead of ReLU?","anchors":["We use a gelu"]},
+    {"id":"b13","document":"bert","page":13,"language":"en","query":"How is BERT pretraining divided between short and long input sequences?","anchors":["sequence length of 128 for 90%","sequence of 512"]},
+    {"id":"b14","document":"bert","page":13,"language":"en","query":"What two objectives are summed in the BERT training loss?","anchors":["The training loss is the sum","mean next sentence prediction likelihood"]},
+    {"id":"b15","document":"bert","page":13,"language":"en","query":"How many Cloud TPUs were used to train BERT Base?","anchors":["was performed on 4 Cloud TPUs"]},
+    {"id":"a01","document":"attention","page":1,"language":"en","query":"Does the original Transformer architecture require recurrence or convolution?","anchors":["dispensing with recurrence and convolutions entirely"]},
+    {"id":"a02","document":"attention","page":3,"language":"zh","query":"Attention Is All You Need中的编码器堆叠多少层？","anchors":["The encoder is composed of a stack of","identical layers"]},
+    {"id":"a03","document":"attention","page":5,"language":"en","query":"How many parallel attention heads are used in the original Transformer?","anchors":["In this work we employ","8 parallel attention layers"]},
+    {"id":"a04","document":"attention","page":3,"language":"zh","query":"原始Transformer各子层及嵌入层输出向量的维度是多少？","anchors":["produce outputs of dimension","512"]},
+    {"id":"a05","document":"attention","page":5,"language":"en","query":"What is the inner feed-forward layer size in the Transformer base model?","anchors":["the inner-layer has dimensionality","2048"]},
+    {"id":"a06","document":"attention","page":6,"language":"zh","query":"原始Transformer如何用三角函数编码词的位置？","anchors":["we use sine and cosine functions of different frequencies"]},
+    {"id":"a07","document":"attention","page":7,"language":"en","query":"How many learning-rate warmup steps are used for the original Transformer?","anchors":["We used","4000"]},
+    {"id":"a08","document":"attention","page":7,"language":"en","query":"Which optimizer was used to train the Transformer in Attention Is All You Need?","anchors":["We used the Adam optimizer"]},
+    {"id":"a09","document":"attention","page":8,"language":"zh","query":"原始Transformer基础模型的dropout率是多少？","anchors":["For the base model, we use a rate of","0.1"]},
+    {"id":"a10","document":"attention","page":8,"language":"en","query":"What label-smoothing value was used during Transformer training?","anchors":["we employed label smoothing of value","0.1"]},
+    {"id":"a11","document":"attention","page":7,"language":"en","query":"How large is the WMT English-German parallel training corpus used for the Transformer?","anchors":["4.5 million sentence pairs"]},
+    {"id":"a12","document":"attention","page":7,"language":"en","query":"What is the shared English-German vocabulary size after byte-pair encoding?","anchors":["shared source- target vocabulary of about 37000 tokens"]},
+    {"id":"a13","document":"attention","page":7,"language":"zh","query":"Transformer英语法语训练语料有多少句子？","anchors":["English-French dataset consisting of 36M sentences"]},
+    {"id":"a14","document":"attention","page":7,"language":"en","query":"What GPU hardware and GPU count were used to train the original Transformer?","anchors":["one machine with 8 NVIDIA P100 GPUs"]},
+    {"id":"a15","document":"attention","page":7,"language":"en","query":"How many steps and hours were needed to train the Transformer base model?","anchors":["base models for a total of 100,000 steps or 12 hours"]}
+  ]
+}

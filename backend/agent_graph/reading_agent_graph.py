@@ -4,12 +4,15 @@ import hashlib
 import json
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, TypedDict
+from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_config
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Overwrite, Send
+from pydantic import ConfigDict
+from pydantic.json_schema import SkipJsonSchema
+from typing_extensions import TypedDict
 
 from app.ai.knowledge_context import knowledge_context_diagnostics
 from backend.agent_core.events import AgentEventType
@@ -52,6 +55,7 @@ from backend.models.agent_runtime import (
     AgentPlanStep,
     AgentRouteDecision,
 )
+from backend.rag.observability import bind_rag_trace
 from backend.services.agent_evidence_gate_service import AgentEvidenceGateService
 from backend.services.agent_react_decision_service import AgentReActDecisionService
 
@@ -98,11 +102,13 @@ class ReadingAgentGraphState(RootOrchestrationState, total=False):
 class ReadingAgentRuntimeContext(TypedDict, total=False):
     """Per-invocation objects that must never become Studio/checkpoint state."""
 
-    event_sink: GraphEventSink | None
-    control: AgentRunControl
+    __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
+
+    event_sink: SkipJsonSchema[GraphEventSink | None]
+    control: SkipJsonSchema[AgentRunControl]
     memory_snapshot: dict[str, Any]
     parallel_policy: Any
-    resource_manager: AgentResourceManager
+    resource_manager: SkipJsonSchema[AgentResourceManager]
     resuming: bool
     durable_write_interrupt: bool
     write_confirmation_decision: dict[str, Any]
@@ -364,9 +370,11 @@ class ReadingAgentGraph:
         agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._adapter = adapter
-        self._react_decision_service = (
-            react_decision_service or AgentReActDecisionService()
-        )
+        native_service = getattr(adapter, "_service", None)
+        planner = getattr(getattr(native_service, "_semantic_router", None), "_planner", None)
+        self._react_decision_service = react_decision_service or AgentReActDecisionService(
+            text_service=getattr(planner, "_text_service", None)
+            if getattr(native_service, "function_calling_enabled", False) else None)
         self._evidence_gate_service = (
             evidence_gate_service or AgentEvidenceGateService()
         )
@@ -1141,6 +1149,13 @@ class ReadingAgentGraph:
         adapter = self._collaboration_adapter
         if adapter is None:
             return {"agent_state": _dump_agent_state(state)}
+        context = self._orchestration_runtime_context(state)
+        if (
+            getattr(self._adapter._service, "function_calling_enabled", False)
+            and str(context.get("multi_agent_mode", "auto") or "auto") == "auto"
+            and not context.get("workflow_action")
+        ):
+            return {"agent_state": _dump_agent_state(state)}
 
         emit, control = self._runtime(runtime)
         if self._uses_native_topology:
@@ -1484,6 +1499,7 @@ class ReadingAgentGraph:
                 fallback_reason="frontier_stalled",
             )
         scope = ScopeContext.model_validate(graph_state.get("scope", {}))
+        state = _coerce_agent_state(graph_state["agent_state"])
         task_map = plan.task_map()
         sends: list[Send] = []
         for task_id in active_ids:
@@ -1510,6 +1526,7 @@ class ReadingAgentGraph:
                         "scope": scope,
                         "dependency_results": dict(projected.results),
                         "attempt_ordinal": attempt_ordinals.get(task_id, 1),
+                        "trace_id": state.trace_id or state.run_id,
                     },
                 )
             )
@@ -1607,15 +1624,25 @@ class ReadingAgentGraph:
         state = _coerce_agent_state(graph_state["agent_state"])
         service = self._orchestration_service
         _, control = self._runtime(runtime)
-        if service is None or self._collaboration_adapter is None:
+        context = self._orchestration_runtime_context(state)
+        mode = str(context.get("multi_agent_mode", "auto") or "auto")
+        if (
+            getattr(self._adapter._service, "function_calling_enabled", False)
+            and mode == "auto"
+            and not context.get("workflow_action")
+        ):
+            route = OrchestrationRoute(
+                lane=OrchestrationLane.FAST,
+                reason_code="native_function_calling",
+                user_visible_reason="The model selects tools for this request.",
+            )
+        elif service is None or self._collaboration_adapter is None:
             route = OrchestrationRoute(
                 lane=OrchestrationLane.FAST,
                 reason_code="orchestration_unavailable",
                 user_visible_reason="The canonical Agent path is sufficient.",
             )
         else:
-            context = self._orchestration_runtime_context(state)
-            mode = str(context.get("multi_agent_mode", "auto") or "auto")
             route = run_node_operation_with_timeout(
                 lambda: service.route(state.user_input, context, mode=mode),
                 control=control,
@@ -1886,7 +1913,7 @@ class ReadingAgentGraph:
                 },
             )
             emitted.add(AgentEventType.KNOWLEDGE_SCOPE_RESOLVED)
-            if not decision.should_retrieve:
+            if not decision.should_retrieve and decision.reason_code != "semantic_router_required":
                 emit(
                     AgentEventType.KNOWLEDGE_SKIPPED,
                     {
@@ -2098,6 +2125,10 @@ class ReadingAgentGraph:
                     iteration=iteration,
                     tools=tools,
                     observations=tuple(state.react.observations),
+                    native_decisions=tuple(state.react.decisions),
+                    native_results=tuple(state.tool_results),
+                    native_evidence=tuple(state.evidence),
+                    native_citations=tuple(state.citations),
                     max_observation_chars=control.policy.max_observation_chars,
                     remaining_tool_calls=max(
                         0, control.policy.max_tool_calls - len(state.tool_calls)
@@ -2123,6 +2154,19 @@ class ReadingAgentGraph:
                 control=control,
             )
             state.record_react_decision(decision)
+            if getattr(self._adapter._service, "function_calling_enabled", False):
+                previous = state.knowledge_decision
+                local_search = decision.tool_name == "search_knowledge_base"
+                if previous is not None and (local_search or decision.kind == "final" or decision.tool_name == "list_knowledge_documents"):
+                    state.knowledge_decision = previous.model_copy(update={
+                        "should_retrieve": previous.should_retrieve or local_search,
+                        "reason_code": "explicit_never" if previous.mode.value == "never" else (
+                            "knowledge_request" if previous.should_retrieve or local_search else (
+                                "catalog_request" if decision.tool_name == "list_knowledge_documents" or previous.reason_code == "catalog_request" else "current_context_sufficient")),
+                        "scope_strategy": state.knowledge_scope.strategy,
+                        "query": str(decision.arguments.get("query", previous.query))[:4000],
+                    })
+                    state.browser_context["knowledge_decision"] = state.knowledge_decision.model_dump(mode="json")
         except Exception as exc:
             state.mark_react_status("failed")
             self._abort(graph_state, exc)
@@ -2556,6 +2600,8 @@ class ReadingAgentGraph:
                     decision is None
                     or decision.kind != "final"
                     or not decision.final_answer
+                    or (getattr(self._adapter._service, "function_calling_enabled", False)
+                        and state.knowledge_search_count > 0 and not state.evidence)
                 ):
                     if state.evidence_sufficient is False:
                         state.ui_mode = "assistant"
@@ -2563,8 +2609,9 @@ class ReadingAgentGraph:
                             {
                                 "status": "completed",
                                 "output_text": (
-                                    "Knowledge retrieval did not produce sufficient "
-                                    "evidence to answer reliably."
+                                    "本地资料检索未获得可核验的正文证据，无法可靠回答该文档问题。"
+                                    if getattr(self._adapter._service, "function_calling_enabled", False)
+                                    else "Knowledge retrieval did not produce sufficient evidence to answer reliably."
                                 ),
                                 "provider": "deterministic-fallback",
                                 "model": "",
@@ -2723,20 +2770,21 @@ class ReadingAgentGraph:
             if resume
             else initial
         )
-        result = graph.invoke(
-            graph_input,
-            config=(
-                self._checkpoint_config(state.run_id)
-                if self._checkpointer is not None and not temporary
-                else None
-            ),
-            context=runtime_context,
-            durability=(
-                "sync"
-                if self._checkpointer is not None and not temporary
-                else None
-            ),
-        )
+        with bind_rag_trace(state.trace_id or state.run_id, emit):
+            result = graph.invoke(
+                graph_input,
+                config=(
+                    self._checkpoint_config(state.run_id)
+                    if self._checkpointer is not None and not temporary
+                    else None
+                ),
+                context=runtime_context,
+                durability=(
+                    "sync"
+                    if self._checkpointer is not None and not temporary
+                    else None
+                ),
+            )
         final_state = _coerce_agent_state(
             result.get("agent_state", initial["agent_state"])
         )

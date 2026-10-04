@@ -57,6 +57,7 @@ class FakeQdrantClient:
         self.created: list[dict[str, object]] = []
         self.query_calls: list[dict[str, object]] = []
         self.upserts: list[dict[str, object]] = []
+        self.publications: list[dict[str, object]] = []
 
     def collection_exists(self, _collection_name: str) -> bool:
         return False
@@ -69,6 +70,9 @@ class FakeQdrantClient:
 
     def upsert(self, **kwargs) -> None:
         self.upserts.append(kwargs)
+
+    def set_payload(self, **kwargs) -> None:
+        self.publications.append(kwargs)
 
     def delete(self, **_kwargs) -> None:
         return None
@@ -128,6 +132,8 @@ def test_two_stage_store_indexes_coarse_and_late_vectors() -> None:
     )
 
     assert client.upserts
+    assert client.publications[0]["payload"] == {"visual_published": True}
+    assert client.upserts[0]["points"][0].payload["visual_published"] is False
     point = client.upserts[0]["points"][0]
     assert set(point.vector) == {COARSE_VECTOR_NAME, LATE_VECTOR_NAME}
     assert point.vector[COARSE_VECTOR_NAME] == pytest.approx(

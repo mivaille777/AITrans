@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from heapq import heapify, heappop, nsmallest
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Protocol, runtime_checkable
@@ -160,22 +161,43 @@ class BM25SparseRetriever:
         if not query_tokens:
             return []
         scores = self._index.score(query_tokens)
-        scores = {
-            chunk_id: score
-            for chunk_id, score in scores.items()
-            if self._matches_filter(self._data.chunks[chunk_id], filters)
-            and (
+        exclude_references = bool(filters and filters.exclude_references)
+        effective_filters = filters.model_copy(update={"exclude_references": False}) if exclude_references else filters
+        def eligible(chunk_id: str) -> bool:
+            chunk = self._data.chunks[chunk_id]
+            if (exclude_references and chunk_id in self._reference_chunks) or not self._matches_filter(chunk, effective_filters):
+                return False
+            return (
                 active_generations is not None
                 and normalized_generation is None
-                or self._matches_generation(
-                    self._data.chunks[chunk_id], normalized_generation
-                )
+                or self._matches_generation(chunk, normalized_generation)
+            ) and self._matches_active_generation(chunk, active_generations)
+
+        # Avoid metadata checks on all hits for broad searches. For selective
+        # scopes, bound heap popping and fall back to the existing filtered heap.
+        if filters and filters.document_ids and len(filters.document_ids) <= top_k:
+            scoped_ids = set(filters.document_ids)
+            ranked = nsmallest(
+                top_k, ((chunk_id, score) for chunk_id, score in scores.items()
+                        if self._data.chunks[chunk_id].document_id in scoped_ids and eligible(chunk_id)),
+                key=lambda item: (-item[1], item[0]),
             )
-            and self._matches_active_generation(
-                self._data.chunks[chunk_id], active_generations
-            )
-        }
-        ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:top_k]
+        else:
+            pending = [(-score, chunk_id) for chunk_id, score in scores.items()]
+            heapify(pending)
+            ranked: list[tuple[str, float]] = []
+            for _ in range(max(128, top_k * 4)):
+                if not pending or len(ranked) >= top_k:
+                    break
+                negative_score, chunk_id = heappop(pending)
+                if eligible(chunk_id):
+                    ranked.append((chunk_id, -negative_score))
+            if pending and len(ranked) < top_k:
+                ranked.extend(nsmallest(
+                    top_k - len(ranked),
+                    ((chunk_id, -score) for score, chunk_id in pending if eligible(chunk_id)),
+                    key=lambda item: (-item[1], item[0]),
+                ))
         return [
             RetrievalCandidate(
                 chunk=self._data.chunks[chunk_id].model_copy(deep=True),
@@ -456,12 +478,17 @@ class BM25SparseRetriever:
         )
 
     def _rebuild_index(self) -> None:
-        self._index.rebuild(
+        self._reference_chunks = {
+            chunk_id for chunk_id, chunk in self._data.chunks.items() if is_reference_chunk(chunk)
+        }
+        index = BM25Index(k1=self._index.k1, b=self._index.b)
+        index.rebuild(
             {
                 chunk_id: self._tokenizer.tokenize(self._search_text(chunk))
                 for chunk_id, chunk in self._data.chunks.items()
             }
         )
+        self._index = index
         self._data.tokenizer_version = self._tokenizer_version
 
     @staticmethod

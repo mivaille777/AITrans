@@ -4,12 +4,14 @@ import math
 from collections.abc import Mapping
 from datetime import date, datetime
 from enum import Enum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from backend.models.agent_runtime import AgentEvidenceItem
+from backend.rag.exceptions import RagInvariantError
 from backend.rag.models import RetrievalCandidate, RetrievalResult
 
 
@@ -68,6 +70,12 @@ def build_evidence_item(
     """Map one retrieval candidate to a stable Agent evidence contract."""
 
     chunk = candidate.chunk
+    if chunk.source_span is not None and (
+        chunk.source_span.quote_hash != sha256(chunk.text.encode("utf-8")).hexdigest()
+        or chunk.source_span.start_char != chunk.start_char
+        or chunk.source_span.end_char != chunk.end_char
+    ):
+        raise RagInvariantError("evidence source span does not match its excerpt")
     modality = str(chunk.metadata.get("modality", "text") or "text")
     element_metadata = chunk.metadata.get("element_metadata")
     if not isinstance(element_metadata, Mapping):
@@ -86,6 +94,10 @@ def build_evidence_item(
             "retrieval": dict(retrieval_metadata or {}),
             "candidate": dict(candidate.metadata),
             "rank": candidate.rank,
+            "chunk_id": chunk.chunk_id,
+            "source_span": chunk.source_span,
+            "index_generation": candidate.index_generation or chunk.metadata.get("index_generation"),
+            "trace_id": candidate.trace_id,
             "page_number": chunk.page_number,
             "section_heading": chunk.section_heading,
             "modality": modality,

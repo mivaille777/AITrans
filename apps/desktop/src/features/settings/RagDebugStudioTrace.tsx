@@ -241,7 +241,10 @@ function TraceTab({
   const [companionTraces, setCompanionTraces] = useState<RagDebugCompanionTrace[]>([])
   const mounted = useRef(true)
 
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   useEffect(() => {
     void listRagDebugCompanionTraces(12)
       .then((items) => {
@@ -410,6 +413,25 @@ function TraceTab({
         <ConfigTuningPanel config={selectedConfig} onSaved={onConfigsChanged} onNotice={setNotice} />
         {trace && !trace.metadata.qasper_run_id ? <KnowledgeDebugCards trace={trace} /> : null}
         {trace?.metadata.qasper_case ? <QasperTraceSummary trace={trace} /> : null}
+        {trace?.stages.some((stage) => stage.key === "graph") ? (
+          <section className="rounded-[10px] border border-slate-200 p-4" aria-label="Graph evidence trace">
+            <h2 className="text-[13px] font-semibold">Graph Seeds / Expansion / Paths</h2>
+            <p className="mt-1 text-[10px] text-slate-500">
+              {trace.stages.find((stage) => stage.key === "graph")?.status}
+            </p>
+            <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap text-[10px]">
+              {JSON.stringify(trace.stages.find((stage) => stage.key === "graph")?.summary ?? {}, null, 2)}
+            </pre>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {trace.candidates.filter((item) => Array.isArray(item.metadata.graph_paths) && item.metadata.graph_paths.length > 0).map((item) => (
+                <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className="rounded border px-2 py-1 text-[10px]">
+                  Inspect graph source: {item.id}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[10px] text-slate-500">Select a final retrieval result below to inspect its source chunk.</p>
+          </section>
+        ) : null}
 
         <section className="rounded-[10px] border border-slate-200 px-4 py-4">
           <div className="grid grid-cols-5 gap-2 md:grid-cols-10">{(trace?.stages ?? INITIAL_STAGES).map((item) => <StagePill key={item.key} stage={item} active={activeStage === item.key} />)}</div>

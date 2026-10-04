@@ -1,17 +1,17 @@
 # Contributing to AITrans
 
-AITrans uses layered verification so failures are caught before changes reach `WebReBuild` or `main`.
+AITrans uses layered verification so failures are caught before changes reach `electronrebuild` or `main`.
 
 ## Recommended branch flow
 
-1. Create a short-lived feature or fix branch from the latest `WebReBuild`.
+1. Create a short-lived feature or fix branch from the latest `electronrebuild`.
 2. Make focused commits.
 3. Run the relevant local verification scope.
-4. Open a pull request into `WebReBuild`.
+4. Open a pull request into `electronrebuild`.
 5. Merge only after the required CI quality gate passes.
-6. Promote tested changes from `WebReBuild` to `main` through a pull request.
+6. Promote tested changes from `electronrebuild` to `main` through a pull request.
 
-Direct pushes to `WebReBuild` and `main` should be disabled by repository rules.
+Direct pushes to `electronrebuild` and `main` should be disabled by repository rules.
 
 ## Local verification
 
@@ -24,8 +24,8 @@ From the repository root:
 # Frontend: lint, Vitest/typecheck, production build
 .\scripts\verify.ps1 -Scope Frontend
 
-# Tauri/Rust: fmt, Clippy, tests, locked build
-.\scripts\verify.ps1 -Scope Tauri
+# Desktop/Electron: shell compile, contract tests, credential vault smoke
+.\scripts\verify.ps1 -Scope Desktop
 
 # Everything
 .\scripts\verify.ps1 -Scope All
@@ -47,10 +47,11 @@ The normal CI workflow verifies:
 - Python dependency consistency and blocking Ruff critical-correctness checks, with the broader Ruff baseline reported as advisory;
 - Python 3.12 compatibility smoke tests;
 - React lint, Vitest/type checks, and production build;
-- Rust formatting visibility plus blocking Clippy, tests, and locked Tauri build;
+- Agent Runtime v1 acceptance checks;
+- Electron shell compilation, desktop contracts, release static checks, dependency audit, and credential vault smoke;
 - a final `CI quality gate` job that succeeds only when every required layer succeeds.
 
-Rust formatting is currently advisory while the existing Tauri baseline is normalized; Clippy, Rust tests, and locked builds are blocking. GPU/model tests remain opt-in because they require suitable hardware and local models.
+GPU/model tests remain opt-in because they require suitable hardware and local models.
 
 ## Pull request expectations
 

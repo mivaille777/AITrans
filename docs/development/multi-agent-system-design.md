@@ -3,7 +3,7 @@
 > 日期：2026-09-16；初始评估基线：`WebReBuild @ ad27691`；实现复验：2026-09-17 `4163845`。
 > 适用定位：以个人知识工作区为核心的本地优先文档理解、研究辅助和知识管理产品。
 > 状态：目标架构与 MA00–MA10 确定性门禁已实现；真实 Qwen3、真实配置 LLM、手工 UI 和三策略语义质量 A/B 尚未验证，因此本文仍不代表已测得多 Agent 质量提升。
-> 开发执行入口：[多 Agent 分阶段任务书](multi-agent-system-taskbook.md)。记忆契约参见[记忆系统任务书](memory-system-taskbook.md)。
+> 本文保留 MA00–MA10 时期的设计与验收记录；当前开发执行入口：[Agent Runtime 任务书](<Agent Runtime重构任务书.md>)。记忆契约参见[记忆系统任务书](memory-system-taskbook.md)。
 
 ## 1. 设计结论与产品目标
 
@@ -126,7 +126,7 @@ Agent API / WebSocket / Research UI
       → final delivery and persistent task events
 ```
 
-MA10 的 deterministic T01–T36 契约矩阵为 36/36，通过完整 Python、桌面端和 Tauri 门禁。公平 A/B 调度和 recorded-input 协议已经具备，但当前没有真实三策略语义观测；usage 未知时写 `null`，不写假零。发布策略因此采用 `AITRANS_MULTI_AGENT_ROLLOUT=single` 默认值，复杂 workflow 仅显式启用。完整边界和报告见[任务书 MA10 记录](multi-agent-system-taskbook.md#ma10-实施记录--2026-09-17)与[确定性报告](ma10-deterministic-report.json)。
+MA10 的 deterministic T01–T36 契约矩阵为 36/36，通过当时完整 Python、桌面端和 Tauri 门禁。公平 A/B 调度和 recorded-input 协议已经具备，但当时没有真实三策略语义观测；usage 未知时写 `null`，不写假零。当时发布策略采用 `AITRANS_MULTI_AGENT_ROLLOUT=single` 默认值，复杂 workflow 仅显式启用。历史结果见[确定性报告](ma10-deterministic-report.json)；当前执行与验收见 [Agent Runtime 任务书](<Agent Runtime重构任务书.md>)。
 
 旧 `AgentPlanner/AgentExecutor` 仍由 legacy 迁移桥生产使用；旧 checkpoint 解释器也处于兼容期。本阶段保留这些代码和历史数据。回滚可按 `workflow → single → simple → legacy/off` 收紧运行面，切换前应备份 checkpoint、artifact、memory、Knowledge 与 Research SQLite 文件。
 

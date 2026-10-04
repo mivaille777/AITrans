@@ -12,6 +12,7 @@ from uuid import uuid4
 from app.infrastructure.paths import writable_config_dir
 from backend.models.rag_debug import (
     RagDebugCase,
+    RagDebugCompanionTrace,
     RagDebugConfigProfile,
     RagDebugDataset,
 )
@@ -122,6 +123,12 @@ class RagDebugStoreService:
 
             CREATE INDEX IF NOT EXISTS idx_rag_debug_cases_dataset
                 ON rag_debug_cases(dataset_id, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS rag_debug_snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         connection.execute(
@@ -132,6 +139,56 @@ class RagDebugStoreService:
     def _initialize(self) -> None:
         with self._lock, closing(self._connect()) as connection, connection:
             self._ensure_schema(connection)
+
+    def save_snapshot(self, snapshot_id: str, kind: str, payload: dict) -> None:
+        """Append an immutable version; duplicate identities must fail."""
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute(
+                "INSERT INTO rag_debug_snapshots VALUES (?, ?, ?, ?)",
+                (snapshot_id, kind, _dump(payload), _now()),
+            )
+
+    def get_snapshot(self, snapshot_id: str) -> dict | None:
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute("SELECT payload_json FROM rag_debug_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
+    def save_companion_trace(self, trace: RagDebugCompanionTrace) -> None:
+        """Keep bounded route history; source text is never persisted here."""
+        from backend.rag.bad_cases.store import redact_snapshot
+
+        payload = redact_snapshot(trace.model_dump(mode="json"))
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO rag_debug_snapshots VALUES (?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET payload_json = excluded.payload_json
+                """,
+                (f"companion:{trace.trace_id}", "companion_trace", _dump(payload), trace.created_at),
+            )
+            connection.execute(
+                """
+                DELETE FROM rag_debug_snapshots
+                WHERE kind = 'companion_trace' AND snapshot_id NOT IN (
+                    SELECT snapshot_id FROM rag_debug_snapshots
+                    WHERE kind = 'companion_trace'
+                    ORDER BY created_at DESC, rowid DESC LIMIT 100
+                )
+                """
+            )
+
+    def list_companion_traces(self, *, limit: int = 20) -> list[RagDebugCompanionTrace]:
+        safe_limit = max(1, min(int(limit or 20), 100))
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM rag_debug_snapshots
+                WHERE kind = 'companion_trace'
+                ORDER BY created_at DESC, rowid DESC LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        return [RagDebugCompanionTrace.model_validate_json(row[0]) for row in rows]
 
     @staticmethod
     def _config_from_row(row: sqlite3.Row) -> RagDebugConfigProfile:

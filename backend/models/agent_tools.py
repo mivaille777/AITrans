@@ -78,6 +78,7 @@ AgentTraceEventType = Literal[
     "rag_query_rewritten",
     "rag_dense_completed",
     "rag_sparse_completed",
+    "rag_graph_completed",
     "rag_fusion_completed",
     "rag_rerank_completed",
     "rag_evidence_selected",

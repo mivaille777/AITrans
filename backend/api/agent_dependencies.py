@@ -52,6 +52,7 @@ from backend.api.knowledge_workspace_dependencies import get_knowledge_workspace
 from backend.api.llm_dependencies import get_llm_gateway
 from backend.api.memory_dependencies import get_memory_coordinator
 from backend.models.agent_tasks import TaskRole
+from backend.rag.exceptions import RagRetrievalError
 from backend.services.academic_writer_service import AcademicWriterService
 from backend.services.agent_checkpoint_service import AgentCheckpointService
 from backend.services.agent_conversation_service import AgentConversationService
@@ -103,6 +104,18 @@ class _LazyRetrievalService:
     @staticmethod
     def retrieve(*args, **kwargs):
         return get_retrieval_service().retrieve(*args, **kwargs)
+
+    @staticmethod
+    def validate_evidence_candidates(*args, **kwargs):
+        validator = getattr(get_retrieval_service(), "validate_evidence_candidates", None)
+        if not callable(validator):
+            raise RagRetrievalError("retrieval provider does not support evidence source validation")
+        return validator(*args, **kwargs)
+
+    @staticmethod
+    def evidence_cache_version(*args, **kwargs):
+        getter = getattr(get_retrieval_service(), "evidence_cache_version", None)
+        return getter(*args, **kwargs) if callable(getter) else None
 
 
 class _LazyEvidenceReviewService:

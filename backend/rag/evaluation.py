@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from math import log2
 from statistics import mean
+from typing import Any
 
 from pydantic import Field
 
@@ -10,6 +11,7 @@ from backend.rag.evaluation_dataset import (
     RagEvaluationCase,
     RagEvaluationPrediction,
 )
+from backend.rag.evaluation_protocol import ClaimAssessment, assessment_map
 from backend.rag.models import RagContractModel
 
 
@@ -76,6 +78,8 @@ class RagCaseEvaluation(RagContractModel):
     ndcg_at_10: float = Field(ge=0.0, le=1.0)
     pre_rerank_reciprocal_rank: float = Field(ge=0.0, le=1.0)
     pre_rerank_ndcg_at_10: float = Field(ge=0.0, le=1.0)
+    post_rerank_reciprocal_rank: float = Field(default=0.0, ge=0.0, le=1.0)
+    post_rerank_ndcg_at_10: float = Field(default=0.0, ge=0.0, le=1.0)
     no_answer_correct: bool | None = None
 
 
@@ -142,6 +146,7 @@ class RagEvaluationReport(RagContractModel):
     citations: RagCitationMetrics
     performance: RagPerformanceMetrics
     cases: list[RagCaseEvaluation] = Field(default_factory=list)
+    production: dict[str, Any] = Field(default_factory=dict)
 
 
 def _average(values: Sequence[float]) -> float:
@@ -159,7 +164,9 @@ def _latency(values: Sequence[float]) -> RagLatencyPercentiles:
 def _citation_metrics(
     cases: Sequence[RagEvaluationCase],
     predictions: dict[str, RagEvaluationPrediction],
+    assessments: Sequence[ClaimAssessment] = (),
 ) -> RagCitationMetrics:
+    independent = assessment_map(assessments)
     annotated_links: set[tuple[str, str, str]] = set()
     annotated_claims: set[tuple[str, str]] = set()
     predicted_links: set[tuple[str, str, str]] = set()
@@ -185,9 +192,10 @@ def _citation_metrics(
                 (case.case_id, claim.claim_id, chunk_id)
                 for chunk_id in claim.cited_chunk_ids
             )
-            if claim.supported is not None:
+            assessment = independent.get(claim_key)
+            if assessment is not None:
                 assessed_claims += 1
-                unsupported_claims += int(not claim.supported)
+                unsupported_claims += int(not assessment.supported)
 
     correct_links = annotated_links.intersection(predicted_links)
     return RagCitationMetrics(
@@ -211,7 +219,14 @@ def _citation_metrics(
 def evaluate_rag(
     cases: Sequence[RagEvaluationCase],
     predictions: Sequence[RagEvaluationPrediction],
+    *, assessments: Sequence[ClaimAssessment] = (),
 ) -> RagEvaluationReport:
+    if len({case.case_id for case in cases}) != len(cases) or len({item.case_id for item in predictions}) != len(predictions):
+        raise ValueError("duplicate evaluation case or prediction ID")
+    independent = assessment_map(assessments)
+    predicted_claims = {(item.case_id, claim.claim_id) for item in predictions for claim in item.claims}
+    if set(independent).difference(predicted_claims):
+        raise ValueError("independent assessment references an unknown predicted claim")
     prediction_by_id = {prediction.case_id: prediction for prediction in predictions}
     expected_ids = {case.case_id for case in cases}
     missing = expected_ids.difference(prediction_by_id)
@@ -231,6 +246,11 @@ def evaluate_rag(
             category_counts[category] = category_counts.get(category, 0) + 1
         prediction = prediction_by_id[case.case_id]
         grades = case.graded_relevance
+        post_ranked = (
+            prediction.post_rerank_chunk_ids
+            if prediction.post_rerank_chunk_ids is not None
+            else prediction.ranked_chunk_ids
+        )
         evaluated.append(
             RagCaseEvaluation(
                 case_id=case.case_id,
@@ -245,6 +265,8 @@ def evaluate_rag(
                 pre_rerank_ndcg_at_10=ndcg_at_k(
                     prediction.pre_rerank_chunk_ids, grades, 10
                 ),
+                post_rerank_reciprocal_rank=reciprocal_rank(post_ranked, grades),
+                post_rerank_ndcg_at_10=ndcg_at_k(post_ranked, grades, 10),
                 no_answer_correct=(
                     not prediction.ranked_chunk_ids if case.no_answer else None
                 ),
@@ -254,7 +276,7 @@ def evaluate_rag(
     answerable = [
         result
         for result, case in zip(evaluated, cases, strict=True)
-        if not case.no_answer
+        if not case.no_answer or case.answerability == "relevant_insufficient"
     ]
     no_answer_results = [
         result.no_answer_correct
@@ -262,9 +284,9 @@ def evaluate_rag(
         if result.no_answer_correct is not None
     ]
     before_mrr = _average([result.pre_rerank_reciprocal_rank for result in answerable])
-    after_mrr = _average([result.reciprocal_rank for result in answerable])
+    after_mrr = _average([result.post_rerank_reciprocal_rank for result in answerable])
     before_ndcg = _average([result.pre_rerank_ndcg_at_10 for result in answerable])
-    after_ndcg = _average([result.ndcg_at_10 for result in answerable])
+    after_ndcg = _average([result.post_rerank_ndcg_at_10 for result in answerable])
 
     latency = [prediction_by_id[case.case_id].latency for case in cases]
     return RagEvaluationReport(
@@ -275,8 +297,8 @@ def evaluate_rag(
             recall_at_5=_average([result.recall_at_5 for result in answerable]),
             recall_at_10=_average([result.recall_at_10 for result in answerable]),
             recall_at_20=_average([result.recall_at_20 for result in answerable]),
-            mrr=after_mrr,
-            ndcg_at_10=after_ndcg,
+            mrr=_average([result.reciprocal_rank for result in answerable]),
+            ndcg_at_10=_average([result.ndcg_at_10 for result in answerable]),
             no_answer_accuracy=(
                 sum(bool(value) for value in no_answer_results) / len(no_answer_results)
                 if no_answer_results
@@ -292,7 +314,8 @@ def evaluate_rag(
             ndcg_at_10_after=after_ndcg,
             ndcg_at_10_delta=after_ndcg - before_ndcg,
         ),
-        citations=_citation_metrics(cases, prediction_by_id),
+        citations=_citation_metrics(cases, prediction_by_id, assessments),
+        production=production_metrics(cases, prediction_by_id, assessments),
         performance=RagPerformanceMetrics(
             query_embedding_ms=_latency([item.query_embedding_ms for item in latency]),
             dense_search_ms=_latency([item.dense_search_ms for item in latency]),
@@ -302,6 +325,70 @@ def evaluate_rag(
         ),
         cases=evaluated,
     )
+
+
+def production_metrics(cases, predictions, assessments=()) -> dict[str, Any]:
+    def covers(observed, gold):
+        return observed is not None and (
+            observed.document_id == gold.document_id
+            and observed.source_span.document_hash == gold.source_span.document_hash
+            and observed.source_span.document_text_hash == gold.source_span.document_text_hash
+            and observed.source_span.start_char <= gold.source_span.start_char
+            and observed.source_span.end_char >= gold.source_span.end_char
+        )
+
+    rows = []
+    for case in cases:
+        prediction = predictions[case.case_id]
+        relevant = set(case.graded_relevance)
+        gold_spans = [span for span in case.gold_spans if span.relevance_grade > 0]
+        evidence_gold = {span.span_id for span in gold_spans} if gold_spans else relevant
+        expected_docs = set(case.gold_document_ids) | {span.document_id for span in gold_spans}
+        row = {"case_id": case.case_id, "relevant_evidence_n": len(evidence_gold), "relevant_documents_n": len(expected_docs)}
+        ranked = prediction.ranked_chunk_ids
+        for k in (1, 5, 10):
+            retrieved = ranked[:k]
+            hits = set(retrieved) & relevant
+            if gold_spans:
+                hits = {gold.span_id for gold in gold_spans for key in retrieved
+                        if covers(prediction.chunk_spans.get(key), gold)}
+            hit_chunks = [key for key in retrieved if (
+                any(covers(prediction.chunk_spans.get(key), gold) for gold in gold_spans)
+                if gold_spans else key in relevant
+            )]
+            docs = {prediction.chunk_document_ids[key] for key in retrieved if key in prediction.chunk_document_ids}
+            row[f"evidence_recall_at_{k}"] = len(hits)/len(evidence_gold) if evidence_gold else None
+            row[f"document_recall_at_{k}"] = len(docs & expected_docs)/len(expected_docs) if expected_docs else None
+            row[f"precision_at_{k}"] = len(hit_chunks)/k if evidence_gold else None
+            row[f"hit_rate_at_{k}"] = float(bool(hits)) if evidence_gold else None
+            complete_hits = hits if gold_spans else set(retrieved)
+            row[f"complete_evidence_at_{k}"] = float(any(set(group).issubset(complete_hits) for group in case.evidence_sets)) if case.evidence_sets else None
+        scope = set(case.expected_scope_document_ids)
+        row["scope_violations"] = sum(
+            1 for key in ranked if scope and prediction.chunk_document_ids.get(key) not in scope
+        )
+        rows.append(row)
+    metrics = {}
+    for name in (f"{metric}_at_{k}" for metric in ("evidence_recall", "document_recall", "precision", "hit_rate", "complete_evidence") for k in (1, 5, 10)):
+        values = [row[name] for row in rows if row[name] is not None]
+        metrics[name] = {"value": _average(values) if values else None, "n": len(values), "denominator": "macro over cases with applicable gold; precision divides by K"}
+    metrics["scope_violations"] = sum(row["scope_violations"] for row in rows)
+    metrics["independent_answer"] = {
+        "n": len(assessments),
+        "faithfulness": _average([float(item.supported) for item in assessments]) if assessments else None,
+        "citation_accuracy": _average([float(item.citation_correct) for item in assessments]) if assessments else None,
+        "status": "assessed" if assessments else "unassessed",
+    }
+    metrics["per_case"] = rows
+    abstentions = [(case, predictions[case.case_id]) for case in cases if predictions[case.case_id].abstained is not None]
+    answerable = [prediction for case, prediction in abstentions if case.answerability == "answerable" or (case.answerability is None and not case.no_answer)]
+    unanswerable = [prediction for case, prediction in abstentions if case.answerability in {"absent", "relevant_insufficient"} or case.no_answer]
+    metrics["abstention"] = {
+        "answerable_n": len(answerable), "unanswerable_n": len(unanswerable),
+        "false_abstention_rate": _average([float(item.abstained) for item in answerable]) if answerable else None,
+        "correct_abstention_rate": _average([float(item.abstained) for item in unanswerable]) if unanswerable else None,
+    }
+    return metrics
 
 
 __all__ = [

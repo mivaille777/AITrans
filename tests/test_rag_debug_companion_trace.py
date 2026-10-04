@@ -1,15 +1,192 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
+from time import perf_counter, sleep
 from types import SimpleNamespace
+
+import pytest
 
 from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.models.rag_debug import RagDebugCase, RagDebugRunRequest
 from backend.rag.config import RagConfig
 from backend.rag.index_manifest import IndexManifestRecord, IndexStatus
+from backend.rag.models import RetrievalResult
 from backend.services.rag_debug_service import RagDebugService
 from backend.services.rag_debug_store_service import RagDebugStoreService
+
+
+def test_debug_stage_durations_and_event_clock_measure_actual_work(monkeypatch, tmp_path):
+    from backend.services.rag_debug_service import _RunState
+
+    service = RagDebugService(store=RagDebugStoreService(storage_path=tmp_path / "debug.sqlite3"))
+
+    def retrieve(_query, **_kwargs):
+        sleep(0.02)
+        return RetrievalResult(query=_query, candidates=[], metadata={
+            "embedding_ms": 2.0, "dense_search_ms": 3.0, "sparse_search_ms": 7.0,
+        })
+
+    monkeypatch.setattr(service, "_retriever_for_profile", lambda *_args: SimpleNamespace(retrieve=retrieve))
+    try:
+        trace = service.run_trace_sync(
+            RagDebugRunRequest(query="Find evidence", knowledge_access_policy=KnowledgeAccessPolicy.ALWAYS),
+            runtime=SimpleNamespace(config=RagConfig()),
+        )
+        stages = {item.key: item for item in trace.stages}
+        assert stages["dense"].elapsed_ms == 5.0
+        assert stages["bm25"].elapsed_ms == 7.0
+        assert stages["answer"].elapsed_ms == 0.0
+        state = _RunState(response=trace, events=[], cancel=Event(), started_clock=perf_counter() - 0.1)
+        service._runs[trace.run_id] = state
+        service._update_run(trace.run_id, "dense", "complete", {"elapsed_ms": 5.0})
+        service._update_run(trace.run_id, "bm25", "complete", {"elapsed_ms": 7.0})
+        assert state.events[0].elapsed_ms >= 100.0
+        assert state.events[1].elapsed_ms >= state.events[0].elapsed_ms
+        assert datetime.fromisoformat(state.events[0].payload["timestamp"]).tzinfo is not None
+        assert {item.key: item for item in state.response.stages}["bm25"].elapsed_ms == 7.0
+    finally:
+        service.close()
+
+
+def _record_companion_trace(service: RagDebugService, request_id: int = 7) -> str:
+    return service.record_companion_route(
+        request_id=request_id,
+        conversation_id="conversation-1",
+        query="private-user-question",
+        knowledge_enabled=True,
+        document_ids=("doc-1",),
+        route="knowledge_search",
+        route_reason="knowledge_capability_enabled",
+        grounding_policy="evidence",
+        retrieval_skipped=False,
+        verification_skipped=False,
+        retrieval={"original_query": "private-retrieval-query", "total_rag_ms": 12.5},
+        evidence=[{"evidence_id": "ev-1", "excerpt": "private-document-excerpt"}],
+        citations=[{"citation_id": "cite-1", "label": "[1]"}],
+    )
+
+
+def test_companion_history_survives_restart_with_redacted_source(tmp_path: Path) -> None:
+    path = tmp_path / "rag-debug.sqlite3"
+    service = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        trace_id = _record_companion_trace(service)
+        assert service.list_companion_traces()[0].query == "private-user-question"
+        service.update_companion_verification(
+            trace_id,
+            verification={"passed": False, "reason_codes": ["weak_claim_evidence_overlap"]},
+            fallback_applied=True,
+        )
+    finally:
+        service.close()
+
+    restarted = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        trace = restarted.list_companion_traces()[0]
+        assert trace.trace_id == trace_id
+        assert trace.document_scope == "selected"
+        assert trace.route == "knowledge_search"
+        assert trace.query == "[redacted]"
+        assert trace.retrieval["original_query"] == "[redacted]"
+        assert trace.retrieval["total_rag_ms"] == 12.5
+        assert trace.evidence == [{"evidence_id": "ev-1", "excerpt": "[redacted]"}]
+        assert trace.citations[0]["label"] == "[1]"
+        assert trace.verification["reason_codes"] == ["weak_claim_evidence_overlap"]
+        assert trace.fallback_applied is True
+        snapshot = restarted.store.get_snapshot(f"companion:{trace_id}")
+        assert snapshot is not None
+        assert "private-" not in str(snapshot)
+        trace.verification["passed"] = True
+        assert restarted.list_companion_traces()[0].verification["passed"] is False
+    finally:
+        restarted.close()
+
+
+def test_companion_verification_can_update_restored_history(tmp_path: Path) -> None:
+    path = tmp_path / "rag-debug.sqlite3"
+    service = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        trace_id = _record_companion_trace(service)
+    finally:
+        service.close()
+    restarted = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        restarted.update_companion_verification(
+            trace_id, verification={"passed": True}, fallback_applied=False,
+        )
+        snapshot = restarted.store.get_snapshot(f"companion:{trace_id}")
+        assert snapshot is not None
+        assert snapshot["verification"] == {"passed": True}
+    finally:
+        restarted.close()
+
+
+@pytest.mark.parametrize("terminal", ["complete", "error", "cancelled"])
+def test_companion_lifecycle_has_real_times_and_survives_restart(tmp_path, terminal):
+    path = tmp_path / "debug.sqlite3"
+    service = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    trace_id = _record_companion_trace(service)
+    try:
+        service.record_companion_event(trace_id, stage="preparing", status="active")
+        service.record_companion_event(trace_id, stage="generating", status="active")
+        service.record_companion_event(trace_id, stage="answer", status=terminal,
+            metadata={"output_characters": 20})
+        service.record_companion_event(trace_id, stage="generating", status="active")
+        service.record_companion_route(request_id=7, conversation_id="conversation-7", query="private",
+            knowledge_enabled=True, document_ids=("doc-1",), route="knowledge_search", route_reason="ready",
+            grounding_policy="evidence", retrieval_skipped=False, verification_skipped=False, trace_id=trace_id)
+        assert len(service.list_companion_traces()) == 1
+    finally:
+        service.close()
+    restarted = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        trace = restarted.list_companion_traces()[0]
+        spans = trace.retrieval["lifecycle"]
+        assert len(spans) == 3
+        assert trace.retrieval["answer_status"] == terminal
+        assert spans[-1]["status"] == terminal
+        for span in spans:
+            assert span["parent_id"] == trace_id
+            start = datetime.fromisoformat(span["started_at"])
+            end = datetime.fromisoformat(span["ended_at"])
+            assert start.tzinfo and end >= start
+            assert span["elapsed_ms"] == pytest.approx((end - start).total_seconds() * 1000)
+            assert span["token_usage"] is None and span["cost"] is None
+    finally:
+        restarted.close()
+
+
+def test_companion_history_retention_preserves_other_snapshot_kinds(tmp_path: Path) -> None:
+    path = tmp_path / "rag-debug.sqlite3"
+    store = RagDebugStoreService(storage_path=path)
+    store.save_snapshot("trace:keep", "trace", {"run_id": "keep"})
+    store.save_snapshot("badcase:keep", "bad_case", {"case_id": "keep"})
+    service = RagDebugService(store=store)
+    try:
+        trace_ids = [_record_companion_trace(service, index) for index in range(102)]
+        oldest_kept = trace_ids[2]
+        service.update_companion_verification(
+            oldest_kept, verification={"passed": True}, fallback_applied=False,
+        )
+        assert store.get_snapshot(f"companion:{trace_ids[0]}") is None
+        assert store.get_snapshot(f"companion:{trace_ids[1]}") is None
+        assert store.get_snapshot("trace:keep") == {"run_id": "keep"}
+        assert store.get_snapshot("badcase:keep") == {"case_id": "keep"}
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint"):
+            store.save_snapshot("trace:keep", "trace", {"run_id": "replacement"})
+    finally:
+        service.close()
+    restarted = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        history = restarted.list_companion_traces(limit=100)
+        assert len(history) == 100
+        assert [trace.trace_id for trace in history] == list(reversed(trace_ids[2:]))
+        assert history[-1].verification == {"passed": True}
+    finally:
+        restarted.close()
 
 
 def test_debug_document_listing_serializes_index_timestamp(tmp_path: Path) -> None:
@@ -109,6 +286,7 @@ def test_rag_debug_trace_exposes_knowledge_decision_and_scope_when_retrieval_is_
         assert {stage.key for stage in trace.stages if stage.status == "skipped"} == {
             "dense",
             "bm25",
+            "graph",
             "fusion",
             "rerank",
             "context",

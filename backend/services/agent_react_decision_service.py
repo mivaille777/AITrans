@@ -9,9 +9,15 @@ from app.ai.errors import AIConfigurationError, AIError, AIResponseError
 from app.ai.knowledge_context import compact_knowledge_context
 from app.ai.prompt_registry import PromptRegistry, PromptSpec
 from app.ai.service import AITextService
+from backend.agent_tools.knowledge import KnowledgeFunctionSearchArgs
 from backend.models.agent_react import AgentObservation, AgentReActDecision
+from backend.rag.context_builder import GroundedContextBuilder
 from backend.services.agent_security_service import AgentSecurityService
 from backend.services.agent_tool_registry import AgentToolSpec
+from backend.services.knowledge_function_calling import (
+    KNOWLEDGE_FUNCTION_PROMPT,
+    knowledge_function_schema,
+)
 
 REACT_DECISION_SYSTEM_PROMPT = """You are the bounded ReAct decision layer for AITranslator's reading agent.
 Choose exactly one next observable action based on the user's request, registered tools, reading context, first-class Knowledge/Canvas context, conversation history, compact prior observations, deterministic evidence-gate state, and remaining execution budget.
@@ -363,6 +369,10 @@ class AgentReActDecisionService:
             **payload,
         )
         spec = self._prompt_registry.get("agent.react_decision")
+        client = self._client()
+        if callable(getattr(client, "complete_tools", None)):
+            return self._decide_native(client=client, iteration=iteration,
+                tools=tools, prompt=prompt, payload=payload, spec=spec)
         read_tools_available = any(
             tool.name in {"read_knowledge_chunk", "read_knowledge_section"}
             for tool in tools
@@ -409,6 +419,231 @@ class AgentReActDecisionService:
             action_summary=envelope.action_summary,
             final_answer=envelope.final_answer,
         )
+
+    def _decide_native(self, *, client, iteration, tools, prompt, payload, spec):
+        local_names = {
+            "list_knowledge_documents",
+            "search_knowledge_base",
+            "read_knowledge_chunk",
+            "read_knowledge_section",
+        }
+        decisions = payload.get("native_decisions", ())
+        results = payload.get("native_results", ())
+        prior_local = any(item.tool_name in local_names for item in decisions)
+        required = (
+            str(payload.get("knowledge_access_policy", "auto")) == "always"
+            and not prior_local
+        )
+        available = tuple(
+            tool
+            for tool in tools
+            if (not tool.requires_reading_context or payload.get("source_text"))
+            and (not required or tool.name in local_names)
+            and (payload.get("remaining_tool_calls") != 0)
+            and (
+                tool.name != "search_knowledge_base"
+                or (
+                    payload.get("remaining_knowledge_searches") != 0
+                    and sum(item.tool_name == "search_knowledge_base" for item in decisions)
+                    < 2
+                )
+            )
+            and (
+                not tool.name.startswith("read_knowledge_")
+                or (
+                    payload.get("remaining_knowledge_reads") != 0
+                    and sum(
+                        item.tool_name.startswith("read_knowledge_") for item in decisions
+                    )
+                    < 4
+                )
+            )
+        )
+        schemas = []
+        for tool in available:
+            if tool.name in local_names:
+                schemas.append(knowledge_function_schema(tool.name))
+            else:
+                properties = dict(tool.input_schema)
+                schemas.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": {
+                                "type": "object",
+                                "properties": properties,
+                                "additionalProperties": False,
+                                "required": [
+                                    key
+                                    for key, value in properties.items()
+                                    if "default" not in value
+                                ],
+                            },
+                        },
+                    }
+                )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Choose one registered function call or answer directly. Never output a JSON decision envelope. "
+                    "Use exactly one tool per turn. Write actions require user intent and runtime confirmation. "
+                    + KNOWLEDGE_FUNCTION_PROMPT
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        known_ids = set(payload.get("knowledge_document_ids", ()))
+        located = set()
+        prior_ids = set()
+        for decision in decisions:
+            identifier = decision.native_tool_call_id
+            if not identifier:
+                continue
+            prior_ids.add(identifier)
+            result = next(
+                (
+                    item
+                    for item in results
+                    if item.get("step_id") == f"react-{decision.iteration}"
+                ),
+                None,
+            )
+            data = dict((result or {}).get("data") or {})
+            data.pop("observability", None)
+            if decision.tool_name == "search_knowledge_base":
+                located.update(item["chunk_id"] for item in data.get("results", []))
+            elif decision.tool_name == "list_knowledge_documents":
+                known_ids.update(item["document_id"] for item in data.get("documents", []))
+            if decision.tool_name.startswith("read_knowledge_") and payload.get(
+                "native_evidence"
+            ):
+                data.pop("evidence", None)
+                data.pop("citations", None)
+                data["available_evidence"] = (
+                    GroundedContextBuilder()
+                    .build(
+                        list(payload["native_evidence"]), list(payload["native_citations"])
+                    )
+                    .text
+                )
+            # Replay actual model calls and bounded observations with matching IDs.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": identifier,
+                            "type": "function",
+                            "function": {
+                                "name": decision.tool_name,
+                                "arguments": json.dumps(
+                                    decision.arguments, ensure_ascii=False
+                                ),
+                            },
+                        }
+                    ],
+                }
+            )
+            content = json.dumps(
+                {"ok": result is not None, "data": data}, ensure_ascii=False
+            )
+            if len(content) > 16_000:
+                content = json.dumps(
+                    {
+                        "ok": result is not None,
+                        "summary": (result or {}).get("output_text", "")[:8_000],
+                        "notice": "Detailed output omitted; use runtime observations and accumulated evidence.",
+                    },
+                    ensure_ascii=False,
+                )
+            messages.append(
+                {"role": "tool", "tool_call_id": identifier, "content": content}
+            )
+        read_required = (
+            bool(located)
+            and not any(
+                item.tool_name.startswith("read_knowledge_") for item in decisions
+            )
+            and any(tool.name.startswith("read_knowledge_") for tool in available)
+        )
+        if read_required:
+            available = tuple(
+                tool for tool in available if tool.name.startswith("read_knowledge_")
+            )
+            schemas = [knowledge_function_schema(tool.name) for tool in available]
+            required = True
+        for attempt in range(2):
+            response = client.complete_tools(
+                messages=messages,
+                tools=schemas,
+                tool_choice="required" if required else "auto",
+                temperature=spec.temperature,
+                max_tokens=2048,
+            )
+            if not response.tool_calls:
+                if required:
+                    raise AIResponseError(
+                        "The Agent model omitted required knowledge access or evidence Read."
+                    )
+                return AgentReActDecision(
+                    iteration=iteration, kind="final", final_answer=response.content
+                )
+            try:
+                if len(response.tool_calls) != 1:
+                    raise ValueError("Agent decisions require exactly one function call.")
+                call = response.tool_calls[0]
+                if call["id"] in prior_ids:
+                    raise ValueError("Repeated native tool_call_id.")
+                name = call["function"]["name"]
+                arguments = json.loads(call["function"]["arguments"])
+                if name == "search_knowledge_base":
+                    arguments = KnowledgeFunctionSearchArgs.model_validate(
+                        arguments, strict=True
+                    ).model_dump()
+                    if set(arguments["document_ids"]) - known_ids:
+                        raise ValueError(
+                            "Document IDs must come from the permitted scope or catalog."
+                        )
+                if (
+                    name.startswith("read_knowledge_")
+                    and arguments.get("chunk_id") not in located
+                ):
+                    raise ValueError("Read requires a chunk located by search in this run.")
+                envelope = _DecisionEnvelope(
+                    kind="tool", tool_name=name, arguments=arguments
+                )
+                validated = self._validate_tool_decision(
+                    envelope,
+                    tools=available,
+                    source_text=str(payload.get("source_text", "") or ""),
+                )
+                return AgentReActDecision(
+                    iteration=iteration,
+                    kind="tool",
+                    tool_name=name,
+                    arguments=validated,
+                    action_summary=next(tool.title for tool in available if tool.name == name),
+                    native_tool_call_id=call["id"],
+                )
+            except (ValueError, TypeError, ValidationError) as exc:
+                if attempt:
+                    raise AIResponseError(
+                        "Agent model repeated an invalid function call after one repair."
+                    ) from exc
+                messages.append(response.message)
+                for call in response.tool_calls:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": json.dumps({"ok": False, "error": str(exc)[:500]}),
+                        }
+                    )
+        raise AIResponseError("Agent native function decision failed.")
 
     def close(self) -> None:
         if self._text_service is None:

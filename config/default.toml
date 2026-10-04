@@ -76,20 +76,27 @@ mouse_offset_y = 16
 
 [rag]
 enabled = true
+query_rewrite_enabled = true
+query_router_enabled = true
+jit_search_read_enabled = true
+
+[rag.graph]
+enabled = true
+deadline_ms = 1000.0
 
 [rag.advanced_parsing]
 enabled = true
 provider = "docling"
-device = "cpu"
+device = "auto"
 layout_enabled = true
 table_enabled = true
-ocr_enabled = false
-formula_enabled = false
+ocr_enabled = true
+formula_enabled = true
 document_timeout_seconds = 120.0
 
 [rag.visual_understanding]
 # Stage 2: optional figure-to-text enrichment for the existing text RAG path.
-enabled = false
+enabled = true
 provider = "openai_compatible"
 model = ""
 base_url = ""
@@ -101,9 +108,8 @@ max_images_per_document = 24
 max_asset_bytes = 8388608
 
 [rag.visual_retrieval]
-# Stage 3: native late-interaction retrieval over rendered PDF pages / DOCX
-# pictures. Disabled by default so the existing Qwen3 + BM25 text pipeline and
-# its dependency footprint are unchanged unless explicitly enabled.
+# Stage 3: native late-interaction retrieval requires sufficient model memory.
+# See RAG-ENABLEMENT-AND-CHAT-VALIDATION.md for the current hardware blocker.
 enabled = false
 provider = "colpali_engine"
 model_family = "colqwen2_5"
@@ -181,6 +187,8 @@ distance = "cosine"
 storage_path = "config/rag/qdrant"
 
 [rag.retrieval]
+embedding_cache_size = 128
+channel_deadline_ms = 30000.0
 dense_top_k = 30
 sparse_top_k = 30
 fusion_top_k = 20
@@ -192,6 +200,7 @@ small_to_big_neighbor_radius = 1
 small_to_big_max_tokens_per_anchor = 1200
 
 [rag.reranker]
+deadline_ms = 30000.0
 provider = "qwen3"
 model = "Qwen/Qwen3-Reranker-0.6B"
 device = "auto"

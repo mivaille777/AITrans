@@ -6,6 +6,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
@@ -95,6 +96,19 @@ def _image_data_url(path: Path, *, max_asset_bytes: int) -> str:
             f"visual asset exceeds configured size limit: {stat.st_size} > {max_asset_bytes}"
         )
     mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if path.suffix.lower() in {".jp2", ".jpx", ".j2k"}:
+        from PIL import Image
+
+        with Image.open(path) as image, BytesIO() as buffer:
+            image.convert("RGB").save(buffer, format="PNG")
+            image_bytes = buffer.getvalue()
+        if len(image_bytes) > max_asset_bytes:
+            raise ValueError(
+                f"converted visual asset exceeds configured size limit: "
+                f"{len(image_bytes)} > {max_asset_bytes}"
+            )
+        payload = base64.b64encode(image_bytes).decode("ascii")
+        return f"data:image/png;base64,{payload}"
     if not mime_type.startswith("image/"):
         raise ValueError(f"visual asset is not a recognized image: {path.name}")
     payload = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -147,6 +161,7 @@ class OpenAICompatibleVisualDescriptionProvider:
             self._client = OpenAICompatibleClient(
                 base_url=self._config.base_url,
                 model=self.model_name,
+                provider=self._config.credential_provider,
                 timeout=self._config.timeout_seconds,
                 max_retries=self._config.max_retries,
             )

@@ -57,6 +57,10 @@ jobs:
         shell: pwsh
         run: python -m pip check
 
+      - name: Run frozen RAG functional regression gates
+        shell: pwsh
+        run: python scripts/check_rag_regression.py --suite ci
+
       - name: Run Research Memory reliability benchmark
         shell: pwsh
         run: python scripts/run_research_memory_regression.py --report test-results/research-memory-regression.json

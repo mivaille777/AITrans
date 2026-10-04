@@ -12,7 +12,7 @@ RagDebugStageStatus = Literal[
     "pending", "active", "complete", "warning", "failed", "skipped"
 ]
 RagDebugStageKey = Literal[
-    "query", "rewrite", "dense", "bm25", "fusion", "rerank", "context", "answer"
+    "query", "rewrite", "dense", "bm25", "graph", "fusion", "rerank", "context", "answer"
 ]
 
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Iterable, Mapping
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any
+
+from typing_extensions import TypedDict
 
 from backend.agent_core.orchestration.reducer import (
     reduce_artifact_refs as _reduce_artifact_refs,

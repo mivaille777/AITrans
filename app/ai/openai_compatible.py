@@ -30,12 +30,13 @@ from app.ai.secrets import (
     get_provider_api_key,
     normalize_provider_name,
 )
+from app.ai.tool_calling import NativeToolCallingClient
 
 DEFAULT_COMPATIBLE_TIMEOUT_SECONDS = 15.0
 DEFAULT_COMPATIBLE_MAX_RETRIES = 1
 
 
-class OpenAICompatibleClient:
+class OpenAICompatibleClient(NativeToolCallingClient):
     """Call an arbitrary Chat-Completions-compatible provider."""
 
     def __init__(

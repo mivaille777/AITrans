@@ -92,12 +92,14 @@ def test_success_trace_contains_one_event_per_retrieval_stage() -> None:
 
     assert event_types == list(RAG_EVENT_TYPES[:-1])
     assert len(event_types) == len(set(event_types))
-    assert events[2].payload == {
+    assert {key: events[2].payload[key] for key in ("query_id", "dense_count", "embedding_ms", "dense_search_ms")} == {
         "query_id": "rag-test-1",
         "dense_count": 5,
         "embedding_ms": 3.0,
         "dense_search_ms": 4.0,
     }
+    assert all(event.payload["trace_id"] == "rag-test-1" for event in events)
+    assert all(event.payload["parent_id"] == "rag-test-1:0" for event in events[1:])
     rerank = next(
         event for event in events if event.event_type == "rag_rerank_completed"
     )
@@ -177,3 +179,22 @@ def test_sensitive_payload_is_bounded_and_omits_full_queries(tmp_path) -> None:
     assert "PRIVATE SUBQUERY" not in persisted
     assert "S" * MAX_TRACE_EXCERPT_CHARS in persisted
     assert "S" * (MAX_TRACE_EXCERPT_CHARS + 1) not in persisted
+
+
+def test_agent_storage_retains_times_and_cache_links_without_private_span_fields(tmp_path):
+    state = AgentState(session_id="timed-rag", intent="search_knowledge_base")
+    span = {"trace_id": state.trace_id, "span_id": "span-1", "parent_id": state.trace_id,
+            "stage": "cache", "status": "complete", "started_at": "2026-10-03T00:00:00+00:00",
+            "ended_at": "2026-10-03T00:00:00.001+00:00", "elapsed_ms": 1.0,
+            "error": "PRIVATE INPUT", "query": "PRIVATE QUERY"}
+    event = AgentEvent(event_type=AgentEventType.RAG_EVIDENCE_SELECTED, run_id=state.run_id,
+        trace_id=state.trace_id, payload={"trace_id": state.trace_id, "spans": [span],
+            "retrieval_spans": [span], "cache_hit": True, "cache_source_span_ids": ["original-span"],
+            "started_at": span["started_at"], "ended_at": span["ended_at"], "token_usage": None, "cost": None})
+    store = AgentTraceStoreService(storage_path=tmp_path / "agent.sqlite3")
+    store.record(state, [event])
+    persisted = store.event_payloads(state.run_id)[0]
+    assert persisted["spans"][0]["elapsed_ms"] == 1.0
+    assert persisted["cache_source_span_ids"] == ["original-span"]
+    assert persisted["cache_hit"] is True
+    assert "PRIVATE" not in repr(persisted)

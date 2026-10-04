@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 from pathlib import Path
+from random import Random
+
+import pytest
+from PIL import Image
 
 from backend.rag.config import RagVisualUnderstandingConfig
 from backend.rag.evidence_builder import build_evidence_item
@@ -17,9 +22,43 @@ from backend.rag.models import (
 from backend.rag.multimodal import build_multimodal_chunks
 from backend.rag.vision import (
     OpenAICompatibleVisualDescriptionProvider,
+    _image_data_url,
     enrich_document_with_visual_descriptions,
     visual_description_index_version,
 )
+
+
+def test_jpeg2000_visual_asset_is_converted_without_changing_original(tmp_path: Path) -> None:
+    asset = tmp_path / "figure.jp2"
+    Image.new("RGB", (16, 16), "red").save(asset, format="JPEG2000")
+    original = asset.read_bytes()
+    data_url = _image_data_url(asset, max_asset_bytes=4096)
+    assert data_url.startswith("data:image/png;base64,")
+    with Image.open(BytesIO(base64.b64decode(data_url.split(",", 1)[1]))) as image:
+        assert image.size == (16, 16)
+        assert image.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+    assert asset.read_bytes() == original
+
+
+def test_jpeg2000_conversion_preserves_output_size_limit(tmp_path: Path) -> None:
+    asset = tmp_path / "figure.jp2"
+    image = Image.frombytes("RGB", (64, 64), Random(7).randbytes(64 * 64 * 3))
+    image.save(asset, format="JPEG2000", irreversible=True,
+               quality_mode="rates", quality_layers=[20])
+    png = BytesIO()
+    with Image.open(asset) as decoded:
+        decoded.convert("RGB").save(png, format="PNG")
+    limit = asset.stat().st_size
+    assert len(png.getvalue()) > limit
+    with pytest.raises(ValueError, match="size limit"):
+        _image_data_url(asset, max_asset_bytes=limit)
+
+
+def test_corrupt_jpeg2000_visual_asset_remains_an_error(tmp_path: Path) -> None:
+    asset = tmp_path / "figure.jp2"
+    asset.write_bytes(b"invalid jpeg2000")
+    with pytest.raises(OSError):
+        _image_data_url(asset, max_asset_bytes=4096)
 
 _TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII="
@@ -249,6 +288,22 @@ def test_openai_compatible_visual_provider_sends_image_data_url(tmp_path: Path) 
     assert user_content[1]["type"] == "image_url"
     assert user_content[1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert user_content[1]["image_url"]["detail"] == "high"
+
+
+def test_visual_provider_uses_configured_credential_provider(monkeypatch) -> None:
+    from backend.rag import vision
+
+    calls = []
+
+    def create_client(**kwargs):
+        calls.append(kwargs)
+        return FakeCompletionClient()
+
+    monkeypatch.setattr(vision, "OpenAICompatibleClient", create_client)
+    OpenAICompatibleVisualDescriptionProvider(_config(credential_provider="deepseek"))
+
+    assert calls[0]["provider"] == "deepseek"
+    assert calls[0]["base_url"] == "http://127.0.0.1:8000/v1"
 
 
 class FakeParser:

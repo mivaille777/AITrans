@@ -34,6 +34,94 @@ def make_retriever(tmp_path: Path) -> BM25SparseRetriever:
     return BM25SparseRetriever(tmp_path / "bm25_index.json")
 
 
+def test_ranked_scan_continues_past_out_of_scope_and_inactive_hits(tmp_path):
+    retriever = make_retriever(tmp_path)
+    retriever.index_chunks([chunk("outside", "water", document_id="outside")])
+    retriever.index_chunks([chunk("stale", "water", document_id="allowed")], generation_id="old")
+    retriever.index_chunks([chunk("reference", "water", document_id="allowed", section="References")], generation_id="current")
+    retriever.index_chunks([
+        chunk("a", "water and a long discussion", document_id="allowed"),
+        chunk("b", "water and a long discussion", document_id="allowed"),
+    ], generation_id="current")
+    hits = retriever.search("water", 2, VectorSearchFilter(document_ids=["allowed"]),
+                            active_generations={"allowed": "current"})
+    assert [hit.chunk.chunk_id for hit in hits] == ["a", "b"]
+    assert hits[0].sparse_score == hits[1].sparse_score
+    assert retriever.search("water", 2, active_generations={}) == []
+
+
+def test_selective_scope_finds_low_ranked_hits_without_dropping_ties(tmp_path):
+    retriever = make_retriever(tmp_path)
+    retriever.index_chunks([
+        *[chunk(f"outside-{i}", "water", document_id="outside") for i in range(200)],
+        chunk("a", "water with additional context", document_id="allowed").model_copy(update={"metadata": {"selected": True}}),
+        chunk("b", "water with additional context", document_id="allowed").model_copy(update={"metadata": {"selected": True}}),
+    ])
+    hits = retriever.search("water", 2, VectorSearchFilter(metadata={"selected": True}))
+    assert [hit.chunk.chunk_id for hit in hits] == ["a", "b"]
+    assert hits[0].sparse_score == hits[1].sparse_score
+
+
+def test_reference_classification_updates_on_replacement_and_restart(tmp_path):
+    retriever = make_retriever(tmp_path)
+    references = chunk("shared", "water tank controller", section="References")
+    retriever.index_chunks([references])
+    filters = VectorSearchFilter(exclude_references=True)
+    assert retriever.search("water tank", 3, filters) == []
+    retriever.index_chunks([chunk("shared", "water tank controller", section="Methods")])
+    assert [item.chunk.chunk_id for item in retriever.search("water tank", 3, filters)] == ["shared"]
+    restarted = make_retriever(tmp_path)
+    assert [item.chunk.chunk_id for item in restarted.search("water tank", 3, filters)] == ["shared"]
+    restarted.delete_document("doc_one")
+    assert restarted.search("water tank", 3, filters) == []
+
+
+def test_bm25_vectorized_scores_keep_numeric_formula_and_current_parameters():
+    import math
+
+    from backend.rag.sparse.bm25 import BM25Index
+
+    index = BM25Index()
+    index.rebuild({"a": ["water", "water", "tank"], "b": ["water"], "c": []})
+    for k1, b in ((1.5, .75), (.8, 0.0), (2.0, 1.0)):
+        index.k1, index.b = k1, b
+        scores = index.score(["water", "water", "absent"])
+        idf = math.log(1 + (3 - 2 + .5) / (2 + .5))
+        expected = {key: idf * (tf * (k1 + 1) / (tf + k1 * (1 - b + b * length / (4 / 3))))
+                    for key, tf, length in (("a", 2, 3), ("b", 1, 1))}
+        assert scores == pytest.approx(expected, abs=1e-12)
+    index.rebuild({})
+    assert index.score(["water"]) == {}
+
+
+def test_in_progress_sparse_rebuild_does_not_mutate_published_scoring_arrays(tmp_path, monkeypatch):
+    from threading import Event, Thread
+
+    from backend.rag.sparse.bm25 import BM25Index
+
+    retriever = make_retriever(tmp_path)
+    retriever.index_chunks([chunk("old", "water tank")])
+    ready, release = Event(), Event()
+    rebuild = BM25Index.rebuild
+
+    def blocked_rebuild(index, documents):
+        rebuild(index, documents)
+        ready.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(BM25Index, "rebuild", blocked_rebuild)
+    worker = Thread(target=lambda: retriever.index_chunks([chunk("new", "water tank")]))
+    worker.start()
+    try:
+        assert ready.wait(5)
+        assert [item.chunk.chunk_id for item in retriever.search("water", 3)] == ["old"]
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert {item.chunk.chunk_id for item in retriever.search("water", 3)} == {"old", "new"}
+
+
 @pytest.mark.parametrize("query", ["M10", "J_seg", "GP-UCB"])
 def test_exact_identifier_match_ranks_first(tmp_path: Path, query: str) -> None:
     retriever = make_retriever(tmp_path)

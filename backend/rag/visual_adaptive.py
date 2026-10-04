@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -117,10 +117,11 @@ class AdaptiveQdrantTwoStageVisualStore(QdrantTwoStageVisualStore):
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if not self._prefetch_policy.enabled:
             candidate_count = self.estimate_candidate_count(filters)
-            results = super().search(query, top_k=top_k, filters=filters)
+            results = super().search(query, top_k=top_k, filters=filters, active_generations=active_generations)
             return _annotate_prefetch_results(
                 results,
                 candidate_count=candidate_count,
@@ -135,7 +136,7 @@ class AdaptiveQdrantTwoStageVisualStore(QdrantTwoStageVisualStore):
             raise ValueError("visual top_k must be positive")
         self.ensure_collection()
         multivector = _validate_multivector(query, self.dimension)
-        query_filter = self._build_filter(filters)
+        query_filter = self._build_filter(filters, active_generations)
         candidate_count = self.estimate_candidate_count(filters)
         prefetch_limit = adaptive_prefetch_top_k(
             candidate_count=candidate_count,
@@ -151,6 +152,7 @@ class AdaptiveQdrantTwoStageVisualStore(QdrantTwoStageVisualStore):
             response = self._client.query_points(
                 collection_name=self.collection_name,
                 prefetch=qdrant_models.Prefetch(
+                    filter=query_filter,
                     query=pool_multivector(multivector, self.dimension),
                     using=COARSE_VECTOR_NAME,
                     limit=prefetch_limit,
@@ -247,6 +249,7 @@ class AdaptiveVisualRetrievalService(VisualRetrievalService):
         section_hints: tuple[str, ...] = (),
         final_top_k: int | None = None,
         include_references: bool = False,
+        **retrieval_options,
     ) -> RetrievalResult:
         result = super().retrieve(
             query,
@@ -254,6 +257,7 @@ class AdaptiveVisualRetrievalService(VisualRetrievalService):
             section_hints=section_hints,
             final_top_k=final_top_k,
             include_references=include_references,
+            **retrieval_options,
         )
         metadata = dict(result.metadata)
         policy = getattr(self._store, "prefetch_policy", None)

@@ -25,6 +25,19 @@ from backend.rag.evaluation_dataset import (
     load_evaluation_predictions,
 )
 
+
+def test_reranker_comparison_uses_full_post_pool_not_final_truncation():
+    case = RagEvaluationCase(case_id="pool", query="query", relevant_chunk_ids=["gold"])
+    prediction = RagEvaluationPrediction(
+        case_id="pool", ranked_chunk_ids=["noise"],
+        pre_rerank_chunk_ids=["gold", "noise"],
+        post_rerank_chunk_ids=["noise", "gold"],
+    )
+    report = evaluate_rag([case], [prediction])
+    assert report.retrieval.mrr == 0.0
+    assert report.reranker.mrr_after == 0.5
+    assert report.reranker.mrr_delta == -0.5
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -139,8 +152,9 @@ def test_evaluation_reports_retrieval_reranking_grounding_and_latency() -> None:
     assert report.citations.citation_precision == 0.5
     assert report.citations.citation_recall == 0.5
     assert report.citations.citation_coverage == 1
-    assert report.citations.unsupported_claim_rate == 0.5
-    assert report.citations.assessed_claims == 2
+    # The system's own supported flags are not independent assessments.
+    assert report.citations.assessed_claims == 0
+    assert report.production["independent_answer"]["faithfulness"] is None
     assert report.performance.total_rag_ms.p50 == 20
     assert report.performance.total_rag_ms.p95 == 29
 

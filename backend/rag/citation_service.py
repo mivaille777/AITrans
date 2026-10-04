@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
+from backend.rag.evidence_verifier import verify_evidence_provenance
 from backend.rag.exceptions import RagInvariantError
 
 
@@ -11,6 +12,7 @@ class CitationService:
 
     @staticmethod
     def _evidence_ids(evidence: Sequence[AgentEvidenceItem]) -> list[str]:
+        verify_evidence_provenance(evidence)
         ordered: list[str] = []
         seen: set[str] = set()
         for item in evidence:

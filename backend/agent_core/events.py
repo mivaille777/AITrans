@@ -61,6 +61,7 @@ class AgentEventType(str, Enum):
     RAG_QUERY_REWRITTEN = "rag_query_rewritten"
     RAG_DENSE_COMPLETED = "rag_dense_completed"
     RAG_SPARSE_COMPLETED = "rag_sparse_completed"
+    RAG_GRAPH_COMPLETED = "rag_graph_completed"
     RAG_FUSION_COMPLETED = "rag_fusion_completed"
     RAG_RERANK_COMPLETED = "rag_rerank_completed"
     RAG_EVIDENCE_SELECTED = "rag_evidence_selected"

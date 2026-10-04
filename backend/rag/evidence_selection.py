@@ -5,6 +5,7 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from time import perf_counter
 from typing import Any, Protocol
 
@@ -441,6 +442,13 @@ class EvidenceSelectionService:
                     "start_char": source_chunk.start_char + item.start_offset,
                     "end_char": source_chunk.start_char + item.end_offset,
                     "token_count": self._token_counter.count(item.text),
+                    "source_span": (
+                        source_chunk.source_span.model_copy(update={
+                            "start_char": source_chunk.start_char + item.start_offset,
+                            "end_char": source_chunk.start_char + item.end_offset,
+                            "quote_hash": sha256(item.text.encode("utf-8")).hexdigest(),
+                        }) if source_chunk.source_span is not None else None
+                    ),
                 }
             )
             selected_candidate = item.candidate.model_copy(

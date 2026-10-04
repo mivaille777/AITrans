@@ -55,8 +55,9 @@ class MatrixService(CompanionChatService):
         document_ids: tuple[str, ...] = (),
         *,
         history: tuple[tuple[str, str], ...] = (),
+        trace_id: str | None = None,
     ) -> CompanionKnowledgeGrounding:
-        _ = history
+        _ = history, trace_id
         self.retrieval_calls.append((query, document_ids))
         evidence = AgentEvidenceItem(
             evidence_id="ev-1",
@@ -150,6 +151,26 @@ def test_all_documents_scope_survives_identity_then_enables_next_knowledge_query
     assert service.retrieval_calls == [
         ("资料库里的 PID tuning 怎么做", ())
     ]
+
+
+@pytest.mark.parametrize("query", ["本地的资料库有什么？", "本地资料库有几份文档？"])
+@pytest.mark.parametrize("policy", ["auto", "always"])
+def test_local_library_inventory_uses_manifest_without_content_retrieval(query, policy):
+    service = MatrixService()
+    prepared = service.prepare_execution(query=query, knowledge_access_policy=policy)
+    assert prepared.plan.route is CompanionQueryRoute.KNOWLEDGE_CATALOG
+    assert prepared.plan.grounding_policy is GroundingPolicy.MANIFEST
+    assert prepared.catalog_document_count == 1
+    assert "Control Paper" in prepared.direct_output_text
+    assert service.retrieval_calls == []
+
+
+def test_local_library_content_question_still_retrieves_in_auto_mode():
+    service = MatrixService()
+    query = "本地资料库里的 PID tuning 怎么做？"
+    prepared = service.prepare_execution(query=query, knowledge_access_policy="auto")
+    assert prepared.plan.use_knowledge
+    assert service.retrieval_calls == [(query, ())]
 
 
 def test_verifier_failure_replaces_generated_claim_with_bounded_evidence() -> None:

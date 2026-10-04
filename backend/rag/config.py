@@ -96,6 +96,7 @@ class RagVisualUnderstandingConfig(RagConfigModel):
 
     enabled: bool = False
     provider: str = "openai_compatible"
+    credential_provider: str = "openai_compatible"
     model: str = ""
     base_url: str = ""
     inherit_ai_settings: bool = True
@@ -137,8 +138,11 @@ class RagVisualRetrievalConfig(RagConfigModel):
     model_family: str = "colqwen2_5"
     model: str = "tsystems/colqwen2.5-3b-multilingual-v1.0"
     model_path: str = ""
+    cache_dir: str = ""
     device: str = "auto"
     precision: str = "default"
+    quantization: str = "none"
+    max_image_tokens: int = Field(default=768, ge=64, le=2048)
     dimension: int = Field(default=128, ge=1)
     batch_size: int = Field(default=1, ge=1, le=16)
     local_files_only: bool = False
@@ -160,6 +164,14 @@ class RagVisualRetrievalConfig(RagConfigModel):
     rrf_k: int = Field(default=60, ge=1, le=1000)
     text_weight: float = Field(default=1.0, gt=0.0, le=10.0)
     visual_weight: float = Field(default=1.0, gt=0.0, le=10.0)
+
+    @field_validator("quantization")
+    @classmethod
+    def validate_quantization(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"none", "nf4"}:
+            raise ValueError("visual retrieval quantization must be none or nf4")
+        return normalized
 
     @field_validator("provider")
     @classmethod
@@ -247,6 +259,16 @@ class RagVectorStoreConfig(RagConfigModel):
     collection_name: str = Field(default="aitrans_knowledge", min_length=1)
     distance: str = "cosine"
     storage_path: str = "config/rag/qdrant"
+    url: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+
+    @field_validator("url")
+    @classmethod
+    def validate_server_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if normalized and not normalized.startswith(("http://", "https://")):
+            raise ValueError("Qdrant server URL must use http or https")
+        return normalized
 
 
 class RagGraphConfig(RagConfigModel):
@@ -270,6 +292,8 @@ class RagGraphConfig(RagConfigModel):
 
 
 class RagRetrievalConfig(RagConfigModel):
+    embedding_cache_size: int = Field(default=0, ge=0, le=10000)
+    channel_deadline_ms: float | None = Field(default=None, gt=0)
     dense_top_k: int = Field(default=30, ge=1)
     sparse_top_k: int = Field(default=30, ge=1)
     fusion_top_k: int = Field(default=20, ge=1)
@@ -305,6 +329,8 @@ class RagRerankerConfig(RagConfigModel):
     lazy_load: bool = True
     local_files_only: bool = False
     model_path: str = ""
+    max_input_tokens: int | None = Field(default=None, ge=64, le=32768)
+    deadline_ms: float | None = Field(default=None, gt=0)
 
     @field_validator("device")
     @classmethod
@@ -317,6 +343,9 @@ class RagRerankerConfig(RagConfigModel):
 
 class RagConfig(RagConfigModel):
     enabled: bool = True
+    inference_timeout_seconds: float = Field(default=120.0, gt=0)
+    query_rewrite_enabled: bool = True
+    query_router_enabled: bool = False
     jit_search_read_enabled: bool = False
     graph: RagGraphConfig = Field(default_factory=RagGraphConfig)
     advanced_parsing: RagAdvancedParsingConfig = Field(default_factory=RagAdvancedParsingConfig)

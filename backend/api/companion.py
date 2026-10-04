@@ -1,4 +1,5 @@
-from typing import Annotated
+import logging
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -7,6 +8,7 @@ from backend.api.dependencies import (
     get_companion_chat_service,
     get_companion_handoff_service,
     get_companion_ownership_service,
+    get_rag_debug_service,
 )
 from backend.models.companion import (
     CompanionChatOwnershipResponse,
@@ -18,7 +20,11 @@ from backend.models.companion import (
     CompanionHandoffRequest,
     CompanionHandoffResponse,
 )
-from backend.services.companion_chat_service import CompanionChatService
+from backend.models.companion_routing import GroundingPolicy
+from backend.services.companion_chat_service import (
+    CompanionChatService,
+    CompanionPreparedExecution,
+)
 from backend.services.companion_handoff_service import (
     CompanionHandoffService,
     CompanionHandoffState,
@@ -145,6 +151,58 @@ def send_companion_chat(
     payload: CompanionChatRequest,
     service: CompanionChatServiceDependency,
 ) -> CompanionChatResponse:
+    trace_service = None
+    trace_id = ""
+    try:
+        trace_service = get_rag_debug_service()
+        trace_id = trace_service.record_companion_route(
+            request_id=payload.request_id, conversation_id=payload.conversation_id,
+            query=payload.user_message, knowledge_enabled=payload.knowledge_enabled,
+            document_ids=tuple(payload.knowledge_document_ids), route="pending", route_reason="",
+            grounding_policy="pending", retrieval_skipped=True, verification_skipped=True,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to start HTTP Companion trace.")
+
+    def record_phase(stage: str, _plan: Any = None, *, terminal: str = "active", metadata: dict | None = None) -> None:
+        if trace_service is not None and trace_id:
+            try:
+                trace_service.record_companion_event(
+                    trace_id, stage=stage, status=terminal, metadata=metadata,
+                )
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to record HTTP Companion trace.")
+
+    def record_prepared(prepared: CompanionPreparedExecution) -> None:
+        if trace_service is not None and trace_id:
+            try:
+                trace_service.record_companion_route(
+                    trace_id=trace_id, request_id=payload.request_id,
+                    conversation_id=payload.conversation_id, query=payload.user_message,
+                    knowledge_enabled=payload.knowledge_enabled,
+                    document_ids=tuple(payload.knowledge_document_ids),
+                    route=prepared.plan.route.value, route_reason=prepared.plan.reason,
+                    grounding_policy=prepared.plan.grounding_policy.value,
+                    retrieval_skipped=not prepared.plan.use_knowledge,
+                    verification_skipped=prepared.plan.grounding_policy is not GroundingPolicy.EVIDENCE,
+                    catalog_document_count=prepared.catalog_document_count,
+                    retrieval=dict(prepared.grounding.debug_metadata or {}),
+                    evidence=[item.model_dump(mode="json") for item in prepared.grounding.evidence],
+                    citations=[item.model_dump(mode="json") for item in prepared.grounding.citations],
+                )
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to record HTTP Companion preparation.")
+
+    def record_verification(verification: dict, fallback_applied: bool) -> None:
+        if trace_service is not None and trace_id:
+            try:
+                trace_service.update_companion_verification(
+                    trace_id, verification=verification, fallback_applied=fallback_applied,
+                )
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to record HTTP Companion verification.")
+
+    record_phase("preparing")
     try:
         result = service.send(
             session_id=payload.session_id,
@@ -165,17 +223,28 @@ def send_companion_chat(
             knowledge_access_policy=payload.knowledge_access_policy,
             knowledge_enabled=payload.knowledge_enabled,
             knowledge_document_ids=tuple(payload.knowledge_document_ids),
+            **({"trace_id": trace_id or None, "phase_callback": record_phase,
+                "prepared_callback": record_prepared, "verification_callback": record_verification}
+               if isinstance(service, CompanionChatService) else {}),
         )
     except AIConfigurationError as exc:
+        record_phase("answer", terminal="error", metadata={"error_code": "configuration"})
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
     except AIError as exc:
+        record_phase("answer", terminal="error", metadata={"error_code": "provider"})
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    except Exception:
+        record_phase("answer", terminal="error", metadata={"error_code": "internal"})
+        raise
+
+    record_phase("answer", terminal="complete", metadata={"provider": result.provider,
+        "model": result.model, "output_characters": len(result.output_text)})
 
     return CompanionChatResponse(
         conversation_id=payload.conversation_id,

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import parse_qs, unquote, urlparse
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -13,7 +14,11 @@ from backend.agent_tools.base import (
     TypedAgentToolDefinition,
     typed_tool_definition,
 )
-from backend.knowledge.domain import KnowledgeItem, KnowledgeItemType, KnowledgeRelationOrigin
+from backend.knowledge.domain import (
+    KnowledgeItem,
+    KnowledgeItemType,
+    KnowledgeRelationOrigin,
+)
 from backend.knowledge.service import KnowledgeWorkspaceService
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.rag.citation_service import build_evidence_citations
@@ -21,6 +26,7 @@ from backend.rag.evidence_builder import build_agent_evidence
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.observability import RagTraceEventData, build_rag_trace_events
 from backend.rag.query_planner import RagQueryPlan, merge_query_results
+from backend.rag.retrieval_service import RetrievalService
 from backend.rag.stores.base import VectorSearchFilter
 
 
@@ -43,6 +49,25 @@ class KnowledgeReadSectionArgs(AgentToolModel):
 class KnowledgeSearchPlannerArgs(AgentToolModel):
     query: str = Field(min_length=1, max_length=4_000)
     document_scope: str = Field(default="", max_length=8_000)
+    document_ids: list[str] = Field(default_factory=list, max_length=100)
+    top_k: int = Field(default=5, ge=1, le=8)
+
+
+class KnowledgeFunctionSearchArgs(AgentToolModel):
+    query: str = Field(min_length=1, max_length=4_000)
+    document_ids: list[str] = Field(max_length=100)
+    top_k: int = Field(ge=1, le=8)
+
+
+class KnowledgeListArgs(AgentToolModel):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=50)
+
+
+class KnowledgeListResultData(AgentToolModel):
+    documents: list[dict[str, Any]] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    next_offset: int | None = None
 
 
 class KnowledgeSearchResultItem(AgentToolModel):
@@ -68,6 +93,8 @@ class KnowledgeSearchResultData(AgentToolModel):
     results: list[KnowledgeSearchResultItem] = Field(default_factory=list)
     elapsed_ms: float = Field(ge=0.0)
     fallback_reason: str = ""
+    evidence_status: Literal["sufficient", "relevant_insufficient", "absent"] = "absent"
+    evidence_status_reason: str = ""
     evidence: list[AgentEvidenceItem] = Field(default_factory=list)
     citations: list[AgentCitationRef] = Field(default_factory=list)
     query_plan: RagQueryPlan | None = None
@@ -309,12 +336,41 @@ class KnowledgeAgentTools:
         chunk_store: KnowledgeChunkStore | None = None,
         jit_search_read_enabled: bool = False,
         workspace_service: KnowledgeWorkspaceService | None = None,
+        library_service: Any | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._query_planner = query_planner
         self._chunk_store = chunk_store
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         self._workspace_service = workspace_service
+        self._library_service = library_service
+
+    def list_knowledge_documents(
+        self, context: AgentToolInvocationContext, args: BaseModel,
+    ) -> AgentToolExecutionResult:
+        typed = cast(KnowledgeListArgs, args)
+        if self._library_service is None:
+            raise RuntimeError("Knowledge library is unavailable.")
+        if not context.knowledge_document_ids and not context.knowledge_scope_allow_global:
+            raise PermissionError("Knowledge access requires an explicit document scope.")
+        allowed = set(context.knowledge_document_ids)
+        records = [record for record in self._library_service.list_documents()
+            if not allowed or record.document_id in allowed]
+        page = records[typed.offset:typed.offset + typed.limit]
+        documents = [{"document_id": record.document_id, "title": record.title,
+            "status": str(getattr(record.status, "value", record.status)),
+            "chunk_count": len(record.chunk_ids)} for record in page]
+        metadata_reader = getattr(self._library_service, "document_source_metadata", None)
+        for record, document in zip(page, documents, strict=True):
+            document.update(metadata_reader(record) if callable(metadata_reader) else {
+                "file_format": "unknown", "modified_at": None, "metadata_status": "source_unavailable",
+            })
+        next_offset = typed.offset + len(page)
+        data = {"documents": documents, "total": len(records),
+            "next_offset": next_offset if next_offset < len(records) else None}
+        return AgentToolExecutionResult(tool_name="list_knowledge_documents",
+            output_text="\n".join(f"{item['title']} ({item['status']})" for item in documents),
+            effect="read", request_id=context.request_id, data=data)
 
     def search_knowledge_base(
         self,
@@ -367,6 +423,10 @@ class KnowledgeAgentTools:
                     self._retrieval_service.retrieve(
                         retrieval_query,
                         filters=filters,
+                        **({"trace_id": context.trace_id} if context.trace_id and (
+                            isinstance(self._retrieval_service, RetrievalService)
+                            or callable(getattr(self._retrieval_service, "validate_evidence_candidates", None))
+                        ) else {}),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - degrade per subquery
@@ -374,7 +434,9 @@ class KnowledgeAgentTools:
         if not retrievals:
             detail = "; ".join(retrieval_errors) or "retrieval unavailable"
             raise RuntimeError(f"Knowledge retrieval failed: {detail}")
-        default_limit = max((len(item.candidates) for item in retrievals), default=1)
+        default_limit = max(
+            1, max((len(item.candidates) for item in retrievals), default=1)
+        )
         retrieval = merge_query_results(
             typed.query,
             retrievals,
@@ -386,6 +448,9 @@ class KnowledgeAgentTools:
         candidates = retrieval.candidates
         for candidate in candidates:
             _validate_chunk_scope(candidate.chunk, context)
+        validator = getattr(self._retrieval_service, "validate_evidence_candidates", None)
+        if callable(validator):
+            validator(retrieval, filters=filters)
         evidence = (
             []
             if self.jit_search_read_enabled
@@ -397,6 +462,8 @@ class KnowledgeAgentTools:
             retrievals=retrievals,
             merged=retrieval,
             evidence=evidence,
+            query_id=f"{context.trace_id or context.run_id}:rag:{uuid4().hex[:12]}",
+            trace_id=context.trace_id or context.run_id or None,
         )
         result_builder = (
             _result_item if self.jit_search_read_enabled else _legacy_result_item
@@ -414,7 +481,7 @@ class KnowledgeAgentTools:
                 for item in results
             )
         else:
-            output_text = "No matching knowledge found."
+            output_text = "No matching knowledge found. Evidence is absent; do not make a document-grounded claim."
         return AgentToolExecutionResult(
             tool_name="search_knowledge_base",
             output_text=output_text,
@@ -426,6 +493,8 @@ class KnowledgeAgentTools:
                 "results": results,
                 "elapsed_ms": retrieval.elapsed_ms,
                 "fallback_reason": fallback_reason,
+                "evidence_status": "relevant_insufficient" if results else "absent",
+                "evidence_status_reason": "claim_verification_required" if results else "no_evidence",
                 "evidence": [item.model_dump(mode="json") for item in evidence],
                 "citations": [item.model_dump(mode="json") for item in citations],
                 "query_plan": plan.model_dump(mode="json"),
@@ -472,6 +541,14 @@ class KnowledgeAgentTools:
             candidates=candidates,
             retrieval_strategy="jit_read",
         )
+        validator = getattr(self._retrieval_service, "validate_evidence_candidates", None)
+        if callable(validator):
+            validator(
+                retrieval,
+                filters=VectorSearchFilter(
+                    document_ids=list(context.knowledge_document_ids),
+                ),
+            )
         evidence = build_agent_evidence(retrieval)
         citations = build_evidence_citations(evidence)
         output_text = "\n\n".join(
@@ -493,6 +570,16 @@ class KnowledgeAgentTools:
             },
         )
 
+    def _get_read_chunk(
+        self, chunk_id: str, context: AgentToolInvocationContext,
+    ) -> DocumentChunk | None:
+        getter = getattr(self._retrieval_service, "get_active_chunk", None)
+        if callable(getter):
+            if not context.knowledge_document_ids and not context.knowledge_scope_allow_global:
+                raise PermissionError("Knowledge access requires an explicit document scope.")
+            return getter(chunk_id, filters=VectorSearchFilter(document_ids=list(context.knowledge_document_ids)))
+        return self._chunk_store.get_chunk(chunk_id)
+
     def read_knowledge_chunk(
         self,
         context: AgentToolInvocationContext,
@@ -501,7 +588,7 @@ class KnowledgeAgentTools:
         typed = cast(KnowledgeReadChunkArgs, args)
         if self._chunk_store is None:
             raise RuntimeError("Knowledge chunk store is unavailable.")
-        chunk = self._chunk_store.get_chunk(typed.chunk_id)
+        chunk = self._get_read_chunk(typed.chunk_id, context)
         if chunk is None:
             raise LookupError("Knowledge chunk no longer exists.")
         _validate_chunk_scope(chunk, context)
@@ -521,7 +608,7 @@ class KnowledgeAgentTools:
         typed = cast(KnowledgeReadSectionArgs, args)
         if self._chunk_store is None:
             raise RuntimeError("Knowledge chunk store is unavailable.")
-        anchor = self._chunk_store.get_chunk(typed.chunk_id)
+        anchor = self._get_read_chunk(typed.chunk_id, context)
         if anchor is None:
             raise LookupError("Knowledge chunk no longer exists.")
         _validate_chunk_scope(anchor, context)
@@ -658,6 +745,14 @@ def build_knowledge_tool_definitions(
             retry_policy="safe",
         )
     ]
+    if tools._library_service is not None:
+        definitions.append(typed_tool_definition(
+            name="list_knowledge_documents", title="List knowledge documents",
+            description="List permitted local document titles, IDs and index status. Use for catalog questions and resolving names to IDs; this is metadata, not document evidence.",
+            category="knowledge", effect="read", requires_reading_context=False,
+            requires_confirmation=False, args_model=KnowledgeListArgs,
+            result_model=KnowledgeListResultData, executor=tools.list_knowledge_documents,
+        ))
     if tools.jit_search_read_enabled:
         definitions.extend(
             (

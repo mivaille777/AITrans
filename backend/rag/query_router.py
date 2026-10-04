@@ -13,7 +13,9 @@ _IDENTIFIER = re.compile(
 _QUOTED = re.compile(r'["“《]([^"”》\n]{2,200})["”》]')
 _MULTI_HOP = re.compile(
     r"\b(?:compare|versus|difference|cross[-\s]document|multi[-\s]hop)\b"
-    r"|跨文档|跨论文|多跳|比较|对比|区别|差异|为什么.*比|\bwhy\b.{0,80}\bthan\b",
+    r"|跨文档|跨论文|多跳|比较|对比|区别|差异|为什么.*比|\bwhy\b.{0,80}\bthan\b"
+    r"|(?:什么|何种|怎样的)关系|之间.{0,24}关系|如何.{0,40}影响"
+    r"|\brelationships?\b|\b(?:related|relates?)\s+to\b",
     re.IGNORECASE,
 )
 

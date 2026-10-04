@@ -95,6 +95,21 @@ class ChatStub:
         )
 
 
+def test_rewrite_cannot_introduce_a_section_constraint_from_answer_format():
+    retrieval = RetrievalStub()
+    service = CompanionChatService(
+        retrieval_service=retrieval, query_planner=PlannerStub(),
+        rag_router_enabled=True,
+    )
+    query = "水箱控制论文研究了什么系统？请给出一句话结论并附引用。"
+
+    service.prepare_knowledge(query, ("doc-1",))
+
+    assert retrieval.queries[0] == query
+    assert all(not call["section_hints"] for call in retrieval.calls)
+    assert "Conclusion Conclusions concluding remarks final findings" not in retrieval.queries
+
+
 def test_companion_rag_uses_planned_queries_history_document_scope_and_structure() -> None:
     retrieval = RetrievalStub()
     planner = PlannerStub()

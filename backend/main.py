@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from functools import partial
@@ -65,6 +66,7 @@ from backend.api.overlay import router as overlay_router
 from backend.api.quick_actions import router as quick_actions_router
 from backend.api.rag_debug import router as rag_debug_router
 from backend.api.rag_models import router as rag_models_router
+from backend.api.rag_models import warm_existing_knowledge_runtime
 from backend.api.reading import router as reading_router
 from backend.api.research import router as research_router
 from backend.api.research_memory import router as research_memory_router
@@ -118,6 +120,12 @@ def get_dev_origins():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    try:
+        await asyncio.to_thread(warm_existing_knowledge_runtime)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "RAG startup preparation failed; local model health and retrieval errors remain explicit."
+        )
     store = get_agent_run_store()
     stop = asyncio.Event()
     worker_id = f"worker-{uuid4().hex}"

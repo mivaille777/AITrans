@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, RLock
@@ -46,6 +46,7 @@ from backend.rag.evaluation_dataset import (
     RagEvaluationPrediction,
 )
 from backend.rag.evidence_builder import build_agent_evidence
+from backend.rag.inference_worker import inference_cancellation
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.observability import build_rag_trace_events
 from backend.rag.query_planner import RagQueryPlanner, merge_query_results
@@ -66,6 +67,7 @@ _STAGE_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     ("rewrite", "Rewrite", "Generate standalone retrieval queries"),
     ("dense", "Dense Retrieval", "Vector search from the active index"),
     ("bm25", "BM25 Retrieval", "Sparse lexical search from the active index"),
+    ("graph", "Graph Retrieval", "Entity seeds, expansion, paths and source evidence"),
     ("fusion", "Fusion", "Merge retrieval lists with the configured strategy"),
     ("rerank", "Rerank", "Apply the configured reranker when available"),
     ("context", "Context Building", "Build bounded grounded context"),
@@ -86,6 +88,7 @@ class _RunState:
     response: RagDebugTraceResponse
     events: list[RagDebugStageEvent]
     cancel: Event
+    started_clock: float = field(default_factory=perf_counter)
 
 
 class _RunCancelled(Exception):
@@ -99,7 +102,7 @@ class RagDebugService:
         self.store = store
         self._lock = RLock()
         self._runs: dict[str, _RunState] = {}
-        self._companion_traces: list[RagDebugCompanionTrace] = []
+        self._companion_traces = self.store.list_companion_traces(limit=100)
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-debug")
 
     def close(self) -> None:
@@ -123,8 +126,9 @@ class RagDebugService:
         retrieval: dict[str, Any] | None = None,
         evidence: list[dict[str, Any]] | None = None,
         citations: list[dict[str, Any]] | None = None,
+        trace_id: str | None = None,
     ) -> str:
-        trace_id = f"companion_{uuid4().hex[:20]}"
+        trace_id = trace_id or str((retrieval or {}).get("trace_id") or f"companion_{uuid4().hex[:20]}")
         scope = (
             "selected"
             if document_ids
@@ -149,9 +153,50 @@ class RagDebugService:
             created_at=datetime.now(UTC).isoformat(),
         )
         with self._lock:
+            for index, existing in enumerate(self._companion_traces):
+                if existing.trace_id == trace_id:
+                    for key in ("lifecycle", "answer_status", "answer_ended_at"):
+                        if key in existing.retrieval:
+                            trace.retrieval[key] = existing.retrieval[key]
+                    trace.created_at = existing.created_at
+                    self.store.save_companion_trace(trace)
+                    self._companion_traces[index] = trace
+                    return trace_id
+            self.store.save_companion_trace(trace)
             self._companion_traces.insert(0, trace)
             del self._companion_traces[100:]
         return trace_id
+
+    def record_companion_event(self, trace_id: str, *, stage: str, status: str,
+                               metadata: dict[str, Any] | None = None) -> None:
+        """Persist the actual lifecycle, including failed/cancelled preparation."""
+        now = datetime.now(UTC)
+        with self._lock:
+            for index, trace in enumerate(self._companion_traces):
+                if trace.trace_id != trace_id:
+                    continue
+                updated = trace.model_copy(deep=True)
+                if updated.retrieval.get("answer_status") in {"complete", "cancelled", "error"}:
+                    return
+                events = updated.retrieval.setdefault("lifecycle", [])
+                if events and events[-1]["status"] == "active":
+                    previous = events[-1]
+                    previous["ended_at"] = now.isoformat()
+                    previous["elapsed_ms"] = max(0.0, (now - datetime.fromisoformat(previous["started_at"])).total_seconds() * 1000)
+                    previous["status"] = status if status in {"cancelled", "error"} else "complete"
+                events.append({
+                    "trace_id": trace_id, "span_id": f"{trace_id}:{len(events)}",
+                    "parent_id": trace_id, "stage": stage, "status": status,
+                    "started_at": now.isoformat(), "ended_at": None if status == "active" else now.isoformat(),
+                    "elapsed_ms": 0.0, "token_usage": None, "cost": None,
+                    **(metadata or {}),
+                })
+                if status in {"complete", "cancelled", "error"}:
+                    updated.retrieval["answer_status"] = status
+                    updated.retrieval["answer_ended_at"] = now.isoformat()
+                self.store.save_companion_trace(updated)
+                self._companion_traces[index] = updated
+                return
 
     def update_companion_verification(
         self,
@@ -164,13 +209,15 @@ class RagDebugService:
             for index, trace in enumerate(self._companion_traces):
                 if trace.trace_id != trace_id:
                     continue
-                self._companion_traces[index] = trace.model_copy(
+                updated = trace.model_copy(
                     update={
                         "verification_skipped": False,
                         "verification": dict(verification or {}),
                         "fallback_applied": bool(fallback_applied),
                     }
                 )
+                self.store.save_companion_trace(updated)
+                self._companion_traces[index] = updated
                 break
 
     def list_companion_traces(self, *, limit: int = 20) -> list[RagDebugCompanionTrace]:
@@ -216,7 +263,17 @@ class RagDebugService:
     def get_run(self, run_id: str) -> RagDebugTraceResponse | None:
         with self._lock:
             state = self._runs.get(run_id)
-            return state.response.model_copy(deep=True) if state else None
+            if state:
+                return state.response.model_copy(deep=True)
+        saved = self.store.get_snapshot(f"trace:{run_id}")
+        return RagDebugTraceResponse.model_validate(saved) if saved is not None else None
+
+    def _persist_trace(self, response: RagDebugTraceResponse) -> None:
+        from backend.rag.bad_cases.store import redact_snapshot
+        payload = redact_snapshot(response.model_dump(mode="json"))
+        payload["metadata"]["snapshot_schema_version"] = 1
+        payload["metadata"]["source_redacted"] = True
+        self.store.save_snapshot(f"trace:{response.run_id}", "trace", payload)
 
     def get_events(self, run_id: str, after: int = 0) -> RagDebugRunEventsResponse | None:
         with self._lock:
@@ -303,7 +360,7 @@ class RagDebugService:
     ) -> RagDebugTraceResponse:
         run_id = f"rageval_{uuid4().hex[:20]}"
         trace_id = f"ragtrace_{uuid4().hex[:20]}"
-        return self._execute_core(
+        response = self._execute_core(
             run_id=run_id,
             trace_id=trace_id,
             request=request,
@@ -312,6 +369,8 @@ class RagDebugService:
             cancelled=Event(),
             emit=lambda _stage, _status, _payload: None,
         )
+        self._persist_trace(response)
+        return response
 
     def evaluate_dataset(
         self,
@@ -412,6 +471,8 @@ class RagDebugService:
                     case_id=case.case_id,
                     ranked_chunk_ids=ranked,
                     pre_rerank_chunk_ids=metadata.get("pre_rerank_chunk_ids", ranked),
+                    rerank_input_chunk_ids=metadata.get("rerank_input_chunk_ids"),
+                    post_rerank_chunk_ids=metadata.get("post_rerank_chunk_ids"),
                     latency=RagEvaluationLatency(
                         query_embedding_ms=float(metadata.get("embedding_ms", 0.0) or 0.0),
                         dense_search_ms=float(metadata.get("dense_search_ms", 0.0) or 0.0),
@@ -587,32 +648,36 @@ class RagDebugService:
             self._update_run(run_id, stage, status, payload)
 
         try:
-            response = self._execute_core(
-                run_id=run_id,
-                trace_id=self._runs[run_id].response.trace_id,
-                request=request,
-                runtime=runtime,
-                answer_service=answer_service,
-                cancelled=self._runs[run_id].cancel,
-                emit=emit,
-            )
+            with inference_cancellation(state.cancel):
+                response = self._execute_core(
+                    run_id=run_id,
+                    trace_id=state.response.trace_id,
+                    request=request,
+                    runtime=runtime,
+                    answer_service=answer_service,
+                    cancelled=state.cancel,
+                    emit=emit,
+                )
             with self._lock:
                 state = self._runs.get(run_id)
                 if state is not None:
                     state.response = response.model_copy(
                         update={"status": "cancelled" if state.cancel.is_set() else "completed"}
                     )
+                    self._persist_trace(state.response)
         except _RunCancelled:
             with self._lock:
                 state = self._runs.get(run_id)
                 if state is not None:
                     state.response = state.response.model_copy(update={"status": "cancelled"})
+                    self._persist_trace(state.response)
         except Exception as exc:  # noqa: BLE001 - expose a bounded diagnostic to the UI
             with self._lock:
                 state = self._runs.get(run_id)
                 if state is not None:
                     state.response = state.response.model_copy(
-                        update={"status": "failed", "error": str(exc) or exc.__class__.__name__}
+                        update={"status": "cancelled" if state.cancel.is_set() else "failed",
+                                "error": str(exc) or exc.__class__.__name__}
                     )
                     self._append_event(
                         state,
@@ -620,6 +685,7 @@ class RagDebugService:
                         "failed",
                         {"error": str(exc) or exc.__class__.__name__},
                     )
+                    self._persist_trace(state.response)
 
     def _execute_core(
         self,
@@ -686,13 +752,16 @@ class RagDebugService:
             stage.elapsed_ms = max(0.0, float(elapsed_ms))
             stage.summary = summary or {}
             stage.candidate_count = max(0, int(count))
-            emit(key, status, {"summary": stage.summary, "candidate_count": stage.candidate_count})
+            emit(key, status, {"summary": stage.summary, "candidate_count": stage.candidate_count,
+                               "elapsed_ms": stage.elapsed_ms})
 
         stage_update("query", "active")
+        query_started = perf_counter()
         query_plan = RagQueryPlanner(text_service=None).plan(request.query)
         stage_update(
             "query",
             "complete",
+            elapsed_ms=(perf_counter() - query_started) * 1000,
             summary={"original_query": query_plan.original_query},
         )
         stage_update(
@@ -706,7 +775,7 @@ class RagDebugService:
         check_cancelled()
 
         if not knowledge_decision_model.should_retrieve:
-            for key in ("dense", "bm25", "fusion", "rerank", "context", "answer"):
+            for key in ("dense", "bm25", "graph", "fusion", "rerank", "context", "answer"):
                 stage_update(
                     key,
                     "skipped",
@@ -744,10 +813,11 @@ class RagDebugService:
         retriever = self._retriever_for_profile(runtime, profile)
         retrievals: list[RetrievalResult] = []
         retrieval_errors: list[str] = []
-        dense_started = perf_counter()
         for retrieval_query in retrieval_queries:
             check_cancelled()
             kwargs: dict[str, Any] = {"filters": filters, "final_top_k": request.top_k}
+            if isinstance(retriever, RetrievalService) or callable(getattr(retriever, "validate_evidence_candidates", None)):
+                kwargs["trace_id"] = trace_id
             if structural_intent is not None:
                 kwargs["section_hints"] = structural_intent.section_aliases
                 kwargs["include_references"] = structural_intent.name == "bibliography"
@@ -759,11 +829,18 @@ class RagDebugService:
         if not retrievals:
             raise RuntimeError("; ".join(retrieval_errors) or "RAG retrieval returned no result.")
 
-        elapsed_retrieval = (perf_counter() - dense_started) * 1000
         dense_count = sum(int(result.metadata.get("dense_count", 0) or 0) for result in retrievals)
         sparse_count = sum(int(result.metadata.get("sparse_count", 0) or 0) for result in retrievals)
-        stage_update("dense", "complete", elapsed_ms=elapsed_retrieval, count=dense_count, summary={"count": dense_count, "embedding_ms": self._metric(retrievals, "embedding_ms"), "dense_search_ms": self._metric(retrievals, "dense_search_ms")})
-        stage_update("bm25", "complete", elapsed_ms=elapsed_retrieval, count=sparse_count, summary={"count": sparse_count, "sparse_search_ms": self._metric(retrievals, "sparse_search_ms")})
+        stage_update("dense", "complete", elapsed_ms=self._metric(retrievals, "embedding_ms") + self._metric(retrievals, "dense_search_ms"), count=dense_count, summary={"count": dense_count, "embedding_ms": self._metric(retrievals, "embedding_ms"), "dense_search_ms": self._metric(retrievals, "dense_search_ms")})
+        stage_update("bm25", "complete", elapsed_ms=self._metric(retrievals, "sparse_search_ms"), count=sparse_count, summary={"count": sparse_count, "sparse_search_ms": self._metric(retrievals, "sparse_search_ms")})
+        graph_enabled = any(item.metadata.get("graph_enabled", False) for item in retrievals)
+        graph_trace = [item.metadata.get("graph_trace", {}) for item in retrievals]
+        graph_count = sum(int(item.metadata.get("graph_count", 0)) for item in retrievals)
+        graph_error = "; ".join(str(item.metadata.get("graph_error", "")) for item in retrievals if item.metadata.get("graph_error"))
+        stage_update("graph", "warning" if graph_error else ("complete" if graph_enabled else "skipped"),
+                     elapsed_ms=self._metric(retrievals, "graph_search_ms"), count=graph_count,
+                     summary={"enabled": graph_enabled, "traces": graph_trace, "error": graph_error,
+                              "paths": [path.model_dump(mode="json") for result in retrievals for item in result.candidates for path in item.graph_paths]})
 
         merge_limit = max(1, min(request.top_k, max(len(item.candidates) for item in retrievals)))
         merged = merge_query_results(request.query, retrievals, limit=merge_limit)
@@ -773,19 +850,27 @@ class RagDebugService:
         stage_update("rerank", "warning" if rerank_fallback else "complete", elapsed_ms=self._metric(retrievals, "rerank_ms"), count=len(merged.candidates), summary={"count": len(merged.candidates), "fallback": rerank_fallback})
         check_cancelled()
 
+        validator = getattr(retriever, "validate_evidence_candidates", None)
+        if callable(validator):
+            validator(merged, filters=filters)
+        context_started = perf_counter()
         evidence = build_agent_evidence(merged)
         citations = build_evidence_citations(evidence)
         grounded = GroundedContextBuilder().build(evidence, citations)
+        included = set(grounded.included_evidence_ids)
+        evidence = [item for item in evidence if item.evidence_id in included]
+        citations = [item for item in citations if set(item.evidence_ids).issubset(included)]
         evidence_gate_rounds = self._evidence_gate_rounds(retrievals, retrieval_errors)
         evidence_sufficient = bool(
             evidence_gate_rounds
             and evidence_gate_rounds[-1].get("sufficient", False)
         )
-        stage_update("context", "complete", elapsed_ms=(perf_counter() - started) * 1000 - sum(item.elapsed_ms for item in response_stages[:6]), count=len(evidence), summary={"estimated_tokens": grounded.estimated_tokens, "included": len(grounded.included_evidence_ids), "omitted": len(grounded.omitted_evidence_ids)})
+        stage_update("context", "complete", elapsed_ms=(perf_counter() - context_started) * 1000, count=len(evidence), summary={"estimated_tokens": grounded.estimated_tokens, "included": len(grounded.included_evidence_ids), "omitted": len(grounded.omitted_evidence_ids)})
 
         answer = ""
         answer_status = "skipped"
         answer_summary: dict[str, Any] = {"enabled": request.include_answer}
+        answer_started = perf_counter()
         if request.include_answer:
             if answer_service is None:
                 answer_status = "warning"
@@ -805,7 +890,7 @@ class RagDebugService:
                 except Exception as exc:  # noqa: BLE001 - retrieval remains useful if generation fails
                     answer_status = "warning"
                     answer_summary["error"] = str(exc) or exc.__class__.__name__
-        stage_update("answer", answer_status, elapsed_ms=(perf_counter() - started) * 1000, summary=answer_summary)
+        stage_update("answer", answer_status, elapsed_ms=(perf_counter() - answer_started) * 1000 if request.include_answer else 0.0, summary=answer_summary)
 
         trace_events = build_rag_trace_events(
             plan=query_plan,
@@ -818,12 +903,21 @@ class RagDebugService:
             emit(event.event_type, "complete", event.payload)
 
         candidates = self._candidate_responses(merged, retrievals)
-        pre_rerank_scores: dict[str, float] = {}
-        for retrieval in retrievals:
-            for rank, chunk_id in enumerate(retrieval.metadata.get("pre_rerank_chunk_ids", []), 1):
-                pre_rerank_scores[chunk_id] = pre_rerank_scores.get(chunk_id, 0.0) + 1 / (60 + rank)
+        ranking_stages = {}
+        for name in ("pre_rerank_chunk_ids", "rerank_input_chunk_ids", "post_rerank_chunk_ids"):
+            scores: dict[str, float] = {}
+            for retrieval in retrievals:
+                for rank, chunk_id in enumerate(retrieval.metadata.get(name, []), 1):
+                    scores[chunk_id] = scores.get(chunk_id, 0.0) + 1 / (60 + rank)
+            ranking_stages[name] = sorted(scores, key=lambda key: (-scores[key], key))
         metadata = {
-            "pre_rerank_chunk_ids": sorted(pre_rerank_scores, key=lambda key: (-pre_rerank_scores[key], key)),
+            "trace_id": trace_id,
+            "retrieval_spans": [item.metadata["retrieval_span"] for item in retrievals
+                                if "retrieval_span" in item.metadata],
+            "stage_timings": [item.metadata.get("stage_timings", {}) for item in retrievals],
+            "graph_trace": graph_trace,
+            **ranking_stages,
+            "final_chunk_ids": [candidate.chunk.chunk_id for candidate in merged.candidates],
             "total_rag_ms": (perf_counter() - started) * 1000,
             "embedding_ms": self._metric(retrievals, "embedding_ms"),
             "dense_search_ms": self._metric(retrievals, "dense_search_ms"),
@@ -882,6 +976,7 @@ class RagDebugService:
                 stages[index] = current.model_copy(
                     update={
                         "status": status,
+                        "elapsed_ms": max(0.0, float(payload.get("elapsed_ms", 0.0) or 0.0)),
                         "summary": dict(payload.get("summary") or {}),
                         "candidate_count": max(0, int(payload.get("candidate_count", 0) or 0)),
                     }
@@ -897,8 +992,8 @@ class RagDebugService:
                 sequence=sequence,
                 stage=stage,
                 status=status,
-                elapsed_ms=0.0,
-                payload=payload,
+                elapsed_ms=max(0.0, (perf_counter() - state.started_clock) * 1000),
+                payload={**payload, "timestamp": datetime.now(UTC).isoformat()},
             )
         )
 
@@ -1030,8 +1125,17 @@ class RagDebugService:
     def _retriever_for_profile(runtime: Any, profile: RagDebugConfigProfile) -> Any:
         base = getattr(runtime.retrieval_service, "_base", runtime.retrieval_service)
         current_config = getattr(base, "_config", runtime.config.retrieval)
-        if profile.config.retrieval == current_config:
+        if profile.config.retrieval == current_config and profile.config.graph == runtime.config.graph:
             return runtime.retrieval_service
+        graph_retriever = getattr(base, "_graph_retriever", None)
+        if profile.config.graph.enabled and graph_retriever is not None:
+            from backend.rag.graph_retriever import GraphRetriever
+            graph_retriever = GraphRetriever(repository=graph_retriever._repository,
+                                             store=runtime.vector_store, config=profile.config.graph)
+        elif not profile.config.graph.enabled:
+            graph_retriever = None
+        else:
+            raise ValueError("Graph profile requires a runtime with a published graph index")
         return RetrievalService(
             embedding_provider=runtime.embedding_provider,
             vector_store=runtime.vector_store,
@@ -1039,6 +1143,7 @@ class RagDebugService:
             config=profile.config.retrieval,
             reranker=getattr(base, "_reranker", None),
             manifest=runtime.manifest,
+            graph_retriever=graph_retriever,
         )
 
     @classmethod
@@ -1079,7 +1184,12 @@ class RagDebugService:
             chunk_type=chunk.chunk_type,
             start=chunk.start_char,
             end=chunk.end_char,
-            metadata=candidate.metadata,
+            metadata={**candidate.metadata,
+                      "source_span": chunk.source_span.model_dump(mode="json") if chunk.source_span else None,
+                      "index_generation": candidate.index_generation or chunk.metadata.get("index_generation"),
+                      "trace_id": candidate.trace_id,
+                      "graph_paths": [path.model_dump(mode="json") for path in candidate.graph_paths],
+                      "channel_hits": [hit.model_dump(mode="json") for hit in candidate.channel_hits]},
         )
 
     @staticmethod

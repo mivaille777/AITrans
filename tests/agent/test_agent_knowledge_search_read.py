@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -12,8 +14,14 @@ from backend.agent_core.state import AgentState
 from backend.agent_tools.knowledge import KnowledgeSearchResultData
 from backend.models.agent_runtime import AgentCitationRef
 from backend.rag.citation_service import CitationService
+from backend.rag.config import RagRetrievalConfig, RagVectorStoreConfig
+from backend.rag.embeddings.base import EmbeddingFingerprint
 from backend.rag.exceptions import RagInvariantError
+from backend.rag.index_manifest import IndexManifest, IndexManifestRecord, IndexStatus
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
+from backend.rag.retrieval_service import RetrievalService
+from backend.rag.sparse.store import BM25SparseRetriever
+from backend.rag.stores import QdrantLocalVectorStore
 from backend.services.agent_tool_registry import AgentToolRegistry
 
 
@@ -207,6 +215,30 @@ def test_read_without_document_scope_requires_explicit_global_access() -> None:
     assert allowed.data["chunks"][0]["text"] == "Full evidence text for chunk 1."
 
 
+@pytest.mark.parametrize("document_ids", [[], ["doc-A"]])
+def test_jit_read_validation_preserves_scope_with_global_access(document_ids) -> None:
+    chunk = _chunk(1)
+    retrieval = _Retrieval([RetrievalCandidate(chunk=chunk, rank=1)])
+    validated = []
+    retrieval.validate_evidence_candidates = lambda result, *, filters: validated.append(filters)
+    registry = AgentToolRegistry(
+        translation_service=SimpleNamespace(),
+        quick_action_service=SimpleNamespace(),
+        research_note_service=SimpleNamespace(),
+        retrieval_service=retrieval,
+        chunk_store=_ChunkStore([chunk]),
+        jit_search_read_enabled=True,
+    )
+
+    result = registry.execute(
+        "read_knowledge_chunk", chunk_id="chunk-1",
+        knowledge_document_ids=document_ids, knowledge_scope_allow_global=True,
+    )
+
+    assert result.data["evidence"]
+    assert validated[0].document_ids == document_ids
+
+
 def test_repeated_read_deduplicates_evidence_in_agent_state() -> None:
     registry = _registry([_chunk(1)])
     state = AgentState()
@@ -274,3 +306,128 @@ def test_search_and_read_have_independent_budgets_and_block_overflow() -> None:
 
     assert control.knowledge_search_count == 1
     assert control.knowledge_read_count == 2
+
+
+@pytest.mark.parametrize("top_k", [None, 1])
+def test_search_no_hits_returns_empty_results_without_evidence(top_k: int | None) -> None:
+    registry = _registry([], candidates=[])
+    result = registry.execute(
+        "search_knowledge_base", query="missing information",
+        knowledge_document_ids=["doc-A"], top_k=top_k,
+    )
+    assert result.data is not None
+    data = KnowledgeSearchResultData.model_validate(result.data)
+    assert data.results == []
+    assert data.evidence == []
+    assert data.citations == []
+
+
+def test_agent_search_cache_reuses_vectors_without_reusing_stale_or_private_evidence(
+    tmp_path: Path,
+) -> None:
+    embedding = SimpleNamespace(
+        model_name="cache-test", dimension=2,
+        fingerprint=EmbeddingFingerprint(
+            model_id="cache-test", dimension=2, normalized=True,
+            query_prefix="query", document_prefix="", model_revision="v1",
+        ),
+        embed_query=Mock(return_value=[1.0, 0.0]),
+    )
+    manifest = IndexManifest(tmp_path / "manifest.json")
+    vector = QdrantLocalVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")), dimension=2,
+    )
+    sparse = BM25SparseRetriever(tmp_path / "bm25.json")
+    retrieval = RetrievalService(
+        embedding_provider=embedding, vector_store=vector, sparse_retriever=sparse,
+        manifest=manifest, config=RagRetrievalConfig(embedding_cache_size=8),
+    )
+    registry = AgentToolRegistry(
+        translation_service=SimpleNamespace(), quick_action_service=SimpleNamespace(),
+        research_note_service=SimpleNamespace(), retrieval_service=retrieval,
+        chunk_store=sparse, jit_search_read_enabled=True,
+    )
+
+    def publish(chunk: DocumentChunk, generation: str, *, neighbors=()) -> None:
+        chunks = [chunk, *neighbors]
+        ids = [item.chunk_id for item in chunks]
+        manifest.begin_generation(chunk.document_id, generation, ids)
+        vector.upsert_chunks(chunks, [[1.0, 0.0] for _ in chunks], generation_id=generation)
+        sparse.index_chunks(chunks, generation_id=generation)
+        manifest.validate_generation(chunk.document_id, generation, ids)
+        manifest.publish_generation(
+            chunk.document_id, generation,
+            manifest_record=IndexManifestRecord(
+                document_id=chunk.document_id, chunk_ids=ids, generation_id=generation,
+                embedding_fingerprint=embedding.fingerprint.as_dict(), status=IndexStatus.READY,
+            ),
+        )
+
+    def search(document_id: str) -> KnowledgeSearchResultData:
+        result = registry.execute(
+            "search_knowledge_base", query="training", knowledge_document_ids=[document_id],
+        )
+        assert result.data is not None
+        return KnowledgeSearchResultData.model_validate(result.data)
+
+    try:
+        publish(_chunk(1), "a-v1")
+        publish(_chunk(3, document_id="doc-B"), "b-v1")
+        assert [item.chunk_id for item in search("doc-A").results] == ["chunk-1"]
+        read = registry.execute(
+            "read_knowledge_chunk", chunk_id="chunk-1", knowledge_document_ids=["doc-A"],
+        )
+        assert [item["chunk_id"] for item in read.data["chunks"]] == ["chunk-1"]
+        section = registry.execute(
+            "read_knowledge_section", chunk_id="chunk-1", knowledge_document_ids=["doc-A"],
+            neighbor_radius=1,
+        )
+        assert [item["chunk_id"] for item in section.data["chunks"]] == ["chunk-1"]
+        assert [item.chunk_id for item in search("doc-A").results] == ["chunk-1"]
+        assert embedding.embed_query.call_count == 1
+        assert [item.chunk_id for item in search("doc-B").results] == ["chunk-3"]
+        assert embedding.embed_query.call_count == 2
+
+        publish(_chunk(2), "a-v2")
+        assert [item.chunk_id for item in search("doc-A").results] == ["chunk-2"]
+        with pytest.raises(LookupError, match="no longer exists"):
+            registry.execute(
+                "read_knowledge_chunk", chunk_id="chunk-1", knowledge_document_ids=["doc-A"],
+            )
+        current_read = registry.execute(
+            "read_knowledge_chunk", chunk_id="chunk-2", knowledge_document_ids=["doc-A"],
+        )
+        assert [item["chunk_id"] for item in current_read.data["chunks"]] == ["chunk-2"]
+        assert embedding.embed_query.call_count == 3
+        assert [item.chunk_id for item in search("doc-A").results] == ["chunk-2"]
+        assert embedding.embed_query.call_count == 3
+
+        embedding.fingerprint = EmbeddingFingerprint(
+            model_id="cache-test", dimension=2, normalized=True,
+            query_prefix="query", document_prefix="", model_revision="v2",
+        )
+        changed_model = search("doc-A")
+        assert embedding.embed_query.call_count == 4
+        assert changed_model.retrieval_strategy == "sparse-only"
+        assert [item.chunk_id for item in changed_model.results] == ["chunk-2"]
+        assert "reindex required" in changed_model.fallback_reason
+
+        publish(_chunk(2), "a-v3", neighbors=(_chunk(3),))
+        rebuilt_section = registry.execute(
+            "read_knowledge_section", chunk_id="chunk-2", knowledge_document_ids=["doc-A"],
+            neighbor_radius=1,
+        )
+        assert [item["chunk_id"] for item in rebuilt_section.data["chunks"]] == ["chunk-2", "chunk-3"]
+        assert {item["metadata"]["index_generation"] for item in rebuilt_section.data["evidence"]} == {"a-v3"}
+
+        manifest.delete("doc-A")
+        vector.delete_document("doc-A")
+        sparse.delete_document("doc-A")
+        assert search("doc-A").results == []
+        with pytest.raises(LookupError, match="no longer exists"):
+            registry.execute(
+                "read_knowledge_section", chunk_id="chunk-2", knowledge_document_ids=["doc-A"],
+            )
+        assert search("unknown-document").results == []
+    finally:
+        vector.close()

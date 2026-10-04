@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.structure_retrieval import (
     build_structural_queries,
@@ -55,6 +57,14 @@ def test_detects_common_academic_sections_and_special_artifacts() -> None:
     assert detect_structural_intent("解释一下 Fig. 4").name == "figure"
     assert detect_structural_intent("Equation 7 defines what?").name == "equation"
     assert detect_structural_intent("公式 5 的含义是什么").name == "equation"
+
+
+@pytest.mark.parametrize("query", [
+    "水箱控制论文研究了什么系统？请给出一句话结论并附引用。",
+    "What system is studied? Give a one-sentence conclusion with citations.",
+])
+def test_answer_format_does_not_restrict_retrieval_to_conclusion_section(query):
+    assert detect_structural_intent(query) is None
 
 
 def test_structural_queries_add_heading_vocabulary_without_only_increasing_top_k() -> None:

@@ -35,7 +35,10 @@ def _source_type(source_uri: str) -> str:
     return suffix or "unknown"
 
 
-def _document(record: IndexManifestRecord) -> KnowledgeDocumentResponse:
+def _document(
+    record: IndexManifestRecord, service: KnowledgeLibraryService
+) -> KnowledgeDocumentResponse:
+    source_metadata = service.document_source_metadata(record)
     return KnowledgeDocumentResponse(
         document_id=record.document_id,
         title=record.title,
@@ -44,6 +47,8 @@ def _document(record: IndexManifestRecord) -> KnowledgeDocumentResponse:
         status=record.status,
         chunk_count=len(record.chunk_ids),
         indexed_at=record.indexed_at,
+        modified_at=source_metadata["modified_at"],
+        metadata_status=source_metadata["metadata_status"],
         error=record.error,
         content_hash=record.content_hash,
         parser_version=record.parser_version,
@@ -112,7 +117,7 @@ def import_knowledge_document(
     _ensure_index_succeeded(result)
     record = _record_or_404(result.document_id, service)
     return KnowledgeDocumentImportResponse(
-        document=_document(record),
+        document=_document(record, service),
         reused_existing=result.reused_existing,
         elapsed_ms=result.elapsed_ms,
     )
@@ -122,7 +127,7 @@ def import_knowledge_document(
 def list_knowledge_documents(
     service: KnowledgeLibraryDependency,
 ) -> KnowledgeDocumentListResponse:
-    documents = [_document(record) for record in service.list_documents()]
+    documents = [_document(record, service) for record in service.list_documents()]
     return KnowledgeDocumentListResponse(total=len(documents), documents=documents)
 
 
@@ -134,7 +139,7 @@ def get_knowledge_document(
     document_id: str,
     service: KnowledgeLibraryDependency,
 ) -> KnowledgeDocumentResponse:
-    return _document(_record_or_404(document_id, service))
+    return _document(_record_or_404(document_id, service), service)
 
 
 @router.get(
@@ -252,7 +257,7 @@ def reindex_knowledge_document(
     _ensure_index_succeeded(result)
     record = _record_or_404(result.document_id, service)
     return KnowledgeDocumentImportResponse(
-        document=_document(record),
+        document=_document(record, service),
         reused_existing=result.reused_existing,
         elapsed_ms=result.elapsed_ms,
     )

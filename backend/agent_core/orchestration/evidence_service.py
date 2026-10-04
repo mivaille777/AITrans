@@ -3,9 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import OrderedDict
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from threading import RLock
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from backend.models.agent_artifacts import EvidenceRef
 from backend.models.agent_evidence import (
@@ -17,6 +21,10 @@ from backend.models.agent_evidence import (
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.models.agent_tasks import ScopeContext, ScopeMode
 from backend.rag.citation_service import build_evidence_citations
+from backend.rag.exceptions import RagRetrievalError
+from backend.rag.models import RetrievalResult
+from backend.rag.observability import build_rag_trace_events, current_rag_trace
+from backend.rag.query_planner import RagQueryPlan
 from backend.rag.stores.base import VectorSearchFilter
 
 _TOKEN_RE = re.compile(r"[\w\-]+", re.UNICODE)
@@ -44,8 +52,12 @@ def _relevance(query: str, text: str) -> float:
 
 
 class ScopedEvidenceCache:
-    def __init__(self) -> None:
-        self._values: dict[str, tuple[EvidencePacket, ...]] = {}
+    def __init__(self, *, max_entries: int = 128) -> None:
+        if max_entries < 1:
+            raise ValueError("evidence cache size must be positive")
+        self._max_entries = max_entries
+        self._values: OrderedDict[str, tuple[EvidencePacket, ...]] = OrderedDict()
+        self._retrievals: dict[str, RetrievalResult] = {}
         self._lock = RLock()
 
     @staticmethod
@@ -58,9 +70,7 @@ class ScopedEvidenceCache:
         filters: dict[str, Any] | None = None,
     ) -> str:
         payload = {
-            "scope_revision": scope.scope_revision,
-            "scope_ref": scope.scope_ref,
-            "source_versions": scope.source_versions,
+            "scope": scope.model_dump(mode="json"),
             "query": " ".join(str(query or "").split()),
             "limit": int(limit),
             "model_version": str(model_version or ""),
@@ -73,12 +83,34 @@ class ScopedEvidenceCache:
     def get(self, key: str) -> tuple[EvidencePacket, ...] | None:
         with self._lock:
             value = self._values.get(key)
+            if value is not None:
+                self._values.move_to_end(key)
             return tuple(item.model_copy(deep=True) for item in value) if value is not None else None
 
-    def put(self, key: str, value: Iterable[EvidencePacket]) -> tuple[EvidencePacket, ...]:
+    def get_retrieval(self, key: str) -> RetrievalResult | None:
+        with self._lock:
+            result = self._retrievals.get(key)
+            return result.model_copy(deep=True) if result is not None else None
+
+    def discard(self, key: str) -> None:
+        with self._lock:
+            self._values.pop(key, None)
+            self._retrievals.pop(key, None)
+
+    def put(
+        self, key: str, value: Iterable[EvidencePacket], *, retrieval: RetrievalResult | None = None,
+    ) -> tuple[EvidencePacket, ...]:
         stored = tuple(item.model_copy(deep=True) for item in value)
         with self._lock:
             self._values[key] = stored
+            self._values.move_to_end(key)
+            if retrieval is not None:
+                self._retrievals[key] = retrieval.model_copy(deep=True)
+            else:
+                self._retrievals.pop(key, None)
+            while len(self._values) > self._max_entries:
+                oldest, _ = self._values.popitem(last=False)
+                self._retrievals.pop(oldest, None)
         return tuple(item.model_copy(deep=True) for item in stored)
 
 
@@ -164,17 +196,6 @@ class ScopedEvidenceService:
         ):
             return ()
 
-        cache_key = self._cache.key(
-            scope=scope,
-            query=normalized_query,
-            limit=bounded_limit,
-            model_version=self._model_version,
-            filters={"include_reviewed": bool(include_reviewed)},
-        )
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-
         packets: list[EvidencePacket] = []
         packets.extend(self._document_packets(normalized_query, scope, bounded_limit))
         packets.extend(self._note_packets(normalized_query, scope, bounded_limit))
@@ -191,18 +212,60 @@ class ScopedEvidenceService:
             deduped.values(),
             key=lambda item: (-item.relevance_score, item.evidence_ref.evidence_id),
         )[:bounded_limit]
-        return self._cache.put(cache_key, ordered)
+        return tuple(ordered)
 
     def _document_packets(self, query: str, scope: ScopeContext, limit: int) -> list[EvidencePacket]:
         if self._rag is None or (
             scope.mode is ScopeMode.RESTRICTED and not scope.allowed_document_ids
         ):
             return []
+        started_at, started = datetime.now(UTC), perf_counter()
+        parent_trace_id, event_sink = current_rag_trace()
+        trace_id = parent_trace_id or f"rag_{uuid4().hex[:20]}"
+        filters = VectorSearchFilter(document_ids=list(scope.allowed_document_ids))
+        version_getter = getattr(self._rag, "evidence_cache_version", None)
+        version = version_getter(filters=filters) if callable(version_getter) else None
+        cache_enabled = not callable(version_getter) or version is not None
+        cache_key = self._cache.key(
+            scope=scope, query=query, limit=limit, model_version=self._model_version,
+            filters={"retrieval_version": version},
+        )
+        validator = getattr(self._rag, "validate_evidence_candidates", None)
+        cached = self._cache.get(cache_key) if cache_enabled else None
+        if cached is not None:
+            cached_result = self._cache.get_retrieval(cache_key)
+            if callable(validator):
+                try:
+                    if cached_result is None:
+                        cached = None
+                    else:
+                        validator(cached_result, filters=filters)
+                except RagRetrievalError:
+                    cached = None
+            if cached is not None and (
+                not callable(version_getter) or version_getter(filters=filters) == version
+            ):
+                if cached_result is not None and (parent_trace_id or callable(event_sink)):
+                    previous = cached_result.metadata.get("retrieval_span", {})
+                    ended_at = datetime.now(UTC)
+                    span = {"trace_id": trace_id, "span_id": f"{trace_id}:cache:{uuid4().hex[:12]}",
+                            "parent_id": trace_id, "stage": "cache", "status": "complete",
+                            "started_at": started_at.isoformat(), "ended_at": ended_at.isoformat(),
+                            "elapsed_ms": (perf_counter() - started) * 1000}
+                    cached_result.elapsed_ms = span["elapsed_ms"]
+                    cached_result.metadata.update({"retrieval_span": span, "stage_timings": {"cache": span},
+                        "evidence_cache_hit": True, "cache_source_span_ids": [previous["span_id"]] if previous else []})
+                    self._record_document_trace(query, cached_result, cached, trace_id, event_sink)
+                return list(cached)
+            self._cache.discard(cache_key)
         result = self._rag.retrieve(
             query,
-            filters=VectorSearchFilter(document_ids=list(scope.allowed_document_ids)),
+            filters=filters,
             final_top_k=limit,
+            **({"trace_id": trace_id} if callable(validator) else {}),
         )
+        if callable(validator):
+            validator(result, filters=filters)
         packets: list[EvidencePacket] = []
         allowed = set(scope.allowed_document_ids)
         for candidate in result.candidates:
@@ -248,7 +311,32 @@ class ScopedEvidenceService:
                     metadata={"retrieval_strategy": result.retrieval_strategy},
                 )
             )
+        self._record_document_trace(query, result, packets, trace_id, event_sink)
+        if cache_enabled and (
+            not callable(version_getter) or version_getter(filters=filters) == version
+        ):
+            self._cache.put(cache_key, packets, retrieval=result)
         return packets
+
+    def _record_document_trace(
+        self, query: str, result: RetrievalResult, packets: Iterable[EvidencePacket], trace_id: str, event_sink: Any,
+    ) -> None:
+        if current_rag_trace()[0] or callable(event_sink):
+            for packet in packets:
+                packet.metadata.update({"retrieval_span": result.metadata.get("retrieval_span"),
+                    "stage_timings": result.metadata.get("stage_timings", {}),
+                    "evidence_cache_hit": result.metadata.get("evidence_cache_hit", False),
+                    "cache_source_span_ids": result.metadata.get("cache_source_span_ids", [])})
+        if callable(event_sink):
+            from backend.agent_core.events import AgentEventType
+
+            events = build_rag_trace_events(
+                plan=RagQueryPlan(original_query=query, rewritten_query=query, subqueries=[]),
+                retrievals=[result], merged=result, evidence=self.to_agent_evidence(packets),
+                query_id=f"{trace_id}:rag:{uuid4().hex[:12]}", trace_id=trace_id,
+            )
+            for event in events:
+                event_sink(AgentEventType(event.event_type), event.payload)
 
     def _note_packets(self, query: str, scope: ScopeContext, limit: int) -> list[EvidencePacket]:
         if self._notes is None or (

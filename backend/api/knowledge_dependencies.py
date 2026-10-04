@@ -16,6 +16,7 @@ from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import (
     RagConfig,
     RagEmbeddingConfig,
+    RagVectorStoreConfig,
     RagVisualRetrievalConfig,
     RagVisualUnderstandingConfig,
 )
@@ -23,6 +24,7 @@ from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
 from backend.rag.embeddings.runtime import resolve_embedding_runtime_config
 from backend.rag.index_manifest import IndexManifest
 from backend.rag.index_service import IndexService
+from backend.rag.inference_worker import ProcessInferenceProvider
 from backend.rag.parsers import parse_document
 from backend.rag.rerankers import Qwen3RerankerProvider
 from backend.rag.retrieval_service import RetrievalService
@@ -182,10 +184,13 @@ def _resolve_visual_understanding_config(
     provider = (
         str(ai_settings.get("provider", "") or "").strip().lower().replace("-", "_")
     )
-    if provider != "openai_compatible":
+    if provider not in {"openai_compatible", "deepseek"}:
         return resolved
 
     inherited: dict[str, Any] = {}
+    ai_base_url = str(ai_settings.get("base_url", "") or "").strip().rstrip("/")
+    if not resolved.base_url.strip() or resolved.base_url.rstrip("/") == ai_base_url:
+        inherited["credential_provider"] = provider
     if not resolved.model.strip():
         inherited_model = str(ai_settings.get("model", "") or "").strip()
         if inherited_model:
@@ -206,15 +211,21 @@ def _resolve_visual_retrieval_config(
     env_enabled = _env_bool("AITRANS_RAG_VISUAL_RETRIEVAL_ENABLED")
     if env_enabled is not None:
         updates["enabled"] = env_enabled
+    local_files_only = _env_bool("AITRANS_RAG_VISUAL_LOCAL_FILES_ONLY")
+    if local_files_only is not None:
+        updates["local_files_only"] = local_files_only
     for env_name, field in (
         ("AITRANS_RAG_VISUAL_MODEL", "model"),
         ("AITRANS_RAG_VISUAL_MODEL_PATH", "model_path"),
+        ("AITRANS_RAG_VISUAL_CACHE_DIR", "cache_dir"),
         ("AITRANS_RAG_VISUAL_DEVICE", "device"),
+        ("AITRANS_RAG_VISUAL_QUANTIZATION", "quantization"),
+        ("AITRANS_RAG_VISUAL_MAX_IMAGE_TOKENS", "max_image_tokens"),
     ):
         value = os.getenv(env_name, "").strip()
         if value:
             updates[field] = value
-    return config.model_copy(update=updates, deep=True)
+    return RagVisualRetrievalConfig.model_validate({**config.model_dump(), **updates})
 
 
 def _create_graph_extraction_service() -> ResearchMemoryExtractionService:
@@ -251,6 +262,11 @@ def _build_runtime() -> RagRuntime:
     vector_store_config = config.vector_store.model_copy(
         update={"storage_path": str(resolved_storage_path)}
     )
+    server_url = os.getenv("AITRANS_QDRANT_URL", "").strip()
+    if server_url:
+        vector_store_config = RagVectorStoreConfig.model_validate(
+            {**vector_store_config.model_dump(), "url": server_url}
+        )
     visual_retrieval = visual_retrieval.model_copy(
         update={
             "storage_path": str(resolved_storage_path),
@@ -276,13 +292,22 @@ def _build_runtime() -> RagRuntime:
 
     model_manager = get_rag_model_manager()
     embedding = create_embedding_provider(config.embedding, model_manager=model_manager)
+    if isinstance(getattr(embedding, "_config", None), RagEmbeddingConfig):
+        embedding = ProcessInferenceProvider(embedding, kind="embedding", timeout_seconds=config.inference_timeout_seconds)
+    reranker = Qwen3RerankerProvider(config.reranker.model_copy(update={"lazy_load": True}), model_manager=model_manager)
+    if getattr(reranker, "_config", None) is not None:
+        reranker = ProcessInferenceProvider(reranker, kind="reranker", timeout_seconds=config.inference_timeout_seconds)
+    if isinstance(getattr(visual_embedding_provider, "_config", None), RagVisualRetrievalConfig):
+        visual_embedding_provider = ProcessInferenceProvider(
+            visual_embedding_provider, kind="visual", timeout_seconds=config.inference_timeout_seconds,
+        )
 
     shared_qdrant_client: QdrantClient | None = None
     visual_vector_store: QdrantVisualMultiVectorStore | None = None
     if visual_retrieval.enabled:
         # Qdrant Local permits one storage owner. Share one client across the
         # text and native-visual collections only when Stage 3 is enabled.
-        shared_qdrant_client = QdrantClient(path=str(resolved_storage_path))
+        shared_qdrant_client = QdrantLocalVectorStore.create_client(vector_store_config)
         vector_store = QdrantLocalVectorStore(
             vector_store_config,
             dimension=config.embedding.dimension,
@@ -329,10 +354,7 @@ def _build_runtime() -> RagRuntime:
         vector_store=vector_store,
         sparse_retriever=sparse,
         config=config.retrieval,
-        reranker=Qwen3RerankerProvider(
-            config.reranker,
-            model_manager=model_manager,
-        ),
+        reranker=reranker,
         manifest=manifest,
         graph_retriever=graph_retriever,
     )
@@ -430,6 +452,8 @@ def close_rag_runtime() -> None:
         return
 
     for provider in (
+        runtime.embedding_provider,
+        getattr(getattr(runtime.retrieval_service, "_base", runtime.retrieval_service), "_reranker", None),
         runtime.visual_description_provider,
         runtime.visual_embedding_provider,
         runtime.graph_extraction_service,

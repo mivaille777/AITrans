@@ -6,7 +6,7 @@
 > 状态：设计完成，以下开发阶段均未实施、未验收。本文中的新路径、API 和测试名是实施目标，不表示已经存在。
 > 后续执行以当时的工作区和最新代码为准；本文中的仓库相对路径从仓库根目录解析，不依赖本机盘符。
 
-联合实施说明（2026-09-16）：参见[科研多 Agent 设计](multi-agent-system-design.md)及[多 Agent 任务书](multi-agent-system-taskbook.md)。本任务书 M04 的协作接入节点在新架构中由统一任务分发/专家子图承担；M07 的 reading/research 映射到 document/research，translation 偏好由共享语言能力使用，writer/curator 按需领取局部记忆。记忆的存储、隔离、删除、恢复验收保持不变；避免两套任务各自实现一个 MemoryCoordinator 或相互覆盖根图。
+联合实施说明（2026-09-16）：原设计参见[科研多 Agent 设计](multi-agent-system-design.md)，当前执行依据见 [Agent Runtime 任务书](<Agent Runtime重构任务书.md>)。本任务书 M04 的协作接入节点在新架构中由统一任务分发/专家子图承担；M07 的 reading/research 映射到 document/research，translation 偏好由共享语言能力使用，writer/curator 按需领取局部记忆。记忆的存储、隔离、删除、恢复验收保持不变；避免两套任务各自实现一个 MemoryCoordinator 或相互覆盖根图。
 
 ## 1. 最终应达到的效果
 

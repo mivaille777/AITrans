@@ -23,6 +23,8 @@ class KnowledgeDocumentResponse(KnowledgeApiModel):
     status: IndexStatus
     chunk_count: int = Field(default=0, ge=0)
     indexed_at: datetime | None = None
+    modified_at: datetime | None = None
+    metadata_status: str = "source_unavailable"
     error: str = ""
     content_hash: str = ""
     parser_version: str = ""

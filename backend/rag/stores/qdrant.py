@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Self
+from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from qdrant_client import QdrantClient
@@ -45,9 +47,17 @@ class QdrantLocalVectorStore:
             )
         self._dimension = dimension
         self._owns_client = client is None
-        self._client = client or QdrantClient(
-            path=str(Path(self._config.storage_path).expanduser().resolve())
-        )
+        self._client = client or self.create_client(self._config)
+
+    @staticmethod
+    def create_client(config: RagVectorStoreConfig) -> QdrantClient:
+        if config.url:
+            options = {"trust_env": False} if urlsplit(config.url).hostname in {
+                "localhost", "127.0.0.1", "::1",
+            } else {}
+            return QdrantClient(url=config.url, timeout=config.timeout_seconds,
+                api_key=os.environ.get("AITRANS_QDRANT_API_KEY") or None, **options)
+        return QdrantClient(path=str(Path(config.storage_path).expanduser().resolve()))
 
     @property
     def dimension(self) -> int:

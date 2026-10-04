@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from time import sleep
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.dependencies import (
@@ -285,6 +286,70 @@ def test_companion_websocket_persists_completed_knowledge_grounding(tmp_path) ->
     assert done["grounding_verification"]["passed"] is True
     assert done["grounding_verification"]["strict_passed"] is True
     assert done["grounding_verification"]["partial_grounding"] is False
+
+
+@pytest.mark.parametrize("failure_stage", ["", "route", "verification"])
+def test_companion_history_persistence_does_not_interrupt_verified_answer(
+    tmp_path, monkeypatch, caplog, failure_stage,
+) -> None:
+    from backend.api import companion_stream
+    from backend.api.dependencies import get_rag_debug_service
+    from backend.services.rag_debug_service import RagDebugService
+    from backend.services.rag_debug_store_service import RagDebugStoreService
+
+    debug_path = tmp_path / "rag-debug.sqlite3"
+    debug_store = RagDebugStoreService(storage_path=debug_path)
+    debug = RagDebugService(store=debug_store)
+    save_trace = debug_store.save_companion_trace
+
+    def save_or_fail(trace):
+        stage = "verification" if trace.verification else "route"
+        if stage == failure_stage:
+            raise OSError("debug storage write failed")
+        save_trace(trace)
+
+    monkeypatch.setattr(debug_store, "save_companion_trace", save_or_fail)
+    monkeypatch.setattr(companion_stream, "get_rag_debug_service", lambda: debug)
+    app = create_app()
+    app.dependency_overrides[get_rag_debug_service] = lambda: debug
+    store = ConversationStoreService(storage_path=tmp_path / "chat.sqlite3")
+    app.dependency_overrides[get_conversation_store_service] = lambda: store
+    app.dependency_overrides[get_companion_chat_service] = GroundedStreamingCompanionChatService
+    try:
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws/companion/chat") as websocket:
+                websocket.send_json({"type": "start", "request": _grounded_payload(15)})
+                events = []
+                while not events or events[-1]["type"] not in {"done", "error"}:
+                    events.append(websocket.receive_json())
+            done = events[-1]
+            assert done["type"] == "done"
+            assert done["output_text"] == "GP anchors localize the search around prior evidence [1]."
+            assert done["grounding_verification"]["passed"] is True
+            assert done["citations"][0]["label"] == "[1]"
+            response = client.get("/api/rag/debug/companion-traces")
+            assert response.status_code == 200
+            assert len(response.json()) == (0 if failure_stage == "route" else 1)
+        if failure_stage:
+            assert "debug storage write failed" in caplog.text
+    finally:
+        debug.close()
+
+    if not failure_stage:
+        restarted = RagDebugService(store=RagDebugStoreService(storage_path=debug_path))
+        try:
+            trace = restarted.list_companion_traces()[0]
+            assert trace.route == "document_scoped_search"
+            assert trace.query == "[redacted]"
+            assert trace.verification["passed"] is True
+            assert trace.citations[0]["label"] == "[1]"
+            spans = trace.retrieval["lifecycle"]
+            assert {span["stage"] for span in spans}.issuperset({"preparing", "generating", "verifying", "answer"})
+            assert spans[-1]["status"] == "complete"
+            assert trace.retrieval["answer_status"] == "complete"
+            assert all(span["ended_at"] for span in spans)
+        finally:
+            restarted.close()
 
 
 def test_companion_websocket_streams_knowledge_before_final_verification(tmp_path) -> None:

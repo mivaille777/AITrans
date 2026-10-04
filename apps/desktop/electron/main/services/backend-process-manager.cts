@@ -23,7 +23,7 @@ export interface BackendRuntimeStatus {
 }
 
 const DEFAULT_HEALTH_URL = "http://127.0.0.1:8766/health"
-const READY_ATTEMPTS = 120
+const READY_ATTEMPTS = 1440
 const READY_DELAY_MS = 250
 const MAX_DIAGNOSTIC_BYTES = 16 * 1024
 

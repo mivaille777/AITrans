@@ -326,6 +326,105 @@ def test_status_reports_downloading_while_snapshot_is_in_progress(
     assert manager.status(EMBEDDING_MODEL_ID).state == "installed"
 
 
+def test_runtime_probe_uses_text_reranker_under_visual_wrapper(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.api import rag_models
+
+    calls = []
+
+    def rerank(query, candidates, *, top_k):
+        calls.append((query, top_k))
+        return [candidates[0].model_copy(update={"rerank_score": 0.8})]
+
+    runtime = SimpleNamespace(
+        retrieval_service=SimpleNamespace(
+            _base=SimpleNamespace(_reranker=SimpleNamespace(rerank=rerank))
+        )
+    )
+    model = SimpleNamespace(
+        model_id=RERANKER_MODEL_ID, model_copy=lambda **_kwargs: "probed"
+    )
+    monkeypatch.setattr(rag_models, "get_rag_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        rag_models,
+        "get_rag_model_manager",
+        lambda: SimpleNamespace(status=lambda _id: model),
+    )
+    assert rag_models._probe_runtime(RERANKER_MODEL_ID) == "probed"
+    assert calls == [("model health check", 1)]
+
+
+def test_startup_prepares_text_and_visual_models_for_ready_library(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.api import rag_models
+    from backend.rag.index_manifest import IndexStatus
+
+    calls = []
+    health = []
+
+    def embed_visual(query):
+        calls.append("visual")
+        return [[1.0, 0.0]]
+
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(enabled=True),
+        manifest=SimpleNamespace(
+            list_records=lambda: [SimpleNamespace(status=IndexStatus.READY)]
+        ),
+        visual_embedding_provider=SimpleNamespace(
+            embed_query=embed_visual, dimension=2
+        ),
+    )
+    monkeypatch.setattr(rag_models, "get_rag_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        rag_models, "_probe_runtime", lambda model_id: calls.append(model_id)
+    )
+    monkeypatch.setattr(
+        rag_models,
+        "set_rag_model_runtime_health",
+        lambda model_id, **kwargs: health.append((model_id, kwargs)),
+    )
+    rag_models.warm_existing_knowledge_runtime()
+    assert calls == [EMBEDDING_MODEL_ID, RERANKER_MODEL_ID, "visual"]
+    assert all(item[1] == {"ready": True} for item in health)
+    runtime.manifest.list_records = list
+    rag_models.warm_existing_knowledge_runtime()
+    assert len(calls) == 3
+
+
+def test_startup_failure_is_recorded_and_not_reported_ready(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.api import rag_models
+    from backend.rag.index_manifest import IndexStatus
+
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(enabled=True),
+        manifest=SimpleNamespace(
+            list_records=lambda: [SimpleNamespace(status=IndexStatus.READY)]
+        ),
+    )
+    health = []
+
+    def failed(model_id):
+        raise RuntimeError("model allocation failed")
+
+    monkeypatch.setattr(rag_models, "get_rag_runtime", lambda: runtime)
+    monkeypatch.setattr(rag_models, "_probe_runtime", failed)
+    monkeypatch.setattr(
+        rag_models,
+        "set_rag_model_runtime_health",
+        lambda model_id, **kwargs: health.append((model_id, kwargs)),
+    )
+    with pytest.raises(RuntimeError, match="model allocation failed"):
+        rag_models.warm_existing_knowledge_runtime()
+    assert health == [
+        (EMBEDDING_MODEL_ID, {"ready": False, "error": "model allocation failed"})
+    ]
+
+
 def test_rag_model_api_lifecycle_and_unknown_model(tmp_path: Path) -> None:
     manager = ModelManager(
         tmp_path / "models",

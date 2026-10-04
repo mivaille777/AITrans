@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
+from backend.agent_tools.base import AgentToolInvocationContext
+from backend.agent_tools.knowledge import KnowledgeAgentTools, KnowledgeListArgs
 from backend.api.knowledge_dependencies import get_knowledge_library_service
 from backend.main import create_app
 from backend.rag.chunking import StructureAwareChunker
@@ -15,7 +20,7 @@ from backend.rag.config import (
     RagEmbeddingConfig,
     RagVectorStoreConfig,
 )
-from backend.rag.index_manifest import IndexManifest
+from backend.rag.index_manifest import IndexManifest, IndexManifestRecord
 from backend.rag.index_service import IndexService
 from backend.rag.models import DocumentChunk, KnowledgeDocument, NormalizedDocument
 from backend.services.knowledge_library_service import KnowledgeLibraryService
@@ -173,11 +178,67 @@ def _client(service: KnowledgeLibraryService) -> TestClient:
     return TestClient(app)
 
 
+@pytest.mark.parametrize("suffix", [".PDF", ".docx", ".md"])
+def test_catalog_source_format_and_mtime_refresh_without_parsing(tmp_path, suffix):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    source = allowed / f"资料 与空间{suffix}"
+    source.write_bytes(b"metadata only")
+    os.utime(source, (1_700_000_000, 1_700_000_000))
+    service, _, _ = _service(tmp_path / "state", allowed)
+    record = IndexManifestRecord(
+        document_id="doc-metadata", title="Paper", source_uri=source.as_uri()
+    )
+    service._manifest.upsert(record)
+    tools = KnowledgeAgentTools(retrieval_service=None, library_service=service)
+    context = AgentToolInvocationContext(knowledge_document_ids=[record.document_id])
+    item = tools.list_knowledge_documents(context, KnowledgeListArgs()).data[
+        "documents"
+    ][0]
+    assert item["file_format"] == suffix.lower().lstrip(".")
+    assert datetime.fromisoformat(item["modified_at"]) == datetime.fromtimestamp(
+        1_700_000_000, UTC
+    )
+    assert "source_uri" not in item
+    os.utime(source, (1_700_000_010, 1_700_000_010))
+    refreshed = tools.list_knowledge_documents(context, KnowledgeListArgs()).data[
+        "documents"
+    ][0]
+    assert datetime.fromisoformat(refreshed["modified_at"]) == datetime.fromtimestamp(
+        1_700_000_010, UTC
+    )
+
+
+def test_catalog_missing_or_denied_source_has_explicit_metadata_status(tmp_path):
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "private.pdf"
+    outside.write_bytes(b"private")
+    service, _, _ = _service(tmp_path / "state", allowed)
+    for path, expected in (
+        (allowed / "missing.pdf", "source_missing"),
+        (outside, "source_denied"),
+    ):
+        metadata = service.document_source_metadata(
+            IndexManifestRecord(document_id="doc", source_uri=path.as_uri())
+        )
+        assert metadata["file_format"] == "pdf"
+        assert metadata["modified_at"] is None
+        assert metadata["metadata_status"] == expected
+    unknown = service.document_source_metadata(
+        IndexManifestRecord(document_id="legacy", title="PDF paper")
+    )
+    assert unknown["file_format"] == "unknown"
+    assert unknown["modified_at"] is None
+    assert unknown["metadata_status"] == "source_unavailable"
+
+
 def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
     allowed = tmp_path / "allowed"
     allowed.mkdir()
     source = allowed / "control.md"
     source.write_text("Gaussian processes improve robust PID tuning.", encoding="utf-8")
+    os.utime(source, (1_700_000_000, 1_700_000_000))
     service, vector_store, sparse = _service(tmp_path / "state", allowed)
     client = _client(service)
 
@@ -187,6 +248,9 @@ def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
     document_id = document["document_id"]
     assert document["status"] == "ready"
     assert document["source_type"] == "md"
+    assert datetime.fromisoformat(document["modified_at"]) == datetime.fromtimestamp(1_700_000_000, UTC)
+    assert document["modified_at"] != document["indexed_at"]
+    assert document["metadata_status"] == "available"
     assert document["chunk_count"] == 1
     first_record = service.get_document(document_id)
     assert first_record is not None
@@ -199,6 +263,7 @@ def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
     runtime = client.get("/api/knowledge/runtime")
     assert listed.json()["total"] == 1
     assert detail.json()["title"] == "control"
+    assert listed.json()["documents"][0]["modified_at"] == detail.json()["modified_at"]
     assert index_status.json()["status"] == "ready"
     assert runtime.json() == {
         "enabled": True,

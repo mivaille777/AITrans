@@ -50,6 +50,49 @@ def test_native_studio_graph_exposes_the_four_registered_compiled_specialists(mo
     } <= nodes
 
 
+def test_explicit_native_studio_entry_preserves_compat_default(monkeypatch):
+    monkeypatch.setenv("AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT", "false")
+
+    def unexpected_dependency():
+        raise AssertionError("Studio graph construction resolved a runtime dependency")
+
+    monkeypatch.setattr(studio, "get_product_agent_service", unexpected_dependency)
+    monkeypatch.setattr(studio, "get_knowledge_workspace_service", unexpected_dependency)
+    native = studio.make_native_root_graph()
+    nodes = set(native.get_graph().nodes)
+
+    assert {
+        "route_orchestration", "resolve_scope", "load_memory_snapshot",
+        "plan_tasks", "validate_plan", "dispatch_frontier",
+        "advance_frontier", "finalize_task_graph",
+        *(specialist_node_name(agent_id)
+          for agent_id in ("document", "research", "writer", "curator")),
+    } <= nodes
+    assert "plan_tasks" not in studio.make_root_graph().get_graph().nodes
+    assert len(list(native.get_subgraphs())) == 4
+    assert {
+        specialist_node_name(agent_id)
+        for agent_id in ("document", "research", "writer", "curator")
+    } <= {
+        edge.target for edge in native.get_graph().edges
+        if edge.source == "dispatch_frontier"
+    }
+
+
+def test_studio_graph_schemas_support_python_311_runtime_context(monkeypatch):
+    monkeypatch.setenv("AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT", "false")
+    for graph in (studio.make_root_graph(), studio.make_native_root_graph()):
+        assert graph.get_input_jsonschema()["type"] == "object"
+        assert graph.get_output_jsonschema()["type"] == "object"
+        context = graph.get_context_jsonschema()
+        assert not {"event_sink", "control", "resource_manager"} & set(
+            context["properties"]
+        )
+        for _, specialist in graph.get_subgraphs():
+            assert specialist.get_input_jsonschema()["type"] == "object"
+            assert specialist.get_output_jsonschema()["type"] == "object"
+
+
 def test_root_graph_factory_keeps_persistent_and_temporary_checkpoint_rules():
     checkpointer = InMemorySaver()
     graph = RootAgentGraph(

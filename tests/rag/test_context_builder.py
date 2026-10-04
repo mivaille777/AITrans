@@ -81,6 +81,8 @@ def test_context_budget_truncation_is_deterministic_and_ranked() -> None:
         "evidence:rank-2",
         "evidence:rank-3",
     )
+    assert "citation-1 =>" not in first.text
+    assert "citation-3 =>" not in first.text
 
 
 def test_score_orders_evidence_when_retrieval_rank_is_missing() -> None:

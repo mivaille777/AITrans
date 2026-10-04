@@ -143,6 +143,10 @@ _HEADING_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _NON_WORD = re.compile(r"[^a-z0-9\u4e00-\u9fff]+", re.IGNORECASE)
+_ANSWER_FORMAT = re.compile(
+    r"(?:一|1)句话(?:的)?结论|\bone[-\s]+sentence[-\s]+conclusions?\b",
+    re.IGNORECASE,
+)
 
 
 def normalize_section_heading(value: str) -> str:
@@ -151,7 +155,7 @@ def normalize_section_heading(value: str) -> str:
 
 
 def detect_structural_intent(query: str) -> StructuralRetrievalIntent | None:
-    text = str(query or "").strip()
+    text = _ANSWER_FORMAT.sub("", str(query or "").strip())
     if not text:
         return None
     for intent, patterns in _INTENTS:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
@@ -132,6 +133,30 @@ class KnowledgeLibraryService:
 
     def list_documents(self) -> list[IndexManifestRecord]:
         return self._manifest.list_records()
+
+    def document_source_metadata(
+        self, record: IndexManifestRecord
+    ) -> dict[str, str | None]:
+        suffix = Path(unquote(urlparse(record.source_uri).path)).suffix.lower()
+        metadata: dict[str, str | None] = {
+            "file_format": suffix.lstrip(".")
+            if suffix in SUPPORTED_KNOWLEDGE_SUFFIXES
+            else "unknown",
+            "modified_at": None,
+            "metadata_status": "available",
+        }
+        try:
+            path = self.validate_source_path(self._path_from_file_uri(record.source_uri))
+            metadata["modified_at"] = datetime.fromtimestamp(
+                path.stat().st_mtime, UTC
+            ).isoformat()
+        except FileNotFoundError:
+            metadata["metadata_status"] = "source_missing"
+        except PermissionError:
+            metadata["metadata_status"] = "source_denied"
+        except (ValueError, OSError):
+            metadata["metadata_status"] = "source_unavailable"
+        return metadata
 
     def get_document(self, document_id: str) -> IndexManifestRecord | None:
         return self._manifest.get(str(document_id or "").strip())

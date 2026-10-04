@@ -157,11 +157,6 @@ def build_root_graph(
         builder.add_edge("plan_tasks", "validate_plan")
         if send_topology:
             builder.add_edge("validate_plan", "dispatch_frontier")
-            builder.add_conditional_edges(
-                "dispatch_frontier",
-                dispatch_branch,
-                {"finalize": "finalize_task_graph"},
-            )
             specialist_nodes = sorted(
                 name
                 for name in active_nodes
@@ -169,6 +164,16 @@ def build_root_graph(
             )
             if not specialist_nodes:
                 raise ValueError("native Send topology has no registered specialist subgraphs")
+            # Send chooses actual destinations at runtime; declare all possible
+            # targets so Studio can also draw the fan-out edges.
+            builder.add_conditional_edges(
+                "dispatch_frontier",
+                dispatch_branch,
+                {
+                    "finalize": "finalize_task_graph",
+                    **{name: name for name in specialist_nodes},
+                },
+            )
             for name in specialist_nodes:
                 builder.add_edge(name, "advance_frontier")
             builder.add_edge("advance_frontier", "dispatch_frontier")

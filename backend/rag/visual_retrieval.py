@@ -4,27 +4,38 @@ import logging
 import math
 import os
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 
 from backend.rag.config import RagVisualRetrievalConfig
-from backend.rag.exceptions import RagConfigurationError, RagRetrievalError, RagVectorStoreError
+from backend.rag.exceptions import (
+    RagConfigurationError,
+    RagRetrievalError,
+    RagVectorStoreError,
+)
 from backend.rag.index_manifest import IndexManifest, IndexManifestRecord, IndexStatus
 from backend.rag.index_service import IndexDocumentResult, IndexService
-from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult, build_stable_chunk_id
+from backend.rag.models import (
+    DocumentChunk,
+    RetrievalCandidate,
+    RetrievalResult,
+    build_stable_chunk_id,
+)
+from backend.rag.retrievers.base import RetrievalRequest, record_channel_hits
 from backend.rag.stores.base import VectorSearchFilter
 
 LOGGER = logging.getLogger(__name__)
-VISUAL_RETRIEVAL_VERSION = "visual-retrieval-v1"
+VISUAL_RETRIEVAL_VERSION = "visual-retrieval-v2"
 
 _DISTANCE = {
     "cosine": qdrant_models.Distance.COSINE,
@@ -163,11 +174,35 @@ class ColPaliEngineVisualEmbeddingProvider:
             "device_map": device,
             "torch_dtype": dtype,
         }
+        cache_kwargs = {"cache_dir": self._config.cache_dir} if self._config.cache_dir else {}
+        load_kwargs.update(cache_kwargs)
+        if family in {"colqwen2", "colqwen2_5"}:
+            load_kwargs["attn_implementation"] = "sdpa"
+        if self._config.quantization == "nf4":
+            if not device.startswith("cuda"):
+                raise RagConfigurationError("native visual NF4 quantization requires CUDA")
+            try:
+                from transformers import BitsAndBytesConfig
+
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_compute_dtype=dtype,
+                    llm_int8_skip_modules=["visual", "custom_text_proj"],
+                )
+            except Exception as exc:
+                raise RagConfigurationError(
+                    "native visual NF4 requires the optional bitsandbytes dependency"
+                ) from exc
         try:
             model = model_class.from_pretrained(source, **load_kwargs).eval()
             processor = processor_class.from_pretrained(
                 source,
                 local_files_only=self._config.local_files_only,
+                **cache_kwargs,
+                **({"max_num_visual_tokens": self._config.max_image_tokens}
+                   if family in {"colqwen2", "colqwen2_5"} else {}),
             )
         except Exception as exc:
             raise RagConfigurationError(
@@ -244,6 +279,9 @@ def visual_retrieval_index_version(config: RagVisualRetrievalConfig) -> str:
             config.provider,
             config.model_family,
             config.model_path or config.model,
+            config.precision,
+            config.quantization,
+            str(config.max_image_tokens),
             str(config.dimension),
             config.distance,
             config.query_prefix,
@@ -315,16 +353,22 @@ class QdrantVisualMultiVectorStore:
                 f"expected size={self.dimension}, distance={distance.value}, comparator=max_sim"
             )
 
-    def has_document(self, document_id: str, *, index_version: str) -> bool:
+    def has_document(
+        self, document_id: str, *, index_version: str,
+        generation_id: str | None = None, content_hash: str | None = None,
+    ) -> bool:
         self.ensure_collection()
+        conditions = [_match("document_id", document_id), _match("visual_index_version", index_version)]
+        if generation_id is not None:
+            conditions.append(_match("metadata.index_generation", generation_id))
+        if content_hash is not None:
+            conditions.append(_match("document_hash", content_hash))
+        conditions.append(_match("visual_published", True))
         try:
             records, _offset = self._client.scroll(
                 collection_name=self.collection_name,
                 scroll_filter=qdrant_models.Filter(
-                    must=[
-                        _match("document_id", document_id),
-                        _match("visual_index_version", index_version),
-                    ]
+                    must=conditions
                 ),
                 limit=1,
                 with_payload=False,
@@ -350,12 +394,14 @@ class QdrantVisualMultiVectorStore:
         old_ids = self._document_point_ids(document_id)
         points = []
         new_ids: set[UUID] = set()
+        build_id = uuid4().hex
         for chunk, vector in zip(chunks, vectors, strict=True):
-            point_id = self._point_id(chunk.chunk_id)
+            point_id = self._point_id(f"{chunk.chunk_id}:{build_id}", chunk.metadata.get("index_generation"), index_version)
             new_ids.add(point_id)
             payload = chunk.model_dump(mode="json")
             payload["source_kind"] = str(chunk.metadata.get("source_kind", ""))
             payload["visual_index_version"] = index_version
+            payload["visual_published"] = False
             points.append(
                 qdrant_models.PointStruct(
                     id=point_id,
@@ -365,11 +411,7 @@ class QdrantVisualMultiVectorStore:
             )
         try:
             if points:
-                self._client.upsert(
-                    collection_name=self.collection_name,
-                    points=points,
-                    wait=True,
-                )
+                self._publish_points(points)
             stale = sorted(old_ids - new_ids, key=str)
             if stale:
                 self._client.delete(
@@ -380,12 +422,27 @@ class QdrantVisualMultiVectorStore:
         except Exception as exc:
             raise RagVectorStoreError("failed to replace visual Qdrant document") from exc
 
+    def _publish_points(self, points: list[qdrant_models.PointStruct]) -> None:
+        point_ids = [point.id for point in points]
+        try:
+            self._client.upsert(collection_name=self.collection_name, points=points, wait=True)
+            self._client.set_payload(collection_name=self.collection_name,
+                payload={"visual_published": True}, points=point_ids, wait=True)
+        except Exception:  # Remove only this failed build and preserve its error.
+            try:
+                self._client.delete(collection_name=self.collection_name,
+                    points_selector=qdrant_models.PointIdsList(points=point_ids), wait=True)
+            except Exception:  # Preserve the publication failure if storage is unavailable.
+                LOGGER.exception("failed to clean up an incomplete visual build")
+            raise
+
     def search(
         self,
         query: list[list[float]],
         *,
         top_k: int,
         filters: VectorSearchFilter | None = None,
+        active_generations: Mapping[str, str | None] | None = None,
     ) -> list[RetrievalCandidate]:
         if top_k <= 0:
             raise RagVectorStoreError("visual top_k must be positive")
@@ -395,7 +452,7 @@ class QdrantVisualMultiVectorStore:
             response = self._client.query_points(
                 collection_name=self.collection_name,
                 query=multivector,
-                query_filter=self._build_filter(filters),
+                query_filter=self._build_filter(filters, active_generations),
                 limit=top_k,
                 with_payload=True,
                 with_vectors=False,
@@ -408,6 +465,7 @@ class QdrantVisualMultiVectorStore:
             payload = dict(point.payload or {})
             payload.pop("source_kind", None)
             payload.pop("visual_index_version", None)
+            payload.pop("visual_published", None)
             try:
                 chunk = DocumentChunk.model_validate(payload)
             except Exception as exc:
@@ -424,6 +482,23 @@ class QdrantVisualMultiVectorStore:
                 )
             )
         return results
+
+    def get_chunk(self, chunk_id: str, *, generation_id: str | None = None) -> DocumentChunk | None:
+        self.ensure_collection()
+        conditions = [_match("chunk_id", chunk_id), _match("visual_published", True),
+                      _match("visual_index_version", visual_retrieval_index_version(self._config))]
+        if generation_id is not None:
+            conditions.append(_match("metadata.index_generation", generation_id))
+        records, _ = self._client.scroll(
+            collection_name=self.collection_name, scroll_filter=qdrant_models.Filter(must=conditions),
+            limit=1, with_payload=True, with_vectors=False,
+        )
+        if not records:
+            return None
+        payload = dict(records[0].payload or {})
+        for key in ("source_kind", "visual_index_version", "visual_published", "visual_search_schema"):
+            payload.pop(key, None)
+        return DocumentChunk.model_validate(payload)
 
     def delete_document(self, document_id: str) -> None:
         if not document_id:
@@ -470,14 +545,26 @@ class QdrantVisualMultiVectorStore:
             raise RagVectorStoreError("failed to enumerate visual Qdrant document") from exc
 
     @staticmethod
-    def _point_id(chunk_id: str) -> UUID:
-        return uuid5(NAMESPACE_URL, f"aitrans-rag-visual:{chunk_id}")
+    def _point_id(chunk_id: str, generation_id: str | None = None, index_version: str = "") -> UUID:
+        return uuid5(NAMESPACE_URL, f"aitrans-rag-visual:{chunk_id}:{generation_id or ''}:{index_version}")
 
-    @staticmethod
-    def _build_filter(filters: VectorSearchFilter | None) -> qdrant_models.Filter | None:
-        if filters is None:
-            return None
-        conditions: list[qdrant_models.FieldCondition] = []
+    def _build_filter(
+        self,
+        filters: VectorSearchFilter | None,
+        active_generations: Mapping[str, str | None] | None = None,
+    ) -> qdrant_models.Filter:
+        filters = filters or VectorSearchFilter()
+        conditions: list[Any] = [_match("visual_published", True),
+                                _match("visual_index_version", visual_retrieval_index_version(self._config))]
+        if active_generations is not None:
+            if not active_generations:
+                conditions.append(qdrant_models.HasIdCondition(has_id=[]))
+            else:
+                conditions.append(qdrant_models.Filter(should=[
+                    qdrant_models.Filter(must=[_match("document_id", document_id),
+                        _match("metadata.index_generation", generation or "")])
+                    for document_id, generation in active_generations.items()
+                ]))
         if filters.document_ids:
             conditions.append(
                 qdrant_models.FieldCondition(
@@ -561,19 +648,28 @@ class VisualIndexCoordinator:
         record = self._manifest.get(document_id)
         if record is None or record.status is not IndexStatus.READY:
             return 0
-        if not force and self._store.has_document(
-            document_id,
-            index_version=self.index_version,
-        ):
+        version_args = {"index_version": self.index_version}
+        if isinstance(self._store, QdrantVisualMultiVectorStore):
+            version_args.update(generation_id=record.generation_id, content_hash=record.content_hash)
+        if not force and self._store.has_document(document_id, **version_args):
             return 0
         source_path = Path(source).expanduser().resolve()
         items = self._item_builder(source_path, record, self._config)
         if not items:
             self._store.delete_document(document_id)
             return 0
-        chunks = [item[0] for item in items]
+        chunks = [item[0].model_copy(update={"metadata": {
+            **item[0].metadata, "index_generation": record.generation_id,
+            "asset_sha256": sha256(item[1].read_bytes()).hexdigest(),
+            "visual_index_version": self.index_version,
+        }}) for item in items]
         image_paths = [item[1] for item in items]
         vectors = self._provider.embed_images(image_paths)
+        current = self._manifest.get(document_id)
+        if current is None or current.status is not IndexStatus.READY or (
+            current.generation_id != record.generation_id or current.content_hash != record.content_hash
+        ):
+            raise RagRetrievalError("document publication changed during visual indexing")
         self._store.replace_document(
             document_id,
             chunks,
@@ -676,7 +772,10 @@ class VisualRetrievalService:
         section_hints: tuple[str, ...] = (),
         final_top_k: int | None = None,
         include_references: bool = False,
+        **retrieval_options: Any,
     ) -> RetrievalResult:
+        started = perf_counter()
+        started_at = datetime.now(UTC)
         desired_top_k = final_top_k or self._default_final_top_k
         text_pool = max(desired_top_k, self._config.text_candidate_pool)
         text_result = self._base.retrieve(
@@ -685,20 +784,48 @@ class VisualRetrievalService:
             section_hints=section_hints,
             final_top_k=text_pool,
             include_references=include_references,
+            **retrieval_options,
         )
+        active = text_result.metadata.get("active_generations")
         visual_started = perf_counter()
+        visual_started_at = datetime.now(UTC)
         try:
             query_vectors = self._provider.embed_query(query)
+            search_options = {"active_generations": active} if active is not None else {}
             visual = self._store.search(
                 query_vectors,
                 top_k=self._config.visual_top_k,
                 filters=filters,
+                **search_options,
             )
+            if active is not None:
+                request = RetrievalRequest(query=query, top_k=self._config.visual_top_k,
+                    filters=filters or VectorSearchFilter(), active_generations=active)
+                visual = record_channel_hits(request, visual, channel="visual", score_field="fusion_score")
+                for candidate in visual:
+                    self._validate_visual_chunk(candidate.chunk, filters=filters)
             visual_error = ""
         except Exception as exc:  # noqa: BLE001 - text-only fallback is intentional
             visual = []
             visual_error = str(exc) or exc.__class__.__name__
         visual_ms = (perf_counter() - visual_started) * 1000
+        visual_ended_at = datetime.now(UTC)
+
+        def finish(candidates: list[RetrievalCandidate], strategy: str, metadata: dict[str, Any]) -> RetrievalResult:
+            ended_at = datetime.now(UTC)
+            elapsed_ms = (perf_counter() - started) * 1000
+            parent = dict(text_result.metadata.get("retrieval_span", {}))
+            if parent:
+                parent.update(started_at=started_at.isoformat(), ended_at=ended_at.isoformat(), elapsed_ms=elapsed_ms)
+                timings = dict(text_result.metadata.get("stage_timings", {}))
+                timings["visual"] = {"trace_id": parent["trace_id"], "span_id": f"{parent['span_id']}:visual",
+                    "parent_id": parent["span_id"], "stage": "visual", "status": "error" if visual_error else "complete",
+                    "started_at": visual_started_at.isoformat(), "ended_at": visual_ended_at.isoformat(),
+                    "elapsed_ms": visual_ms}
+                metadata.update(retrieval_span=parent, stage_timings=timings)
+            metadata["total_rag_ms"] = elapsed_ms
+            return text_result.model_copy(update={"candidates": candidates, "retrieval_strategy": strategy,
+                                                 "elapsed_ms": elapsed_ms, "metadata": metadata})
 
         if not visual:
             selected = _rerank_slice(text_result.candidates, desired_top_k)
@@ -716,13 +843,7 @@ class VisualRetrievalService:
                 if visual_error
                 else text_result.retrieval_strategy
             )
-            return text_result.model_copy(
-                update={
-                    "candidates": selected,
-                    "retrieval_strategy": strategy,
-                    "metadata": metadata,
-                }
-            )
+            return finish(selected, strategy, metadata)
 
         fusion_started = perf_counter()
         fused = weighted_rrf_fuse(
@@ -748,13 +869,75 @@ class VisualRetrievalService:
             "visual_weight": self._config.visual_weight,
             "final_count": len(selected),
         }
-        return text_result.model_copy(
-            update={
-                "candidates": selected,
-                "retrieval_strategy": f"{text_result.retrieval_strategy}+visual-rrf",
-                "metadata": metadata,
-            }
-        )
+        return finish(selected, f"{text_result.retrieval_strategy}+visual-rrf", metadata)
+
+    def _validate_visual_chunk(
+        self, chunk: DocumentChunk, *, filters: VectorSearchFilter | None = None,
+    ) -> None:
+        manifest = getattr(self._base, "_manifest", None)
+        if manifest is None:
+            raise RagRetrievalError("visual evidence requires a publication manifest")
+        active = self._base._resolve_active_generations(filters or VectorSearchFilter())
+        generation = chunk.metadata.get("index_generation") or None
+        if active is None or chunk.document_id not in active or active[chunk.document_id] != generation:
+            raise RagRetrievalError("visual evidence is outside the current scope or active generation")
+        stored = self._store.get_chunk(chunk.chunk_id, generation_id=generation)
+        record = manifest.get(chunk.document_id)
+        if stored is None or stored != chunk or record is None or (
+            chunk.document_hash != record.content_hash or chunk.source_uri != record.source_uri
+            or chunk.metadata.get("visual_index_version") != visual_retrieval_index_version(self._config)
+        ):
+            raise RagRetrievalError("visual evidence does not match its published source")
+        asset = _path_from_file_uri(str(stored.metadata.get("asset_uri", "")))
+        if not asset.is_file() or sha256(asset.read_bytes()).hexdigest() != stored.metadata.get("asset_sha256"):
+            raise RagRetrievalError("visual evidence asset is missing or has changed")
+        source = _path_from_file_uri(record.source_uri)
+        if not source.is_file() or sha256(source.read_bytes()).hexdigest() != record.content_hash:
+            raise RagRetrievalError("visual evidence source document is missing or has changed")
+
+    def validate_evidence_candidates(
+        self, result: RetrievalResult, *, filters: VectorSearchFilter | None = None,
+    ) -> None:
+        validator = getattr(self._base, "validate_evidence_candidates", None)
+        if not callable(validator):
+            raise RagRetrievalError("retrieval provider does not support evidence source validation")
+        version_getter = getattr(self._base, "evidence_cache_version", None)
+        initial_version = version_getter(filters=filters) if callable(version_getter) else None
+        text = []
+        for candidate in result.candidates:
+            if candidate.chunk.metadata.get("native_visual_retrieval"):
+                if candidate.index_generation != (candidate.chunk.metadata.get("index_generation") or None):
+                    raise RagRetrievalError("visual candidate generation disagrees with source chunk")
+                self._validate_visual_chunk(candidate.chunk, filters=filters)
+            else:
+                text.append(candidate)
+        validator(result.model_copy(update={"candidates": text}), filters=filters)
+        if callable(version_getter) and version_getter(filters=filters) != initial_version:
+            raise RagRetrievalError("evidence publication changed during visual source validation")
+
+    def evidence_cache_version(self, *, filters: VectorSearchFilter | None = None) -> str | None:
+        # Visual sidecars publish independently of the text index; don't cache
+        # an empty visual result while a sidecar is being built.
+        return None
+
+    def get_active_chunk(
+        self, chunk_id: str, *, filters: VectorSearchFilter | None = None,
+    ) -> DocumentChunk | None:
+        text = self._base.get_active_chunk(chunk_id, filters=filters)
+        if text is not None:
+            return text
+        resolver = getattr(self._base, "_resolve_active_generations", None)
+        if not callable(resolver):
+            return None
+        active = resolver(filters or VectorSearchFilter())
+        for generation in dict.fromkeys((active or {}).values()):
+            chunk = self._store.get_chunk(chunk_id, generation_id=generation)
+            if chunk is not None and chunk.document_id in (active or {}) and (
+                active[chunk.document_id] == (chunk.metadata.get("index_generation") or None)
+            ):
+                self._validate_visual_chunk(chunk, filters=filters)
+                return chunk
+        return None
 
 
 def weighted_rrf_fuse(
@@ -815,6 +998,8 @@ def build_visual_index_items(
     record: IndexManifestRecord,
     config: RagVisualRetrievalConfig,
 ) -> list[tuple[DocumentChunk, Path]]:
+    if sha256(source.read_bytes()).hexdigest() != record.content_hash:
+        raise RagRetrievalError("source document changed before visual indexing")
     suffix = source.suffix.lower()
     if suffix == ".pdf":
         return _render_pdf_pages(source, record, config)
@@ -835,7 +1020,8 @@ def _render_pdf_pages(
             "PDF native visual retrieval requires PyMuPDF from the optional visual requirements"
         ) from exc
 
-    directory = _document_asset_root(record.document_id, config.asset_storage_path) / record.content_hash[:24]
+    directory = (_document_asset_root(record.document_id, config.asset_storage_path)
+                 / record.content_hash[:24] / visual_retrieval_index_version(config))
     directory.mkdir(parents=True, exist_ok=True)
     items: list[tuple[DocumentChunk, Path]] = []
     scale = config.render_dpi / 72.0
@@ -878,7 +1064,8 @@ def _extract_docx_pictures(
         from docx import Document
     except Exception as exc:
         raise RagConfigurationError("DOCX visual retrieval requires python-docx") from exc
-    directory = _document_asset_root(record.document_id, config.asset_storage_path) / record.content_hash[:24]
+    directory = (_document_asset_root(record.document_id, config.asset_storage_path)
+                 / record.content_hash[:24] / visual_retrieval_index_version(config))
     directory.mkdir(parents=True, exist_ok=True)
     document = Document(str(source))
     relationships = [

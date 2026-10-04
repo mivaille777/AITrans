@@ -25,6 +25,7 @@ export interface RagConfig {
     small_to_big_max_tokens_per_anchor: number
   }
   reranker: Record<string, unknown>
+  graph?: Record<string, unknown>
 }
 
 export interface RagDebugCompanionTrace {

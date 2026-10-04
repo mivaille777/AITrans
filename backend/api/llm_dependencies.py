@@ -87,6 +87,7 @@ def build_routed_product_agent_service(
         reading_resolver=resolver,
     )
     return ProductAgentService(
+        function_calling_enabled=True,
         registry=registry,
         chat_service=synthesis,
         grounded_synthesis_service=GroundedSynthesisService(chat_service=synthesis),

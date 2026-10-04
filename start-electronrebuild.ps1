@@ -4,7 +4,8 @@ param(
     [switch]$SkipRagProbe,
     [switch]$Verify,
     [switch]$BackendOnly,
-    [switch]$BuiltRuntime
+    [switch]$BuiltRuntime,
+    [switch]$RefreshRagEnvironment
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,19 @@ Set-StrictMode -Version Latest
 $RepoRoot = $PSScriptRoot
 $DesktopDir = Join-Path $RepoRoot "apps\desktop"
 $ExpectedBranch = "electronrebuild"
+
+if ($RefreshRagEnvironment) {
+    foreach ($name in @(
+        "AITRANS_QDRANT_URL", "AITRANS_RAG_VISUAL_RETRIEVAL_ENABLED",
+        "AITRANS_RAG_VISUAL_QUANTIZATION", "AITRANS_RAG_VISUAL_MAX_IMAGE_TOKENS",
+        "AITRANS_RAG_VISUAL_MODEL_PATH", "AITRANS_RAG_VISUAL_CACHE_DIR",
+        "AITRANS_RAG_VISUAL_LOCAL_FILES_ONLY"
+    )) {
+        [Environment]::SetEnvironmentVariable(
+            $name, [Environment]::GetEnvironmentVariable($name, "User"), "Process"
+        )
+    }
+}
 
 function Assert-LastExitCode {
     param([string]$Message)
@@ -34,7 +48,11 @@ function Assert-CommandAvailable {
 }
 
 function Resolve-CondaExecutable {
-    $command = Get-Command conda -ErrorAction SilentlyContinue
+    if ($env:CONDA_EXE -and (Test-Path -LiteralPath $env:CONDA_EXE -PathType Leaf)) {
+        return $env:CONDA_EXE
+    }
+
+    $command = Get-Command conda -CommandType Application -ErrorAction SilentlyContinue
     if ($command) {
         return $command.Source
     }
@@ -134,7 +152,7 @@ else:
     print("Torch                : missing")
     print("CUDA available       : False")
 '@
-    python -c $RagRuntimeProbe
+    $RagRuntimeProbe | python -
     Assert-LastExitCode "Unable to inspect local RAG Python dependencies."
 }
 

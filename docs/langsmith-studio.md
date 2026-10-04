@@ -1,6 +1,6 @@
 # LangSmith Studio for AITrans
 
-AITrans exposes the production `ReadingAgentGraph` to LangSmith Studio for local graph visualization and debugging. This is a developer-only path; the normal FastAPI/Tauri startup path does not depend on Studio.
+AITrans exposes the configured production Root graph and an explicit native multi-Agent graph to LangSmith Studio for local visualization and debugging. This is a developer-only path; the normal FastAPI/Electron startup path does not depend on Studio.
 
 ## 1. Install the Studio development dependency
 
@@ -81,11 +81,19 @@ Open Studio:
 https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
 ```
 
-Select the `reading_agent` graph and use **Graph** mode.
+Select a graph and use **Graph** mode:
+
+- `root_agent`: follows `AITRANS_LANGGRAPH_NATIVE_MULTI_AGENT`, just like new production runs. The default is compatibility mode.
+- `reading_agent`: compatibility alias for the same configured Root graph.
+- `root_agent_native`: explicitly builds the native multi-Agent implementation for Studio, regardless of the production rollout switch. Select this entry to inspect planning and the four compiled specialist subgraphs. This does not change the production default or existing runs.
 
 ## 4. What you should see
 
-The graph topology evolves with the current Agent stage. At minimum, the production workflow remains wrapped by Conversation preparation/finalization, while newer stages may expose routing/planning/tool branches inside that boundary.
+With the native switch disabled, `root_agent` shows the Conversation, knowledge access and ReAct branches. Specialist scheduling stays behind the compatibility bridge; the canvas does not expose it as native subgraphs.
+
+`root_agent_native` additionally shows `route_orchestration`, `resolve_scope`, `load_memory_snapshot`, `plan_tasks`, `validate_plan`, `dispatch_frontier`, four `specialist_*` compiled subgraphs, `advance_frontier` and `finalize_task_graph`. Expand specialist nodes to inspect their internal steps. Fast requests can still use the existing direct/ReAct path.
+
+The native entry uses the existing native graph implementation; it is not evidence that the desktop runtime has enabled native execution. Studio debug state is separate from production checkpoints, and viewing the graph does not run a task or validate a real-model workflow.
 
 ## 5. Running the graph from Studio
 

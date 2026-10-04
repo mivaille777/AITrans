@@ -12,6 +12,20 @@ from backend.rag.source_span import SourceSpan, resolve_source_span
 from backend.rag.stores import QdrantLocalVectorStore, VectorSearchFilter
 
 
+def test_server_client_reuses_adapter_and_reads_api_key_from_environment(monkeypatch):
+    calls = []
+    monkeypatch.setenv("AITRANS_QDRANT_API_KEY", "test-token")
+    monkeypatch.setattr("backend.rag.stores.qdrant.QdrantClient", lambda **kwargs: calls.append(kwargs) or object())
+    config = RagVectorStoreConfig(url="http://localhost:6333/", timeout_seconds=2)
+    QdrantLocalVectorStore(config, dimension=4)
+    assert calls == [{"url": "http://localhost:6333", "timeout": 2, "api_key": "test-token", "trust_env": False}]
+
+
+def test_invalid_server_url_is_rejected():
+    with pytest.raises(ValueError, match="http or https"):
+        RagVectorStoreConfig(url="file:///private/qdrant")
+
+
 def make_chunk(
     chunk_id: str,
     *,

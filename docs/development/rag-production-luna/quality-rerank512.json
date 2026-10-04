@@ -1,0 +1,5 @@
+{
+  "semantic_chunking": {"enabled": false},
+  "retrieval": {"rerank_candidate_k": 8},
+  "reranker": {"max_input_tokens": 512}
+}

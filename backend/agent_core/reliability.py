@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -19,6 +20,7 @@ from backend.agent_core.exceptions import (
     AgentPauseRequestedError,
     AgentToolTimeoutError,
 )
+from backend.rag.inference_worker import inference_cancellation
 
 T = TypeVar("T")
 
@@ -190,30 +192,37 @@ def _run_bounded_operation(
         )
 
     queue: Queue[tuple[bool, object]] = Queue(maxsize=1)
+    stop_event = Event()
 
     def worker() -> None:
         try:
-            queue.put((True, operation()))
+            with inference_cancellation(lambda: stop_event.is_set() or control.cancel_event.is_set() or control.pause_event.is_set()):
+                queue.put((True, operation()))
         except BaseException as exc:  # noqa: BLE001 - preserve interruptions across the worker boundary
             queue.put((False, exc))
 
-    Thread(target=worker, name=thread_name, daemon=True).start()
+    thread = Thread(target=copy_context().run, args=(worker,), name=thread_name, daemon=True)
+    thread.start()
     started = monotonic()
-    while True:
-        control.checkpoint(stage)
-        elapsed = monotonic() - started
-        remaining = timeout - elapsed
-        if remaining <= 0:
-            raise timeout_error(timeout)
-        try:
-            ok, value = queue.get(timeout=min(0.05, remaining))
-        except Empty:
-            continue
-        if ok:
-            return value  # type: ignore[return-value]
-        if isinstance(value, BaseException):
-            raise value
-        raise RuntimeError(f"Agent operation {stage} failed without an exception.")
+    try:
+        while True:
+            control.checkpoint(stage)
+            elapsed = monotonic() - started
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                raise timeout_error(timeout)
+            try:
+                ok, value = queue.get(timeout=min(0.05, remaining))
+            except Empty:
+                continue
+            if ok:
+                return value  # type: ignore[return-value]
+            if isinstance(value, BaseException):
+                raise value
+            raise RuntimeError(f"Agent operation {stage} failed without an exception.")
+    finally:
+        stop_event.set()
+        thread.join(timeout=0.5)
 
 
 def run_react_decision_with_timeout(

@@ -16,13 +16,13 @@ _GREETING_RE = re.compile(
     re.IGNORECASE,
 )
 _CATALOG_RE = re.compile(
-    r"(?:知识库|知识库中|knowledge\s*(?:base|library))"
-    r".{0,24}(?:有什么|有哪些|内容|目录|清单|文档|documents?|papers?)"
+    r"(?:资料库|知识库|知识库中|knowledge\s*(?:base|library))"
+    r".{0,24}(?:有什么|有哪些|有几|多少|内容|目录|清单|文档|documents?|papers?)"
     r"|(?:list|show|enumerate)\s+(?:my\s+)?(?:knowledge|documents?|papers?)",
     re.IGNORECASE,
 )
 _EXPLICIT_KNOWLEDGE_RE = re.compile(
-    r"(?:知识库|知识库中|knowledge\s*(?:base|library)|向量库|检索)"
+    r"(?:资料库|知识库|知识库中|knowledge\s*(?:base|library)|向量库|检索)"
     r"|(?:相关工作|相关论文|文献|论文们|跨文档|跨论文|比较.+(?:论文|文献|文档))"
     r"|(?:找|搜索|检索|查找|寻找).{0,16}(?:论文|文献|证据|支持|反驳)"
     r"|(?:related\s+work|related\s+papers?|cross[-\s]document|evidence|verify|support|refute|literature|search)\b",

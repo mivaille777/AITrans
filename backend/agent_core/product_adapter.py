@@ -348,6 +348,21 @@ class ProductAgentRuntimeAdapter:
         attached_document = str(
             payload.get("attached_document_id", "") or ""
         ).strip()
+        native = bool(getattr(self._service, "function_calling_enabled", False))
+        if native:
+            policy = KnowledgeAccessPolicy(payload.get("knowledge_access_policy", "auto"))
+            decision = KnowledgeAccessDecision(mode=policy, should_retrieve=False,
+                reason_code="explicit_never" if policy is KnowledgeAccessPolicy.NEVER else "semantic_router_required")
+            state.knowledge_policy = policy
+            state.knowledge_decision = decision
+            context["knowledge_decision"] = decision.model_dump(mode="json")
+            if policy is KnowledgeAccessPolicy.NEVER:
+                context["disabled_tools"] = sorted(self._knowledge_tool_names())
+            else:
+                context["knowledge_scope_allow_global"] = True
+                if explicit_ids and not context.get("explicit_knowledge_document_ids"):
+                    context["explicit_knowledge_document_ids"] = list(explicit_ids)
+            return decision
         decision = self._knowledge_access_router.route(
             user_message=str(payload.get("user_message", "") or ""),
             context_mode=str(payload.get("context_mode", "general") or "general"),
@@ -442,6 +457,7 @@ class ProductAgentRuntimeAdapter:
                 "search_knowledge_base",
                 "read_knowledge_chunk",
                 "read_knowledge_section",
+                "list_knowledge_documents",
                 "search_research_notes",
                 "search_research_memory",
                 "analyze_cross_document_research",
@@ -461,8 +477,15 @@ class ProductAgentRuntimeAdapter:
         tools = tuple(list_tools())
         if state is None:
             return tools
+        if bool(getattr(self._service, "function_calling_enabled", False)):
+            selected_tools = getattr(self._service, "_tools_for_payload", None)
+            if callable(selected_tools):
+                tools = tuple(selected_tools(self.build_payload(state)))
         decision = state.browser_context.get("knowledge_decision", {})
-        if isinstance(decision, dict) and not bool(decision.get("should_retrieve", False)):
+        restricted = (str(decision.get("mode", "auto")) == "never"
+            if bool(getattr(self._service, "function_calling_enabled", False))
+            else not bool(decision.get("should_retrieve", False)))
+        if isinstance(decision, dict) and restricted:
             knowledge_tools = self._knowledge_tool_names()
             return tuple(
                 tool
@@ -521,6 +544,13 @@ class ProductAgentRuntimeAdapter:
         self.resolve_knowledge_scope(state, decision=decision_model)
         payload = self.build_payload(state)
         decision = decision_model.model_dump(mode="json")
+        if bool(getattr(self._service, "function_calling_enabled", False)):
+            route = AgentRouteDecision(kind="complex", source="semantic_router",
+                intent="native_function_calling", user_visible_reason="The model chooses the required tools.")
+            metadata = {"duration_ms": 0, "llm_called": False,
+                "knowledge_decision": decision, "knowledge_tool_restricted": decision_model.mode is KnowledgeAccessPolicy.NEVER}
+            state.apply_route(route)
+            return route, metadata
         knowledge_tools = self._knowledge_tool_names()
         if not bool(decision.get("should_retrieve", False)):
             payload = self._restrict_non_retrieval_tools(payload, knowledge_tools)
@@ -657,7 +687,7 @@ class ProductAgentRuntimeAdapter:
             intent=step.tool_name,
             tool_name=step.tool_name,
             user_visible_reason=f"Execute {step.step_id}.",
-            arguments={str(key): str(value) for key, value in step.arguments.items()},
+            arguments=dict(step.arguments),
         )
         payload = self.build_payload(state)
         if step.tool_name == "search_knowledge_base":

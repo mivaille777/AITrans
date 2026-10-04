@@ -61,7 +61,8 @@ def _probe_runtime(model_id: str) -> RagModelStatusResponse:
             ),
             rank=1,
         )
-        ranked = runtime.retrieval_service._reranker.rerank(  # noqa: SLF001 - same runtime probe
+        retrieval = getattr(runtime.retrieval_service, "_base", runtime.retrieval_service)
+        ranked = retrieval._reranker.rerank(  # noqa: SLF001 - same runtime probe
             "model health check",
             [candidate],
             top_k=1,
@@ -71,6 +72,32 @@ def _probe_runtime(model_id: str) -> RagModelStatusResponse:
     else:
         raise RagModelManagerError(f"unknown managed RAG model: {model_id}")
     return _with_runtime_health(get_rag_model_manager().status(model_id))
+
+
+def warm_existing_knowledge_runtime() -> None:
+    """Prepare resident models before serving indexed-document requests."""
+    runtime = get_rag_runtime()
+    if not runtime.config.enabled or not any(
+        record.status.value == "ready" for record in runtime.manifest.list_records()
+    ):
+        return
+    for model_id in (EMBEDDING_MODEL_ID, RERANKER_MODEL_ID):
+        try:
+            _probe_runtime(model_id)
+        except Exception as exc:
+            set_rag_model_runtime_health(
+                model_id, ready=False, error=str(exc) or type(exc).__name__
+            )
+            raise
+        set_rag_model_runtime_health(model_id, ready=True)
+    if runtime.visual_embedding_provider is not None:
+        vectors = runtime.visual_embedding_provider.embed_query(
+            "RAG runtime health check"
+        )
+        if not vectors or any(
+            len(row) != runtime.visual_embedding_provider.dimension for row in vectors
+        ):
+            raise RuntimeError("visual health check returned an unexpected dimension")
 
 
 @router.get("", response_model=RagModelListResponse)

@@ -120,3 +120,20 @@ def test_invalid_scores_are_rejected() -> None:
     reranker = provider(Model([0.1]), [])
     with pytest.raises(RagRetrievalError, match="count mismatch"):
         reranker.rerank("query", candidates(), top_k=2)
+
+
+def test_explicit_input_bound_reaches_existing_model_factory():
+    calls = []
+    reranker = provider(Model([0.2, 0.9, 0.5]), calls, max_input_tokens=512)
+    reranker.rerank("query", candidates(), top_k=2)
+    assert calls[0][1]["max_length"] == 512
+
+
+def test_reranker_stops_between_batches_after_deadline(monkeypatch):
+    clock = iter([0.0, 0.0, 0.01])
+    monkeypatch.setattr("backend.rag.rerankers.qwen3.perf_counter", lambda: next(clock))
+    model = Model([0.5])
+    reranker = provider(model, [], batch_size=1, deadline_ms=1)
+    with pytest.raises(TimeoutError, match="reranker deadline"):
+        reranker.rerank("query", candidates(), top_k=3)
+    assert len(model.calls) == 1

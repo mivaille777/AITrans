@@ -16,6 +16,12 @@ from backend.rag.config import (
 )
 
 
+def test_query_planning_flags_are_supported_by_strict_rag_config():
+    configured = RagConfig(query_rewrite_enabled=True, query_router_enabled=True)
+    assert configured.query_rewrite_enabled is True
+    assert configured.query_router_enabled is True
+
+
 def test_rag_config_defaults_match_v1_contract() -> None:
     config = RagConfig()
 
@@ -138,11 +144,20 @@ def test_default_toml_rag_section_validates_against_contract() -> None:
 
     assert config.advanced_parsing.enabled is True
     assert config.advanced_parsing.provider == "docling"
-    assert config.advanced_parsing.device == "cpu"
+    assert config.advanced_parsing.device == "auto"
     assert config.advanced_parsing.layout_enabled is True
     assert config.advanced_parsing.table_enabled is True
-    assert config.advanced_parsing.ocr_enabled is False
-    assert config.advanced_parsing.formula_enabled is False
+    assert config.advanced_parsing.ocr_enabled is True
+    assert config.advanced_parsing.formula_enabled is True
+    assert config.graph.enabled is True
+    assert config.graph.deadline_ms == 1000
+    assert config.visual_understanding.enabled is True
+    assert config.visual_retrieval.enabled is False
+    assert config.query_router_enabled is True
+    assert config.jit_search_read_enabled is True
+    assert config.retrieval.embedding_cache_size == 128
+    assert config.retrieval.channel_deadline_ms == 30000
+    assert config.reranker.deadline_ms == 30000
     assert config.chunking.target_tokens == 420
     assert config.chunking.preferred_max_tokens == 550
     assert config.chunking.hard_max_tokens == 750

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from threading import RLock
+from time import perf_counter
 from typing import Any
 
 from backend.rag.config import RagRerankerConfig
@@ -41,16 +42,29 @@ class Qwen3RerankerProvider:
             raise ValueError("top_k must be positive")
         if not candidates:
             return []
+        deadline = (
+            perf_counter() + self._config.deadline_ms / 1000
+            if self._config.deadline_ms is not None else None
+        )
         model = self._ensure_model()
         pairs = [(query, self._candidate_text(candidate)) for candidate in candidates]
-        scores = model.predict(
-            pairs,
-            batch_size=self._config.batch_size,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-        )
-        if hasattr(scores, "tolist"):
-            scores = scores.tolist()
+        scores = []
+        batch_size = self._config.batch_size if deadline is not None else len(pairs)
+        for start in range(0, len(pairs), batch_size):
+            if deadline is not None and perf_counter() >= deadline:
+                raise TimeoutError("reranker deadline exceeded")
+            batch = pairs[start:start + batch_size]
+            values = model.predict(
+                batch, batch_size=self._config.batch_size,
+                convert_to_numpy=True, show_progress_bar=False,
+            )
+            if deadline is not None and perf_counter() >= deadline:
+                raise TimeoutError("reranker deadline exceeded")
+            if hasattr(values, "tolist"):
+                values = values.tolist()
+            if not isinstance(values, Sequence) or len(values) != len(batch):
+                raise RagRetrievalError("reranker score count mismatch")
+            scores.extend(values)
         if not isinstance(scores, Sequence) or len(scores) != len(candidates):
             raise RagRetrievalError("reranker score count mismatch")
         scored = []
@@ -58,7 +72,10 @@ class Qwen3RerankerProvider:
             value = float(score)
             if not math.isfinite(value):
                 raise RagRetrievalError("reranker produced a non-finite score")
-            scored.append(candidate.model_copy(update={"rerank_score": value}))
+            scored.append(candidate.model_copy(update={
+                "rerank_score": value,
+                "metadata": {**candidate.metadata, "reranker_input_limit_tokens": self._config.max_input_tokens},
+            }))
         ordered = sorted(
             scored,
             key=lambda item: (
@@ -118,10 +135,15 @@ class Qwen3RerankerProvider:
             else:
                 source = self._config.model
                 local_files_only = self._config.local_files_only
+            input_options = (
+                {"max_length": self._config.max_input_tokens}
+                if self._config.max_input_tokens is not None else {}
+            )
             self._model = self._factory(
                 source,
                 device=device,
                 local_files_only=local_files_only,
+                **input_options,
             )
             return self._model
 

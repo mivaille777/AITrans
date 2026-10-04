@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.api.dependencies import (
@@ -11,6 +12,98 @@ from backend.api.dependencies import (
 )
 from backend.main import create_app
 from backend.services.companion_handoff_service import CompanionHandoffService
+
+
+@pytest.mark.parametrize("unsupported", [False, True])
+def test_http_chat_traces_and_verifies_document_answer(tmp_path, monkeypatch, unsupported):
+    from datetime import UTC, datetime
+
+    from backend.api import companion
+    from backend.services.companion_chat_service import CompanionChatService
+    from backend.services.rag_debug_service import RagDebugService
+    from backend.services.rag_debug_store_service import RagDebugStoreService
+    from tests.rag.test_companion_rag import ChatStub, RetrievalStub
+
+    class Retrieval(RetrievalStub):
+        def retrieve(self, query, **kwargs):
+            result = super().retrieve(query, **kwargs)
+            now = datetime.now(UTC).isoformat()
+            self.trace_id = kwargs["trace_id"]
+            span = {"trace_id": self.trace_id, "span_id": f"{self.trace_id}:retrieve:1",
+                    "parent_id": self.trace_id, "stage": "retrieval", "status": "complete",
+                    "started_at": now, "ended_at": now, "elapsed_ms": 0.0}
+            result.metadata.update(retrieval_span=span, stage_timings={"dense": span})
+            return result
+
+        def validate_evidence_candidates(self, result, **kwargs):
+            assert {item.chunk.document_id for item in result.candidates} == {"doc-1"}
+
+    class Chat(ChatStub):
+        def execute(self, request):
+            result = super().execute(request)
+            result.output_text = "Mars contains thirty billion green penguins. [1]" if unsupported else "Bounded evidence for the answer. [1]"
+            return result
+
+    rag, chat = Retrieval(), Chat()
+    service = CompanionChatService(retrieval_service=rag, chat_service=chat, rag_rewrite_enabled=False)
+    path = tmp_path / "traces.sqlite3"
+    debug = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    monkeypatch.setattr(companion, "get_rag_debug_service", lambda: debug)
+    app = create_app()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/companion/chat", json={"session_id": "http-trace",
+                "user_message": "What is the evidence in this document?", "request_id": 17,
+                "context_mode": "general",
+                "knowledge_access_policy": "always", "knowledge_document_ids": ["doc-1"]})
+        assert response.status_code == 200
+        assert ("penguins" in response.json()["output_text"]) is False
+        trace = debug.list_companion_traces()[0]
+        assert trace.trace_id == rag.trace_id
+        assert trace.verification_skipped is False
+        assert trace.fallback_applied is unsupported
+        assert trace.retrieval["answer_status"] == "complete"
+        assert [span["stage"] for span in trace.retrieval["lifecycle"]] == [
+            "preparing", "routing", "retrieving", "generating", "verifying", "answer"]
+        assert trace.retrieval["retrieval_spans"][0]["parent_id"] == trace.trace_id
+    finally:
+        debug.close()
+    restarted = RagDebugService(store=RagDebugStoreService(storage_path=path))
+    try:
+        trace = restarted.list_companion_traces()[0]
+        assert trace.retrieval["answer_status"] == "complete"
+        assert "Bounded evidence for the answer" not in repr(trace.model_dump())
+        assert all(span["ended_at"] for span in trace.retrieval["lifecycle"])
+    finally:
+        restarted.close()
+
+
+def test_http_chat_preparation_error_closes_trace(tmp_path, monkeypatch):
+    from app.ai.errors import AIConfigurationError
+    from backend.api import companion
+    from backend.services.companion_chat_service import CompanionChatService
+    from backend.services.rag_debug_service import RagDebugService
+    from backend.services.rag_debug_store_service import RagDebugStoreService
+
+    def fail(**kwargs):
+        raise AIConfigurationError("missing provider")
+
+    service = CompanionChatService()
+    monkeypatch.setattr(service, "prepare_execution", fail)
+    debug = RagDebugService(store=RagDebugStoreService(storage_path=tmp_path / "traces.sqlite3"))
+    monkeypatch.setattr(companion, "get_rag_debug_service", lambda: debug)
+    app = create_app()
+    app.dependency_overrides[get_companion_chat_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/companion/chat", json={"session_id": "failed", "user_message": "Hello", "context_mode": "general"})
+        assert response.status_code == 503
+        trace = debug.list_companion_traces()[0]
+        assert trace.retrieval["answer_status"] == "error"
+        assert trace.retrieval["lifecycle"][0]["status"] == "error"
+    finally:
+        debug.close()
 
 
 def _context_payload() -> dict[str, object]:
