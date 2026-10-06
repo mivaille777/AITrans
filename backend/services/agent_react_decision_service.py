@@ -421,6 +421,10 @@ class AgentReActDecisionService:
         )
 
     def _decide_native(self, *, client, iteration, tools, prompt, payload, spec):
+        skills = payload.get("skill_session")
+        if skills is not None:
+            from backend.services.skill_function_bridge import SkillCallingClient
+            client = SkillCallingClient(client, skills, cancel_event=payload.get("skill_cancel_event"))
         local_names = {
             "list_knowledge_documents",
             "search_knowledge_base",

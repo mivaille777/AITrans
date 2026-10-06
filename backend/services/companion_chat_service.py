@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from threading import Event
 from time import perf_counter
 from types import SimpleNamespace
@@ -126,6 +126,7 @@ class CompanionChatService:
         rag_query_router: RagQueryRouter | Any | None = None,
         function_calling_enabled: bool = False,
         knowledge_tools_factory: Callable[[], KnowledgeAgentTools] | None = None,
+        skill_runtime_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -144,6 +145,7 @@ class CompanionChatService:
         self._grounded_context_builder = GroundedContextBuilder()
         self.function_calling_enabled = bool(function_calling_enabled)
         self._knowledge_tools_factory = knowledge_tools_factory
+        self._skill_runtime_factory = skill_runtime_factory
         if not isinstance(rag_rewrite_enabled, bool) or not isinstance(
             rag_router_enabled, bool
         ):
@@ -742,6 +744,7 @@ class CompanionChatService:
         tool_context: str = "",
         knowledge_context: dict[str, Any] | None = None,
         filesystem_workspace_files: object = (),
+        skill_context: str = "",
     ) -> ChatRequest:
         _ = (source_language, target_language)
 
@@ -817,10 +820,24 @@ class CompanionChatService:
             tool_context=str(tool_context or ""),
             knowledge_context=dict(knowledge_context or {}),
             filesystem_workspace_files=tuple(workspace_files),
+            skill_context=skill_context,
         )
+
+    def _skill_session(self, payload):
+        existing = payload.pop("skill_session", None)
+        if existing is not None:
+            return existing
+        if self._skill_runtime_factory is None:
+            return None
+        return self._skill_runtime_factory().start(
+            str(payload.get("user_message", "")),
+            str(payload.get("context_mode", "general") or "general"),
+        )
+
 
     def send(self, **kwargs: Any) -> CompanionChatResult:
         payload = dict(kwargs)
+        shared_skills = payload.pop("skill_session", None)
         phase_callback = payload.pop("phase_callback", None)
         prepared_callback = payload.pop("prepared_callback", None)
         verification_callback = payload.pop("verification_callback", None)
@@ -842,6 +859,7 @@ class CompanionChatService:
 
             parts.extend(self.run_functions(
                 **payload, knowledge_access_policy=policy,
+                skill_session=shared_skills,
                 knowledge_document_ids=document_ids, trace_id=trace_id,
                 phase_callback=phase_callback, prepared_callback=capture_prepared,
                 reset_output=parts.clear, stream=False,
@@ -860,11 +878,19 @@ class CompanionChatService:
                 phase_callback=phase_callback,
                 trace_id=trace_id,
             )
-        if not self.function_calling_enabled and callable(prepared_callback):
-            prepared_callback(prepared)
         if prepared.tool_name:
             payload["tool_name"] = prepared.tool_name
             payload["tool_context"] = prepared.tool_context
+        if not self.function_calling_enabled:
+            if shared_skills is not None:
+                payload["skill_session"] = shared_skills
+            skills = self._skill_session(payload)
+            if skills is not None:
+                payload["skill_context"] = skills.context()
+                prepared = replace(prepared, grounding=replace(prepared.grounding,
+                    debug_metadata=dict(prepared.grounding.debug_metadata or {}, skills=skills.snapshot())))
+        if not self.function_calling_enabled and callable(prepared_callback):
+            prepared_callback(prepared)
         request = self._build_request(**self._with_resolved_reading(payload))
         if callable(phase_callback):
             phase_callback("generating", prepared.plan)
@@ -961,7 +987,11 @@ class CompanionChatService:
         return len(grounding.evidence)
 
     def stream(self, **kwargs: Any) -> Iterator[str]:
-        request = self._build_request(**self._with_resolved_reading(kwargs))
+        payload = dict(kwargs)
+        skills = self._skill_session(payload)
+        if skills is not None:
+            payload["skill_context"] = skills.context()
+        request = self._build_request(**self._with_resolved_reading(payload))
         yield from self._ensure_stream_service().stream(request)
 
     @staticmethod
@@ -1070,6 +1100,7 @@ class CompanionChatService:
         state = KnowledgeFunctionState(
             scope=scope, policy=policy, trace_id=trace_id or f"companion_{uuid4().hex[:20]}"
         )
+        skills = self._skill_session(payload)
         request = self._build_request(**payload)
         messages = [
             {"role": "system", "content": CHAT_SYSTEM_PROMPT + KNOWLEDGE_FUNCTION_PROMPT},
@@ -1098,12 +1129,18 @@ class CompanionChatService:
 
         def on_state(current):
             prepared = self._function_prepared(current)
+            if skills is not None:
+                prepared.grounding.debug_metadata["skills"] = skills.snapshot()
             if callable(prepared_callback):
                 prepared_callback(prepared)
 
         def on_phase(phase):
             if callable(phase_callback):
                 phase_callback(phase, self._function_prepared(state).plan)
+
+        if skills is not None:
+            from backend.services.skill_function_bridge import SkillCallingClient
+            client = SkillCallingClient(client, skills, on_change=lambda: on_state(state), cancel_event=cancel_event)
 
         try:
             yield from run_knowledge_functions(

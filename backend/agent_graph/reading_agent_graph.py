@@ -371,6 +371,7 @@ class ReadingAgentGraph:
     ) -> None:
         self._adapter = adapter
         native_service = getattr(adapter, "_service", None)
+        self._skill_runtime_factory = getattr(getattr(native_service, "_chat_service", None), "_skill_runtime_factory", None)
         planner = getattr(getattr(native_service, "_semantic_router", None), "_planner", None)
         self._react_decision_service = react_decision_service or AgentReActDecisionService(
             text_service=getattr(planner, "_text_service", None)
@@ -2120,6 +2121,9 @@ class ReadingAgentGraph:
         knowledge_read_count = _knowledge_read_count(state)
         payload = self._adapter.build_payload(state)
         try:
+            if self._skill_runtime_factory is not None and control.skill_session is None:
+                control.skill_session = self._skill_runtime_factory().start(
+                    state.user_input, str(payload.get("context_mode", "general")))
             decision = run_react_decision_with_timeout(
                 lambda: self._react_decision_service.decide(
                     iteration=iteration,
@@ -2129,6 +2133,8 @@ class ReadingAgentGraph:
                     native_results=tuple(state.tool_results),
                     native_evidence=tuple(state.evidence),
                     native_citations=tuple(state.citations),
+                    skill_session=control.skill_session,
+                    skill_cancel_event=control.cancel_event,
                     max_observation_chars=control.policy.max_observation_chars,
                     remaining_tool_calls=max(
                         0, control.policy.max_tool_calls - len(state.tool_calls)
@@ -2184,6 +2190,7 @@ class ReadingAgentGraph:
                     "argument_keys": sorted(decision.arguments),
                     "action_fingerprint": action_fingerprint,
                     "action_summary": decision.action_summary,
+                    **({"skills": control.skill_session.snapshot()} if control.skill_session is not None else {}),
                     "provider": str(
                         getattr(self._react_decision_service, "provider_name", "") or ""
                     ),

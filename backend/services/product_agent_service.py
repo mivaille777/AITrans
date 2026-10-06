@@ -792,6 +792,7 @@ class ProductAgentService:
             evidence=evidence,
             citations=citations,
             **({"knowledge_access_policy": "never"} if self.function_calling_enabled else {}),
+            **({"skill_session": control.skill_session} if control.skill_session is not None else {}),
         )
         answer = verified.answer
         verification = verified.verification
@@ -849,6 +850,8 @@ class ProductAgentService:
         kwargs: dict[str, Any] = {}
         if self.function_calling_enabled:
             kwargs["knowledge_access_policy"] = "never"
+            if control.skill_session is not None:
+                kwargs["skill_session"] = control.skill_session
         if tool_name:
             kwargs["tool_name"] = tool_name
             kwargs["tool_context"] = tool_context

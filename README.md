@@ -72,7 +72,10 @@ AITrans currently exposes the following primary routes:
 | **Research** | Organize evidence and reopen research context for synthesis. |
 | **Knowledge** | Manage cards, documents, boards, relations, graph views, and reusable knowledge. |
 | **Translation** | Translate manual input or captured reading selections. |
+| **Skills** | Manage skill packages, preview/edit files, inspect layered routing, and load task-specific instructions on demand. |
 | **Settings** | Configure model providers, local runtime, browser integration, local models, and RAG debugging. |
+
+Skills uses domain routing → candidate metadata → activated instructions → on-demand resources. Companion chat and Agent ReAct share request-scoped loading with independent budgets and revision checks. See the [Skill architecture and API contract](docs/development/skill-system.md) and [complete architecture diagram](docs/development/skill-architecture.md).
 
 ---
 

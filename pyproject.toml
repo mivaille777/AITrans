@@ -23,6 +23,7 @@ dependencies = [
     "openai>=1.0",
     "fastapi>=0.116,<1",
     "pydantic>=2.10,<3",
+    "PyYAML>=6.0,<7",
     "typing-extensions>=4.12,<5",
     "uvicorn[standard]>=0.35,<1",
     # LangGraph is the stateful orchestration layer for chat/workspace/tool execution.

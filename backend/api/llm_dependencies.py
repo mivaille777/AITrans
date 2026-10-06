@@ -17,6 +17,7 @@ from backend.services.grounded_synthesis_service import GroundedSynthesisService
 from backend.services.product_agent_service import ProductAgentService
 from backend.services.quick_action_service import QuickActionService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
+from backend.services.skill_dependencies import get_skill_runtime
 
 _gateway: LLMGateway | None = None
 _gateway_lock = Lock()
@@ -85,6 +86,8 @@ def build_routed_product_agent_service(
     synthesis = CompanionChatService(
         text_service=gateway.create_text_service("agent_synthesis"),
         reading_resolver=resolver,
+        function_calling_enabled=True,
+        skill_runtime_factory=get_skill_runtime,
     )
     return ProductAgentService(
         function_calling_enabled=True,

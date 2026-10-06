@@ -1,0 +1,71 @@
+flowchart TB
+    accTitle: AITrans Skill 系统完整架构
+    accDescr: 从前端管理、本地存储与索引到任务范围、领域路由、候选发现、正文激活、资源读取、上下文组装和 Agent 执行的完整架构；策略、版本和预算贯穿各层。
+
+    subgraph frontend_layer[前端工作区]
+        workspace[Skills 管理与文件树]
+        editor[源码编辑与 Markdown 预览]
+        inspector[任务路由检查]
+    end
+    subgraph management_layer[管理 API 与本地存储]
+        api[FastAPI Skills CRUD]
+        store[SkillService 原子文件操作]
+        packages[(SKILL.md 与附属文件)]
+        state[(启用状态与移除归档)]
+    end
+    subgraph routing_layer[发现与分层路由]
+        index[仅 frontmatter 的版本缓存]
+        scope[启用 校验 模式 调用方式]
+        domains[L0 领域摘要与粗路由]
+        candidates[L1 候选元数据与匹配原因]
+    end
+    subgraph loading_layer[任务会话与按需加载]
+        session[每任务独立 SkillSession]
+        discover[discover_skills 领域内发现]
+        activate[activate_skill 完整正文 L2]
+        resource[read_skill_resource 分页资料 L3]
+        context[受保护指令与参考数据分区]
+    end
+    subgraph execution_layer[模型与现有执行链路]
+        request[用户任务或显式技能名]
+        bridge[SkillCallingClient 原生调用适配]
+        model[LLM 判断技能与下一动作]
+        companion[Companion 对话工具环路]
+        agent[ReadingAgentGraph ReAct]
+        synthesis[最终回答与证据校验]
+    end
+    subgraph control_layer[约束与观测]
+        guards[相对路径 版本复核 权限边界]
+        budget[3 个激活 8 次调用 字符预算]
+        trace[候选 激活 资源 预算 调用记录]
+    end
+
+    workspace --> api
+    editor --> api
+    inspector -->|catalog 与 route| domains
+    api --> store
+    store --> packages
+    store --> state
+    packages -->|只读入口头部| index
+    state --> scope
+    index --> scope --> domains --> candidates --> session
+    request --> session
+    session --> discover --> candidates
+    session --> activate
+    session --> resource
+    activate -->|按选择读取| packages
+    resource -->|已激活文件范围| packages
+    activate --> context
+    resource --> context
+    domains --> context
+    candidates --> context
+    context --> bridge --> model
+    model -->|选择技能函数| session
+    companion --> bridge
+    agent --> bridge
+    model -->|现有工具或回答| synthesis
+    guards -.-> store
+    guards -.-> session
+    budget -.-> session
+    session --> trace
+    synthesis --> trace

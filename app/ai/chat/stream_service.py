@@ -47,7 +47,7 @@ class ProviderStreamingAIChatService(AIChatService):
                     route_key=self._runtime_route_key(wrapper),
                 ):
                     for delta in stream_method(
-                        system_prompt=prompt_spec.system_prompt,
+                        system_prompt=prompt_spec.system_prompt + request.skill_context,
                         user_prompt=prompt,
                         temperature=self.temperature,
                         max_tokens=self.max_tokens,
@@ -71,7 +71,7 @@ class ProviderStreamingAIChatService(AIChatService):
                 wrapper,
                 create,
                 prompt,
-                system_prompt=prompt_spec.system_prompt,
+                system_prompt=prompt_spec.system_prompt + request.skill_context,
             )
             return
 

@@ -95,6 +95,7 @@ class AgentRunControl:
     started_at: float = field(default_factory=monotonic)
     knowledge_search_count: int = 0
     knowledge_read_count: int = 0
+    skill_session: object | None = field(default=None, repr=False)
     _fence_lock: RLock = field(default_factory=RLock, repr=False)
 
     @property
@@ -145,8 +146,12 @@ class AgentRunControl:
         return min(max(0.0, float(node_timeout_seconds)), self.remaining_seconds)
 
     def bounded_react_decision_timeout(self) -> float:
+        timeout = self.policy.react_decision_timeout_seconds
+        if self.skill_session is not None and self.skill_session.function_names:
+            # One decision can include bounded metadata/activation/resource calls.
+            timeout = max(timeout, 60.0)
         return min(
-            self.policy.react_decision_timeout_seconds,
+            timeout,
             self.remaining_seconds,
         )
 

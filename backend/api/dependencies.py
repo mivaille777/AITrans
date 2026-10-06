@@ -49,6 +49,7 @@ from backend.services.sandbox_debug_service import SandboxDebugService
 from backend.services.sandbox_network_permission_service import (
     SandboxNetworkPermissionService,
 )
+from backend.services.skill_dependencies import get_skill_runtime
 from backend.services.translation_service import TranslationService
 from backend.services.workspace_apply_service import WorkspaceApplyService
 
@@ -238,6 +239,7 @@ def get_companion_chat_service() -> CompanionChatService:
                 rag_settings = {}
             _companion_chat_service = CompanionChatService(
                 function_calling_enabled=True,
+                skill_runtime_factory=get_skill_runtime,
                 knowledge_tools_factory=lambda: KnowledgeAgentTools(
                     retrieval_service=get_retrieval_service(), chunk_store=get_rag_runtime().sparse_retriever,
                     jit_search_read_enabled=True, library_service=get_knowledge_library_service()),

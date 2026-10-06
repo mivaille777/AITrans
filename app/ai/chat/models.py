@@ -64,6 +64,7 @@ class ChatRequest:
     tool_context: str = ""
     knowledge_context: dict[str, Any] = field(default_factory=dict)
     filesystem_workspace_files: tuple[dict[str, str | int], ...] = ()
+    skill_context: str = ""
 
 
 @dataclass(frozen=True, slots=True)

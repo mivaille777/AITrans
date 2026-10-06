@@ -6,10 +6,10 @@ import json
 from typing import Any
 
 from app.ai.chat.models import ChatMessage, ChatRequest, ChatResult, ChatRole
+from app.ai.chat.system_context import SYSTEM_CONTEXT
 from app.ai.context_budget import ContextBudgetManager, ContextField
 from app.ai.errors import AIConfigurationError, AIError, AIResponseError
 from app.ai.knowledge_context import knowledge_context_json
-from app.ai.chat.system_context import SYSTEM_CONTEXT
 from app.ai.prompt_registry import PromptRegistry, PromptSpec
 
 CHAT_SYSTEM_PROMPT = f"""{SYSTEM_CONTEXT.prompt_identity}
@@ -221,7 +221,7 @@ class AIChatService:
         prompt_spec = self._prompt_registry.get("chat.reading")
         try:
             output = self._client().complete(
-                system_prompt=prompt_spec.system_prompt,
+                system_prompt=prompt_spec.system_prompt + request.skill_context,
                 user_prompt=prompt,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,

@@ -18,6 +18,7 @@ describe("workspace navigation", () => {
       "/research",
       "/knowledge",
       "/translation",
+      "/skills",
       "/settings",
     ])
   })
@@ -33,6 +34,7 @@ describe("workspace navigation", () => {
       "/research",
       "/knowledge",
       "/agent",
+      "/skills",
     ])
     expect(workspaceSidebarRoutes.some((route) => route.path === "/translation")).toBe(false)
   })
@@ -46,6 +48,7 @@ describe("workspace navigation", () => {
     expect(workspaceRouteUsesFixedHeight("/research")).toBe(true)
     expect(workspaceRouteUsesFixedHeight("/knowledge")).toBe(true)
     expect(workspaceRouteUsesFixedHeight("/settings")).toBe(true)
+    expect(workspaceRouteUsesFixedHeight("/skills")).toBe(true)
     expect(workspaceRouteUsesFixedHeight("/translation")).toBe(false)
   })
 })
