@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(scriptDir, "..")
 const repoRoot = path.resolve(desktopRoot, "../..")
+process.env.PYINSTALLER_CONFIG_DIR ||= path.join(repoRoot, ".cache", "pyinstaller")
 const buildRoot = path.join(repoRoot, "build")
 const pyinstallerDist = path.join(buildRoot, "pyinstaller")
 const pyinstallerWork = path.join(buildRoot, "pyinstaller-work")
@@ -30,7 +31,7 @@ function run(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: repoRoot,
       stdio: "inherit",
-      windowsHide: false,
+      windowsHide: true,
       ...options,
     })
     child.once("error", reject)
@@ -44,7 +45,7 @@ function run(command, args, options = {}) {
 async function assertBuildEnvironment() {
   const probe = [
     "import PyInstaller",
-    "import qdrant_client",
+    "import faiss",
     "import sentence_transformers",
     "import transformers",
     "print('AITrans sidecar build dependencies available')",
@@ -53,7 +54,7 @@ async function assertBuildEnvironment() {
     await run(python, ["-c", probe])
   } catch (error) {
     throw new Error(
-      'Missing Python packaging dependencies. Run: python -m pip install -e ".[build]" -r aitranslator-rag-requirements.txt',
+      'Missing Python packaging dependencies. Install .[build] and RAG requirements, then run scripts/install_faiss.ps1.',
       { cause: error },
     )
   }

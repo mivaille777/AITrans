@@ -61,6 +61,7 @@ def _message_response(
         knowledge_document_count=grounding.knowledge_document_count,
         knowledge_chunk_count=grounding.knowledge_chunk_count,
         knowledge_fallback_reason=grounding.knowledge_fallback_reason,
+        knowledge_recovery=grounding.knowledge_recovery,
         evidence=list(grounding.evidence),
         citations=list(grounding.citations),
         created_at=message.created_at,

@@ -45,14 +45,14 @@ def test_benchmark_runtimes_use_distinct_qdrant_and_bm25_storage(tmp_path) -> No
         assert left.vector_store.collection_name != right.vector_store.collection_name
         assert right.vector_store.search([1.0, 0.0], top_k=5) == []
         assert right.sparse_retriever.search("benchmark evidence", 5) == []
-        assert not (tmp_path / "config" / "rag" / "qdrant").exists()
+        assert not (tmp_path / "config" / "rag" / "faiss").exists()
     finally:
         left.close()
         right.close()
 
 
 def test_benchmark_runtime_rejects_production_storage_path(tmp_path, monkeypatch) -> None:
-    production = (tmp_path / "config" / "rag" / "qdrant").resolve()
+    production = (tmp_path / "config" / "rag" / "faiss").resolve()
     monkeypatch.chdir(tmp_path)
     try:
         build_benchmark_rag_runtime(production, embedding_provider=_FakeEmbedding())

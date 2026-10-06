@@ -34,12 +34,13 @@ dependencies = [
     "pypdf>=5.0,<6",
     "python-docx>=1.1,<2",
     "lxml>=6.0,<7",
-    # Qdrant Local is imported by the normal FastAPI RAG runtime, so it is a
-    # core runtime dependency rather than an optional GPU/model dependency.
-    "qdrant-client>=1.19,<2",
+    # Install FAISS with scripts/install_faiss.ps1 (GPU preferred). GPU and CPU
+    # distributions share the faiss module and must not overwrite each other.
+    "numpy>=1.26,<3",
 ]
 
 [project.optional-dependencies]
+faiss-cpu = ["faiss-cpu==1.15.1"]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23,<1",

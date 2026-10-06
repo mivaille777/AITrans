@@ -21,7 +21,7 @@ from backend.rag.index_manifest import IndexManifest, IndexManifestRecord, Index
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.sparse.store import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore
+from backend.rag.stores import FaissVectorStore
 from backend.services.agent_tool_registry import AgentToolRegistry
 
 
@@ -334,8 +334,9 @@ def test_agent_search_cache_reuses_vectors_without_reusing_stale_or_private_evid
         embed_query=Mock(return_value=[1.0, 0.0]),
     )
     manifest = IndexManifest(tmp_path / "manifest.json")
-    vector = QdrantLocalVectorStore(
-        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")), dimension=2,
+    vector = FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "faiss")), dimension=2,
+        fingerprint=embedding.fingerprint.as_dict(),
     )
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
     retrieval = RetrievalService(

@@ -16,7 +16,7 @@ from backend.rag.index_manifest import IndexManifest, ready_manifest_record
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.sparse.store import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore
+from backend.rag.stores import FaissVectorStore
 
 
 class CountingRag:
@@ -127,8 +127,8 @@ def live_evidence(tmp_path):
             self.calls += 1
             return super().retrieve(*args, **kwargs)
 
-    vector = QdrantLocalVectorStore(
-        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")), dimension=4,
+    vector = FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "faiss")), dimension=4,
     )
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
     manifest = IndexManifest(tmp_path / "manifest.json")

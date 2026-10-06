@@ -1177,7 +1177,10 @@ button { -webkit-tap-highlight-color:transparent; }
 .ait-chat-composer-input { width:100%; min-height:29px; max-height:108px; padding:0; border:0; outline:0; background:transparent; color:#262626; font-size:12px; line-height:1.6; resize:none; }
 .ait-chat-composer-input::placeholder { color:#9a9a9a; }
 .ait-chat-send-button { min-width:86px; min-height:48px; border-radius:12px!important; background:#111!important; color:#fff!important; box-shadow:none!important; }
-.ait-chat-send-button:hover { background:#292929!important; }
+.ait-chat-send-button:not(:disabled) { cursor:pointer; }
+.ait-chat-send-button:not(:disabled):hover { background:#292929!important; }
+.ait-chat-send-button:disabled { background:#e5e5e5!important; color:#909090!important; cursor:not-allowed; opacity:1; }
+.ait-chat-unavailable-message { display:flex; align-items:center; gap:10px; }
 .ait-chat-composer-helper { margin:9px 0 0; color:#9a9a9a; font-size:9px; }
 
 .ait-chat-context-picker,

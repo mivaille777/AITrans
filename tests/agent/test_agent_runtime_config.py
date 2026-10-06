@@ -30,7 +30,7 @@ def test_runtime_config_exposes_only_safe_routing_metadata() -> None:
     prompt_ids = {prompt.prompt_id for prompt in response.prompts}
     assert "agent.planner@1.2.0" in prompt_ids
     assert "agent.multi_step_planner@1.1.0" in prompt_ids
-    assert "rag.query_planner@1.4.0" in prompt_ids
+    assert "rag.query_planner@1.5.0" in prompt_ids
     assert "chat.reading@1.4.1" in prompt_ids
     assert "text.translate@1.0.0" in prompt_ids
     assert all("prompt" not in prompt.model_dump() for prompt in response.prompts)

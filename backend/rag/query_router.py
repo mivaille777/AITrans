@@ -18,6 +18,15 @@ _MULTI_HOP = re.compile(
     r"|\brelationships?\b|\b(?:related|relates?)\s+to\b",
     re.IGNORECASE,
 )
+_SEMANTIC_INTENT = re.compile(
+    r"\b(?:why|how|explain|summarize|describe|discuss)\b"
+    r"|为什么|为何|怎样|如何|解释|总结|概述|讨论|机制|原理",
+    re.IGNORECASE,
+)
+_EXPLANATORY_INTENT = re.compile(
+    r"\b(?:why|how|explain)\b|为什么|为何|怎样|如何|解释|机制|原理",
+    re.IGNORECASE,
+)
 
 
 def normalize_query(query: str) -> str:
@@ -31,12 +40,23 @@ def protected_query_terms(query: str) -> tuple[str, ...]:
     )
 
 
+def is_explanatory_query(query: str) -> bool:
+    normalized = normalize_query(query)
+    intent_text = re.sub(r"10\.\d{4,9}/\S+", "", _QUOTED.sub("", normalized))
+    return bool(_EXPLANATORY_INTENT.search(intent_text))
+
+
 def classify_query(query: str) -> RagQueryType:
     normalized = normalize_query(query)
     if not normalized:
         return "no-answer"
     if _MULTI_HOP.search(normalized):
         return "multi-hop"
+    # A literal acronym inside an explanation is a protected term, not a reason
+    # to disable dense retrieval and cross-language rewriting for the question.
+    semantic_text = re.sub(r"10\.\d{4,9}/\S+", "", _QUOTED.sub("", normalized))
+    if _SEMANTIC_INTENT.search(semantic_text):
+        return "semantic"
     return "keyword" if protected_query_terms(normalized) else "semantic"
 
 
@@ -73,7 +93,9 @@ class RagQueryRouter:
     def route(
         self, query: str, *, allowed_document_ids: tuple[str, ...] | None = None
     ) -> RagQueryRoute:
-        scope = tuple(allowed_document_ids) if allowed_document_ids is not None else None
+        scope = (
+            tuple(allowed_document_ids) if allowed_document_ids is not None else None
+        )
         query_type = classify_query(query)
         if scope == () or query_type == "no-answer":
             return RagQueryRoute(

@@ -131,7 +131,7 @@ def main() -> int:
     config = production_config.model_copy(deep=True)
     if args.parser == "pypdf":
         config.advanced_parsing.enabled = False
-    config.vector_store.storage_path = str(args.output.resolve() / "runtime" / "qdrant")
+    config.vector_store.storage_path = str(args.output.resolve() / "runtime" / "faiss")
     config.vector_store.collection_name = "pdf_import_proxy"
     config.embedding.local_files_only = True
     config.reranker.local_files_only = True

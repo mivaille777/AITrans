@@ -24,7 +24,7 @@ from backend.rag.models import DocumentChunk
 from backend.rag.parsers import parse_document
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.sparse import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore, VectorSearchFilter
+from backend.rag.stores import FaissVectorStore, VectorSearchFilter
 from backend.services.knowledge_library_service import KnowledgeLibraryService
 
 
@@ -41,7 +41,7 @@ class FixtureEmbedding:
 
 def _build_services(root: Path, allowed_root: Path):
     vector_config = RagVectorStoreConfig(
-        storage_path=str(root / "qdrant"),
+        storage_path=str(root / "faiss"),
         collection_name="knowledge_lifecycle_test",
     )
     chunking = RagChunkingConfig(
@@ -59,7 +59,7 @@ def _build_services(root: Path, allowed_root: Path):
         vector_store=vector_config,
     )
     embedding = FixtureEmbedding()
-    vector_store = QdrantLocalVectorStore(vector_config, dimension=4)
+    vector_store = FaissVectorStore(vector_config, dimension=4)
     sparse = BM25SparseRetriever(root / "bm25.json")
     manifest = IndexManifest(root / "manifest.json")
     manifest.recover_interrupted_operations()
@@ -306,7 +306,7 @@ def test_real_format_import_reindex_restart_and_delete_lifecycle(
         vector_store_open = False
 
         # Reopen each persistent store after deletion to verify durable cleanup.
-        reopened_vector = QdrantLocalVectorStore(
+        reopened_vector = FaissVectorStore(
             RagVectorStoreConfig(
                 storage_path=str(vector_path),
                 collection_name="knowledge_lifecycle_test",

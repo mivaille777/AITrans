@@ -7,16 +7,39 @@ from backend.rag.query_router import RagQueryRouter
     ("query", "kind", "rounds", "dense", "graph"),
     [
         ("Find 10.1234/example", "keyword", 1, False, False),
+        ("Find 10.1234/why-pid", "keyword", 1, False, False),
         ("What is GP?", "keyword", 1, False, False),
         ("What is ＧＰ?", "keyword", 1, False, False),
         ("GP是什么模型", "keyword", 1, False, False),
         ("Explain the mechanism", "semantic", 3, True, False),
+        ("水箱论文为何需要限制 PID 增益变化？", "semantic", 3, True, False),
+        ("Why must PID gain updates be bounded?", "semantic", 3, True, False),
+        (
+            "Explain how GP uncertainty guides controller tuning",
+            "semantic",
+            3,
+            True,
+            False,
+        ),
+        ('Find "Explain the PID mechanism"', "keyword", 1, False, False),
         ("比较 M10 与 C8", "multi-hop", 3, True, None),
         ("Compare papers across documents", "multi-hop", 3, True, None),
-        ("autotuned PID controller 和 MATLAB PID Tuner 有什么关系？", "multi-hop", 3, True, None),
+        (
+            "autotuned PID controller 和 MATLAB PID Tuner 有什么关系？",
+            "multi-hop",
+            3,
+            True,
+            None,
+        ),
         ("两个控制器之间的关系是什么？", "multi-hop", 3, True, None),
         ("控制器如何影响水位？", "multi-hop", 3, True, None),
-        ("What is the relationship between Alpha and Beta?", "multi-hop", 3, True, None),
+        (
+            "What is the relationship between Alpha and Beta?",
+            "multi-hop",
+            3,
+            True,
+            None,
+        ),
         ("How is Alpha related to Beta?", "multi-hop", 3, True, None),
     ],
 )
@@ -28,7 +51,9 @@ def test_enabled_routes_have_bounded_channels_and_keep_exact_scope(
     assert route.query_type == kind
     assert route.max_queries == rounds
     assert route.retrieval_kwargs == {
-        "dense_enabled": dense, "sparse_enabled": True, "graph_enabled": graph,
+        "dense_enabled": dense,
+        "sparse_enabled": True,
+        "graph_enabled": graph,
     }
     assert route.document_ids == scope
     assert route.reason

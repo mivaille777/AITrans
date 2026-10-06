@@ -706,6 +706,7 @@ export function useCompanionConversationRuntime(
                 ...message,
                 serverMessageId: event.message_id || message.serverMessageId,
                 generationPhase: event.phase,
+                knowledgeRecovery: event.knowledge_recovery ?? message.knowledgeRecovery,
                 status: "streaming",
               }
             : message,
@@ -749,6 +750,7 @@ export function useCompanionConversationRuntime(
                 knowledgeDocumentCount: event.knowledge_document_count,
                 knowledgeChunkCount: event.knowledge_chunk_count,
                 knowledgeFallbackReason: event.knowledge_fallback_reason,
+                knowledgeRecovery: event.knowledge_recovery,
                 evidence: event.evidence,
                 citations: event.citations,
                 generationPhase: "complete",
@@ -803,6 +805,7 @@ export function useCompanionConversationRuntime(
               serverMessageId: event.message_id,
               status: "error",
               errorCode: event.code,
+              content: event.output_text || message.content || event.message || "本次未能生成有效回答，请重试。",
             }
           : message,
       ),
@@ -1412,8 +1415,9 @@ export function useCompanionConversationRuntime(
     context,
     contextMode,
     chatAvailable: chatStatusQuery.data?.available ?? false,
-    chatStatusDetail: chatStatusQuery.data?.detail ?? "",
-    chatStatusLoaded: chatStatusQuery.isSuccess,
+    chatStatusDetail: chatStatusQuery.data?.detail
+      || (chatStatusQuery.error instanceof Error ? `无法连接 AI Chat：${chatStatusQuery.error.message}` : ""),
+    chatStatusLoaded: chatStatusQuery.isFetched,
     openingConversation,
     contextUpdating,
     knowledgeAccessPolicy,

@@ -47,7 +47,8 @@ def effective_document_ids(
 
 
 _REFERENCE_HEADING = re.compile(
-    r"(?:^|\s)(?:references?|bibliography|works cited|reference list)(?:$|\s)",
+    r"^\s*(?:(?:\d+(?:\.\d+)*|[ivxlcdm]+)[.)]?\s+)?"
+    r"(?:references?|bibliography|works cited|reference list)\s*[:：.]?\s*$",
     re.IGNORECASE,
 )
 
@@ -65,11 +66,17 @@ def is_reference_chunk(chunk: DocumentChunk) -> bool:
         return True
     if chunk.chunk_type in {"reference_group", "reference_entry"}:
         return True
-    headings = " ".join([chunk.section_heading, *chunk.section_path])
-    if _REFERENCE_HEADING.search(headings):
+    if any(
+        _REFERENCE_HEADING.fullmatch(heading)
+        for heading in (chunk.section_heading, *chunk.section_path)
+    ):
         return True
-    prefix = chunk.text[:240].replace("\n", " ")
-    return bool(_REFERENCE_HEADING.search(prefix))
+    # Legacy unstructured chunks may start with a bibliography heading. A
+    # mention such as "Fixed-PID reference" is a body fact, never a heading.
+    first_line = next(
+        (line.strip() for line in chunk.text.splitlines() if line.strip()), ""
+    )
+    return bool(_REFERENCE_HEADING.fullmatch(first_line))
 
 
 @runtime_checkable

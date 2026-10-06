@@ -128,7 +128,7 @@ class RagVisualRetrievalConfig(RagConfigModel):
     """Optional native page/image late-interaction retrieval.
 
     This path is isolated from the text collection. ColQwen/ColPali token
-    embeddings are stored in a dedicated Qdrant MaxSim multivector collection
+    embeddings are stored in a dedicated local multivector collection
     and fused with the established text pipeline only at query time. Stage 3.1
     can prefetch with a cheap pooled vector before applying MaxSim.
     """
@@ -148,7 +148,7 @@ class RagVisualRetrievalConfig(RagConfigModel):
     local_files_only: bool = False
     query_prefix: str = "Query: "
     collection_name: str = Field(default="aitrans_knowledge_visual", min_length=1)
-    storage_path: str = "config/rag/qdrant"
+    storage_path: str = "config/rag/faiss"
     distance: str = "dot"
     on_disk: bool = False
     asset_storage_path: str = "config/rag/visual_pages"
@@ -255,19 +255,25 @@ class RagEmbeddingConfig(RagConfigModel):
 
 
 class RagVectorStoreConfig(RagConfigModel):
-    provider: str = "qdrant_local"
+    provider: str = "faiss_local"
     collection_name: str = Field(default="aitrans_knowledge", min_length=1)
     distance: str = "cosine"
-    storage_path: str = "config/rag/qdrant"
-    url: str = ""
-    timeout_seconds: float = Field(default=30.0, gt=0)
+    storage_path: str = "config/rag/faiss"
 
-    @field_validator("url")
+    @field_validator("provider")
     @classmethod
-    def validate_server_url(cls, value: str) -> str:
-        normalized = value.strip().rstrip("/")
-        if normalized and not normalized.startswith(("http://", "https://")):
-            raise ValueError("Qdrant server URL must use http or https")
+    def validate_provider(cls, value: str) -> str:
+        normalized = value.strip().lower().replace("-", "_")
+        if normalized != "faiss_local":
+            raise ValueError("vector provider must be faiss_local; migrate existing data with scripts/migration first")
+        return normalized
+
+    @field_validator("distance")
+    @classmethod
+    def validate_distance(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"cosine", "dot", "euclid", "manhattan"}:
+            raise ValueError("unsupported vector distance")
         return normalized
 
 

@@ -261,6 +261,7 @@ def send_companion_chat(
         knowledge_document_count=getattr(result, "knowledge_document_count", 0),
         knowledge_chunk_count=getattr(result, "knowledge_chunk_count", 0),
         knowledge_fallback_reason=getattr(result, "knowledge_fallback_reason", ""),
+        knowledge_recovery=getattr(result, "knowledge_recovery", {}),
         evidence=list(getattr(result, "evidence", ())),
         citations=list(getattr(result, "citations", ())),
     )

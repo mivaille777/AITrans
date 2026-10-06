@@ -14,7 +14,11 @@ from backend.rag.models import DocumentChunk, RetrievalCandidate
 from backend.rag.sparse.bm25 import BM25Index
 from backend.rag.sparse.tokenizer import SparseTokenizer
 from backend.rag.stores.base import VectorSearchFilter, is_reference_chunk
-from backend.rag.structure_retrieval import section_match_priority
+from backend.rag.structure_retrieval import (
+    infer_structural_parents,
+    order_structural_candidates,
+    section_match_priority,
+)
 
 
 @runtime_checkable
@@ -162,10 +166,17 @@ class BM25SparseRetriever:
             return []
         scores = self._index.score(query_tokens)
         exclude_references = bool(filters and filters.exclude_references)
-        effective_filters = filters.model_copy(update={"exclude_references": False}) if exclude_references else filters
+        effective_filters = (
+            filters.model_copy(update={"exclude_references": False})
+            if exclude_references
+            else filters
+        )
+
         def eligible(chunk_id: str) -> bool:
             chunk = self._data.chunks[chunk_id]
-            if (exclude_references and chunk_id in self._reference_chunks) or not self._matches_filter(chunk, effective_filters):
+            if (
+                exclude_references and chunk_id in self._reference_chunks
+            ) or not self._matches_filter(chunk, effective_filters):
                 return False
             return (
                 active_generations is not None
@@ -178,8 +189,13 @@ class BM25SparseRetriever:
         if filters and filters.document_ids and len(filters.document_ids) <= top_k:
             scoped_ids = set(filters.document_ids)
             ranked = nsmallest(
-                top_k, ((chunk_id, score) for chunk_id, score in scores.items()
-                        if self._data.chunks[chunk_id].document_id in scoped_ids and eligible(chunk_id)),
+                top_k,
+                (
+                    (chunk_id, score)
+                    for chunk_id, score in scores.items()
+                    if self._data.chunks[chunk_id].document_id in scoped_ids
+                    and eligible(chunk_id)
+                ),
                 key=lambda item: (-item[1], item[0]),
             )
         else:
@@ -193,11 +209,17 @@ class BM25SparseRetriever:
                 if eligible(chunk_id):
                     ranked.append((chunk_id, -negative_score))
             if pending and len(ranked) < top_k:
-                ranked.extend(nsmallest(
-                    top_k - len(ranked),
-                    ((chunk_id, -score) for score, chunk_id in pending if eligible(chunk_id)),
-                    key=lambda item: (-item[1], item[0]),
-                ))
+                ranked.extend(
+                    nsmallest(
+                        top_k - len(ranked),
+                        (
+                            (chunk_id, -score)
+                            for score, chunk_id in pending
+                            if eligible(chunk_id)
+                        ),
+                        key=lambda item: (-item[1], item[0]),
+                    )
+                )
         return [
             RetrievalCandidate(
                 chunk=self._data.chunks[chunk_id].model_copy(deep=True),
@@ -234,7 +256,7 @@ class BM25SparseRetriever:
         ):
             effective_filters = filters.model_copy(update={"exclude_references": False})
 
-        matches: list[tuple[int, DocumentChunk]] = []
+        eligible_chunks = []
         for chunk in self._data.chunks.values():
             if not self._matches_filter(chunk, effective_filters):
                 continue
@@ -244,30 +266,43 @@ class BM25SparseRetriever:
                 continue
             if not self._matches_active_generation(chunk, active_generations):
                 continue
-            priority = section_match_priority(
-                RetrievalCandidate(chunk=chunk),
-                headings,
-            )
+            eligible_chunks.append(RetrievalCandidate(chunk=chunk))
+        enriched = infer_structural_parents(eligible_chunks)
+        matches = []
+        for candidate in enriched:
+            priority = section_match_priority(candidate, headings)
             if priority:
-                matches.append((priority, chunk))
+                matches.append((priority, candidate))
 
         matches.sort(
             key=lambda item: (
                 -item[0],
-                item[1].document_id,
-                item[1].page_number if item[1].page_number is not None else 10**9,
-                item[1].chunk_index,
-                item[1].chunk_id,
+                item[1].chunk.document_id,
+                item[1].chunk.page_number
+                if item[1].chunk.page_number is not None
+                else 10**9,
+                item[1].chunk.chunk_index,
+                item[1].chunk.chunk_id,
             )
         )
-        return [
-            RetrievalCandidate(
-                chunk=chunk.model_copy(deep=True),
-                sparse_score=float(priority),
-                rank=rank,
-                metadata={"structural_section_match": True},
+        candidates = [
+            candidate.model_copy(
+                deep=True,
+                update={
+                    "sparse_score": float(priority),
+                    "rank": rank,
+                    "metadata": {
+                        **candidate.metadata,
+                        "structural_section_match": True,
+                    },
+                },
             )
-            for rank, (priority, chunk) in enumerate(matches[:top_k], start=1)
+            for rank, (priority, candidate) in enumerate(matches, start=1)
+        ]
+        ordered, _count = order_structural_candidates(candidates, headings)
+        return [
+            candidate.model_copy(update={"rank": rank})
+            for rank, candidate in enumerate(ordered[:top_k], start=1)
         ]
 
     def section_neighbors(
@@ -479,7 +514,9 @@ class BM25SparseRetriever:
 
     def _rebuild_index(self) -> None:
         self._reference_chunks = {
-            chunk_id for chunk_id, chunk in self._data.chunks.items() if is_reference_chunk(chunk)
+            chunk_id
+            for chunk_id, chunk in self._data.chunks.items()
+            if is_reference_chunk(chunk)
         }
         index = BM25Index(k1=self._index.k1, b=self._index.b)
         index.rebuild(

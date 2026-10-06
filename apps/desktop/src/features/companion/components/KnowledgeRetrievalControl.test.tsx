@@ -16,7 +16,7 @@ function json(body: unknown): Response {
 
 function renderControl({ documents = [document()] }: { documents?: ReturnType<typeof document>[] } = {}) {
   fetchMock.mockImplementation(async (input) => String(input).endsWith("/runtime")
-    ? json({ enabled: true, embedding_provider: "qwen3", embedding_model: "Qwen3", embedding_status: "ready", device: "cuda", dimension: 1024, vector_store_provider: "qdrant", collection_name: "knowledge", document_count: documents.length, ready_document_count: documents.length, indexed_chunk_count: 12, max_file_bytes: 1 })
+    ? json({ enabled: true, embedding_provider: "qwen3", embedding_model: "Qwen3", embedding_status: "ready", device: "cuda", dimension: 1024, vector_store_provider: "faiss", collection_name: "knowledge", document_count: documents.length, ready_document_count: documents.length, indexed_chunk_count: 12, max_file_bytes: 1 })
     : json({ total: documents.length, documents }))
   vi.stubGlobal("fetch", fetchMock)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

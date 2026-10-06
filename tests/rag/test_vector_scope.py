@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from backend.rag.config import RagVectorStoreConfig
 from backend.rag.models import DocumentChunk
-from backend.rag.stores import QdrantLocalVectorStore, VectorSearchFilter
+from backend.rag.stores import FaissVectorStore, VectorSearchFilter
 
 
 def make_chunk(chunk_id: str, document_id: str) -> DocumentChunk:
@@ -30,8 +29,8 @@ def make_chunk(chunk_id: str, document_id: str) -> DocumentChunk:
     )
 
 
-def make_store(path: Path) -> QdrantLocalVectorStore:
-    return QdrantLocalVectorStore(
+def make_store(path: Path) -> FaissVectorStore:
+    return FaissVectorStore(
         RagVectorStoreConfig(storage_path=str(path)),
         dimension=4,
     )
@@ -40,11 +39,11 @@ def make_store(path: Path) -> QdrantLocalVectorStore:
 VECTOR = [1.0, 0.0, 0.0, 0.0]
 
 
-def test_empty_or_disjoint_scope_returns_without_querying_qdrant(
+def test_empty_or_disjoint_scope_returns_without_querying_faiss(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    store = make_store(tmp_path / "qdrant")
+    store = make_store(tmp_path / "faiss")
     monkeypatch.setattr(
         store,
         "ensure_collection",
@@ -71,28 +70,10 @@ def test_empty_or_disjoint_scope_returns_without_querying_qdrant(
     store.close()
 
 
-def test_qdrant_filter_contains_allowlist_and_only_scoped_generations() -> None:
-    query_filter = QdrantLocalVectorStore._build_filter(
-        VectorSearchFilter(),
-        active_generations={
-            "doc_allowed": "generation-current",
-            "doc_private": "generation-current",
-        },
-        allowed_document_ids=["doc_allowed"],
-    )
-
-    assert query_filter is not None
-    assert query_filter.must[0].key == "document_id"
-    assert query_filter.must[0].match.any == ["doc_allowed"]
-    scoped_generation_filter = query_filter.must[1]
-    assert len(scoped_generation_filter.should) == 1
-    assert scoped_generation_filter.should[0].must[0].match.value == "doc_allowed"
-
-
 def test_scope_and_active_generation_filter_before_query_and_after_delete(
     tmp_path: Path,
 ) -> None:
-    store = make_store(tmp_path / "qdrant")
+    store = make_store(tmp_path / "faiss")
     try:
         allowed = make_chunk("chunk_allowed", "doc_allowed")
         stale = make_chunk("chunk_stale", "doc_allowed")
@@ -130,53 +111,23 @@ def test_scope_and_active_generation_filter_before_query_and_after_delete(
         store.close()
 
 
-def test_post_filter_drops_out_of_scope_and_stale_generation_payloads(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    store = make_store(tmp_path / "qdrant")
-    try:
-        store.ensure_collection()
-        valid = QdrantLocalVectorStore._chunk_payload(
-            make_chunk("valid", "doc_allowed"),
-            "generation-current",
-        )
-        private = QdrantLocalVectorStore._chunk_payload(
-            make_chunk("private", "doc_private"),
-            "generation-current",
-        )
-        stale = QdrantLocalVectorStore._chunk_payload(
-            make_chunk("stale", "doc_allowed"),
-            "generation-old",
-        )
-        stale["page_number"] = "corrupt stale generation payload"
-        metadata_only = QdrantLocalVectorStore._chunk_payload(
-            make_chunk("metadata-only", "doc_allowed"),
-            "generation-current",
-        )
-        metadata_only.pop("index_generation")
-        inconsistent = QdrantLocalVectorStore._chunk_payload(
-            make_chunk("inconsistent", "doc_allowed"),
-            "generation-current",
-        )
-        inconsistent["metadata"]["index_generation"] = "generation-old"
-        points = [
-            SimpleNamespace(payload=payload, score=1.0)
-            for payload in (private, stale, metadata_only, inconsistent, valid)
-        ]
-        monkeypatch.setattr(
-            store._client,
-            "query_points",
-            lambda **_kwargs: SimpleNamespace(points=points),
-        )
+def test_pre_filter_keeps_true_scoped_top_k(tmp_path):
+    with make_store(tmp_path / "faiss") as store:
+        chunks = [make_chunk(f"private-{i}", "private") for i in range(50)]
+        chunks += [make_chunk("allowed", "allowed")]
+        store.upsert_chunks(chunks, [VECTOR] * 50 + [[0.,1.,0.,0.]])
+        hits = store.search(VECTOR, top_k=1, allowed_document_ids=["allowed"])
+        assert [hit.chunk.chunk_id for hit in hits] == ["allowed"]
 
-        results = store.search(
-            VECTOR,
-            top_k=5,
-            allowed_document_ids=["doc_allowed"],
-            active_generations={"doc_allowed": "generation-current"},
-        )
 
-        assert [result.chunk.chunk_id for result in results] == ["valid"]
-    finally:
-        store.close()
+def test_corrupt_generation_is_rejected(tmp_path):
+    import json
+    import pytest
+    from backend.rag.exceptions import RagVectorStoreError
+    with make_store(tmp_path / "faiss") as store:
+        store.upsert_chunks([make_chunk("a", "allowed")], [VECTOR], generation_id="g1")
+        chunk = store.get_chunk("a", generation_id="g1").model_dump(mode="json")
+        chunk["metadata"]["index_generation"] = "g2"
+        store.repository.connection.execute("UPDATE items SET payload=?", (json.dumps(chunk),))
+        with pytest.raises(RagVectorStoreError):
+            store.search(VECTOR, top_k=1, active_generations={"allowed":"g1"})

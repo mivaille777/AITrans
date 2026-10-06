@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.rag.config import RagVisualRetrievalConfig
 from backend.rag.stores.base import VectorSearchFilter
-from backend.rag.visual_adaptive import AdaptiveQdrantTwoStageVisualStore
+from backend.rag.stores.visual_base import VisualBenchmarkStore
 from backend.rag.visual_retrieval import VisualEmbeddingProvider
 
 
@@ -104,12 +104,13 @@ def run_visual_retrieval_benchmark(
     cases: Sequence[VisualRetrievalBenchmarkCase],
     *,
     provider: VisualEmbeddingProvider,
-    store: AdaptiveQdrantTwoStageVisualStore,
+    store: VisualBenchmarkStore,
     config: RagVisualRetrievalConfig,
     fixed_prefetch_ks: Sequence[int] = (24, 48, 96),
     top_k: int | None = None,
     repeats: int = 3,
     warmup: int = 1,
+    active_generations=None,
 ) -> VisualRetrievalBenchmarkReport:
     if not cases:
         raise ValueError("visual retrieval benchmark requires at least one case")
@@ -126,6 +127,7 @@ def run_visual_retrieval_benchmark(
         value: store.fixed_prefetch_store(value)
         for value in normalized_ks
     }
+    generation_args = {"active_generations": dict(active_generations)} if active_generations is not None else {}
     case_results: list[VisualRetrievalBenchmarkCaseResult] = []
     query_embedding_ms: list[float] = []
     full_maxsim_oracle_ms: list[float] = []
@@ -145,6 +147,7 @@ def run_visual_retrieval_benchmark(
             query_vector,
             top_k=desired_top_k,
             filters=filters,
+            **generation_args,
         )
         full_maxsim_oracle_ms.append((perf_counter() - oracle_started) * 1000.0)
         oracle_ids = tuple(candidate.chunk.chunk_id for candidate in oracle)
@@ -156,7 +159,7 @@ def run_visual_retrieval_benchmark(
             relevant_ids = oracle_ids
             relevance_source = "full_maxsim_oracle"
 
-        modes: list[tuple[str, AdaptiveQdrantTwoStageVisualStore, int | None]] = [
+        modes: list[tuple[str, VisualBenchmarkStore, int | None]] = [
             ("adaptive", store, None),
             *[
                 (f"fixed_{prefetch_k}", fixed_stores[prefetch_k], prefetch_k)
@@ -169,6 +172,7 @@ def run_visual_retrieval_benchmark(
                     query_vector,
                     top_k=desired_top_k,
                     filters=filters,
+                    **generation_args,
                 )
 
             timings: list[float] = []
@@ -179,6 +183,7 @@ def run_visual_retrieval_benchmark(
                     query_vector,
                     top_k=desired_top_k,
                     filters=filters,
+                    **generation_args,
                 )
                 timings.append((perf_counter() - search_started) * 1000.0)
 

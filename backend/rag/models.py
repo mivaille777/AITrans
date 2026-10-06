@@ -65,7 +65,7 @@ class DocumentElement(RagContractModel):
 
     ``surrogate_text`` is the retrieval representation. ``asset_uri`` points to
     the original visual evidence and is deliberately kept out of vector payload
-    bytes so Qdrant stores only metadata, never encoded images.
+    bytes so vector store stores only metadata, never encoded images.
     """
 
     element_id: str = Field(min_length=1)

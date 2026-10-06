@@ -78,8 +78,6 @@ const activeRoots = [
   path.join(repoRoot, "backend"),
   path.join(repoRoot, "scripts"),
   path.join(repoRoot, "start.ps1"),
-  path.join(repoRoot, "start-electron.ps1"),
-  path.join(repoRoot, "start-electronrebuild.ps1"),
   path.join(repoRoot, "pyproject.toml"),
   path.join(repoRoot, "aitrans_backend.spec"),
   path.join(desktopRoot, "electron"),

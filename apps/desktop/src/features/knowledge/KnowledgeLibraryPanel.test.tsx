@@ -70,7 +70,7 @@ function runtime(documentCount = 1) {
     embedding_status: "ready",
     device: "cuda",
     dimension: 1024,
-    vector_store_provider: "qdrant",
+    vector_store_provider: "faiss",
     collection_name: "knowledge",
     document_count: documentCount,
     ready_document_count: documentCount,

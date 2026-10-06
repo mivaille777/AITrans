@@ -225,7 +225,7 @@ def test_sidecar_packaging_declares_runtime_code_and_excludes_weights() -> None:
         encoding="utf-8"
     )
 
-    for package in ("sentence_transformers", "transformers", "qdrant_client"):
+    for package in ("sentence_transformers", "transformers", "faiss"):
         assert package in spec
     assert "backend/sidecar.py" not in spec
     assert '"backend" / "sidecar.py"' in spec

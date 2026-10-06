@@ -1,0 +1,381 @@
+from __future__ import annotations
+
+import json
+from hashlib import sha256
+from pathlib import Path
+
+import pytest
+
+from backend.rag.config import RagVectorStoreConfig
+from backend.rag.exceptions import RagConfigurationError, RagVectorStoreError
+from backend.rag.models import DocumentChunk
+from backend.rag.source_span import SourceSpan, resolve_source_span
+from backend.rag.stores import FaissVectorStore, VectorSearchFilter
+
+
+@pytest.mark.parametrize("distance", ["cosine", "dot", "euclid", "manhattan"])
+def test_four_metrics_match_frozen_legacy_gold(tmp_path, distance):
+    gold = json.loads((Path(__file__).parent / "fixtures/faiss-gold.json").read_text())
+    with FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path), distance=distance), dimension=4
+    ) as store:
+        store.upsert_chunks([make_chunk(f"c{i}") for i in range(4)], gold["vectors"])
+        hits = store.search(gold["query"], top_k=9)
+        assert [h.chunk.chunk_id for h in hits] == [
+            h["id"] for h in gold["expected"][distance]
+        ]
+        assert [h.dense_score for h in hits] == pytest.approx(
+            [h["score"] for h in gold["expected"][distance]], abs=1e-6
+        )
+
+
+def test_legacy_provider_and_server_config_are_rejected():
+    with pytest.raises(ValueError, match="migrate"):
+        RagVectorStoreConfig(provider="qdrant_local")
+    with pytest.raises(ValueError):
+        RagVectorStoreConfig(url="http://localhost:6333")
+
+
+def make_chunk(
+    chunk_id: str,
+    *,
+    document_id: str = "doc_one",
+    text: str = "Gaussian process PID tuning.",
+    language: str = "en",
+    category: str = "control",
+) -> DocumentChunk:
+    return DocumentChunk(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        text=text,
+        title="Test Paper",
+        section_heading="Methods",
+        page_number=2,
+        chunk_index=0,
+        paragraph_index=1,
+        start_char=10,
+        end_char=10 + len(text),
+        token_count=5,
+        language=language,
+        source_uri="file:///paper.pdf",
+        document_hash="hash",
+        parser_version="pdf-v1",
+        chunker_version="structure-aware-v1",
+        embedding_version="qwen3-0.6b",
+        metadata={"source_kind": "pdf", "category": category},
+    )
+
+
+def make_store(path: Path, *, dimension: int = 4) -> FaissVectorStore:
+    return FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(path)),
+        dimension=dimension,
+    )
+
+
+def test_create_collection_with_expected_schema(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        store.ensure_collection()
+        info = store.repository.collection(store.collection_name)
+
+        assert info["dimension"] == 4
+        assert info["distance"] == "cosine"
+    finally:
+        store.close()
+
+
+def test_upsert_and_dense_search(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        first = make_chunk("chunk_first")
+        second = make_chunk(
+            "chunk_second",
+            document_id="doc_two",
+            text="Computer vision paper.",
+            category="vision",
+        )
+        store.upsert_chunks(
+            [first, second],
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+        )
+
+        results = store.search([1.0, 0.0, 0.0, 0.0], top_k=2)
+
+        assert [result.chunk.chunk_id for result in results] == [
+            "chunk_first",
+            "chunk_second",
+        ]
+        assert results[0].dense_score == pytest.approx(1.0)
+        assert [result.rank for result in results] == [1, 2]
+    finally:
+        store.close()
+
+
+def test_count_chunks_can_scope_to_documents(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        store.upsert_chunks(
+            [
+                make_chunk("chunk_one", document_id="doc_one"),
+                make_chunk("chunk_two", document_id="doc_one"),
+                make_chunk("chunk_three", document_id="doc_two"),
+            ],
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        )
+
+        assert store.count_chunks() == 3
+        assert store.count_chunks(["doc_one"]) == 2
+        assert store.count_chunks(["doc_one", "doc_two"]) == 3
+        assert store.count_chunks([]) == 0
+    finally:
+        store.close()
+
+
+def test_get_chunk_uses_deterministic_point_identity(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        chunk = make_chunk("chunk_stable")
+        store.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+
+        restored = store.get_chunk("chunk_stable")
+
+        assert restored == chunk
+        assert store.get_chunk("chunk_missing") is None
+    finally:
+        store.close()
+
+
+def test_source_span_survives_faiss_payload_round_trip(tmp_path: Path) -> None:
+    source_text = "Introductory text. Exact source evidence. Final notes."
+    selected_text = "Exact source evidence."
+    start_char = source_text.index(selected_text)
+    end_char = start_char + len(selected_text)
+    document_hash = sha256(b"original PDF bytes").hexdigest()
+    source_uri = "file:///paper.pdf"
+    span = SourceSpan.from_text(
+        source_text,
+        start_char=start_char,
+        end_char=end_char,
+        document_hash=document_hash,
+        source_uri=source_uri,
+        page_start=2,
+        page_end=2,
+    )
+    chunk = DocumentChunk(
+        chunk_id="chunk_source_span",
+        document_id="doc_one",
+        text=selected_text,
+        page_number=2,
+        chunk_index=0,
+        start_char=start_char,
+        end_char=end_char,
+        source_uri=source_uri,
+        document_hash=document_hash,
+        source_span=span,
+    )
+    store = make_store(tmp_path / "faiss")
+    try:
+        store.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+
+        restored = store.get_chunk(chunk.chunk_id)
+
+        assert restored is not None
+        assert restored.source_span == span
+        assert resolve_source_span(restored.source_span, source_text) == selected_text
+    finally:
+        store.close()
+
+
+def test_search_supports_metadata_filter(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        control = make_chunk("chunk_control", category="control")
+        vision = make_chunk(
+            "chunk_vision",
+            document_id="doc_two",
+            category="vision",
+        )
+        store.upsert_chunks(
+            [control, vision],
+            [[1.0, 0.0, 0.0, 0.0], [0.9, 0.1, 0.0, 0.0]],
+        )
+
+        results = store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            top_k=5,
+            filters=VectorSearchFilter(metadata={"category": "vision"}),
+        )
+
+        assert [result.chunk.chunk_id for result in results] == ["chunk_vision"]
+    finally:
+        store.close()
+
+
+def test_search_supports_document_and_language_filters(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        english = make_chunk("chunk_en", document_id="doc_en", language="en")
+        chinese = make_chunk("chunk_zh", document_id="doc_zh", language="zh")
+        store.upsert_chunks(
+            [english, chinese],
+            [[1.0, 0.0, 0.0, 0.0], [0.9, 0.1, 0.0, 0.0]],
+        )
+
+        results = store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            top_k=5,
+            filters=VectorSearchFilter(document_ids=["doc_zh"], language="zh"),
+        )
+
+        assert [result.chunk.chunk_id for result in results] == ["chunk_zh"]
+    finally:
+        store.close()
+
+
+def test_delete_document_removes_only_matching_chunks(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        first = make_chunk("chunk_one", document_id="doc_one")
+        second = make_chunk("chunk_two", document_id="doc_two")
+        store.upsert_chunks(
+            [first, second],
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+        )
+
+        store.delete_document("doc_one")
+
+        assert store.get_chunk("chunk_one") is None
+        assert store.get_chunk("chunk_two") == second
+    finally:
+        store.close()
+
+
+def test_duplicate_upsert_is_idempotent(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        chunk = make_chunk("chunk_repeat")
+        store.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+        store.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+
+        results = store.search([1.0, 0.0, 0.0, 0.0], top_k=10)
+
+        assert [result.chunk.chunk_id for result in results] == ["chunk_repeat"]
+    finally:
+        store.close()
+
+
+def test_persistent_store_can_search_after_restart(tmp_path: Path) -> None:
+    path = tmp_path / "faiss"
+    first_store = make_store(path)
+    chunk = make_chunk("chunk_persisted")
+    first_store.upsert_chunks([chunk], [[1.0, 0.0, 0.0, 0.0]])
+    first_store.close()
+
+    second_store = make_store(path)
+    try:
+        results = second_store.search([1.0, 0.0, 0.0, 0.0], top_k=1)
+
+        assert results[0].chunk == chunk
+    finally:
+        second_store.close()
+
+
+def test_wrong_vector_dimension_is_rejected(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        with pytest.raises(RagVectorStoreError, match="dimension mismatch"):
+            store.upsert_chunks([make_chunk("chunk_bad")], [[1.0, 0.0]])
+
+        with pytest.raises(RagVectorStoreError, match="dimension mismatch"):
+            store.search([1.0, 0.0], top_k=1)
+    finally:
+        store.close()
+
+
+def test_wrong_existing_collection_schema_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "faiss"
+    first_store = make_store(path, dimension=3)
+    first_store.ensure_collection()
+    first_store.close()
+
+    second_store = make_store(path, dimension=4)
+    try:
+        with pytest.raises(RagConfigurationError, match="schema mismatch"):
+            second_store.ensure_collection()
+    finally:
+        second_store.close()
+
+
+def test_chunk_vector_count_mismatch_is_rejected(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "faiss")
+    try:
+        with pytest.raises(RagVectorStoreError, match="count mismatch"):
+            store.upsert_chunks([make_chunk("chunk_one")], [])
+    finally:
+        store.close()
+
+
+def test_generations_coexist_search_after_restart_and_delete_independently(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "faiss"
+    first_store = make_store(path)
+    legacy = make_chunk("chunk_shared", text="legacy blue harbor evidence")
+    generation_one = make_chunk("chunk_shared", text="generation one amber evidence")
+    generation_two = make_chunk("chunk_shared", text="generation two violet evidence")
+    first_store.upsert_chunks([legacy], [[1.0, 0.0, 0.0, 0.0]])
+    first_store.upsert_chunks(
+        [generation_one],
+        [[1.0, 0.0, 0.0, 0.0]],
+        generation_id="generation-one",
+    )
+    first_store.upsert_chunks(
+        [generation_two],
+        [[1.0, 0.0, 0.0, 0.0]],
+        generation_id="generation-two",
+    )
+    first_store.close()
+
+    store = make_store(path)
+    try:
+        assert store.count_chunks() == 3
+        assert store.count_chunks(generation_id="generation-one") == 1
+        assert len(store.list_chunks()) == 3
+        assert [
+            candidate.chunk.text
+            for candidate in store.search([1.0, 0.0, 0.0, 0.0], top_k=5)
+        ] == [legacy.text]
+        assert [
+            candidate.chunk.text
+            for candidate in store.search(
+                [1.0, 0.0, 0.0, 0.0],
+                top_k=5,
+                generation_id="generation-one",
+            )
+        ] == [generation_one.text]
+        assert store.get_chunk("chunk_shared") == legacy
+        restored_generation = store.get_chunk(
+            "chunk_shared", generation_id="generation-two"
+        )
+        assert restored_generation is not None
+        assert restored_generation.text == generation_two.text
+        assert restored_generation.metadata["index_generation"] == "generation-two"
+
+        store.delete_chunks(["chunk_shared"], generation_id="generation-one")
+        assert store.get_chunk("chunk_shared", generation_id="generation-one") is None
+        assert store.get_chunk("chunk_shared") == legacy
+        assert (
+            store.get_chunk("chunk_shared", generation_id="generation-two").text
+            == generation_two.text
+        )
+
+        store.delete_document("doc_one", generation_id="generation-two")
+        assert store.count_chunks() == 1
+        assert store.get_chunk("chunk_shared") == legacy
+    finally:
+        store.close()

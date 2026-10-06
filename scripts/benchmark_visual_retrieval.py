@@ -9,7 +9,7 @@ from backend.evaluation.visual_retrieval_benchmark import (
     load_visual_retrieval_benchmark_cases,
     run_visual_retrieval_benchmark,
 )
-from backend.rag.visual_adaptive import AdaptiveQdrantTwoStageVisualStore
+from backend.rag.stores.visual_base import VisualBenchmarkStore
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -56,7 +56,7 @@ def main() -> int:
                 "native visual retrieval is disabled; enable "
                 "AITRANS_RAG_VISUAL_RETRIEVAL_ENABLED=1 first"
             )
-        if not isinstance(store, AdaptiveQdrantTwoStageVisualStore):
+        if not isinstance(store, VisualBenchmarkStore):
             raise RuntimeError(
                 "Stage 3.2 benchmark requires Stage 3.1 prefetch to be enabled"
             )
@@ -71,6 +71,7 @@ def main() -> int:
             top_k=args.top_k,
             repeats=args.repeats,
             warmup=args.warmup,
+            active_generations={r.document_id: r.generation_id or None for r in runtime.manifest.list_records() if r.status.value == "ready"},
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         payload = report.model_dump(mode="json")

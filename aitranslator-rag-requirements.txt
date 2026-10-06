@@ -4,4 +4,4 @@ sentence-transformers==5.7.0
 accelerate
 safetensors
 huggingface_hub
-qdrant-client==1.19.0
+# Install FAISS separately with scripts/install_faiss.ps1: GPU first, CPU fallback.

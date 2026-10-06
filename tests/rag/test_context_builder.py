@@ -47,9 +47,7 @@ def test_context_override_is_supplemental_without_mutating_anchor_evidence() -> 
     context = GroundedContextBuilder().build(
         evidence,
         citations,
-        context_overrides={
-            "evidence:1": "previous context\n\nfollowing context"
-        },
+        context_overrides={"evidence:1": "previous context\n\nfollowing context"},
     )
 
     assert "Evidence: anchor only" in context.text
@@ -111,5 +109,40 @@ def test_context_contains_all_grounding_safety_rules() -> None:
     assert "Do not invent sources" in context.text
     assert "Use only the allowed display labels" in context.text
     assert "interpretation-only" in context.text
-    assert "Do not make a factual claim supported only by Supplemental Context" in context.text
+    assert (
+        "Do not make a factual claim supported only by Supplemental Context"
+        in context.text
+    )
     assert "Internal retrieval scores are not user facts" in context.text
+
+
+def test_large_neighbor_cannot_displace_highest_ranked_citable_anchor():
+    evidence = [
+        _evidence(
+            f"evidence:{i}", rank=i + 1, score=0.9, excerpt="Verified fact. " * 15
+        )
+        for i in range(5)
+    ]
+    builder = GroundedContextBuilder(max_context_tokens=600)
+    citations = build_evidence_citations(evidence)
+    anchors = builder.build(evidence, citations)
+    expanded = builder.build(
+        evidence, citations, context_overrides={"evidence:0": "neighbor " * 600}
+    )
+    assert expanded.included_evidence_ids == anchors.included_evidence_ids
+    assert expanded.included_evidence_ids[0] == "evidence:0"
+    assert expanded.estimated_tokens <= expanded.max_context_tokens
+    assert "neighbor " not in expanded.text
+
+
+def test_small_neighbors_use_only_budget_left_after_all_anchors():
+    evidence = [_evidence(f"evidence:{i}", rank=i + 1, score=0.9) for i in range(3)]
+    builder = GroundedContextBuilder(max_context_tokens=600)
+    context = builder.build(
+        evidence,
+        build_evidence_citations(evidence),
+        context_overrides={"evidence:0": "Useful adjacent context."},
+    )
+    assert len(context.included_evidence_ids) == 3
+    assert "Useful adjacent context." in context.text
+    assert len(context.text) <= builder.max_context_chars

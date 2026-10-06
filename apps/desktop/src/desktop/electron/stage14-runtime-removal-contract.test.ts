@@ -46,15 +46,22 @@ describe("Electron Stage 14 legacy runtime removal", () => {
   it("keeps all active launcher and verification paths Electron-only", () => {
     for (const file of [
       "../../../../../start.ps1",
-      "../../../../../start-electron.ps1",
-      "../../../../../start-electronrebuild.ps1",
-      "../../../../../scripts/start.ps1",
       "../../../../../scripts/verify.ps1",
       "../../../README.md",
     ]) {
       expect(read(file).toLowerCase()).not.toContain("tauri")
     }
-    expect(existsSync(pathOf("../../../../../docs/archive/legacy/start-tauri.ps1"))).toBe(true)
+    for (const obsolete of [
+      "../../../../../start-electron.ps1",
+      "../../../../../start-electronrebuild.ps1",
+      "../../../../../scripts/start.ps1",
+      "../../../../../docs/archive/legacy/start-tauri.ps1",
+      "../../../../../docs/archive/legacy/scripts-start-tauri.ps1",
+      "../../../../../docs/archive/legacy/verify-and-start-tauri.ps1",
+      "../../../../../docs/archive/legacy/webrebuild-dev.ps1",
+    ]) {
+      expect(existsSync(pathOf(obsolete))).toBe(false)
+    }
   })
 
   it("records owner-authorized removal without falsifying manual parity", () => {

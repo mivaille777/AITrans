@@ -96,19 +96,14 @@ class GroundedContextBuilder:
             if citation is None:
                 omitted.append(item.evidence_id)
                 continue
-            supplemental = str(overrides.get(item.evidence_id, "") or "").strip()
             segment = (
                 f"\n[C{position}] {citation.label}\n"
                 f"Title: {item.title or 'Untitled source'}\n"
                 f"Location: {item.location or 'Location unavailable'}\n"
                 f"Evidence: {item.excerpt.strip()}\n"
             )
-            if supplemental:
-                segment += (
-                    "Supplemental Same-Section Context "
-                    "(interpretation only; not independently citable):\n"
-                    f"{supplemental}\n"
-                )
+            # Reserve citable excerpts first. A large neighboring passage must
+            # never displace its own higher-ranked anchor or later source facts.
             if len(text) + len(segment) > self.max_context_chars:
                 omitted.append(item.evidence_id)
                 continue
@@ -119,18 +114,45 @@ class GroundedContextBuilder:
         # A label must never authorize omitted evidence, including partial groups.
         included_set = set(included)
         usable_citations = [
-            citation for citation in citations
+            citation
+            for citation in citations
             if set(citation.evidence_ids).issubset(included_set)
         ]
-        citable = {identifier for citation in usable_citations for identifier in citation.evidence_ids}
-        omitted.extend(identifier for identifier in included if identifier not in citable)
+        citable = {
+            identifier
+            for citation in usable_citations
+            for identifier in citation.evidence_ids
+        }
+        omitted.extend(
+            identifier for identifier in included if identifier not in citable
+        )
         included = [identifier for identifier in included if identifier in citable]
         bounded_allowed = "\n".join(
             f"- {citation.citation_id} => {citation.label} => {', '.join(citation.evidence_ids)}"
             for citation in usable_citations
         )
-        text = preamble.replace(f"ALLOWED CITATIONS\n{allowed}\n", f"ALLOWED CITATIONS\n{bounded_allowed}\n")
-        text = text[:self.max_context_chars] + "".join(segments[identifier] for identifier in included)
+        bounded_preamble = preamble.replace(
+            f"ALLOWED CITATIONS\n{allowed}\n", f"ALLOWED CITATIONS\n{bounded_allowed}\n"
+        )[: self.max_context_chars]
+        text = bounded_preamble + "".join(
+            segments[identifier] for identifier in included
+        )
+        remaining = self.max_context_chars - len(text)
+        for identifier in included:
+            supplemental = str(overrides.get(identifier, "") or "").strip()
+            if not supplemental:
+                continue
+            supplement = (
+                "Supplemental Same-Section Context "
+                "(interpretation only; not independently citable):\n"
+                f"{supplemental}\n"
+            )
+            if len(supplement) <= remaining:
+                segments[identifier] += supplement
+                remaining -= len(supplement)
+        text = bounded_preamble + "".join(
+            segments[identifier] for identifier in included
+        )
 
         estimated_tokens = ceil(len(text) / self.chars_per_token) if text else 0
         return GroundedContext(

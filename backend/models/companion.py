@@ -115,6 +115,7 @@ class CompanionChatResponse(BaseModel):
     knowledge_document_count: int = Field(default=0, ge=0)
     knowledge_chunk_count: int = Field(default=0, ge=0)
     knowledge_fallback_reason: str = ""
+    knowledge_recovery: dict = Field(default_factory=dict)
     evidence: list[AgentEvidenceItem] = Field(default_factory=list)
     citations: list[AgentCitationRef] = Field(default_factory=list)
 

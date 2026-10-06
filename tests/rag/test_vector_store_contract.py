@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from backend.rag.config import RagVectorStoreConfig
-from backend.rag.stores import QdrantLocalVectorStore, VectorStore
+from backend.rag.stores import FaissVectorStore, VectorStore
 
 
 def test_qdrant_store_satisfies_vector_store_protocol(tmp_path: Path) -> None:
-    store = QdrantLocalVectorStore(
-        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")),
+    store = FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "faiss")),
         dimension=4,
     )
     try:

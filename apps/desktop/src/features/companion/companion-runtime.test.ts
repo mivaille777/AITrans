@@ -19,6 +19,21 @@ function message(
 }
 
 describe("companion runtime", () => {
+
+  it("restores a partial full-read outcome for history replay", () => {
+    const recovery = { outcome: "partial" as const, full_read: {
+      basis: "indexed_text", total_chunks: 10, processed_chunks: 3, total_chars: 1000,
+      processed_chars: 300, total_batches: 4, processed_batches: 1, complete: false,
+    } }
+    const restored = restoreCompanionMessages([{
+      message_id: "partial", conversation_id: "c", request_id: 1, role: "assistant",
+      content: "部分回答", status: "complete", provider: "fake", model: "fake",
+      error_code: "", created_at: "", updated_at: "", knowledge_recovery: recovery,
+    }])
+    expect(restored[0].knowledgeRecovery).toEqual(recovery)
+    expect(restored[0].content).toBe("部分回答")
+  })
+
   it("keeps only complete recent messages in model history", () => {
     const messages = [
       ...Array.from({ length: 18 }, (_, index) =>

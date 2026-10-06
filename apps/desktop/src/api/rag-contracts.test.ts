@@ -29,7 +29,7 @@ describe("RAG frontend contracts", () => {
         return jsonResponse({ document_id: "doc/one", status: "ready", chunk_count: 8, indexed_at: null, error: "" })
       }
       if (path.endsWith("/runtime")) {
-        return jsonResponse({ enabled: true, embedding_provider: "qwen3", embedding_model: "model", embedding_status: "ready", device: "cpu", dimension: 1024, vector_store_provider: "qdrant", collection_name: "knowledge", document_count: 1, ready_document_count: 1, indexed_chunk_count: 8, max_file_bytes: 1 })
+        return jsonResponse({ enabled: true, embedding_provider: "qwen3", embedding_model: "model", embedding_status: "ready", device: "cpu", dimension: 1024, vector_store_provider: "faiss", collection_name: "knowledge", document_count: 1, ready_document_count: 1, indexed_chunk_count: 8, max_file_bytes: 1 })
       }
       return jsonResponse({ document_id: "doc/one", title: "Paper", source_uri: "file:///paper.pdf", source_type: "pdf", status: "ready", chunk_count: 8, indexed_at: null, error: "", content_hash: "hash", parser_version: "parser", chunker_version: "chunker", embedding_model: "model", embedding_dimension: 1024 })
     })

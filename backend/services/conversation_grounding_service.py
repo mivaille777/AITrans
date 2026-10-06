@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
@@ -24,6 +24,7 @@ class StoredMessageGrounding:
     knowledge_fallback_reason: str = ""
     evidence: tuple[AgentEvidenceItem, ...] = ()
     citations: tuple[AgentCitationRef, ...] = ()
+    knowledge_recovery: dict = field(default_factory=dict)
 
 
 def _connect(storage_path: str | Path) -> sqlite3.Connection:
@@ -61,6 +62,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         "knowledge_retrieved": "INTEGER NOT NULL DEFAULT 0",
         "knowledge_document_count": "INTEGER NOT NULL DEFAULT 0",
         "knowledge_chunk_count": "INTEGER NOT NULL DEFAULT 0",
+        "knowledge_recovery_json": "TEXT NOT NULL DEFAULT '{}'",
     }
     for column, definition in migrations.items():
         if column not in existing_columns:
@@ -110,6 +112,7 @@ def save_message_grounding(
     knowledge_fallback_reason: str = "",
     evidence: tuple[AgentEvidenceItem, ...] | list[AgentEvidenceItem] = (),
     citations: tuple[AgentCitationRef, ...] | list[AgentCitationRef] = (),
+    knowledge_recovery: dict | None = None,
 ) -> None:
     candidate = str(message_id or "").strip()
     if not candidate:
@@ -129,8 +132,9 @@ def save_message_grounding(
                     knowledge_chunk_count,
                     knowledge_fallback_reason,
                     evidence_json,
-                    citations_json
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    citations_json,
+                    knowledge_recovery_json
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(message_id) DO UPDATE SET
                     knowledge_enabled = excluded.knowledge_enabled,
                     knowledge_access_policy = excluded.knowledge_access_policy,
@@ -140,7 +144,8 @@ def save_message_grounding(
                     knowledge_chunk_count = excluded.knowledge_chunk_count,
                     knowledge_fallback_reason = excluded.knowledge_fallback_reason,
                     evidence_json = excluded.evidence_json,
-                    citations_json = excluded.citations_json
+                    citations_json = excluded.citations_json,
+                    knowledge_recovery_json = excluded.knowledge_recovery_json
                 """,
                 (
                     candidate,
@@ -153,6 +158,7 @@ def save_message_grounding(
                     str(knowledge_fallback_reason or "").strip(),
                     _contract_json(list(evidence)),
                     _contract_json(list(citations)),
+                    json.dumps(knowledge_recovery or {}, ensure_ascii=False),
                 ),
             )
 
@@ -173,7 +179,7 @@ def load_message_grounding(
                    knowledge_decision_json, knowledge_retrieved,
                    knowledge_document_count, knowledge_chunk_count,
                    knowledge_fallback_reason,
-                   evidence_json, citations_json
+                   evidence_json, citations_json, knowledge_recovery_json
             FROM conversation_message_grounding
             WHERE message_id = ?
             """,
@@ -194,6 +200,12 @@ def load_message_grounding(
         policy = KnowledgeAccessPolicy(str(row["knowledge_access_policy"] or "auto"))
     except ValueError:
         policy = KnowledgeAccessPolicy.AUTO
+    try:
+        recovery = json.loads(row["knowledge_recovery_json"] or "{}")
+        if not isinstance(recovery, dict):
+            recovery = {}
+    except (TypeError, ValueError):
+        recovery = {}
     return StoredMessageGrounding(
         knowledge_enabled=bool(row["knowledge_enabled"]),
         knowledge_access_policy=policy,
@@ -204,6 +216,7 @@ def load_message_grounding(
         knowledge_fallback_reason=str(row["knowledge_fallback_reason"] or ""),
         evidence=_evidence_items(str(row["evidence_json"] or "[]")),
         citations=_citation_items(str(row["citations_json"] or "[]")),
+        knowledge_recovery=recovery,
     )
 
 

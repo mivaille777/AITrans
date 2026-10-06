@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.ai.prompt_registry import PromptRegistry, PromptSpec
-from backend.rag.fusion import rrf_fuse
+from backend.rag.fusion import retain_list_coverage, rrf_fuse
 from backend.rag.models import RetrievalResult
 from backend.rag.query_router import (
     RagQueryType,
@@ -23,7 +23,7 @@ MAX_RAG_HISTORY_MESSAGES = 8
 MAX_RAG_HISTORY_CHARS = 6_000
 RAG_QUERY_PLANNER_PROMPT = PromptSpec(
     name="rag.query_planner",
-    version="1.4.0",
+    version="1.5.0",
     system_prompt=(
         "Rewrite the current knowledge-retrieval request into a standalone search query. "
         "Use the bounded conversation history only to resolve pronouns, ellipsis, document "
@@ -39,7 +39,25 @@ RAG_QUERY_PLANNER_PROMPT = PromptSpec(
         "language. Add subqueries only when they improve recall, keep retrieval non-recursive, "
         "and never answer the user's question. Preserve literal acronyms, identifiers and "
         "quoted titles in the rewritten query; do not replace them with guessed expansions. "
-        "The caller reserves one retrieval round for the original query."
+        "The caller reserves one retrieval round for the original query. "
+        "For explanatory semantic questions, preserve the requested operation and "
+        "relationship, including reasons, negation, conditions, and constraints; "
+        "do not reduce the request to topic nouns. Return a faithful standalone "
+        "question as rewritten_query, in English for non-English explanatory "
+        "requests, and one complementary English question in "
+        "subqueries, using standard technical synonyms for the requested operation. "
+        "This is retrieval expansion, not recursive decomposition. When the caller "
+        "has already applied a single_document_scope, use content_focus to form "
+        "the complementary question and omit document selection qualifiers "
+        "from the complementary question, including a document's topic used only "
+        "to identify that document; retain them in rewritten_query. Focus that "
+        "question on the technical operation and the requested explanation. Prefer "
+        "Why/How question form over keyword lists. When explaining why a changing "
+        "parameter must be limited or bounded, ask why updates to that parameter "
+        "are constrained or bounded; preserve its identifier. Do not substitute "
+        "generic parameter variation or performance for constraints on updates. "
+        "Do not add a presumed cause, "
+        "an answer hint, or domain facts absent from the request."
     ),
     temperature=0.0,
     max_tokens=512,
@@ -141,6 +159,37 @@ def _bounded_history(
     return bounded
 
 
+def _content_focus(query: str, *, single_document_scope: bool) -> str:
+    """Give the planner a question without a resolved document selector.
+
+    The original query and protected terms remain mandatory. The caller alone
+    supplies scope; this never changes filters or the original retrieval.
+    """
+    if not single_document_scope:
+        return query
+    question = re.sub(
+        r"^(?:(?!为何|为什么|如何|怎样|[?？]).){0,60}?"
+        r"(?:论文|文章|文献|文中|本文)(?:中|里|的)?"
+        r"(?=为何|为什么|如何|怎样)",
+        "",
+        query,
+    )
+    english = re.match(
+        r"^(why|how)\s+(?:does|did)\s+.{1,80}?\b"
+        r"(?:paper|study|article|document)\s+(.+)$",
+        question,
+        re.IGNORECASE,
+    )
+    if english:
+        question = f"{english.group(1)} {english.group(2)}"
+    if any(
+        term not in protected_query_terms(question)
+        for term in protected_query_terms(query)
+    ):
+        return query
+    return question
+
+
 class RagQueryPlanner:
     """One-shot bounded standalone-query rewrite and optional decomposition."""
 
@@ -200,13 +249,19 @@ class RagQueryPlanner:
         query: str,
         *,
         history: tuple[tuple[str, str], ...] | list[tuple[str, str]] = (),
+        single_document_scope: bool = False,
     ) -> RagQueryPlan:
         fallback = _fallback_plan(query)
         started = perf_counter()
         spec = self._prompt_registry.get("rag.query_planner")
+        planning_query = _content_focus(
+            fallback.original_query,
+            single_document_scope=single_document_scope,
+        )
         prompt = json.dumps(
             {
-                "current_query": fallback.original_query,
+                "current_query": planning_query,
+                "content_focus": planning_query,
                 "conversation_history": _bounded_history(history),
                 "max_retrieval_queries": MAX_RAG_RETRIEVAL_QUERIES,
                 "max_subqueries": MAX_RAG_RETRIEVAL_QUERIES - 2,
@@ -218,6 +273,7 @@ class RagQueryPlanner:
                     "recursive_decomposition": False,
                     "answer_generation": False,
                     "original_query_participates": True,
+                    "single_document_scope": single_document_scope,
                 },
             },
             ensure_ascii=False,
@@ -231,8 +287,7 @@ class RagQueryPlanner:
             )
             plan = self._parse(raw, fallback.original_query)
             changed_query = any(
-                item.casefold() != query.casefold()
-                for item in plan.retrieval_queries
+                item.casefold() != query.casefold() for item in plan.retrieval_queries
             )
             self.last_plan_metadata = {
                 "status": "planned" if changed_query else "identity",
@@ -298,6 +353,13 @@ def merge_query_results(
             ),
             candidate.chunk.chunk_id,
         )
+    )
+    candidates = retain_list_coverage(
+        candidates,
+        ranked_lists,
+        limit=limit,
+        per_list=limit // len(ranked_lists) if ranked_lists else 0,
+        expand_overlapping=True,
     )
     candidates = [
         candidate.model_copy(update={"rank": rank})

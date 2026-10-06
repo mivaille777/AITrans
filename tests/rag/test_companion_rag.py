@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
+import pytest
+
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
-from backend.rag.query_planner import RagQueryPlan
+from backend.rag.query_planner import RagQueryPlan, RagQueryPlanner
 from backend.services.companion_chat_service import CompanionChatService
 
 
@@ -95,10 +98,45 @@ class ChatStub:
         )
 
 
+@pytest.mark.parametrize("document_ids", [("doc-1",), ("doc-1", "doc-2"), ()])
+def test_only_single_document_scope_allows_content_focused_planning(document_ids):
+    class Client:
+        payload = None
+
+        def complete(self, **kwargs):
+            self.payload = json.loads(kwargs["user_prompt"])
+            return json.dumps(
+                {"rewritten_query": "Why constrain PID updates?", "subqueries": []}
+            )
+
+    client = Client()
+    planner = RagQueryPlanner(
+        text_service=SimpleNamespace(provider=SimpleNamespace(client=client))
+    )
+    retrieval = RetrievalStub()
+    query = "水箱论文为何限制 PID 更新？"
+    CompanionChatService(
+        retrieval_service=retrieval, query_planner=planner
+    ).prepare_knowledge(
+        query,
+        document_ids,
+    )
+    assert client.payload["policy"]["single_document_scope"] == (len(document_ids) == 1)
+    assert client.payload["current_query"] == (
+        "为何限制 PID 更新？" if len(document_ids) == 1 else query
+    )
+    assert retrieval.queries[0] == query
+    assert all(
+        (call["filters"].document_ids if call["filters"] else []) == list(document_ids)
+        for call in retrieval.calls
+    )
+
+
 def test_rewrite_cannot_introduce_a_section_constraint_from_answer_format():
     retrieval = RetrievalStub()
     service = CompanionChatService(
-        retrieval_service=retrieval, query_planner=PlannerStub(),
+        retrieval_service=retrieval,
+        query_planner=PlannerStub(),
         rag_router_enabled=True,
     )
     query = "水箱控制论文研究了什么系统？请给出一句话结论并附引用。"
@@ -107,10 +145,15 @@ def test_rewrite_cannot_introduce_a_section_constraint_from_answer_format():
 
     assert retrieval.queries[0] == query
     assert all(not call["section_hints"] for call in retrieval.calls)
-    assert "Conclusion Conclusions concluding remarks final findings" not in retrieval.queries
+    assert (
+        "Conclusion Conclusions concluding remarks final findings"
+        not in retrieval.queries
+    )
 
 
-def test_companion_rag_uses_planned_queries_history_document_scope_and_structure() -> None:
+def test_companion_rag_uses_planned_queries_history_document_scope_and_structure() -> (
+    None
+):
     retrieval = RetrievalStub()
     planner = PlannerStub()
     chat = ChatStub()
@@ -164,11 +207,16 @@ def test_rewrite_and_router_can_be_disabled_independently():
             )
             grounding = service.prepare_knowledge("Explain the mechanism", ("doc-1",))
             assert retrieval.queries[0] == "Explain the mechanism"
-            assert all(call["filters"].document_ids == ["doc-1"] for call in retrieval.calls)
+            assert all(
+                call["filters"].document_ids == ["doc-1"] for call in retrieval.calls
+            )
             assert len(planner.calls) == int(rewrite_enabled)
             assert len(retrieval.calls) <= 3
             assert bool(retrieval.calls[0]["channels"]) is router_enabled
-            assert grounding.debug_metadata["query_plan"]["original_query"] == "Explain the mechanism"
+            assert (
+                grounding.debug_metadata["query_plan"]["original_query"]
+                == "Explain the mechanism"
+            )
             assert grounding.debug_metadata["query_route"]["enabled"] is router_enabled
 
 
@@ -249,7 +297,6 @@ def test_companion_rag_degrades_without_fabricating_evidence() -> None:
     assert result.citations == ()
     assert result.knowledge_fallback_reason == "retrieval_unavailable"
     assert "do not cite" in chat.request.tool_context
-
 
 
 class CatalogLibraryStub:

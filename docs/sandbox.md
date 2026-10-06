@@ -42,18 +42,18 @@ To also enable Python sandbox tools for Agent runs, opt in explicitly when
 starting the desktop app with the development launcher:
 
 ```powershell
-.\scripts\start.ps1 -Mode Desktop -SkipInstall -EnableSandbox
+.\start.ps1 -EnableSandbox
 ```
 
-If another backend is already using port `8766`, use a free API port so the
-launcher does not connect the frontend to that older process:
+Desktop development uses API port `8766` and renderer port `5173`. Restart the
+existing desktop/backend instance with the new flag to apply it to that backend;
+Electron can reuse an already healthy local backend. Custom API ports in the old
+desktop launcher are no longer supported.
 
-```powershell
-.\scripts\start.ps1 -Mode Desktop -SkipInstall -EnableSandbox -ApiPort 8767
-```
-
-The launcher checks that the selected checkout contains Sandbox Debug Studio
-and that the backend exposes a healthy sandbox runtime and `python_execute`.
+The launcher's preflight checks Python, desktop dependencies and the local FAISS
+runtime. Docker/image availability and registered Sandbox tools are checked by
+the backend and Sandbox Debug Studio. The feature flag does not install Docker
+or build an image during system startup.
 
 The runtime defaults to no network and enforces a non-root user, read-only root
 filesystem, dropped capabilities, no-new-privileges, 30-second execution limit,

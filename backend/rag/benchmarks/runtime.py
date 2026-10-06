@@ -7,6 +7,7 @@ from pathlib import Path
 from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import RagConfig
 from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
+from backend.rag.embeddings.base import embedding_fingerprint
 from backend.rag.index_manifest import IndexManifest
 from backend.rag.index_service import IndexService
 from backend.rag.model_manager import ModelManager
@@ -15,7 +16,7 @@ from backend.rag.rerankers import Qwen3RerankerProvider
 from backend.rag.rerankers.base import RerankerProvider
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.sparse import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore
+from backend.rag.stores import FaissVectorStore
 
 
 @dataclass(slots=True)
@@ -25,7 +26,7 @@ class BenchmarkRagRuntime:
     root: Path
     config: RagConfig
     embedding_provider: EmbeddingProvider
-    vector_store: QdrantLocalVectorStore
+    vector_store: FaissVectorStore
     sparse_retriever: BM25SparseRetriever
     manifest: IndexManifest
     chunker: StructureAwareChunker
@@ -74,9 +75,9 @@ def build_benchmark_rag_runtime(
 ) -> BenchmarkRagRuntime:
     """Build an isolated runtime while reusing AITrans' existing RAG services.
 
-    The caller owns ``storage_root``. Qdrant, BM25, and the manifest are all
+    The caller owns ``storage_root``. vector store, BM25, and the manifest are all
     placed below it, and a path-specific collection name prevents accidental
-    collection reuse if a Qdrant directory is copied into another workspace.
+    collection reuse if a vector store directory is copied into another workspace.
     No user Knowledge runtime or settings singleton is loaded here.
     """
 
@@ -90,8 +91,9 @@ def build_benchmark_rag_runtime(
     if not configured_production_storage.is_absolute():
         configured_production_storage = data_root() / configured_production_storage
     production_storage_paths = (
-        Path("config/rag/qdrant").resolve(),
         (data_root() / "config" / "rag" / "qdrant").resolve(),
+        Path("config/rag/faiss").resolve(),
+        (data_root() / "config" / "rag" / "faiss").resolve(),
         configured_production_storage.resolve(),
     )
     root = _resolved_root(
@@ -99,7 +101,7 @@ def build_benchmark_rag_runtime(
         production_storage_paths=production_storage_paths,
     )
     root.mkdir(parents=True, exist_ok=True)
-    vector_root = root / "qdrant"
+    vector_root = root / "faiss"
     collection_suffix = sha256(str(root).encode("utf-8")).hexdigest()[:12]
     isolated_config.vector_store = isolated_config.vector_store.model_copy(
         update={
@@ -122,9 +124,10 @@ def build_benchmark_rag_runtime(
         isolated_config.embedding,
         model_manager=model_manager,
     )
-    vector_store = QdrantLocalVectorStore(
+    vector_store = FaissVectorStore(
         isolated_config.vector_store,
         dimension=isolated_config.embedding.dimension,
+        fingerprint=embedding_fingerprint(embedding).as_dict(),
     )
     sparse = BM25SparseRetriever(root / "bm25_index.json")
     manifest = IndexManifest(root / "index_manifest.json")

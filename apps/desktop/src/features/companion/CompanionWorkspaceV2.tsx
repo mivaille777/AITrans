@@ -34,12 +34,20 @@ import { AgentRunInspector } from "./components/AgentRunInspector"
 import { KnowledgeRetrievalControl } from "./components/KnowledgeRetrievalControl"
 import { useCompanionConversationRuntime } from "./useCompanionConversationRuntime"
 
-function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase): string {
+function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase, message?: CompanionRuntimeMessage): string {
+  const coverage = message?.knowledgeRecovery?.full_read
+  if (phase === "reading_document" && coverage?.total_chunks) {
+    return `正在阅读全文… ${coverage.processed_chunks}/${coverage.total_chunks}`
+  }
   switch (phase) {
     case "routing":
       return "Routing…"
     case "retrieving":
       return "Searching knowledge…"
+    case "recovering":
+      return "正在恢复资料读取…"
+    case "reading_document":
+      return "正在阅读全文…"
     case "verifying":
       return "Verifying sources…"
     case "generating":
@@ -50,6 +58,11 @@ function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase): string
 }
 
 function companionKnowledgeBehaviorLabel(message: CompanionRuntimeMessage): string | null {
+  const recovery = message.knowledgeRecovery
+  if (recovery?.outcome === "partial") return "全文读取未完成"
+  if (recovery?.outcome === "blocked") return "暂时无法核验"
+  if (recovery?.outcome === "fallback") return "已使用证据兜底"
+  if (recovery?.full_read?.complete) return "索引正文已完整读取"
   const decision = message.knowledgeDecision
   const retrieved = message.knowledgeRetrieved
     ?? Boolean(message.knowledgeEnabled && (message.evidence?.length ?? 0) > 0)
@@ -103,6 +116,7 @@ export default function CompanionWorkspaceV2() {
   }, [location.pathname, searchParams, setSearchParams])
 
   const runtime = useCompanionConversationRuntime({
+    clientSurface: "main",
     onConversationAccepted: setConversationRoute,
   })
   const runtimeConversationId = runtime.conversationId
@@ -341,6 +355,7 @@ export default function CompanionWorkspaceV2() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!canSend) return
     runtime.sendMessage(undefined, undefined, {
       transport: runtime.selectedTools.length > 0 ? "agent" : "companion",
       enabledTools: runtime.selectedTools,
@@ -350,6 +365,26 @@ export default function CompanionWorkspaceV2() {
 
   const isKnowledgeContext = runtime.contextMode === "reading"
     && runtime.context.source_kind.startsWith("knowledge_")
+  const sendBlockedReason = runtime.openingConversation
+    ? "正在加载会话…"
+    : runtime.recoveryState !== "idle"
+      ? runtime.recoveryDetail || "会话连接需要恢复，请重试。"
+      : runtime.conversationBusyElsewhere
+        ? "此会话正在另一个窗口中生成回复，请等待完成。"
+        : runtime.contextUpdating
+          ? "正在更新上下文…"
+          : branchingMessageId
+            ? "正在重新发送消息…"
+            : !runtime.chatAvailable
+              ? runtime.chatStatusLoaded
+                ? runtime.chatStatusDetail || "AI Chat 暂不可用，请检查模型配置或重试。"
+                : "正在检查 AI Chat 连接…"
+              : runtime.contextMode === "reading" && !runtime.context.source_text.trim()
+                ? "请先附加阅读内容，或切换到 General。"
+                : ""
+  const canSend = runtime.activeRequestId === null
+    && !sendBlockedReason
+    && Boolean(runtime.draft.trim())
   const contextTitle = runtime.contextMode === "general"
     ? "General Chat"
     : runtime.context.resource_title || runtime.context.section_heading || "Reading context"
@@ -712,17 +747,17 @@ export default function CompanionWorkspaceV2() {
                       ) : message.status === "streaming" ? (
                         <div className="flex items-center gap-2 text-slate-400">
                           <span className="h-3 w-3 animate-spin rounded-full border border-slate-300 border-t-slate-700" />
-                          {companionGenerationPhaseLabel(message.generationPhase)}
+                          {companionGenerationPhaseLabel(message.generationPhase, message)}
                         </div>
                       ) : (
                         <p className="text-slate-400">
-                          {message.status === "cancelled" ? "Generation stopped." : "No response content."}
+                          {message.status === "cancelled" ? "Generation stopped." : message.status === "error" ? "本次未能生成有效回答，请重试。" : "No response content."}
                         </p>
                       )}
                       <div className="ait-chat-message-meta">
                         {message.status === "streaming" && (
                           <Badge className="ait-chat-message-badge" tone="info">
-                            {companionGenerationPhaseLabel(message.generationPhase)}
+                            {companionGenerationPhaseLabel(message.generationPhase, message)}
                           </Badge>
                         )}
                         {message.status === "cancelled" && <Badge className="ait-chat-message-badge" tone="warning">Stopped</Badge>}
@@ -817,10 +852,15 @@ export default function CompanionWorkspaceV2() {
           className={companionLayoutClassNames.composer}
           onSubmit={handleSubmit}
         >
-          {!runtime.chatAvailable && runtime.chatStatusLoaded && (
-            <p className="ait-chat-unavailable-message">
-              AI Chat 未配置：{runtime.chatStatusDetail}
-            </p>
+          {runtime.activeRequestId === null && sendBlockedReason && (
+            <div className="ait-chat-unavailable-message" role="status" id="chat-send-status">
+              <span>{sendBlockedReason}</span>
+              {!runtime.openingConversation && runtime.recoveryState === "offline" ? (
+                <Button size="sm" onClick={() => void runtime.retryRecovery()}>重试连接</Button>
+              ) : !runtime.chatAvailable && runtime.chatStatusLoaded && runtime.recoveryState === "idle" ? (
+                <Button size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: queryKeys.companion.chatStatus })}>重试连接</Button>
+              ) : null}
+            </div>
           )}
           <div className="ait-chat-composer-controls">
             <div className="ait-chat-context-picker" ref={contextPickerRef}>
@@ -948,9 +988,9 @@ export default function CompanionWorkspaceV2() {
                 disabled={runtime.openingConversation}
                 onChange={(event) => runtime.setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                     event.preventDefault()
-                    event.currentTarget.form?.requestSubmit()
+                    if (canSend) event.currentTarget.form?.requestSubmit()
                   }
                 }}
               />
@@ -965,12 +1005,9 @@ export default function CompanionWorkspaceV2() {
                 type="submit"
                 variant="primary"
                 size="md"
-                disabled={
-                  !runtime.chatAvailable ||
-                  !runtime.draft.trim() ||
-                  runtime.openingConversation ||
-                  Boolean(branchingMessageId)
-                }
+                disabled={!canSend}
+                title={sendBlockedReason || (!runtime.draft.trim() ? "请输入消息" : "发送消息")}
+                aria-describedby={sendBlockedReason ? "chat-send-status" : undefined}
               >
                 Send
               </Button>

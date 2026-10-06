@@ -6,13 +6,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if (-not $env:PYINSTALLER_CONFIG_DIR) {
+    $env:PYINSTALLER_CONFIG_DIR = Join-Path $repoRoot '.cache\pyinstaller'
+}
 $specPath = Join-Path $repoRoot "aitrans_backend.spec"
 $buildRoot = Join-Path $repoRoot "build\rag-sidecar"
 $distRoot = Join-Path $repoRoot "dist"
 $distApp = Join-Path $distRoot "AITransBackend"
 $exePath = Join-Path $distApp "AITransBackend.exe"
 $condaPython = if ($env:CONDA_PREFIX) { Join-Path $env:CONDA_PREFIX "python.exe" } else { "" }
-$python = if ($condaPython -and (Test-Path -LiteralPath $condaPython -PathType Leaf)) {
+$python = if ($env:AITRANS_PYTHON_EXECUTABLE -and (Test-Path -LiteralPath $env:AITRANS_PYTHON_EXECUTABLE -PathType Leaf)) {
+    $env:AITRANS_PYTHON_EXECUTABLE
+} elseif ($condaPython -and (Test-Path -LiteralPath $condaPython -PathType Leaf)) {
     $condaPython
 } else {
     (Get-Command python -ErrorAction Stop).Source
@@ -36,10 +41,10 @@ if ($Clean) {
     Remove-ExactBuildTarget -Target $distApp
 }
 
-foreach ($module in @("PyInstaller", "sentence_transformers", "transformers", "qdrant_client")) {
+foreach ($module in @("PyInstaller", "sentence_transformers", "transformers", "faiss")) {
     & $python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$module') else 1)"
     if ($LASTEXITCODE -ne 0) {
-        throw "Missing packaging dependency '$module'. Install .[build] and aitranslator-rag-requirements.txt first."
+        throw "Missing packaging dependency '$module'. Install .[build], RAG requirements, and run scripts/install_faiss.ps1 first."
     }
 }
 
@@ -54,6 +59,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Expected sidecar executable was not produced: $exePath"
+}
+
+& $python (Join-Path $repoRoot "apps\desktop\scripts\archive-sidecar-licenses.py") $distApp
+if ($LASTEXITCODE -ne 0) {
+    throw "Numerical runtime license collection failed."
 }
 
 $forbiddenModelFiles = @(

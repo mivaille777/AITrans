@@ -19,6 +19,7 @@ from backend.rag.exceptions import RagRetrievalError
 from backend.rag.fusion import rrf_fuse
 from backend.rag.index_manifest import IndexManifest
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
+from backend.rag.query_router import is_explanatory_query
 from backend.rag.rerankers.base import RerankerProvider
 from backend.rag.retrievers.base import RetrievalRequest, record_channel_hits
 from backend.rag.retrievers.bm25 import BM25Retriever
@@ -181,6 +182,9 @@ class RetrievalService:
                         raise RagRetrievalError(
                             "embedding fingerprint changed; reindex required"
                         )
+                bind_fingerprint = getattr(self._vector_store, "bind_fingerprint", None)
+                if callable(bind_fingerprint):
+                    bind_fingerprint(embedding_fingerprint(self._embedding).as_dict())
                 dense = VectorRetriever(self._vector_store).retrieve(
                     replace(
                         request,
@@ -276,10 +280,18 @@ class RetrievalService:
                 + (f"; graph={graph_error}" if use_graph else "")
             )
         fusion_started = perf_counter()
+        ranked_channels = [ranked for ranked in (dense, sparse, structural, graph) if ranked]
+        fusion_limit = max(self._config.fusion_top_k, desired_top_k)
         candidates = rrf_fuse(
-            [ranked for ranked in (dense, sparse, structural, graph) if ranked],
-            limit=max(self._config.fusion_top_k, desired_top_k),
+            ranked_channels,
+            limit=max(fusion_limit, sum(map(len, ranked_channels))) if use_structural else fusion_limit,
         )
+        if use_structural:
+            # Reserve explicitly requested section coverage before truncation;
+            # sorting after Top-K cannot recover an already discarded section.
+            candidates, _matching_count = order_structural_candidates(candidates, section_hints)
+            candidates = [candidate.model_copy(update={"rank": rank})
+                          for rank, candidate in enumerate(candidates[:fusion_limit], start=1)]
         fusion_ms = (perf_counter() - fusion_started) * 1000
         stamp_stage("fusion", fusion_started)
         fusion_candidates = list(candidates)
@@ -311,20 +323,26 @@ class RetrievalService:
         reranker_fallback_reason = ""
         rerank_ms = 0.0
         rerank_input_chunk_ids: list[str] = []
+        rerank_pool_policy = "disabled"
         candidates = fusion_candidates
         if reranker_enabled and self._reranker is not None and fusion_candidates:
             if section_hints:
                 # Structural queries intentionally expose the whole fused pool so
                 # section-priority semantics are preserved after reranking.
                 rerank_candidates = fusion_candidates
+                rerank_pool_policy = "section_full_fusion"
             else:
+                rerank_pool_policy = "configured"
                 configured_rerank_k = max(
                     desired_top_k,
                     self._config.effective_rerank_candidate_k,
                 )
-                rerank_candidates = fusion_candidates[
-                    : min(configured_rerank_k, len(fusion_candidates))
-                ]
+                if self._config.rerank_candidate_k is None and is_explanatory_query(query):
+                    # A relevance judge cannot rescue an already truncated hit.
+                    # Explanations use the existing fused pool; final K is unchanged.
+                    configured_rerank_k = fusion_limit
+                    rerank_pool_policy = "explanatory_full_fusion"
+                rerank_candidates = fusion_candidates[:min(configured_rerank_k, len(fusion_candidates))]
             rerank_input_chunk_ids = [
                 candidate.chunk.chunk_id for candidate in rerank_candidates
             ]
@@ -397,6 +415,7 @@ class RetrievalService:
                 "sparse_enabled": sparse_enabled,
                 "structural_enabled": use_structural,
                 "reranker_enabled": reranker_enabled and self._reranker is not None,
+                "rerank_pool_policy": rerank_pool_policy,
                 "fusion_count": fusion_count,
                 "final_count": len(candidates),
                 "fusion_candidate_count": fusion_count,
@@ -519,6 +538,38 @@ class RetrievalService:
             ):
                 return chunk
         return None
+
+    def snapshot_document_chunks(
+        self, document_id: str, *, generation_id: str | None = None,
+    ) -> tuple[str, list[DocumentChunk]]:
+        """Inventory the exact published text, failing closed on missing/changed chunks.
+
+        This is a server-only full-read operation. Callers must authorize document_id.
+        Sparse inventories may include retired generations, so the manifest's exact
+        IDs and the existing provenance validator are both required.
+        """
+        if self._manifest is None:
+            raise RagRetrievalError("Full reading requires a published manifest")
+        record = self._manifest.get(document_id)
+        if record is None or not record.chunk_ids:
+            raise RagRetrievalError("Published document text is unavailable")
+        active = self._manifest.list_active_generations()
+        if document_id not in active or (generation_id is not None and (active[document_id] or "") != generation_id):
+            raise RagRetrievalError("Document generation changed or is unavailable")
+        generation = active[document_id]
+        getter = getattr(self._sparse, "get_chunk", None) or self._vector_store.get_chunk
+        chunks = [getter(identifier, generation_id=generation) for identifier in record.chunk_ids]
+        if any(chunk is None or chunk.document_id != document_id for chunk in chunks):
+            raise RagRetrievalError("Published document has missing text chunks")
+        result = RetrievalResult(
+            query="full-document-read", retrieval_strategy="full-document-read",
+            candidates=[RetrievalCandidate(chunk=chunk) for chunk in chunks],
+        )
+        self.validate_evidence_candidates(result, filters=VectorSearchFilter(document_ids=[document_id]))
+        current = self._manifest.get(document_id)
+        if current is None or current.generation_id != record.generation_id or current.chunk_ids != record.chunk_ids or current.content_hash != record.content_hash:
+            raise RagRetrievalError("Document publication changed during full reading")
+        return generation or "", sorted(chunks, key=lambda chunk: (chunk.chunk_index, chunk.start_char, chunk.chunk_id))
 
     def evidence_cache_version(self, *, filters: VectorSearchFilter | None = None) -> str | None:
         """Version document evidence against the current published index and retrieval settings."""

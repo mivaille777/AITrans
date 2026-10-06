@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.rag.exceptions import RagInvariantError
 
-_STORE_NAMES = ("manifest", "bm25", "qdrant")
+_STORE_NAMES = ("manifest", "bm25", "vector")
 
 
 class IndexAuditError(RagInvariantError):
@@ -74,7 +74,7 @@ class _StoreState:
         )
         self.untagged_chunk_ids_by_document: dict[str, set[str]] = defaultdict(set)
         self.manifest_status_by_document: dict[str, str] = {}
-        self.invalid_qdrant_points = 0
+        self.invalid_vector_points = 0
 
     def add_document(self, document_id: str) -> None:
         self.chunk_ids_by_document.setdefault(document_id, set())
@@ -123,9 +123,7 @@ def audit_index_consistency(
 ) -> IndexAuditReport:
     """Read and compare document, chunk, and generation catalogues.
 
-    The Qdrant adapter currently has no public list operation. This audit uses
-    its existing local client only for read-only ``scroll`` and deliberately
-    avoids ``ensure_collection`` so an audit cannot create or mutate an index.
+    Read public chunk catalogues without creating or mutating collections.
     """
 
     missing = [
@@ -133,7 +131,7 @@ def audit_index_consistency(
         for name, value in (
             ("manifest", manifest),
             ("BM25", sparse_retriever),
-            ("Qdrant", vector_store),
+            ("vector store", vector_store),
         )
         if value is None
     ]
@@ -147,7 +145,7 @@ def audit_index_consistency(
     states = {name: _StoreState() for name in _STORE_NAMES}
     _read_manifest(manifest, states["manifest"])
     _read_sparse(sparse_retriever, states["bm25"])
-    _read_qdrant(vector_store, states["qdrant"], page_size=page_size)
+    _read_vector(vector_store, states["vector"], page_size=page_size)
     return _build_report(states)
 
 
@@ -240,55 +238,17 @@ def _read_sparse(sparse_retriever: SparseReader, state: _StoreState) -> None:
         state.add_chunk(document_id, chunk_id, generation)
 
 
-def _read_qdrant(vector_store: Any, state: _StoreState, *, page_size: int) -> None:
-    # Keep the private-client dependency isolated here. QdrantLocalVectorStore
-    # exposes get/count but not a catalogue scan; opening a second local client
-    # would conflict with the active runtime's file lock.
-    client = getattr(vector_store, "_client", None)
-    collection_name = str(getattr(vector_store, "collection_name", "") or "").strip()
-    if client is None or not callable(getattr(client, "scroll", None)):
-        raise IndexAuditError("Qdrant store has no read-only scroll capability")
-    if not collection_name:
-        raise IndexAuditError("Qdrant store has no collection_name")
-    collection_exists = getattr(client, "collection_exists", None)
-    if callable(collection_exists):
-        try:
-            exists = collection_exists(collection_name)
-        except Exception as exc:
-            raise IndexAuditError("failed to inspect Qdrant collection") from exc
-        if not exists:
-            raise IndexAuditError(f"Qdrant collection {collection_name!r} is missing")
-
-    offset: Any = None
+def _read_vector(vector_store: Any, state: _StoreState, *, page_size: int) -> None:
+    repository = getattr(vector_store, "repository", None)
+    collection_name = str(getattr(vector_store, "collection_name", "") or "")
+    if repository is not None and repository.collection(collection_name) is None:
+        raise IndexAuditError(f"vector collection {collection_name!r} is missing")
     try:
-        while True:
-            points, offset = client.scroll(
-                collection_name=collection_name,
-                limit=page_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-            for point in points:
-                payload = getattr(point, "payload", None)
-                if not isinstance(payload, dict):
-                    state.invalid_qdrant_points += 1
-                    continue
-                document_id = str(payload.get("document_id") or "").strip()
-                chunk_id = str(payload.get("chunk_id") or "").strip()
-                if not document_id or not chunk_id:
-                    state.invalid_qdrant_points += 1
-                    continue
-                generation = _generation(_chunk_generation_value(payload))
-                state.add_chunk(document_id, chunk_id, generation)
-            if offset is None:
-                break
-    except IndexAuditError:
-        raise
+        for chunk in vector_store.list_chunks():
+            document_id, chunk_id = _chunk_identity(chunk, "vector")
+            state.add_chunk(document_id, chunk_id, _generation(_chunk_generation_value(chunk)))
     except Exception as exc:
-        raise IndexAuditError(
-            f"failed to read Qdrant collection {collection_name!r}"
-        ) from exc
+        raise IndexAuditError(f"failed to read vector collection {collection_name!r}") from exc
 
 
 def _chunk_identity(chunk: Any, store: str) -> tuple[str, str]:
@@ -444,7 +404,7 @@ def _build_report(states: dict[str, _StoreState]) -> IndexAuditReport:
             IndexAuditFinding(
                 code="DOCUMENT_ID_DIFFERENCE",
                 severity="error",
-                message="document ID catalogues differ across manifest, BM25, and Qdrant",
+                message="document ID catalogues differ across manifest, BM25, and vector store",
             )
         )
 
@@ -452,13 +412,13 @@ def _build_report(states: dict[str, _StoreState]) -> IndexAuditReport:
         state.generation_tagged_chunk_count for state in states.values()
     )
     all_chunk_count = sum(state.chunk_count for state in states.values())
-    if any(state.invalid_qdrant_points for state in states.values()):
-        count = states["qdrant"].invalid_qdrant_points
+    if any(state.invalid_vector_points for state in states.values()):
+        count = states["vector"].invalid_vector_points
         findings.append(
             IndexAuditFinding(
-                code="INVALID_QDRANT_PAYLOAD",
+                code="INVALID_VECTOR_PAYLOAD",
                 severity="error",
-                store="qdrant",
+                store="vector",
                 message=f"{count} points are missing document_id or chunk_id payload fields",
             )
         )
@@ -490,7 +450,7 @@ def _build_report(states: dict[str, _StoreState]) -> IndexAuditReport:
     divergent = not chunk_ids_equal or not document_ids_equal or generation_mismatch
     if divergent:
         status_value: Literal["consistent", "incomplete", "divergent"] = "divergent"
-    elif generation_status != "consistent" or states["qdrant"].invalid_qdrant_points:
+    elif generation_status != "consistent" or states["vector"].invalid_vector_points:
         status_value = "incomplete"
     else:
         status_value = "consistent"

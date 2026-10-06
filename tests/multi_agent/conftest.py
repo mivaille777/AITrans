@@ -75,11 +75,11 @@ def isolated_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     root = tmp_path / "aitrans-multi-agent"
     root.mkdir(parents=True, exist_ok=True)
-    (root / "qdrant").mkdir()
+    (root / "faiss").mkdir()
 
     monkeypatch.setenv("AITRANS_DATA_ROOT", str(root))
     monkeypatch.setenv("AITRANS_TEST_DATA_ROOT", str(root))
-    monkeypatch.setenv("AITRANS_QDRANT_PATH", str(root / "qdrant"))
+    monkeypatch.setenv("AITRANS_FAISS_PATH", str(root / "faiss"))
     monkeypatch.setenv("AITRANS_AGENT_ARTIFACT_DB", str(root / "agent_artifacts.sqlite3"))
     return root
 

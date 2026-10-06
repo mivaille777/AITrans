@@ -2,27 +2,15 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from time import perf_counter
-
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qdrant_models
 
 from backend.rag.config import RagVisualRetrievalConfig
 from backend.rag.models import RetrievalCandidate, RetrievalResult
 from backend.rag.stores.base import VectorSearchFilter
-from backend.rag.visual_prefetch import (
-    COARSE_VECTOR_NAME,
-    LATE_VECTOR_NAME,
-    QdrantTwoStageVisualStore,
-    pool_multivector,
-)
-from backend.rag.visual_retrieval import (
-    QdrantVisualMultiVectorStore,
-    VisualRetrievalService,
-    _validate_multivector,
-)
+from backend.rag.stores.local_repository import LocalVectorRepository
+from backend.rag.stores.visual_base import VisualVectorStore
+from backend.rag.visual_retrieval import VisualRetrievalService
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +31,7 @@ class AdaptivePrefetchPolicy:
             raise ValueError("adaptive prefetch candidate_ratio must be in (0, 1]")
 
     @classmethod
-    def from_environment(cls) -> "AdaptivePrefetchPolicy":
+    def from_environment(cls) -> AdaptivePrefetchPolicy:
         return cls(
             enabled=_env_bool(
                 "AITRANS_RAG_VISUAL_ADAPTIVE_PREFETCH_ENABLED",
@@ -75,167 +63,6 @@ def adaptive_prefetch_top_k(
     target = max(visual_top_k, policy.min_k, proportional)
     target = min(target, policy.max_k, candidate_count)
     return max(1, target)
-
-
-class AdaptiveQdrantTwoStageVisualStore(QdrantTwoStageVisualStore):
-    """Stage 3.2 visual store with corpus-aware coarse candidate sizing."""
-
-    def __init__(
-        self,
-        config: RagVisualRetrievalConfig,
-        *,
-        client: QdrantClient | None = None,
-        policy: AdaptivePrefetchPolicy | None = None,
-    ) -> None:
-        super().__init__(config, client=client)
-        self._prefetch_policy = policy or AdaptivePrefetchPolicy.from_environment()
-
-    @property
-    def prefetch_policy(self) -> AdaptivePrefetchPolicy:
-        return self._prefetch_policy
-
-    def estimate_candidate_count(
-        self,
-        filters: VectorSearchFilter | None = None,
-    ) -> int | None:
-        """Best-effort filtered point count used only for query planning."""
-
-        try:
-            response = self._client.count(
-                collection_name=self.collection_name,
-                count_filter=self._build_filter(filters),
-                exact=False,
-            )
-            value = int(getattr(response, "count", 0) or 0)
-        except Exception:
-            return None
-        return max(0, value)
-
-    def search(
-        self,
-        query: list[list[float]],
-        *,
-        top_k: int,
-        filters: VectorSearchFilter | None = None,
-        active_generations: Mapping[str, str | None] | None = None,
-    ) -> list[RetrievalCandidate]:
-        if not self._prefetch_policy.enabled:
-            candidate_count = self.estimate_candidate_count(filters)
-            results = super().search(query, top_k=top_k, filters=filters, active_generations=active_generations)
-            return _annotate_prefetch_results(
-                results,
-                candidate_count=candidate_count,
-                prefetch_k=max(
-                    top_k,
-                    max(self._config.visual_top_k, self._config.prefetch_top_k),
-                ),
-                adaptive=False,
-            )
-
-        if top_k <= 0:
-            raise ValueError("visual top_k must be positive")
-        self.ensure_collection()
-        multivector = _validate_multivector(query, self.dimension)
-        query_filter = self._build_filter(filters, active_generations)
-        candidate_count = self.estimate_candidate_count(filters)
-        prefetch_limit = adaptive_prefetch_top_k(
-            candidate_count=candidate_count,
-            visual_top_k=top_k,
-            fallback_prefetch_k=max(
-                self._config.visual_top_k,
-                self._config.prefetch_top_k,
-            ),
-            policy=self._prefetch_policy,
-        )
-        started = perf_counter()
-        try:
-            response = self._client.query_points(
-                collection_name=self.collection_name,
-                prefetch=qdrant_models.Prefetch(
-                    filter=query_filter,
-                    query=pool_multivector(multivector, self.dimension),
-                    using=COARSE_VECTOR_NAME,
-                    limit=prefetch_limit,
-                ),
-                query=multivector,
-                using=LATE_VECTOR_NAME,
-                query_filter=query_filter,
-                limit=top_k,
-                with_payload=True,
-                with_vectors=False,
-            )
-            results = self._decode_candidates(
-                response.points,
-                mode="adaptive-coarse-prefetch-maxsim",
-                prefetch_limit=prefetch_limit,
-            )
-        except Exception as prefetch_exc:
-            if not self._config.prefetch_fallback_to_full_scan:
-                raise
-            fallback_reason = str(prefetch_exc) or prefetch_exc.__class__.__name__
-            results = self._full_scan(
-                multivector,
-                top_k=top_k,
-                query_filter=query_filter,
-                mode="full-maxsim-fallback",
-                prefetch_limit=prefetch_limit,
-                fallback_reason=fallback_reason,
-            )
-        elapsed_ms = (perf_counter() - started) * 1000.0
-        return _annotate_prefetch_results(
-            results,
-            candidate_count=candidate_count,
-            prefetch_k=prefetch_limit,
-            adaptive=True,
-            search_ms=elapsed_ms,
-        )
-
-    def search_full_maxsim(
-        self,
-        query: list[list[float]],
-        *,
-        top_k: int,
-        filters: VectorSearchFilter | None = None,
-    ) -> list[RetrievalCandidate]:
-        """Full-collection Qdrant MaxSim used as the benchmark oracle."""
-
-        if top_k <= 0:
-            raise ValueError("visual top_k must be positive")
-        self.ensure_collection()
-        multivector = _validate_multivector(query, self.dimension)
-        results = self._full_scan(
-            multivector,
-            top_k=top_k,
-            query_filter=self._build_filter(filters),
-            mode="full-maxsim-oracle",
-        )
-        candidate_count = self.estimate_candidate_count(filters)
-        return _annotate_prefetch_results(
-            results,
-            candidate_count=candidate_count,
-            prefetch_k=candidate_count or top_k,
-            adaptive=False,
-        )
-
-    def fixed_prefetch_store(self, prefetch_k: int) -> "AdaptiveQdrantTwoStageVisualStore":
-        """Share the collection/client while disabling adaptive sizing for A/B tests."""
-
-        if prefetch_k <= 0:
-            raise ValueError("prefetch_k must be positive")
-        config = self._config.model_copy(
-            update={"prefetch_top_k": max(self._config.visual_top_k, prefetch_k)},
-            deep=True,
-        )
-        return AdaptiveQdrantTwoStageVisualStore(
-            config,
-            client=self._client,
-            policy=AdaptivePrefetchPolicy(
-                enabled=False,
-                min_k=self._prefetch_policy.min_k,
-                max_k=self._prefetch_policy.max_k,
-                candidate_ratio=self._prefetch_policy.candidate_ratio,
-            ),
-        )
 
 
 class AdaptiveVisualRetrievalService(VisualRetrievalService):
@@ -290,20 +117,11 @@ class AdaptiveVisualRetrievalService(VisualRetrievalService):
 
 
 def create_adaptive_visual_vector_store(
-    config: RagVisualRetrievalConfig,
-    *,
-    client: QdrantClient | None = None,
+    config: RagVisualRetrievalConfig, *, repository: LocalVectorRepository | None = None,
     policy: AdaptivePrefetchPolicy | None = None,
-) -> QdrantVisualMultiVectorStore:
-    """Create Stage 3.2 when Stage 3.1 prefetch is enabled, else Stage 3."""
-
-    if not config.prefetch_enabled:
-        return QdrantVisualMultiVectorStore(config, client=client)
-    return AdaptiveQdrantTwoStageVisualStore(
-        config,
-        client=client,
-        policy=policy,
-    )
+) -> VisualVectorStore:
+    from backend.rag.stores.faiss_visual import FaissVisualMultiVectorStore
+    return FaissVisualMultiVectorStore(config, repository=repository, policy=policy)
 
 
 def _annotate_prefetch_results(
@@ -371,7 +189,6 @@ def _env_float(name: str, *, default: float) -> float:
 
 __all__ = [
     "AdaptivePrefetchPolicy",
-    "AdaptiveQdrantTwoStageVisualStore",
     "AdaptiveVisualRetrievalService",
     "adaptive_prefetch_top_k",
     "create_adaptive_visual_vector_store",

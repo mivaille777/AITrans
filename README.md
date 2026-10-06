@@ -21,6 +21,8 @@ The project started as a translation assistant and is evolving into a knowledge-
 
 > AITrans 是一个以知识空间为核心的本地化 AI Agent 工作平台。它将文献阅读、Research、Knowledge、RAG、多 Agent 协作、工具调用与上下文管理整合在同一工作流中，帮助用户完成从“读取信息”到“形成可复用知识”的全过程。
 
+本地 RAG 使用 FAISS + SQLite，FAISS 优先使用可用 NVIDIA GPU，异常或不可用时回退 CPU。安装 Python 依赖后运行 `scripts/install_faiss.ps1`；GPU 环境后续 pip 安装使用 `-c aitranslator-faiss-gpu-constraints.txt`。详细环境、迁移与验收见 [FAISS 运行说明](scripts/migration/README.md)。
+
 ---
 
 ## Interface Preview
@@ -250,11 +252,28 @@ Python 3.11
 Node.js 24
 ```
 
-Start the local development environment:
+Start the current Electron desktop and its managed backend from the repository root:
 
 ```powershell
-.\scripts\start.ps1
+.\start.ps1
 ```
+
+The root launcher is the single supported system startup script. It selects the
+`aitrans` Conda environment even when the current terminal uses base Python.
+Useful options:
+
+```powershell
+.\start.ps1 -CheckOnly             # Dependency / FAISS preflight; no app is opened
+.\start.ps1 -BackendOnly           # FastAPI only; Node.js is not required
+.\start.ps1 -BuiltRuntime          # Build and preview the current desktop source
+.\start.ps1 -InstallDependencies   # Explicitly install desktop dependencies
+```
+
+Normal startup does not install packages, rebuild knowledge indexes, or require
+a particular Git branch. Electron manages the renderer/backend lifecycle.
+Historical implementation reports are indexed in
+[docs/archive/README.md](docs/archive/README.md); current tests remain under
+`tests/` and the desktop source tree.
 
 For the opt-in Python Sandbox setup, see [docs/sandbox.md](docs/sandbox.md).
 
@@ -306,11 +325,11 @@ Feature development should normally use a short-lived branch and a pull request 
 
 ## Architecture and Development Documents
 
-- [Multi-Agent system design](docs/development/multi-agent-system-design.md)
-- [Agent Runtime taskbook](<docs/development/Agent Runtime重构任务书.md>)
-- [Current RAG architecture and enabled features](docs/development/rag-production-luna/RAG-ARCHITECTURE-CURRENT.md)
-- [RAG production improvement taskbook](AITrans-RAG-Production-Improvement-Plan-GPT6-Luna.md)
-- [RAG execution status and open issues](docs/development/rag-production-luna/STATUS.md)
+- [Multi-Agent system design](docs/archive/development/multi-agent-system-design.md)
+- [Agent Runtime taskbook](<docs/archive/development/Agent Runtime重构任务书.md>)
+- [Current RAG architecture and enabled features](docs/archive/development/rag-production-luna/RAG-ARCHITECTURE-CURRENT.md)
+- [RAG production improvement taskbook](docs/archive/development/AITrans-RAG-Production-Improvement-Plan-GPT6-Luna.md)
+- [RAG execution status and open issues](docs/archive/development/rag-production-luna/STATUS.md)
 - [MA10 deterministic report](docs/development/ma10-deterministic-report.json)
 - [Contributing guide](CONTRIBUTING.md)
 

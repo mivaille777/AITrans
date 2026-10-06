@@ -244,9 +244,11 @@ def test_search_read_preserves_scope_citations_and_replay(resources):
 
 
 def test_found_search_candidates_cannot_be_released_without_read(resources):
-    native = NativeClient([search(), answer("The gain is 2.5 [1].")])
-    with pytest.raises(AIResponseError, match="evidence Read"):
-        send(service(native, resources))
+    native = NativeClient([search(), answer("The gain is 2.5 [1]."), answer("The controller uses a proportional gain of 2.5 to regulate water level [1].")])
+    result = send(service(native, resources))
+    assert result.evidence and result.citations
+    assert result.knowledge_recovery["outcome"] == "fallback"
+    assert result.knowledge_recovery["reason"] == "required_read_missing"
 
 
 def test_multiple_reads_use_stable_distinct_citation_labels(resources):
@@ -301,18 +303,20 @@ def test_invalid_arguments_get_one_structured_repair_without_execution(resources
     native = NativeClient([bad, answer("Cannot perform that call.")])
     send(service(native, resources))
     assert not resources[0].calls
-    assert (
-        json.loads(native.calls[-1]["messages"][-1]["content"])["error"]["code"]
-        == "invalid_arguments"
-    )
+    errors = [json.loads(m["content"])["error"] for m in native.calls[-1]["messages"] if m["role"] == "tool"]
+    assert errors[-1]["code"] in {"unknown_tool", "invalid_json", "schema_validation"}
+    assert errors[-1]["remaining"]["tool_calls"] == 7
 
 
-def test_second_invalid_call_fails_explicitly(resources):
+def test_repeated_invalid_call_uses_server_read_fallback(resources):
     native = NativeClient(
-        [call("unknown_tool", {}, "one"), call("unknown_tool", {}, "two")]
+        [call("unknown_tool", {}, "one"), call("unknown_tool", {}, "two"), answer("The controller uses a proportional gain of 2.5 to regulate water level [1].")]
     )
-    with pytest.raises(AIResponseError, match="one repair"):
-        send(service(native, resources))
+    result = send(service(native, resources), knowledge_document_ids=("doc-A",))
+    assert result.output_text and result.evidence
+    assert result.knowledge_recovery["outcome"] == "fallback"
+    assert resources[0].calls[0][0] == "What does the paper say?"
+    assert resources[0].calls[0][1].document_ids == ["doc-A"]
 
 
 def test_always_keeps_required_choice_during_argument_repair(resources):
@@ -754,16 +758,19 @@ def test_tool_trace_survives_later_model_failure(
     }
     with TestClient(app) as client:
         if transport == "http":
-            assert client.post("/api/companion/chat", json=payload).status_code == 502
+            response = client.post("/api/companion/chat", json=payload)
+            assert response.status_code == 200
+            assert response.json()["evidence"]
         else:
             with client.websocket_connect("/ws/companion/chat") as ws:
                 ws.send_json({"type": "start", "request": payload})
                 event = {}
                 while event.get("type") not in {"done", "error"}:
                     event = ws.receive_json()
-            assert event["type"] == "error"
+            assert event["type"] == "done"
+            assert event["evidence"]
     calls = recorded[-1]["retrieval"]["function_calls"]
-    assert calls[-1]["tool_name"] == "search_knowledge_base"
+    assert calls[-1]["tool_name"] == "read_knowledge_chunk"
     assert calls[-1]["status"] == "success"
 
 

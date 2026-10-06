@@ -1,4 +1,4 @@
-"""Keep bundled PyTorch notices without exceeding Squirrel's path limit."""
+"""Keep bundled numerical-runtime notices without exceeding Squirrel's path limit."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ BUILD_ROOT = REPO_ROOT / "build"
 ALLOWED_ROOTS = {
     (BUILD_ROOT / "pyinstaller" / "AITransBackend").resolve(),
     (BUILD_ROOT / "electron-resources" / "backend" / "AITransBackend").resolve(),
+    (REPO_ROOT / "dist" / "AITransBackend").resolve(),
 }
 
 
@@ -25,8 +26,17 @@ def main() -> int:
         raise ValueError(f"Unexpected sidecar directory: {sidecar}")
 
     internal = (sidecar / "_internal").resolve(strict=True)
-    license_dirs = sorted(internal.glob("torch-*.dist-info/licenses"))
+    license_dirs = sorted(
+        directory for pattern in ("torch-*.dist-info/licenses", "faiss_cpu-*.dist-info/licenses", "faiss_conda_licenses", "numpy-*.dist-info/licenses")
+        for directory in internal.glob(pattern)
+    )
     archive = sidecar / "THIRD_PARTY_LICENSES.zip"
+    if not any("faiss" in str(directory) for directory in license_dirs):
+        if not archive.is_file():
+            raise RuntimeError("FAISS license notices are missing from the sidecar")
+        with ZipFile(archive) as existing:
+            if not any("faiss" in name for name in existing.namelist()):
+                raise RuntimeError("FAISS license notices are missing from the sidecar archive")
     if not license_dirs:
         if not archive.is_file():
             with ZipFile(archive, "w", compression=ZIP_DEFLATED) as output:

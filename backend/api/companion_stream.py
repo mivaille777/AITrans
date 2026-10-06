@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from app.ai.errors import AIConfigurationError, AIError
+from app.ai.errors import AIConfigurationError, AIError, AIAuthenticationError, AIRateLimitError, AITimeoutError, AIConnectionError
 from backend.api.dependencies import (
     get_companion_chat_service,
     get_companion_ownership_service,
@@ -139,6 +139,14 @@ def _incoming_identity(incoming: object) -> tuple[int, str]:
 
 
 def _error_code(exc: Exception) -> str:
+    if isinstance(exc, AIAuthenticationError):
+        return "authentication"
+    if isinstance(exc, AIRateLimitError):
+        return "rate_limit"
+    if isinstance(exc, AITimeoutError):
+        return "timeout"
+    if isinstance(exc, AIConnectionError):
+        return "connection"
     if isinstance(exc, AIConfigurationError):
         return "configuration"
     if isinstance(exc, AIError):
@@ -374,6 +382,7 @@ async def stream_companion_chat(
                     return
 
                 stream_kwargs = _stream_kwargs(payload)
+                grounding = None
 
                 def emit_phase(phase: str, plan: Any) -> None:
                     if rag_debug is not None and companion_trace_id:
@@ -384,7 +393,8 @@ async def stream_companion_chat(
                     route = getattr(getattr(plan, "route", ""), "value", "")
                     emit(
                         {
-                            "type": "phase",
+                        "type": "phase",
+                        "knowledge_recovery": (getattr(grounding, "debug_metadata", None) or {}).get("knowledge_recovery", {}),
                             "phase": phase,
                             "route": str(route or ""),
                             "request_id": request_id,
@@ -583,6 +593,7 @@ async def stream_companion_chat(
                             f"{PARTIAL_GROUNDING_NOTICE}"
                         )
                     elif not verification.passed:
+                        CompanionChatService._mark_grounding_fallback(grounding)
                         text = evidence_only_grounding_fallback(
                             evidence=list(grounding_evidence),
                             citations=list(grounding_citations),
@@ -624,6 +635,8 @@ async def stream_companion_chat(
                                 "accumulated_text": text,
                             }
                         )
+                text = CompanionChatService._function_outcome_text(text, grounding)
+                update_latest(text)
                 commit_terminal(
                     "complete",
                     content=text,
@@ -654,6 +667,7 @@ async def stream_companion_chat(
                                 grounding
                             ),
                             knowledge_fallback_reason=grounding_fallback,
+                            knowledge_recovery=(grounding.debug_metadata or {}).get("knowledge_recovery", {}),
                             evidence=list(grounding_evidence),
                             citations=list(grounding_citations),
                         )
@@ -690,6 +704,7 @@ async def stream_companion_chat(
                             grounding
                         ),
                         "knowledge_fallback_reason": grounding_fallback,
+                        "knowledge_recovery": (grounding.debug_metadata or {}).get("knowledge_recovery", {}),
                         "evidence": [
                             item.model_dump(mode="json") for item in grounding_evidence
                         ],
@@ -703,8 +718,16 @@ async def stream_companion_chat(
                 if cancel_event.is_set():
                     return
                 code = _error_code(exc)
+                error_text = {
+                    "configuration": "模型配置不可用，请检查设置后重试。",
+                    "authentication": "模型服务认证失败，请检查凭据后重试。",
+                    "rate_limit": "模型服务请求受限，请稍后重试。",
+                    "timeout": "本次请求超时，尚未生成完整回答，请重试。",
+                    "connection": "无法连接模型服务，请检查连接后重试。",
+                }.get(code, "本次未能生成有效回答，请重试。")
                 commit_terminal(
                     "error",
+                    content=error_text,
                     provider=service.provider_name,
                     model=service.model,
                     error_code=code,
@@ -716,7 +739,8 @@ async def stream_companion_chat(
                         "conversation_id": conversation_id,
                         "message_id": assistant_message_id,
                         "code": code,
-                        "message": str(exc) or "AI chat streaming failed.",
+                        "output_text": error_text,
+                        "message": error_text,
                     }
                 )
 

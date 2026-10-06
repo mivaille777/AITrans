@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass, replace
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field, replace
 from threading import Event
 from time import perf_counter
 from types import SimpleNamespace
@@ -39,6 +40,7 @@ from backend.rag.models import RetrievalCandidate
 from backend.rag.query_planner import (
     MAX_RAG_RETRIEVAL_QUERIES,
     RagQueryPlan,
+    RagQueryPlanner,
     merge_query_results,
 )
 from backend.rag.query_router import RagQueryRoute, RagQueryRouter
@@ -99,6 +101,7 @@ class CompanionChatResult:
     knowledge_fallback_reason: str = ""
     evidence: tuple[AgentEvidenceItem, ...] = ()
     citations: tuple[AgentCitationRef, ...] = ()
+    knowledge_recovery: dict[str, Any] = field(default_factory=dict)
 
 
 class CompanionChatService:
@@ -406,7 +409,12 @@ class CompanionChatService:
             try:
                 query_planner = self._ensure_query_planner()
                 if query_planner is not None:
-                    proposed = query_planner.plan(query, history=history)
+                    plan_kwargs: dict[str, Any] = {"history": history}
+                    if isinstance(query_planner, RagQueryPlanner):
+                        plan_kwargs["single_document_scope"] = (
+                            scope is not None and len(scope) == 1
+                        )
+                    proposed = query_planner.plan(query, **plan_kwargs)
                     if not isinstance(proposed, RagQueryPlan):
                         raise TypeError("query planner must return a RagQueryPlan")
                     plan = RagQueryPlan.model_validate(
@@ -834,7 +842,6 @@ class CompanionChatService:
             str(payload.get("context_mode", "general") or "general"),
         )
 
-
     def send(self, **kwargs: Any) -> CompanionChatResult:
         payload = dict(kwargs)
         shared_skills = payload.pop("skill_session", None)
@@ -926,6 +933,7 @@ class CompanionChatService:
             if verification.partial_grounding and "cross_language_support_unscored" in verification.reason_codes:
                 output_text = f"{output_text.rstrip()}\n\n{PARTIAL_GROUNDING_NOTICE}"
             elif not verification.passed:
+                self._mark_grounding_fallback(grounding)
                 output_text = evidence_only_grounding_fallback(
                     evidence=list(grounding.evidence), citations=list(grounding.citations),
                 )
@@ -934,6 +942,7 @@ class CompanionChatService:
                     "grounding_verification_failed:", ",".join(verification.reason_codes))))
             if callable(verification_callback):
                 verification_callback(asdict(verification), not verification.passed)
+        output_text = self._function_outcome_text(output_text, grounding)
         return CompanionChatResult(
             session_id=result.session_id,
             user_message=result.user_message,
@@ -950,6 +959,7 @@ class CompanionChatService:
             knowledge_fallback_reason=fallback_reason,
             evidence=grounding.evidence,
             citations=grounding.citations,
+            knowledge_recovery=(grounding.debug_metadata or {}).get("knowledge_recovery", {}),
         )
 
     @staticmethod
@@ -1014,6 +1024,10 @@ class CompanionChatService:
             if state.searched
             else (GroundingPolicy.MANIFEST if state.catalog_used else GroundingPolicy.NONE)
         )
+        if state.recovery.get("reason") in {"document_selection_required", "policy_never"}:
+            policy = GroundingPolicy.NONE
+        elif any(c.get("status") == "scope_denied" for c in state.calls):
+            policy = GroundingPolicy.EVIDENCE
         plan = CompanionExecutionPlan(
             route=route,
             grounding_policy=policy,
@@ -1039,6 +1053,7 @@ class CompanionChatService:
             "trace_id": state.trace_id,
             "function_calls": list(state.calls),
             "observability": list(state.observability),
+            "knowledge_recovery": deepcopy(state.recovery),
             "selected_chunks": [
                 {
                     "document_id": item.source_id,
@@ -1097,8 +1112,17 @@ class CompanionChatService:
             explicit_document_ids=document_ids,
             global_allowed=not document_ids,
         )
+        from backend.services.knowledge_function_recovery import wants_full_read
+        raw_query = str(payload.get("user_message", ""))
+        full_read_requested = wants_full_read(raw_query)
+        original_query = raw_query
+        if full_read_requested:
+            previous_questions = [content for role, content in (payload.get("history", ()) or ()) if role == "user" and content]
+            if previous_questions:
+                original_query += "\n前一用户问题：" + previous_questions[-1][:4000]
         state = KnowledgeFunctionState(
-            scope=scope, policy=policy, trace_id=trace_id or f"companion_{uuid4().hex[:20]}"
+            scope=scope, policy=policy, trace_id=trace_id or f"companion_{uuid4().hex[:20]}",
+            original_query=original_query, full_read_requested=full_read_requested,
         )
         skills = self._skill_session(payload)
         request = self._build_request(**payload)
@@ -1150,6 +1174,26 @@ class CompanionChatService:
             )
         except AgentBudgetExceededError as exc:
             raise AITimeoutError("Local knowledge function calling exceeded its execution deadline.") from exc
+
+    @staticmethod
+    def _mark_grounding_fallback(grounding: CompanionKnowledgeGrounding | None) -> None:
+        recovery = (grounding.debug_metadata or {}).get("knowledge_recovery", {}) if grounding else {}
+        if recovery.get("outcome") in {"normal", "repaired", "recovering"}:
+            recovery.update(outcome="fallback", reason="grounding_verification_failed")
+
+    @staticmethod
+    def _function_outcome_text(text: str, grounding: CompanionKnowledgeGrounding | None) -> str:
+        """Append a server-owned coverage notice after the citation release check."""
+        recovery = (grounding.debug_metadata or {}).get("knowledge_recovery", {}) if grounding else {}
+        coverage = recovery.get("full_read")
+        if not coverage:
+            return text or "本次未能生成有效回答，请重试。"
+        processed, total = coverage.get("processed_chunks", 0), coverage.get("total_chunks", 0)
+        if coverage.get("complete"):
+            notice = f"读取范围：当前索引的全部可用正文（{processed}/{total} 个文本片段）。图片、扫描页及未解析内容不在此完成标记内。"
+        else:
+            notice = f"全文读取尚未完成：已处理 {processed}/{total} 个文本片段。以上内容不能视为对全文的完整结论。"
+        return f"{text.rstrip()}\n\n{notice}"
 
     @staticmethod
     def _knowledge_failure_text(grounding: CompanionKnowledgeGrounding | None) -> str:

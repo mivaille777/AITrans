@@ -12,6 +12,7 @@ import type {
   CompanionHandoff,
   ConversationDetail,
   ConversationMessage,
+  KnowledgeRecovery,
 } from "../../api/types"
 import type { AgentCitationRef, AgentEvidenceItem } from "../evidence/evidence-types"
 
@@ -22,6 +23,8 @@ export type CompanionGenerationPhase =
   | "generating"
   | "verifying"
   | "complete"
+  | "recovering"
+  | "reading_document"
 export type CompanionTransport = "companion" | "agent"
 export type CompanionAgentPhase =
   | "idle"
@@ -48,6 +51,7 @@ export interface CompanionRuntimeMessage extends CompanionChatMessage {
   knowledgeDocumentCount?: number
   knowledgeChunkCount?: number
   knowledgeFallbackReason?: string
+  knowledgeRecovery?: KnowledgeRecovery
   evidence?: AgentEvidenceItem[]
   citations?: AgentCitationRef[]
 }
@@ -199,6 +203,7 @@ export function restoreCompanionMessages(
       knowledgeDocumentCount: grounded.knowledge_document_count,
       knowledgeChunkCount: grounded.knowledge_chunk_count,
       knowledgeFallbackReason: grounded.knowledge_fallback_reason ?? "",
+      knowledgeRecovery: message.knowledge_recovery,
       evidence: grounded.evidence ?? [],
       citations: grounded.citations ?? [],
     }

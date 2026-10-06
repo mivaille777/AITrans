@@ -44,6 +44,10 @@ Windows桌面划词翻译软件_架构技术路线与Codex分步提示词.md
 data/
 /models/
 .cache/
+node_modules/
+runtime/*.sqlite3
+runtime/*.sqlite3-shm
+runtime/*.sqlite3-wal
 
 # RAG local storage
 

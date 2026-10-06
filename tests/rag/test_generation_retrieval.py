@@ -11,7 +11,7 @@ from backend.rag.index_manifest import IndexManifest, ready_manifest_record
 from backend.rag.models import DocumentChunk
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.sparse.store import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore
+from backend.rag.stores import FaissVectorStore
 from backend.rag.stores.base import VectorSearchFilter
 
 
@@ -48,8 +48,8 @@ def _publish(manifest: IndexManifest, generation_id: str, chunk_id: str) -> None
 
 
 def test_online_retrieval_sees_only_published_generation(tmp_path: Path) -> None:
-    vector_store = QdrantLocalVectorStore(
-        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")),
+    vector_store = FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "faiss")),
         dimension=4,
     )
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
@@ -181,13 +181,14 @@ def test_dense_rejects_old_weight_fingerprint_but_sparse_remains_available(
             model_revision="weights-v2",
         )
 
-    vector = QdrantLocalVectorStore(
-        RagVectorStoreConfig(storage_path=str(tmp_path / "qdrant")),
+    vector = FaissVectorStore(
+        RagVectorStoreConfig(storage_path=str(tmp_path / "faiss")),
         dimension=4,
     )
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
     manifest = IndexManifest(tmp_path / "manifest.json")
     embedding = VersionedQueryEmbedding()
+    vector.bind_fingerprint(embedding.fingerprint.as_dict())
     try:
         for document_id, revision in (("old", "weights-v1"), ("new", "weights-v2")):
             chunk = _chunk(document_id, "alpha evidence", document_id=document_id)

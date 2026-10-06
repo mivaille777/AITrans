@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import logging
-import math
 import os
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -12,16 +11,11 @@ from time import perf_counter
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
-from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
-
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qdrant_models
 
 from backend.rag.config import RagVisualRetrievalConfig
 from backend.rag.exceptions import (
     RagConfigurationError,
     RagRetrievalError,
-    RagVectorStoreError,
 )
 from backend.rag.index_manifest import IndexManifest, IndexManifestRecord, IndexStatus
 from backend.rag.index_service import IndexDocumentResult, IndexService
@@ -33,14 +27,11 @@ from backend.rag.models import (
 )
 from backend.rag.retrievers.base import RetrievalRequest, record_channel_hits
 from backend.rag.stores.base import VectorSearchFilter
+from backend.rag.stores.visual_base import VisualVectorStore
+from backend.rag.visual_scoring import validate_multivector as _validate_multivector
 
 LOGGER = logging.getLogger(__name__)
 VISUAL_RETRIEVAL_VERSION = "visual-retrieval-v2"
-
-_DISTANCE = {
-    "cosine": qdrant_models.Distance.COSINE,
-    "dot": qdrant_models.Distance.DOT,
-}
 
 _MODEL_FAMILIES = {
     "colqwen2_5": ("ColQwen2_5", "ColQwen2_5_Processor"),
@@ -141,7 +132,7 @@ class ColPaliEngineVisualEmbeddingProvider:
             try:
                 self._torch.cuda.empty_cache()
             except Exception:
-                pass
+                LOGGER.debug("Unable to release visual CUDA cache", exc_info=True)
 
     def _ensure_loaded(self) -> None:
         if self._model is not None and self._processor is not None:
@@ -249,7 +240,7 @@ class ColPaliEngineVisualEmbeddingProvider:
         result: list[list[list[float]]] = []
         for sample in tensor.detach().float().cpu():
             # Col* processors may pad token rows to the longest sample. Zero rows
-            # carry no MaxSim evidence and only waste Qdrant storage.
+            # carry no MaxSim evidence and only waste vector storage.
             mask = sample.abs().sum(dim=-1) > 0
             sample = sample[mask]
             rows = sample.tolist()
@@ -293,323 +284,6 @@ def visual_retrieval_index_version(config: RagVisualRetrievalConfig) -> str:
     return f"{VISUAL_RETRIEVAL_VERSION}-{sha256(payload).hexdigest()[:16]}"
 
 
-class QdrantVisualMultiVectorStore:
-    """Dedicated Qdrant collection for ColPali/ColQwen MaxSim vectors."""
-
-    def __init__(
-        self,
-        config: RagVisualRetrievalConfig,
-        *,
-        client: QdrantClient | None = None,
-    ) -> None:
-        self._config = config.model_copy(deep=True)
-        self._owns_client = client is None
-        self._client = client or QdrantClient(
-            path=str(Path(self._config.storage_path).expanduser().resolve())
-        )
-
-    @property
-    def collection_name(self) -> str:
-        # Schema-sensitive suffix prevents a dimension/distance change from
-        # colliding with an older MaxSim collection. Model changes that keep
-        # the same schema reuse the collection and are handled by index_version.
-        return f"{self._config.collection_name}_mv{self.dimension}_{self._config.distance}"
-
-    @property
-    def dimension(self) -> int:
-        return self._config.dimension
-
-    def ensure_collection(self) -> None:
-        distance = _DISTANCE[self._config.distance]
-        if not self._client.collection_exists(self.collection_name):
-            self._client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=qdrant_models.VectorParams(
-                    size=self.dimension,
-                    distance=distance,
-                    multivector_config=qdrant_models.MultiVectorConfig(
-                        comparator=qdrant_models.MultiVectorComparator.MAX_SIM,
-                    ),
-                    hnsw_config=qdrant_models.HnswConfigDiff(m=0),
-                    on_disk=self._config.on_disk,
-                ),
-            )
-            return
-        info = self._client.get_collection(self.collection_name)
-        params = info.config.params.vectors
-        if not isinstance(params, qdrant_models.VectorParams):
-            raise RagConfigurationError(
-                f"visual collection {self.collection_name!r} must use one multivector"
-            )
-        multivector = getattr(params, "multivector_config", None)
-        comparator = getattr(multivector, "comparator", None)
-        if (
-            params.size != self.dimension
-            or params.distance != distance
-            or comparator != qdrant_models.MultiVectorComparator.MAX_SIM
-        ):
-            raise RagConfigurationError(
-                "existing visual Qdrant collection schema mismatch: "
-                f"expected size={self.dimension}, distance={distance.value}, comparator=max_sim"
-            )
-
-    def has_document(
-        self, document_id: str, *, index_version: str,
-        generation_id: str | None = None, content_hash: str | None = None,
-    ) -> bool:
-        self.ensure_collection()
-        conditions = [_match("document_id", document_id), _match("visual_index_version", index_version)]
-        if generation_id is not None:
-            conditions.append(_match("metadata.index_generation", generation_id))
-        if content_hash is not None:
-            conditions.append(_match("document_hash", content_hash))
-        conditions.append(_match("visual_published", True))
-        try:
-            records, _offset = self._client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=qdrant_models.Filter(
-                    must=conditions
-                ),
-                limit=1,
-                with_payload=False,
-                with_vectors=False,
-            )
-        except Exception as exc:
-            raise RagVectorStoreError("failed to inspect visual Qdrant index") from exc
-        return bool(records)
-
-    def replace_document(
-        self,
-        document_id: str,
-        chunks: list[DocumentChunk],
-        vectors: list[list[list[float]]],
-        *,
-        index_version: str,
-    ) -> None:
-        if len(chunks) != len(vectors):
-            raise RagVectorStoreError(
-                f"visual chunk/vector count mismatch: {len(chunks)} chunks, {len(vectors)} vectors"
-            )
-        self.ensure_collection()
-        old_ids = self._document_point_ids(document_id)
-        points = []
-        new_ids: set[UUID] = set()
-        build_id = uuid4().hex
-        for chunk, vector in zip(chunks, vectors, strict=True):
-            point_id = self._point_id(f"{chunk.chunk_id}:{build_id}", chunk.metadata.get("index_generation"), index_version)
-            new_ids.add(point_id)
-            payload = chunk.model_dump(mode="json")
-            payload["source_kind"] = str(chunk.metadata.get("source_kind", ""))
-            payload["visual_index_version"] = index_version
-            payload["visual_published"] = False
-            points.append(
-                qdrant_models.PointStruct(
-                    id=point_id,
-                    vector=_validate_multivector(vector, self.dimension),
-                    payload=payload,
-                )
-            )
-        try:
-            if points:
-                self._publish_points(points)
-            stale = sorted(old_ids - new_ids, key=str)
-            if stale:
-                self._client.delete(
-                    collection_name=self.collection_name,
-                    points_selector=qdrant_models.PointIdsList(points=stale),
-                    wait=True,
-                )
-        except Exception as exc:
-            raise RagVectorStoreError("failed to replace visual Qdrant document") from exc
-
-    def _publish_points(self, points: list[qdrant_models.PointStruct]) -> None:
-        point_ids = [point.id for point in points]
-        try:
-            self._client.upsert(collection_name=self.collection_name, points=points, wait=True)
-            self._client.set_payload(collection_name=self.collection_name,
-                payload={"visual_published": True}, points=point_ids, wait=True)
-        except Exception:  # Remove only this failed build and preserve its error.
-            try:
-                self._client.delete(collection_name=self.collection_name,
-                    points_selector=qdrant_models.PointIdsList(points=point_ids), wait=True)
-            except Exception:  # Preserve the publication failure if storage is unavailable.
-                LOGGER.exception("failed to clean up an incomplete visual build")
-            raise
-
-    def search(
-        self,
-        query: list[list[float]],
-        *,
-        top_k: int,
-        filters: VectorSearchFilter | None = None,
-        active_generations: Mapping[str, str | None] | None = None,
-    ) -> list[RetrievalCandidate]:
-        if top_k <= 0:
-            raise RagVectorStoreError("visual top_k must be positive")
-        self.ensure_collection()
-        multivector = _validate_multivector(query, self.dimension)
-        try:
-            response = self._client.query_points(
-                collection_name=self.collection_name,
-                query=multivector,
-                query_filter=self._build_filter(filters, active_generations),
-                limit=top_k,
-                with_payload=True,
-                with_vectors=False,
-            )
-        except Exception as exc:
-            raise RagVectorStoreError("failed to search visual Qdrant collection") from exc
-
-        results: list[RetrievalCandidate] = []
-        for rank, point in enumerate(response.points, start=1):
-            payload = dict(point.payload or {})
-            payload.pop("source_kind", None)
-            payload.pop("visual_index_version", None)
-            payload.pop("visual_published", None)
-            try:
-                chunk = DocumentChunk.model_validate(payload)
-            except Exception as exc:
-                raise RagVectorStoreError("visual Qdrant point has invalid payload") from exc
-            results.append(
-                RetrievalCandidate(
-                    chunk=chunk,
-                    fusion_score=None,
-                    rank=rank,
-                    metadata={
-                        "retrieval_channel": "visual",
-                        "visual_score": float(point.score),
-                    },
-                )
-            )
-        return results
-
-    def get_chunk(self, chunk_id: str, *, generation_id: str | None = None) -> DocumentChunk | None:
-        self.ensure_collection()
-        conditions = [_match("chunk_id", chunk_id), _match("visual_published", True),
-                      _match("visual_index_version", visual_retrieval_index_version(self._config))]
-        if generation_id is not None:
-            conditions.append(_match("metadata.index_generation", generation_id))
-        records, _ = self._client.scroll(
-            collection_name=self.collection_name, scroll_filter=qdrant_models.Filter(must=conditions),
-            limit=1, with_payload=True, with_vectors=False,
-        )
-        if not records:
-            return None
-        payload = dict(records[0].payload or {})
-        for key in ("source_kind", "visual_index_version", "visual_published", "visual_search_schema"):
-            payload.pop(key, None)
-        return DocumentChunk.model_validate(payload)
-
-    def delete_document(self, document_id: str) -> None:
-        if not document_id:
-            return
-        self.ensure_collection()
-        try:
-            self._client.delete(
-                collection_name=self.collection_name,
-                points_selector=qdrant_models.FilterSelector(
-                    filter=qdrant_models.Filter(must=[_match("document_id", document_id)])
-                ),
-                wait=True,
-            )
-        except Exception as exc:
-            raise RagVectorStoreError("failed to delete visual Qdrant document") from exc
-
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
-
-    def _document_point_ids(self, document_id: str) -> set[UUID]:
-        ids: set[UUID] = set()
-        offset = None
-        try:
-            while True:
-                records, offset = self._client.scroll(
-                    collection_name=self.collection_name,
-                    scroll_filter=qdrant_models.Filter(
-                        must=[_match("document_id", document_id)]
-                    ),
-                    limit=256,
-                    offset=offset,
-                    with_payload=False,
-                    with_vectors=False,
-                )
-                for record in records:
-                    try:
-                        ids.add(UUID(str(record.id)))
-                    except (TypeError, ValueError):
-                        continue
-                if offset is None:
-                    return ids
-        except Exception as exc:
-            raise RagVectorStoreError("failed to enumerate visual Qdrant document") from exc
-
-    @staticmethod
-    def _point_id(chunk_id: str, generation_id: str | None = None, index_version: str = "") -> UUID:
-        return uuid5(NAMESPACE_URL, f"aitrans-rag-visual:{chunk_id}:{generation_id or ''}:{index_version}")
-
-    def _build_filter(
-        self,
-        filters: VectorSearchFilter | None,
-        active_generations: Mapping[str, str | None] | None = None,
-    ) -> qdrant_models.Filter:
-        filters = filters or VectorSearchFilter()
-        conditions: list[Any] = [_match("visual_published", True),
-                                _match("visual_index_version", visual_retrieval_index_version(self._config))]
-        if active_generations is not None:
-            if not active_generations:
-                conditions.append(qdrant_models.HasIdCondition(has_id=[]))
-            else:
-                conditions.append(qdrant_models.Filter(should=[
-                    qdrant_models.Filter(must=[_match("document_id", document_id),
-                        _match("metadata.index_generation", generation or "")])
-                    for document_id, generation in active_generations.items()
-                ]))
-        if filters.document_ids:
-            conditions.append(
-                qdrant_models.FieldCondition(
-                    key="document_id",
-                    match=qdrant_models.MatchAny(any=filters.document_ids),
-                )
-            )
-        if filters.source_kind:
-            conditions.append(_match("source_kind", filters.source_kind))
-        if filters.language:
-            conditions.append(_match("language", filters.language))
-        for key, value in sorted(filters.metadata.items()):
-            conditions.append(_match(f"metadata.{key}", value))
-        return qdrant_models.Filter(must=conditions) if conditions else None
-
-
-def _match(key: str, value: Any) -> qdrant_models.FieldCondition:
-    return qdrant_models.FieldCondition(
-        key=key,
-        match=qdrant_models.MatchValue(value=value),
-    )
-
-
-def _validate_multivector(
-    vector: Sequence[Sequence[float]],
-    dimension: int,
-) -> list[list[float]]:
-    if not vector:
-        raise RagVectorStoreError("multivector must contain at least one token vector")
-    converted: list[list[float]] = []
-    for row in vector:
-        if len(row) != dimension:
-            raise RagVectorStoreError(
-                f"multivector dimension mismatch: expected {dimension}, got {len(row)}"
-            )
-        try:
-            values = [float(value) for value in row]
-        except (TypeError, ValueError) as exc:
-            raise RagVectorStoreError("multivector contains a non-numeric value") from exc
-        if not all(math.isfinite(value) for value in values):
-            raise RagVectorStoreError("multivector contains non-finite values")
-        converted.append(values)
-    return converted
-
-
 VisualItemBuilder = Callable[
     [Path, IndexManifestRecord, RagVisualRetrievalConfig],
     list[tuple[DocumentChunk, Path]],
@@ -624,7 +298,7 @@ class VisualIndexCoordinator:
         *,
         config: RagVisualRetrievalConfig,
         provider: VisualEmbeddingProvider,
-        store: QdrantVisualMultiVectorStore,
+        store: VisualVectorStore,
         manifest: IndexManifest,
         item_builder: VisualItemBuilder | None = None,
     ) -> None:
@@ -649,8 +323,7 @@ class VisualIndexCoordinator:
         if record is None or record.status is not IndexStatus.READY:
             return 0
         version_args = {"index_version": self.index_version}
-        if isinstance(self._store, QdrantVisualMultiVectorStore):
-            version_args.update(generation_id=record.generation_id, content_hash=record.content_hash)
+        version_args.update(generation_id=record.generation_id, content_hash=record.content_hash)
         if not force and self._store.has_document(document_id, **version_args):
             return 0
         source_path = Path(source).expanduser().resolve()
@@ -754,7 +427,7 @@ class VisualRetrievalService:
         *,
         base: Any,
         provider: VisualEmbeddingProvider,
-        store: QdrantVisualMultiVectorStore,
+        store: VisualVectorStore,
         config: RagVisualRetrievalConfig,
         default_final_top_k: int,
     ) -> None:
@@ -1082,6 +755,7 @@ def _extract_docx_pictures(
             part = relationship.target_part
             data = bytes(part.blob)
         except Exception:
+            LOGGER.debug("Unable to read embedded document image", exc_info=True)
             continue
         if not data:
             continue
@@ -1180,13 +854,13 @@ def _path_from_file_uri(source_uri: str) -> Path:
 
 
 __all__ = [
-    "ColPaliEngineVisualEmbeddingProvider",
-    "QdrantVisualMultiVectorStore",
     "VISUAL_RETRIEVAL_VERSION",
+    "ColPaliEngineVisualEmbeddingProvider",
     "VisualAwareIndexService",
     "VisualEmbeddingProvider",
     "VisualIndexCoordinator",
     "VisualRetrievalService",
+    "VisualVectorStore",
     "build_visual_index_items",
     "create_visual_embedding_provider",
     "visual_retrieval_index_version",

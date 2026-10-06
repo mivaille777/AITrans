@@ -17,12 +17,13 @@ def _package_version(distribution: str) -> str:
 
 
 def runtime_smoke_test() -> int:
-    import qdrant_client
+    import faiss
     import sentence_transformers
     import transformers
 
     from backend.main import create_app
     from backend.rag.model_manager import ModelManager
+    from backend.rag.runtime_probe import probe_local_vector_runtime
 
     app = create_app()
     manager = ModelManager()
@@ -34,15 +35,16 @@ def runtime_smoke_test() -> int:
                 "version": get_app_version(),
                 "models_root": str(manager.models_root),
                 "runtime": {
-                    "qdrant-client": _package_version("qdrant-client"),
+                    "faiss": faiss.__version__,
                     "sentence-transformers": _package_version("sentence-transformers"),
                     "transformers": _package_version("transformers"),
                 },
                 "imports": [
-                    qdrant_client.__name__,
+                    faiss.__name__,
                     sentence_transformers.__name__,
                     transformers.__name__,
                 ],
+                "vector_probe": probe_local_vector_runtime(),
             },
             ensure_ascii=False,
         )

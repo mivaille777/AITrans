@@ -7,8 +7,6 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-from qdrant_client import QdrantClient
-
 from app.infrastructure.paths import data_root
 from app.infrastructure.settings import SettingsManager
 from backend.api.rag_model_dependencies import get_rag_model_manager
@@ -16,13 +14,12 @@ from backend.rag.chunking import StructureAwareChunker
 from backend.rag.config import (
     RagConfig,
     RagEmbeddingConfig,
-    RagVectorStoreConfig,
     RagVisualRetrievalConfig,
     RagVisualUnderstandingConfig,
 )
 from backend.rag.embeddings import EmbeddingProvider, create_embedding_provider
 from backend.rag.embeddings.runtime import resolve_embedding_runtime_config
-from backend.rag.index_manifest import IndexManifest
+from backend.rag.index_manifest import IndexManifest, IndexStatus
 from backend.rag.index_service import IndexService
 from backend.rag.inference_worker import ProcessInferenceProvider
 from backend.rag.parsers import parse_document
@@ -30,7 +27,9 @@ from backend.rag.rerankers import Qwen3RerankerProvider
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.semantic_chunking import SemanticStructureAwareChunker
 from backend.rag.sparse import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore
+from backend.rag.stores import VectorStore, create_vector_store
+from backend.rag.stores.local_repository import LocalVectorRepository
+from backend.rag.stores.visual_base import VisualVectorStore
 from backend.rag.vision import (
     VisualDescriptionProvider,
     create_visual_description_provider,
@@ -40,7 +39,6 @@ from backend.rag.visual_adaptive import (
     create_adaptive_visual_vector_store,
 )
 from backend.rag.visual_retrieval import (
-    QdrantVisualMultiVectorStore,
     VisualAwareIndexService,
     VisualEmbeddingProvider,
     VisualIndexCoordinator,
@@ -62,7 +60,7 @@ if TYPE_CHECKING:
 class RagRuntime:
     config: RagConfig
     embedding_provider: EmbeddingProvider
-    vector_store: QdrantLocalVectorStore
+    vector_store: VectorStore
     sparse_retriever: BM25SparseRetriever
     manifest: IndexManifest
     retrieval_service: RetrievalService | VisualRetrievalService
@@ -70,8 +68,8 @@ class RagRuntime:
     library_service: KnowledgeLibraryService
     visual_description_provider: VisualDescriptionProvider | None = None
     visual_embedding_provider: VisualEmbeddingProvider | None = None
-    visual_vector_store: QdrantVisualMultiVectorStore | None = None
-    shared_qdrant_client: QdrantClient | None = None
+    visual_vector_store: VisualVectorStore | None = None
+    vector_repository: LocalVectorRepository | None = None
     graph_extraction_service: ResearchMemoryExtractionService | None = None
 
 
@@ -259,14 +257,20 @@ def _build_runtime() -> RagRuntime:
     resolved_storage_path = _resolve_runtime_storage_path(
         config.vector_store.storage_path
     )
+    legacy_path = resolved_storage_path.parent / "qdrant"
+    if not (resolved_storage_path / "vector_store.sqlite3").exists() and (legacy_path / "meta.json").is_file():
+        from backend.rag.exceptions import RagConfigurationError
+        raise RagConfigurationError("Existing local index requires migration; run scripts/migration before starting RAG")
+    migration_ledger = resolved_storage_path / "migration.json"
+    if migration_ledger.exists():
+        import json
+
+        from backend.rag.exceptions import RagConfigurationError
+        if json.loads(migration_ledger.read_text(encoding="utf-8")).get("status") != "verified":
+            raise RagConfigurationError("Vector import is incomplete; resume and verify migration before starting RAG")
     vector_store_config = config.vector_store.model_copy(
         update={"storage_path": str(resolved_storage_path)}
     )
-    server_url = os.getenv("AITRANS_QDRANT_URL", "").strip()
-    if server_url:
-        vector_store_config = RagVectorStoreConfig.model_validate(
-            {**vector_store_config.model_dump(), "url": server_url}
-        )
     visual_retrieval = visual_retrieval.model_copy(
         update={
             "storage_path": str(resolved_storage_path),
@@ -302,32 +306,39 @@ def _build_runtime() -> RagRuntime:
             visual_embedding_provider, kind="visual", timeout_seconds=config.inference_timeout_seconds,
         )
 
-    shared_qdrant_client: QdrantClient | None = None
-    visual_vector_store: QdrantVisualMultiVectorStore | None = None
-    if visual_retrieval.enabled:
-        # Qdrant Local permits one storage owner. Share one client across the
-        # text and native-visual collections only when Stage 3 is enabled.
-        shared_qdrant_client = QdrantLocalVectorStore.create_client(vector_store_config)
-        vector_store = QdrantLocalVectorStore(
-            vector_store_config,
-            dimension=config.embedding.dimension,
-            client=shared_qdrant_client,
+    vector_repository = LocalVectorRepository(resolved_storage_path)
+    visual_vector_store: VisualVectorStore | None = None
+    try:
+        vector_store = create_vector_store(
+            vector_store_config, dimension=config.embedding.dimension,
+            repository=vector_repository,
         )
-        visual_vector_store = create_adaptive_visual_vector_store(
-            visual_retrieval,
-            client=shared_qdrant_client,
-        )
-    else:
-        # Preserve the pre-Stage-3 object lifecycle exactly when disabled.
-        vector_store = QdrantLocalVectorStore(
-            vector_store_config,
-            dimension=config.embedding.dimension,
-        )
+        vector_store.ensure_collection()
+        if visual_retrieval.enabled:
+            visual_vector_store = create_adaptive_visual_vector_store(visual_retrieval, repository=vector_repository)
+            visual_vector_store.ensure_collection()
+    except BaseException:
+        vector_repository.close()
+        raise
 
     state_directory = resolved_storage_path.parent
     sparse = BM25SparseRetriever(state_directory / "bm25_index.json")
     manifest = IndexManifest(state_directory / "index_manifest.json")
     manifest.recover_interrupted_operations()
+    ready = [record for record in manifest.list_records() if record.status is IndexStatus.READY]
+    if ready:
+        dense_ids = {}
+        sparse_ids = {}
+        for catalogue, store in ((dense_ids, vector_store), (sparse_ids, sparse)):
+            for chunk in store.list_chunks():
+                key = (chunk.document_id, chunk.metadata.get("index_generation") or "")
+                catalogue.setdefault(key, set()).add(chunk.chunk_id)
+        for record in ready:
+            key = (record.document_id, record.generation_id or "")
+            if dense_ids.get(key, set()) != set(record.chunk_ids) or sparse_ids.get(key, set()) != set(record.chunk_ids):
+                from backend.rag.exceptions import RagConfigurationError
+                vector_repository.close()
+                raise RagConfigurationError("READY document is missing durable chunks; migrate or rebuild before starting RAG")
 
     graph_indexer = None
     graph_retriever = None
@@ -420,7 +431,7 @@ def _build_runtime() -> RagRuntime:
         visual_description_provider=visual_description_provider,
         visual_embedding_provider=visual_embedding_provider,
         visual_vector_store=visual_vector_store,
-        shared_qdrant_client=shared_qdrant_client,
+        vector_repository=vector_repository,
         graph_extraction_service=graph_extraction_service,
     )
 
@@ -462,12 +473,13 @@ def close_rag_runtime() -> None:
         if callable(close):
             close()
 
-    if runtime.shared_qdrant_client is not None:
-        runtime.shared_qdrant_client.close()
+    if runtime.vector_repository is not None:
+        runtime.vector_repository.close()
     else:
-        close = getattr(runtime.vector_store, "close", None)
-        if callable(close):
-            close()
+        for store in (runtime.vector_store, runtime.visual_vector_store):
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
 
 
 __all__ = [

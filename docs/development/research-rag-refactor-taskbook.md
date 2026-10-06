@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | SciRAG（`2026.eacl-long.303.pdf`） | 提纲与初稿、按提纲批判并生成补检索、检索树的广度/深度混合、自底向上回写；每个检索节点执行按需一跳引用扩展、段落角色标注、关系构建、剪枝及符号重排 | `backend/rag/query_planner.py`、`backend/agent_graph/reading_agent_graph.py` 的运行与预算机制、`backend/services/agent_evidence_gate_service.py` |
 | PaperQA2（`2409.13740v2.pdf`） | Paper Search / Gather Evidence（LLM 相关性评分与上下文摘要）/ Citation Traversal / Generate Answer 的可回环工具策略；记录每层论文召回及拒答 | `backend/agent_tools/knowledge.py`、`backend/agent_graph/reading_agent_graph.py`、`backend/rag/evidence_builder.py`、`backend/rag/context_builder.py` |
-| RAPTOR（`8997_RAPTOR_Recursive_Abstract.pdf`） | 叶子嵌入 → 语义软聚类 → 摘要并重新嵌入，递归构建多层树；跨全部层级的 collapsed-tree 检索 | `backend/rag/document_tree.py` 的原文叶子、`backend/rag/index_service.py`、`backend/rag/stores/qdrant.py` |
+| RAPTOR（`8997_RAPTOR_Recursive_Abstract.pdf`） | 叶子嵌入 → 语义软聚类 → 摘要并重新嵌入，递归构建多层树；跨全部层级的 collapsed-tree 检索 | `backend/rag/document_tree.py` 的原文叶子、`backend/rag/index_service.py`、`backend/rag/stores/faiss.py` |
 | HippoRAG（`NeurIPS-2024-hipporag-...pdf`） | 逐段 NER/OpenIE、同义边、查询实体对齐与节点特异性加权、PPR、实体—段落矩阵回投 | `backend/models/research_memory.py` 的概念模型、`backend/rag/retrieval_service.py`、现有 RRF |
 
 现有 `DocumentTree` 是章节/段落结构，不是 RAPTOR 的语义摘要树。现有 Knowledge Canvas 图谱不具备 HippoRAG 的逐段 OpenIE 图、PPR 和段落回投；Research Memory 的实体关系来自 Research Note，不能直接视为完整论文语料索引。这里实际有三类不同关系：论文级真实引文边、SciRAG 针对当前问题推断的“理论支持实验”等贡献关系、HippoRAG 的实体/概念关系；必须分别建模和评测。SciRAG 的贡献关系是模型分析结果，不能伪装成论文真实引文。

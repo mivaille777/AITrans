@@ -221,7 +221,9 @@ def test_retrieval_channels_can_be_disabled_for_ablation_profiles() -> None:
         small_to_big_enabled=False,
     )
     assert dense_result.retrieval_strategy == "dense-only"
-    assert [candidate.chunk.chunk_id for candidate in dense_result.candidates] == ["dense"]
+    assert [candidate.chunk.chunk_id for candidate in dense_result.candidates] == [
+        "dense"
+    ]
     assert dense_vector.filters is not None
     assert dense_sparse.filters is None
 
@@ -237,7 +239,9 @@ def test_retrieval_channels_can_be_disabled_for_ablation_profiles() -> None:
         small_to_big_enabled=False,
     )
     assert sparse_result.retrieval_strategy == "sparse-only"
-    assert [candidate.chunk.chunk_id for candidate in sparse_result.candidates] == ["sparse"]
+    assert [candidate.chunk.chunk_id for candidate in sparse_result.candidates] == [
+        "sparse"
+    ]
     assert sparse_vector.filters is None
     assert sparse_store.filters is not None
 
@@ -377,9 +381,7 @@ def test_rerank_pool_can_rescue_candidate_below_final_top_k() -> None:
         def rerank(self, _query, candidates, *, top_k):
             ordered = list(candidates)
             gold = next(
-                candidate
-                for candidate in ordered
-                if candidate.chunk.chunk_id == "gold"
+                candidate for candidate in ordered if candidate.chunk.chunk_id == "gold"
             )
             return [gold, *[item for item in ordered if item is not gold]][:top_k]
 
@@ -412,6 +414,40 @@ def test_rerank_pool_can_rescue_candidate_below_final_top_k() -> None:
     assert result.metadata["final_candidate_count"] == 8
 
 
+@pytest.mark.parametrize(
+    "query,explicit_pool,expected",
+    [
+        ("Why must gain updates be bounded?", None, 20),
+        ("为何需要约束增益更新？", None, 20),
+        ("Why must gain updates be bounded?", 8, 8),
+        ("PID gain settings", None, 8),
+        ('Find "Why must PID gain updates be bounded?"', None, 8),
+    ],
+)
+def test_explanations_judge_fused_candidates_before_final_cutoff(
+    query, explicit_pool, expected
+):
+    class Judge:
+        def rerank(self, _query, candidates, *, top_k):
+            return sorted(candidates, key=lambda c: c.chunk.chunk_id != "gold")[:top_k]
+
+    retrieval, *_ = service(
+        dense=[
+            item("gold" if i == 10 else f"candidate-{i}", dense=True, rank=i)
+            for i in range(1, 21)
+        ],
+        reranker=Judge(),
+        config=RagRetrievalConfig(rerank_candidate_k=explicit_pool),
+    )
+    result = retrieval.retrieve(query, sparse_enabled=False)
+    assert result.metadata["rerank_candidate_count"] == expected
+    assert len(result.candidates) == 8
+    assert ("gold" in result.metadata["rerank_input_chunk_ids"]) == (expected == 20)
+    assert result.metadata["rerank_pool_policy"] == (
+        "explanatory_full_fusion" if expected == 20 else "configured"
+    )
+
+
 def test_rerank_candidate_pool_size_is_independent_of_final_top_k() -> None:
     class RecordingReranker:
         def __init__(self):
@@ -422,10 +458,7 @@ def test_rerank_candidate_pool_size_is_independent_of_final_top_k() -> None:
             return list(candidates)[:top_k]
 
     recorder = RecordingReranker()
-    dense = [
-        item(f"chunk-{rank:02d}", dense=True, rank=rank)
-        for rank in range(1, 21)
-    ]
+    dense = [item(f"chunk-{rank:02d}", dense=True, rank=rank) for rank in range(1, 21)]
     retrieval, *_ = service(
         dense=dense,
         config=RagRetrievalConfig(
@@ -466,16 +499,12 @@ def test_reranker_is_applied_and_failure_falls_back_to_rrf() -> None:
     assert fallback.metadata["reranker_fallback_reason"] == "rerank failed"
 
 
-
 def test_reranker_failure_restores_full_rrf_order() -> None:
     class FailingReranker:
         def rerank(self, _query, candidates, *, top_k):
             raise RuntimeError("reranker unavailable")
 
-    dense = [
-        item(f"chunk-{rank:02d}", dense=True, rank=rank)
-        for rank in range(1, 13)
-    ]
+    dense = [item(f"chunk-{rank:02d}", dense=True, rank=rank) for rank in range(1, 13)]
     retrieval, *_ = service(
         dense=dense,
         config=RagRetrievalConfig(

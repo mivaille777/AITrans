@@ -95,7 +95,7 @@ def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
     assert search_tool.effect == "read"
     assert search_tool.requires_reading_context is False
     assert search_tool.requires_confirmation is False
-    assert set(search_tool.input_schema) == {"query", "document_scope"}
+    assert set(search_tool.input_schema) == {"query", "document_scope", "document_ids", "top_k"}
     assert registry.allows_safe_retry(search_tool.name) is True
 
     assert save_tool is not None
@@ -167,10 +167,13 @@ def test_planner_rejects_unknown_knowledge_arguments() -> None:
         "search_knowledge_base",
         {"query": "control", "document_scope": "doc-a,doc-b"},
     ) == {"query": "control", "document_scope": "doc-a,doc-b"}
+    assert registry.validate_planner_arguments(
+        "search_knowledge_base", {"query": "control", "document_ids": ["doc-a"], "top_k": 5},
+    ) == {"query": "control", "document_ids": ["doc-a"], "top_k": 5}
     with pytest.raises(ValueError, match="outside its authority"):
         registry.validate_planner_arguments(
             "search_knowledge_base",
-            {"query": "control", "document_ids": ["doc-a"]},
+            {"query": "control", "trace_id": "spoof"},
         )
 
 

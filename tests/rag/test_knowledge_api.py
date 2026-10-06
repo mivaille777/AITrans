@@ -146,7 +146,7 @@ def _service(
             device="cpu",
         ),
         vector_store=RagVectorStoreConfig(
-            storage_path=str(state_path / "qdrant"),
+            storage_path=str(state_path / "faiss"),
             collection_name="test-knowledge",
         ),
     )
@@ -272,7 +272,7 @@ def test_knowledge_document_lifecycle_and_runtime(tmp_path: Path) -> None:
         "embedding_status": "ready",
         "device": "cpu",
         "dimension": 4,
-        "vector_store_provider": "qdrant_local",
+        "vector_store_provider": "faiss_local",
         "collection_name": "test-knowledge",
         "document_count": 1,
         "ready_document_count": 1,

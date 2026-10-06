@@ -41,10 +41,10 @@ def test_rag_config_defaults_match_v1_contract() -> None:
     assert config.embedding.dimension == 1024
     assert config.embedding.batch_size == 8
     assert config.embedding.normalize is True
-    assert config.vector_store.provider == "qdrant_local"
+    assert config.vector_store.provider == "faiss_local"
     assert config.vector_store.collection_name == "aitrans_knowledge"
     assert config.vector_store.distance == "cosine"
-    assert config.vector_store.storage_path == "config/rag/qdrant"
+    assert config.vector_store.storage_path == "config/rag/faiss"
     assert config.retrieval.fusion == "rrf"
     assert config.retrieval.rerank_candidate_k is None
     assert config.retrieval.effective_rerank_candidate_k == 8

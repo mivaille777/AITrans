@@ -182,7 +182,7 @@ def main() -> int:
             "code_hashes": {file: _sha256(REPO_ROOT / file) for file in (
                 "scripts/run_hf_rag_benchmark.py", "backend/rag/retrieval_service.py",
                 "backend/rag/rerankers/qwen3.py", "backend/rag/embeddings/qwen3.py",
-                "backend/rag/stores/qdrant.py", "backend/rag/sparse/store.py",
+                "backend/rag/stores/faiss.py", "backend/rag/sparse/store.py",
                 "backend/rag/sparse/bm25.py", "backend/rag/sparse/tokenizer.py",
             )},
             "reranker_hashes": {str(path.relative_to(config.reranker.model_path)): _sha256(path)

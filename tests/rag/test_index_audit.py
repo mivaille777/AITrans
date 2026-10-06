@@ -10,7 +10,7 @@ from backend.rag.index_audit import IndexAuditError, audit_index_consistency
 from backend.rag.index_manifest import IndexManifest, ready_manifest_record
 from backend.rag.models import DocumentChunk
 from backend.rag.sparse import BM25SparseRetriever
-from backend.rag.stores import QdrantLocalVectorStore
+from backend.rag.stores import FaissVectorStore
 
 
 def _chunk(
@@ -42,15 +42,15 @@ def _ready_record(document_id: str, chunk_ids: list[str]):
     )
 
 
-def _vector_store(path: Path) -> QdrantLocalVectorStore:
-    return QdrantLocalVectorStore(
+def _vector_store(path: Path) -> FaissVectorStore:
+    return FaissVectorStore(
         RagVectorStoreConfig(storage_path=str(path), collection_name="audit_test"),
         dimension=4,
     )
 
 
 def _write_vector_chunks(
-    store: QdrantLocalVectorStore,
+    store: FaissVectorStore,
     chunks: list[DocumentChunk],
 ) -> None:
     store.upsert_chunks(chunks, [[1.0, 0.0, 0.0, 0.0] for _ in chunks])
@@ -70,7 +70,7 @@ def test_audit_reports_cross_store_chunk_and_generation_differences_read_only(
             _chunk("chunk_sparse_only", generation="generation-a"),
         ]
     )
-    vector = _vector_store(tmp_path / "qdrant")
+    vector = _vector_store(tmp_path / "faiss")
     _write_vector_chunks(
         vector,
         [
@@ -102,7 +102,7 @@ def test_audit_reports_cross_store_chunk_and_generation_differences_read_only(
             "chunk_vector_only",
         ]
         assert document.missing_chunk_ids["bm25"] == ["chunk_vector_only"]
-        assert document.missing_chunk_ids["qdrant"] == ["chunk_sparse_only"]
+        assert document.missing_chunk_ids["vector"] == ["chunk_sparse_only"]
         assert document.generation_mismatch_chunk_ids == ["chunk_shared"]
         assert manifest_path.read_bytes() == manifest_before
         assert sparse_path.read_bytes() == sparse_before
@@ -119,7 +119,7 @@ def test_audit_reports_document_ids_missing_from_a_store(tmp_path: Path) -> None
     manifest.upsert(_ready_record("doc_manifest", ["chunk_manifest"]))
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
     sparse.index_chunks([_chunk("chunk_sparse", document_id="doc_sparse")])
-    vector = _vector_store(tmp_path / "qdrant")
+    vector = _vector_store(tmp_path / "faiss")
     _write_vector_chunks(vector, [_chunk("chunk_vector", document_id="doc_vector")])
     try:
         report = audit_index_consistency(
@@ -146,7 +146,7 @@ def test_matching_legacy_catalogues_are_incomplete_without_generation_metadata(
     manifest.upsert(_ready_record("doc_one", ["chunk_shared"]))
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
     sparse.index_chunks([_chunk("chunk_shared")])
-    vector = _vector_store(tmp_path / "qdrant")
+    vector = _vector_store(tmp_path / "faiss")
     _write_vector_chunks(vector, [_chunk("chunk_shared")])
     try:
         report = audit_index_consistency(
@@ -187,7 +187,7 @@ def test_audit_compares_retained_generations_without_false_chunk_divergence(
         [_chunk("chunk_new", generation="generation-new")],
         generation_id="generation-new",
     )
-    vector = _vector_store(tmp_path / "qdrant")
+    vector = _vector_store(tmp_path / "faiss")
     vector.upsert_chunks(
         [_chunk("chunk_old")],
         [[1.0, 0.0, 0.0, 0.0]],
@@ -208,7 +208,7 @@ def test_audit_compares_retained_generations_without_false_chunk_divergence(
         assert report.status == "consistent"
         assert report.chunk_ids_equal is True
         assert report.generation_status == "consistent"
-        assert report.stores["qdrant"].chunk_count == 2
+        assert report.stores["vector"].chunk_count == 2
     finally:
         vector.close()
 
@@ -218,7 +218,7 @@ def test_audit_compares_retained_generations_without_false_chunk_divergence(
     [
         ("manifest", "manifest"),
         ("sparse_retriever", "BM25"),
-        ("vector_store", "Qdrant"),
+        ("vector_store", "vector store"),
     ],
 )
 def test_missing_required_catalogue_fails_explicitly(
@@ -228,7 +228,7 @@ def test_missing_required_catalogue_fails_explicitly(
 ) -> None:
     manifest = IndexManifest(tmp_path / "manifest.json")
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
-    vector = _vector_store(tmp_path / "qdrant")
+    vector = _vector_store(tmp_path / "faiss")
     inputs = {
         "manifest": manifest,
         "sparse_retriever": sparse,
@@ -242,12 +242,12 @@ def test_missing_required_catalogue_fails_explicitly(
         vector.close()
 
 
-def test_missing_qdrant_collection_is_reported_without_creating_it(
+def test_missing_vector_collection_is_reported_without_creating_it(
     tmp_path: Path,
 ) -> None:
     manifest = IndexManifest(tmp_path / "manifest.json")
     sparse = BM25SparseRetriever(tmp_path / "bm25.json")
-    vector = _vector_store(tmp_path / "qdrant")
+    vector = _vector_store(tmp_path / "faiss")
     try:
         with pytest.raises(IndexAuditError, match="collection .* is missing"):
             audit_index_consistency(
@@ -255,6 +255,6 @@ def test_missing_qdrant_collection_is_reported_without_creating_it(
                 sparse_retriever=sparse,
                 vector_store=vector,
             )
-        assert vector._client.collection_exists(vector.collection_name) is False
+        assert vector.repository.collection(vector.collection_name) is None
     finally:
         vector.close()

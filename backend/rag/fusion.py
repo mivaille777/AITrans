@@ -3,6 +3,61 @@ from __future__ import annotations
 from backend.rag.models import RetrievalCandidate
 
 
+def _candidate_key(candidate: RetrievalCandidate) -> tuple[str, str]:
+    return (
+        candidate.index_generation
+        or candidate.chunk.metadata.get("index_generation")
+        or "",
+        candidate.chunk.chunk_id,
+    )
+
+
+def retain_list_coverage(
+    fused: list[RetrievalCandidate],
+    ranked_lists: list[list[RetrievalCandidate]],
+    *,
+    limit: int,
+    per_list: int,
+    expand_overlapping: bool = False,
+) -> list[RetrievalCandidate]:
+    """Reserve bounded list heads, then fill and order by the original RRF rank.
+
+    A hit unique to one channel/query must reach the relevance judge even when
+    several weaker hits have consensus. This changes admission, not RRF scores.
+    """
+    if limit <= 0 or per_list < 0:
+        raise ValueError("coverage limit must be positive and per_list non-negative")
+    lists = [ranked for ranked in ranked_lists if ranked]
+    quota = min(per_list, limit // len(lists)) if lists else 0
+    available = {_candidate_key(candidate) for candidate in fused}
+    selected = {
+        _candidate_key(candidate)
+        for ranked in lists
+        for candidate in ranked[:quota]
+        if _candidate_key(candidate) in available
+    }
+    # Shared heads leave free slots. For query coverage, deepen all prefixes
+    # together while their deduplicated union fits, before filling by consensus.
+    if expand_overlapping and quota:
+        maximum = max(map(len, lists))
+        while len(selected) < limit and quota < maximum:
+            next_selected = {
+                _candidate_key(candidate)
+                for ranked in lists
+                for candidate in ranked[: quota + 1]
+                if _candidate_key(candidate) in available
+            }
+            if len(next_selected) > limit:
+                break
+            selected = next_selected
+            quota += 1
+    for candidate in fused:
+        if len(selected) >= limit:
+            break
+        selected.add(_candidate_key(candidate))
+    return [candidate for candidate in fused if _candidate_key(candidate) in selected]
+
+
 def rrf_fuse(
     ranked_lists: list[list[RetrievalCandidate]],
     *,
@@ -30,6 +85,18 @@ def rrf_fuse(
                 )
             else:
                 updates = {
+                    "metadata": {
+                        **existing.metadata,
+                        **(
+                            {
+                                "structural_parent_headings": candidate.metadata[
+                                    "structural_parent_headings"
+                                ]
+                            }
+                            if candidate.metadata.get("structural_parent_headings")
+                            else {}
+                        ),
+                    },
                     "dense_score": existing.dense_score
                     if existing.dense_score is not None
                     else candidate.dense_score,
@@ -52,4 +119,4 @@ def rrf_fuse(
     ]
 
 
-__all__ = ["rrf_fuse"]
+__all__ = ["retain_list_coverage", "rrf_fuse"]

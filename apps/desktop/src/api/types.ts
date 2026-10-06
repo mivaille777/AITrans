@@ -317,6 +317,7 @@ export interface CompanionChatResponse {
   knowledge_document_count: number
   knowledge_chunk_count: number
   knowledge_fallback_reason: string
+  knowledge_recovery?: KnowledgeRecovery
   evidence: AgentEvidenceItem[]
   citations: AgentCitationRef[]
 }
@@ -333,10 +334,29 @@ export type CompanionGenerationPhase =
   | "retrieving"
   | "generating"
   | "verifying"
+  | "recovering"
+  | "reading_document"
+
+export interface KnowledgeRecovery {
+  outcome?: "normal" | "recovering" | "repaired" | "fallback" | "partial" | "blocked"
+  reason?: string
+  repair_rounds?: number
+  full_read?: {
+    basis: string
+    total_chunks: number
+    processed_chunks: number
+    total_chars: number
+    processed_chars: number
+    total_batches: number
+    processed_batches: number
+    complete: boolean
+  }
+}
 
 export interface CompanionChatStreamPhase {
   type: "phase"
   phase: CompanionGenerationPhase
+  knowledge_recovery?: KnowledgeRecovery
   route: string
   request_id: number
   conversation_id: string
@@ -375,6 +395,7 @@ export interface CompanionChatStreamDone {
   knowledge_chunk_count: number
   knowledge_enabled: boolean
   knowledge_fallback_reason: string
+  knowledge_recovery?: KnowledgeRecovery
   evidence: AgentEvidenceItem[]
   citations: AgentCitationRef[]
 }
@@ -386,6 +407,7 @@ export interface CompanionChatStreamError {
   message_id: string
   code: string
   message: string
+  output_text?: string
 }
 
 export interface CompanionChatStreamCancelled {
@@ -422,6 +444,7 @@ export interface ConversationMessage {
   knowledge_chunk_count?: number
   knowledge_enabled?: boolean
   knowledge_fallback_reason?: string
+  knowledge_recovery?: KnowledgeRecovery
   evidence?: AgentEvidenceItem[]
   citations?: AgentCitationRef[]
   created_at: string

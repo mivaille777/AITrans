@@ -244,6 +244,9 @@ class IndexService:
             vectors = self._embedding_provider.embed_documents(
                 [chunk.text for chunk in chunks]
             )
+            bind_fingerprint = getattr(self._vector_store, "bind_fingerprint", None)
+            if callable(bind_fingerprint):
+                bind_fingerprint(embedding_fingerprint(self._embedding_provider).as_dict())
 
             self._mark_progress(
                 document_id,
@@ -366,7 +369,7 @@ class IndexService:
                     )
                 except Exception as cleanup_exc:  # noqa: BLE001 - preserve root cause
                     cleanup_errors.append(
-                        "Qdrant cleanup: "
+                        "vector store cleanup: "
                         + (str(cleanup_exc) or cleanup_exc.__class__.__name__)
                     )
                 if self._sparse_retriever is not None:
@@ -456,10 +459,22 @@ class IndexService:
             and record.embedding_dimension == self._embedding_provider.dimension
             and record.embedding_fingerprint
             == embedding_fingerprint(self._embedding_provider).as_dict()
+            and self._stored_chunks_match(record)
             and (
                 self._graph_indexer is None or self._graph_indexer.can_reuse(record)
             )
         )
+
+    def _stored_chunks_match(self, record: IndexManifestRecord) -> bool:
+        expected = set(record.chunk_ids)
+        for store in (self._vector_store, self._sparse_retriever):
+            if store is None:
+                continue
+            observed = {chunk.chunk_id for chunk in store.list_chunks(generation_id=record.generation_id)
+                        if chunk.document_id == record.document_id}
+            if observed != expected:
+                return False
+        return True
 
     @staticmethod
     def _ensure_text_chunk_source_spans(

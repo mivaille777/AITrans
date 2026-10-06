@@ -14,27 +14,89 @@ from backend.rag.config import (
 )
 
 
-def test_runtime_qdrant_environment_selects_server_without_changing_default(tmp_path, monkeypatch):
+def test_runtime_owns_repository_and_closes_it(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from tests.rag.graph.test_indexer import Embedding
 
-    configs = []
-    monkeypatch.setenv("AITRANS_QDRANT_URL", "http://127.0.0.1:6335/")
-    monkeypatch.setattr(knowledge_dependencies, "SettingsManager", lambda: SimpleNamespace(data={
-        "rag": {"embedding": {"dimension": 4}, "graph": {"enabled": False},
-            "vector_store": {"storage_path": str(tmp_path / "original-local")}}}))
+    monkeypatch.setattr(
+        knowledge_dependencies,
+        "SettingsManager",
+        lambda: SimpleNamespace(
+            data={
+                "rag": {
+                    "embedding": {"dimension": 4},
+                    "graph": {"enabled": False},
+                    "vector_store": {"storage_path": str(tmp_path / "faiss")},
+                }
+            }
+        ),
+    )
     monkeypatch.setattr(knowledge_dependencies, "get_rag_model_manager", lambda: None)
-    monkeypatch.setattr(knowledge_dependencies, "create_embedding_provider", lambda *a, **kw: Embedding())
-    monkeypatch.setattr(knowledge_dependencies, "Qwen3RerankerProvider", lambda *a, **kw: None)
-    def store(config, **kwargs):
-        configs.append(config)
-        return SimpleNamespace(close=lambda: None)
-    monkeypatch.setattr(knowledge_dependencies, "QdrantLocalVectorStore", store)
+    monkeypatch.setattr(
+        knowledge_dependencies,
+        "create_embedding_provider",
+        lambda *a, **kw: Embedding(),
+    )
+    monkeypatch.setattr(
+        knowledge_dependencies, "Qwen3RerankerProvider", lambda *a, **kw: None
+    )
     runtime = knowledge_dependencies._build_runtime()
-    assert configs[0].url == "http://127.0.0.1:6335"
-    assert configs[0].storage_path == str(tmp_path / "original-local")
-    assert runtime.config.vector_store.url == configs[0].url
+    assert runtime.vector_store.repository is runtime.vector_repository
+    assert runtime.config.vector_store.provider == "faiss_local"
+    monkeypatch.setattr(knowledge_dependencies, "_runtime", runtime)
+    knowledge_dependencies.close_rag_runtime()
+    assert runtime.vector_repository._closed
+
+
+def test_runtime_rejects_empty_vectors_with_ready_manifest_and_releases_owner(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from backend.rag.exceptions import RagConfigurationError
+    from backend.rag.index_manifest import (
+        IndexManifest,
+        IndexManifestRecord,
+        IndexStatus,
+    )
+    from backend.rag.stores.local_repository import LocalVectorRepository
+    from tests.rag.graph.test_indexer import Embedding
+
+    IndexManifest(tmp_path / "index_manifest.json").upsert(
+        IndexManifestRecord(
+            document_id="ready-but-missing",
+            generation_id="g1",
+            status=IndexStatus.READY,
+            chunk_ids=["missing"],
+        )
+    )
+    monkeypatch.setattr(
+        knowledge_dependencies,
+        "SettingsManager",
+        lambda: SimpleNamespace(
+            data={
+                "rag": {
+                    "embedding": {"dimension": 4},
+                    "graph": {"enabled": False},
+                    "vector_store": {"storage_path": str(tmp_path / "faiss")},
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(knowledge_dependencies, "get_rag_model_manager", lambda: None)
+    monkeypatch.setattr(
+        knowledge_dependencies,
+        "create_embedding_provider",
+        lambda *a, **kw: Embedding(),
+    )
+    monkeypatch.setattr(
+        knowledge_dependencies, "Qwen3RerankerProvider", lambda *a, **kw: None
+    )
+    with pytest.raises(RagConfigurationError, match="READY document"):
+        knowledge_dependencies._build_runtime()
+    with LocalVectorRepository(tmp_path / "faiss"):
+        pass
 
 
 def test_native_visual_memory_overrides_are_validated(monkeypatch):
@@ -58,11 +120,13 @@ def test_visual_config_inherits_chat_credentials_for_same_endpoint(base_url):
     configured = RagVisualUnderstandingConfig(enabled=True, base_url=base_url)
     resolved = knowledge_dependencies._resolve_visual_understanding_config(
         configured,
-        {"ai": {
-            "provider": "deepseek",
-            "model": "deepseek-v4-flash",
-            "base_url": "https://api.deepseek.com",
-        }},
+        {
+            "ai": {
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "base_url": "https://api.deepseek.com",
+            }
+        },
     )
 
     assert resolved.credential_provider == "deepseek"
@@ -93,14 +157,14 @@ def test_relative_rag_storage_is_anchored_to_application_data_root(
     monkeypatch.chdir(working_directory)
     monkeypatch.setattr(knowledge_dependencies, "data_root", lambda: app_data)
 
-    resolved = knowledge_dependencies._resolve_runtime_storage_path("config/rag/qdrant")
+    resolved = knowledge_dependencies._resolve_runtime_storage_path("config/rag/faiss")
 
-    assert resolved == (app_data / "config" / "rag" / "qdrant").resolve()
+    assert resolved == (app_data / "config" / "rag" / "faiss").resolve()
     assert working_directory not in resolved.parents
 
 
 def test_absolute_rag_storage_path_is_preserved(tmp_path: Path) -> None:
-    configured = tmp_path / "explicit" / "qdrant"
+    configured = tmp_path / "explicit" / "faiss"
 
     assert (
         knowledge_dependencies._resolve_runtime_storage_path(configured)
@@ -122,7 +186,7 @@ def test_optional_graph_runtime_shares_index_and_query_lifecycle(
     settings = {
         "rag": {
             "embedding": {"dimension": 4},
-            "vector_store": {"storage_path": str(tmp_path / "qdrant")},
+            "vector_store": {"storage_path": str(tmp_path / "faiss")},
             "graph": {"enabled": enabled},
         }
     }
@@ -181,7 +245,8 @@ def test_optional_graph_runtime_shares_index_and_query_lifecycle(
             monkeypatch.setattr(knowledge_dependencies, "_runtime", runtime)
             assert runtime.graph_extraction_service is None
             assert (
-                runtime.index_service.reindex_document(paper).status is IndexStatus.READY
+                runtime.index_service.reindex_document(paper).status
+                is IndexStatus.READY
             )
             assert calls == [True]
         assert runtime.index_service.delete_document(indexed.document_id)
@@ -198,7 +263,9 @@ def test_optional_graph_runtime_shares_index_and_query_lifecycle(
                     "graph_generation",
                 ):
                     assert (
-                        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[
+                            0
+                        ]
                         == 0
                     )
         after = runtime.retrieval_service.retrieve(

@@ -87,7 +87,7 @@ def test_complex_query_returns_typed_bounded_plan() -> None:
         "M10 mechanism",
     )
     assert len(plan.retrieval_queries) == MAX_RAG_RETRIEVAL_QUERIES
-    assert planner.prompt_id.endswith("@1.4.0")
+    assert planner.prompt_id.endswith("@1.5.0")
     assert len(client.calls) == 1
     prompt = json.loads(client.calls[0]["user_prompt"])
     assert prompt["policy"]["recursive_decomposition"] is False
@@ -185,7 +185,9 @@ def test_planner_failure_and_malformed_output_fall_back_to_original_query() -> N
     }
 
 
-@pytest.mark.parametrize("failure", [TimeoutError("deadline"), RuntimeError("broken client")])
+@pytest.mark.parametrize(
+    "failure", [TimeoutError("deadline"), RuntimeError("broken client")]
+)
 def test_optional_planner_failure_preserves_original_and_records_error(failure):
     plan = _planner(Client(failure=failure)).plan("What is GP?")
     assert plan.retrieval_queries == ("What is GP?",)
@@ -213,7 +215,11 @@ def test_normalized_query_and_rewrites_are_derived_from_trusted_input():
     "response",
     [
         {"rewritten_query": "Gaussian process definition", "subqueries": []},
-        {"rewritten_query": "GP definition", "subqueries": [], "document_ids": ["private"]},
+        {
+            "rewritten_query": "GP definition",
+            "subqueries": [],
+            "document_ids": ["private"],
+        },
     ],
 )
 def test_lost_identifier_or_scope_injection_falls_back(response):
@@ -249,3 +255,67 @@ def test_multi_query_merge_dedupes_chunks_and_applies_result_limit() -> None:
     assert merged.metadata["retrieval_queries"] == ["M10", "C8"]
     assert merged.metadata["multi_query_fusion"] is True
     assert merged.metadata["reranker_applied"] is True
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_scoped_document_selector_is_only_removed_from_planning_input(scoped):
+    query = "水箱论文为何需要限制 PID 增益变化？"
+    client = Client(
+        json.dumps(
+            {
+                "rewritten_query": query,
+                "subqueries": ["Why constrain PID gain updates?"],
+            }
+        )
+    )
+    plan = _planner(client).plan(query, single_document_scope=scoped)
+    payload = json.loads(client.calls[0]["user_prompt"])
+    assert payload["current_query"] == (
+        "为何需要限制 PID 增益变化？" if scoped else query
+    )
+    assert payload["content_focus"] == (
+        "为何需要限制 PID 增益变化？" if scoped else query
+    )
+    assert payload["policy"]["single_document_scope"] is scoped
+    assert plan.retrieval_queries[0] == query
+    assert "PID" in plan.rewritten_query
+    assert len(plan.retrieval_queries) <= MAX_RAG_RETRIEVAL_QUERIES
+
+
+def test_complementary_query_evidence_survives_consensus_cutoff():
+    common = [_candidate(f"shared-{i}", i + 1) for i in range(7)]
+    first = [_candidate("original-only", 1), *common]
+    second = [*common[:2], _candidate("explanation", 3), *common[2:]]
+    results = [
+        RetrievalResult(
+            query=query,
+            candidates=[
+                c.model_copy(update={"rank": i}) for i, c in enumerate(items, 1)
+            ],
+            retrieval_strategy="hybrid",
+            elapsed_ms=1,
+        )
+        for query, items in [("original", first), ("focused", second)]
+    ]
+    merged = merge_query_results("question", results, limit=8)
+    assert "explanation" in {c.chunk.chunk_id for c in merged.candidates}
+    assert "original-only" in {c.chunk.chunk_id for c in merged.candidates}
+    assert len(merged.candidates) == 8
+    assert [c.rank for c in merged.candidates] == list(range(1, 9))
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "PID 论文为何限制更新？",
+        "《水箱控制》论文为何限制 PID 更新？",
+        "为什么论文中提到限制，文中为何使用 PID？",
+        "Why does PID gain variation occur?",
+    ],
+)
+def test_focus_does_not_drop_literals_or_a_question_without_document_selector(query):
+    client = Client(json.dumps({"rewritten_query": query, "subqueries": []}))
+    plan = _planner(client).plan(query, single_document_scope=True)
+    assert json.loads(client.calls[0]["user_prompt"])["current_query"] == query
+    assert plan.original_query == query
+    assert not plan.fallback_reason

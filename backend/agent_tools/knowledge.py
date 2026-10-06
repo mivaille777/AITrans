@@ -25,7 +25,7 @@ from backend.rag.citation_service import build_evidence_citations
 from backend.rag.evidence_builder import build_agent_evidence
 from backend.rag.models import DocumentChunk, RetrievalCandidate, RetrievalResult
 from backend.rag.observability import RagTraceEventData, build_rag_trace_events
-from backend.rag.query_planner import RagQueryPlan, merge_query_results
+from backend.rag.query_planner import RagQueryPlan, RagQueryPlanner, merge_query_results
 from backend.rag.retrieval_service import RetrievalService
 from backend.rag.stores.base import VectorSearchFilter
 
@@ -407,7 +407,13 @@ class KnowledgeAgentTools:
             VectorSearchFilter(document_ids=document_ids) if document_ids else None
         )
         plan = (
-            self._query_planner.plan(typed.query)
+            self._query_planner.plan(
+                typed.query,
+                **(
+                    {"single_document_scope": len(document_ids) == 1}
+                    if isinstance(self._query_planner, RagQueryPlanner) else {}
+                ),
+            )
             if self._query_planner is not None
             else RagQueryPlan(
                 original_query=typed.query,
@@ -568,6 +574,23 @@ class KnowledgeAgentTools:
                 "duplicate_read": False,
                 "duplicate_evidence_count": 0,
             },
+        )
+
+    def snapshot_document(self, context: AgentToolInvocationContext, document_id: str, *, generation_id: str | None = None):
+        """Server-selected inventory; never exposed as model-controlled arguments."""
+        allowed = context.knowledge_document_ids
+        if (allowed and document_id not in allowed) or (not allowed and not context.knowledge_scope_allow_global):
+            raise PermissionError("Document is outside the permitted scope")
+        snapshot = getattr(self._retrieval_service, "snapshot_document_chunks", None)
+        if not callable(snapshot):
+            raise LookupError("Published document inventory is unavailable")
+        return snapshot(document_id, generation_id=generation_id)
+
+    def read_document_batch(self, context: AgentToolInvocationContext, chunks: list[DocumentChunk]):
+        """Validate every server-selected chunk through the normal citation boundary."""
+        return self._read_chunks(
+            context=context, tool_name="read_document_batch", anchor_chunk_id=chunks[0].chunk_id,
+            chunks=chunks, neighbor_radius=0,
         )
 
     def _get_read_chunk(

@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from qdrant_client import QdrantClient
 
 from backend.rag.config import RagVisualRetrievalConfig
 from backend.rag.exceptions import RagRetrievalError, RagVectorStoreError
@@ -102,7 +101,7 @@ class FakeVisualStore:
             _candidate("shared", 2, channel="visual"),
         ][:top_k]
 
-    def has_document(self, document_id: str, *, index_version: str) -> bool:
+    def has_document(self, document_id: str, *, index_version: str, **kwargs) -> bool:
         return self.already_indexed
 
     def replace_document(self, document_id, chunks, vectors, *, index_version):
@@ -334,8 +333,8 @@ def published_visual(request, tmp_path):
         generation_id="g1", content_hash=sha256(source.read_bytes()).hexdigest(), source_uri=source.as_uri())
     config = _visual_config(prefetch_enabled=request.param, render_dpi=72,
         asset_storage_path=str(tmp_path / "assets"))
-    client = QdrantClient(":memory:")
-    store = create_adaptive_visual_vector_store(config, client=client)
+    config.storage_path = str(tmp_path / "faiss")
+    store = create_adaptive_visual_vector_store(config)
     manifest = FakeManifest(record)
     base = SimpleNamespace(
         _manifest=manifest,
@@ -361,7 +360,7 @@ def published_visual(request, tmp_path):
     service = AdaptiveVisualRetrievalService(base=base, provider=FakeVisualProvider(), store=store,
         config=config, default_final_top_k=2)
     yield service, coordinator, store, manifest, source, config
-    client.close()
+    store.close()
 
 
 def test_native_visual_retrieval_validation_jit_and_scope(published_visual):
@@ -415,16 +414,16 @@ def test_native_visual_evidence_rejects_changed_or_forged_source(published_visua
 def test_visual_reindex_uses_current_generation_and_failure_keeps_old_points(published_visual, monkeypatch):
     service, coordinator, store, manifest, source, config = published_visual
     old = service.retrieve("blue chart").candidates[0].chunk
-    original_upsert = store._client.upsert
-    def fail(**kwargs):
-        raise RuntimeError("injected upsert failure")
+    original_upsert = store.repository.write
+    def fail(*args, **kwargs):
+        raise RagVectorStoreError("injected write failure")
     manifest.record.generation_id = "g2"
-    monkeypatch.setattr(store._client, "upsert", fail)
+    monkeypatch.setattr(store.repository, "write", fail)
     with pytest.raises(RagVectorStoreError):
         coordinator.ensure_document(source, "doc-1")
     assert store.get_chunk(old.chunk_id, generation_id="g1") == old
     assert service.retrieve("blue chart").candidates == []
-    monkeypatch.setattr(store._client, "upsert", original_upsert)
+    monkeypatch.setattr(store.repository, "write", original_upsert)
     assert coordinator.ensure_document(source, "doc-1") == 1
     new = service.retrieve("blue chart")
     assert new.candidates[0].index_generation == "g2"
@@ -443,12 +442,15 @@ def test_visual_source_hash_is_checked_before_rendering(published_visual):
 def test_failed_visual_publication_removes_new_points_and_preserves_old(published_visual, monkeypatch):
     service, coordinator, store, manifest, source, config = published_visual
     old = service.retrieve("blue chart").candidates[0].chunk
-    original_publish = store._client.set_payload
-    def fail_after_publication(**kwargs):
-        original_publish(**kwargs)
-        raise RuntimeError("injected publication acknowledgement failure")
+    from contextlib import contextmanager
+    original_transaction = store.repository.transaction
+    @contextmanager
+    def fail_before_commit():
+        with original_transaction() as conn:
+            yield conn
+            raise RagVectorStoreError("injected commit failure")
     manifest.record.generation_id = "g2"
-    monkeypatch.setattr(store._client, "set_payload", fail_after_publication)
+    monkeypatch.setattr(store.repository, "transaction", fail_before_commit)
     with pytest.raises(RagVectorStoreError):
         coordinator.ensure_document(source, "doc-1")
     assert store.get_chunk(old.chunk_id, generation_id="g1") == old

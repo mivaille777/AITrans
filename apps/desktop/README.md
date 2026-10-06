@@ -26,28 +26,25 @@ FastAPI :8766 -> Agent / RAG / Research / Memory / Sandbox
 
 ## Development
 
-Canonical launcher:
+Run the single system launcher from the repository root:
 
 ```powershell
 .\start.ps1
 ```
 
-Explicit Electron launcher:
-
-```powershell
-.\start-electron.ps1
-```
-
 Useful modes:
 
 ```powershell
-.\start-electron.ps1 -InstallDependencies
-.\start-electron.ps1 -Verify
-.\start-electron.ps1 -BackendOnly
-.\start-electron.ps1 -BuiltRuntime
+.\start.ps1 -CheckOnly
+.\start.ps1 -InstallDependencies
+.\start.ps1 -Verify
+.\start.ps1 -BackendOnly
+.\start.ps1 -BuiltRuntime
 ```
 
-The branch-specific `start-electronrebuild.ps1` is retained only as a migration debug helper.
+The launcher uses the selected Conda environment for child processes and restores
+its temporary environment overrides on exit. Backend-only mode does not require
+Node.js or desktop packages. Older duplicate launchers have been removed.
 
 ## Runtime-neutral commands
 
@@ -82,7 +79,10 @@ Do not expose generic renderer `fs`, `exec`, `child_process`, or raw `ipcRendere
 
 ## Migration history
 
-Previous desktop launcher scripts are retained only under `docs/archive/legacy/` for historical reference.
+Historical phase reports are indexed in [docs/archive/README.md](../../docs/archive/README.md).
+The old executable startup scripts have been removed; they remain recoverable
+from Git history. Runtime parity manifests stay at their original paths for
+contract tests.
 
 ## Release readiness
 

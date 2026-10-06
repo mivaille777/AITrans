@@ -33,15 +33,18 @@ describe("Electron Stage 9 development runtime contract", () => {
     expect(source).toContain("Vite exited while Electron was running")
   })
 
-  it("keeps the branch-specific PowerShell launcher separate from legacy start.ps1", () => {
-    const source = read("../../../../../start-electronrebuild.ps1")
+  it("provides one branch-independent source launcher for the current runtime", () => {
+    const source = read("../../../../../start.ps1")
 
-    expect(source).toContain('$ExpectedBranch = "electronrebuild"')
+    expect(source).not.toContain("$ExpectedBranch")
     expect(source).toContain("[switch]$Verify")
     expect(source).toContain("[switch]$BackendOnly")
     expect(source).toContain("[switch]$BuiltRuntime")
-    expect(source).toContain("npm run electron:dev")
-    expect(source).toContain("npm run electron:preview")
+    expect(source).toContain("[switch]$CheckOnly")
+    expect(source).toContain('"desktop:dev"')
+    expect(source).toContain('"desktop:preview"')
+    expect(source).toContain("run --no-capture-output -n $CondaEnvironment")
     expect(source).toContain("python -m backend")
+    expect(source).toContain('Get-Command conda.exe -CommandType Application')
   })
 })

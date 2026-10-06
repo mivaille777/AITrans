@@ -126,7 +126,7 @@ local_files_only = false
 query_prefix = "Query: "
 # Separate collection: never mutate the established dense-text collection.
 collection_name = "aitrans_knowledge_visual"
-storage_path = "config/rag/qdrant"
+storage_path = "config/rag/faiss"
 distance = "dot"
 on_disk = false
 asset_storage_path = "config/rag/visual_pages"
@@ -181,10 +181,10 @@ local_files_only = false
 model_path = ""
 
 [rag.vector_store]
-provider = "qdrant_local"
+provider = "faiss_local"
 collection_name = "aitrans_knowledge"
 distance = "cosine"
-storage_path = "config/rag/qdrant"
+storage_path = "config/rag/faiss"
 
 [rag.retrieval]
 embedding_cache_size = 128

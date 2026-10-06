@@ -99,7 +99,7 @@ KnowledgeBoardDependency = Annotated[
 
 
 class _LazyRetrievalService:
-    """Avoid opening the process-wide Qdrant store for non-retrieval Agent runs."""
+    """Avoid opening the process-wide vector store store for non-retrieval Agent runs."""
 
     @staticmethod
     def retrieve(*args, **kwargs):

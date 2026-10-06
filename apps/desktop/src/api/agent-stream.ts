@@ -94,6 +94,7 @@ export function streamAgentRun(
   }
 
   socket.addEventListener("open", () => {
+    if (terminal) return
     if (cancelRequested) {
       emitCancelledBeforeStart()
       socket.close(1000, "cancelled-before-start")
@@ -122,13 +123,13 @@ export function streamAgentRun(
   })
 
   socket.addEventListener("error", () => {
-    if (terminal || cancelRequested) return
+    if (terminal) return
     terminal = true
     handlers.onTransportError(new Error("Unable to connect to the Agent stream."))
   })
 
   socket.addEventListener("close", (event) => {
-    if (terminal || cancelRequested) return
+    if (terminal) return
     terminal = true
     handlers.onTransportError(
       new Error(`Agent stream closed unexpectedly (${event.code}).`),
