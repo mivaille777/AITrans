@@ -71,3 +71,12 @@ it("reports failed policy updates while keeping the prior enabled state", async 
   await screen.findByRole("alert")
   expect(screen.getByRole("switch", { name: "Enable tool" }).getAttribute("aria-checked")).toBe("true")
 })
+
+it("blocks invalid test JSON before making an execution request", async () => {
+  setup()
+  await screen.findByRole("heading", { name: /search_knowledge_base/ })
+  await userEvent.type(screen.getByRole("textbox", { name: "Input parameters JSON" }), "broken")
+  await userEvent.click(screen.getByRole("button", { name: "Run tool" }))
+  await screen.findByText("Invalid JSON. Fix the input before running.")
+  expect(api.createToolTest).not.toHaveBeenCalled()
+})

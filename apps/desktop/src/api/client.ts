@@ -5,12 +5,14 @@ export const API_BASE_URL = (configuredBaseUrl ?? "http://127.0.0.1:8766").repla
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  readonly fieldErrors: { path: string; message: string }[]
 
-  constructor(message: string, status: number, code = "") {
+  constructor(message: string, status: number, code = "", fieldErrors: { path: string; message: string }[] = []) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.code = code
+    this.fieldErrors = fieldErrors
   }
 }
 
@@ -35,14 +37,17 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`
     let code = ""
+    let fieldErrors: { path: string; message: string }[] = []
     try {
-      const parsed = parseApiErrorPayload(await response.json())
+      const payload = await response.json()
+      const parsed = parseApiErrorPayload(payload)
+      if (Array.isArray(payload?.detail?.field_errors)) fieldErrors = payload.detail.field_errors
       if (parsed.message) detail = parsed.message
       if (parsed.code) code = parsed.code
     } catch {
       // Keep the HTTP status text when the backend did not return JSON.
     }
-    throw new ApiError(detail, response.status, code)
+    throw new ApiError(detail, response.status, code, fieldErrors)
   }
 
   return (await response.json()) as T

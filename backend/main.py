@@ -140,6 +140,8 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        from backend.api.tools import close_tool_test_service
+        close_tool_test_service()
         stop.set()
         worker_task.cancel()
         try:

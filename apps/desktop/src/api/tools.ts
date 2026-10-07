@@ -1,4 +1,4 @@
-import { apiGet, apiPatch } from "./client"
+import { apiGet, apiPatch, apiPost } from "./client"
 
 export interface ToolSummary {
   tool_id: string
@@ -64,3 +64,23 @@ export function getTools(filters: { q?: string; category?: string; status?: stri
 }
 export const getTool = (id: string) => apiGet<ToolDetail>(`/api/tools/${encodeURIComponent(id)}`)
 export const setToolEnabled = (tool: ToolDetail, enabled: boolean) => apiPatch<ToolDetail, { revision: string; enabled: boolean }>(`/api/tools/${encodeURIComponent(tool.tool_id)}`, { revision: tool.revision, enabled })
+
+export interface ToolTestRequest {
+  arguments: Record<string, unknown>
+  context_selection: { research_workspace_id: string; filesystem_workspace_id: string; knowledge_document_ids: string[]; reading_context: Record<string, unknown> }
+  timeout_seconds: number
+  stream_output: boolean
+  client_request_id: string
+}
+export interface ToolTestRun {
+  test_run_id: string; tool_id: string; tool_name: string; trace_id: string; tool_call_id: string
+  status: string; execution_state: string; created_at: string; updated_at: string; finished_at: string | null; elapsed_ms: number
+  result: Record<string, unknown> | null; result_truncated: boolean; error: { code: string; message: string } | null
+  approval_id: string | null; approval_summary: Record<string, unknown> | null
+}
+const testPath = (toolId: string, runId?: string) => `/api/tools/${encodeURIComponent(toolId)}/test-runs${runId ? `/${encodeURIComponent(runId)}` : ""}`
+export const validateToolTest = (id: string, body: ToolTestRequest) => apiPost<{ valid: boolean }, ToolTestRequest>(`/api/tools/${encodeURIComponent(id)}/validate`, body)
+export const createToolTest = (id: string, body: ToolTestRequest) => apiPost<ToolTestRun, ToolTestRequest>(testPath(id), body)
+export const getToolTest = (id: string, run: string) => apiGet<ToolTestRun>(testPath(id, run))
+export const cancelToolTest = (id: string, run: string) => apiPost<ToolTestRun, object>(testPath(id, run) + "/cancel", {})
+export const approveToolTest = (id: string, run: string, approval: string) => apiPost<ToolTestRun, { approval_id: string }>(testPath(id, run) + "/approve", { approval_id: approval })

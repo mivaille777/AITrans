@@ -36,4 +36,12 @@ Enabled state is persisted in tools.sqlite3 with atomic optimistic revisions. Ma
 
 Verification: 99 registry/native/runtime/API regression tests passed, followed by 82 policy/management/native tests including the new entry-point checks. Five frontend behavior/schema tests, test typecheck and app compilation passed. T03 remote SHA: 43a5258c3b1b872dd9a4f29313207345658bab4b (verified). No live model used.
 
-T05–T08 pending. Actual Electron interaction not yet verified.
+## T05 — governed real test execution
+
+Implemented strict validation and async create/get/cancel/approve APIs. Context scope is separate from arguments, research and filesystem IDs are resolved independently, knowledge scope must be explicit, and callers cannot send confirmed/run/trace/call IDs. Test writes consume an ephemeral approval bound to the actual server-created call ID and input/config hash, then revalidate immediately before execution. AgentToolExecutionService gained an optional server-selected call ID; ordinary callers retain generated IDs. No safe retry is used for inspector calls.
+
+Frontend has JSON validation, field error feedback, required context inputs, timeout, actual result envelope, bound approval review/rejection, response cancellation and reconnection polling. Cancellation and deadlines preserve running/unknown physical state until completion; late results cannot overwrite cancelled/timed-out status. This stage keeps runs in memory; durable history/events are T06.
+
+Verification: 12 execution/approval/API tests passed, previous 14 execution/catalog tests passed, 5 Tools UI tests passed, test typecheck/app compilation/Ruff passed. T04 remote SHA: c7e18b48cbe9dc4944a4a8ae851badc29d36927a (verified).
+
+T06–T08 pending. Actual Electron interaction not yet verified.

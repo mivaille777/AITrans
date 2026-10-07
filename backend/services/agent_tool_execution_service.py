@@ -153,6 +153,7 @@ class AgentToolExecutionService:
         emit_retry: Callable[[int, int, Exception, str], None] | None = None,
         on_call: Callable[[str], None] | None = None,
         write_confirmed: bool = False,
+        tool_call_id: str = "",
     ) -> AgentToolExecutionResult:
         definition = self.registry.get_definition(name)
         if definition is None:
@@ -175,7 +176,7 @@ class AgentToolExecutionService:
         idempotency_key = _digest((effective_run_id, effective_step_id, name,
                                    arguments_hash, spec.tool_version))
         call = AgentToolCallRecord(
-            tool_call_id=uuid4().hex, run_id=effective_run_id or "untracked",
+            tool_call_id=tool_call_id or uuid4().hex, run_id=effective_run_id or "untracked",
             step_id=effective_step_id, tool_name=name, effect=spec.effect,
             arguments_hash=arguments_hash, idempotency_key=idempotency_key,
             timeout_ms=max(1, int(spec.timeout_seconds * 1000)),

@@ -6,6 +6,7 @@ import { setToolEnabled } from "../../api/tools"
 import { queryKeys } from "../../shared/query/query-keys"
 import { ToolLibrary } from "./ToolLibrary"
 import { ToolDetailPanel } from "./ToolDetailPanel"
+import { ToolInspector } from "./ToolInspector"
 import { useToolsWorkspace } from "./useToolsWorkspace"
 import "./ToolsWorkspace.css"
 
@@ -31,7 +32,7 @@ export default function ToolsWorkspace() {
         {tool && <ToolDetailPanel key={tool.tool_id} tool={tool} actions={<button role="switch" aria-label="Enable tool" aria-checked={tool.enabled} className="tools-toggle" disabled={toggle.isPending || !tool.editable_fields.includes("enabled")} onClick={() => toggle.mutate({ enabled: !tool.enabled })}><i /><span>{tool.enabled ? "Enabled" : "Disabled"}</span></button>} onExample={(value) => { setDrafts((previous) => ({ ...previous, [tool.tool_id]: value })); setInspectorOpen(true) }} />}
       </main>
       <aside className="tools-inspector" aria-label="Test tool">
-        <header><h2><FlaskConical size={18} />Test tool</h2><button className="tools-close-inspector" aria-label="Close test panel" onClick={() => setInspectorOpen(false)}><X size={16} /></button></header><p className="tools-note">Try a call before using it in an agent.</p><label className="tools-input-label">Input parameters (JSON)<textarea className="tools-input-editor" aria-label="Input parameters JSON" value={drafts[state.selected] ?? "{}"} onChange={(event) => setDrafts((previous) => ({ ...previous, [state.selected]: event.target.value }))} /></label><div className="tools-notice">Test execution will be available after the governed execution stage.</div>
+        <header><h2><FlaskConical size={18} />Test tool</h2><button className="tools-close-inspector" aria-label="Close test panel" onClick={() => setInspectorOpen(false)}><X size={16} /></button></header><p className="tools-note">Try a call before using it in an agent.</p>{tool && <ToolInspector key={tool.tool_id} tool={tool} draft={drafts[state.selected] ?? "{}"} onDraft={(value) => setDrafts((previous) => ({ ...previous, [state.selected]: value }))} />}
       </aside>
       <button className="tools-open-inspector" onClick={() => setInspectorOpen(true)}><FlaskConical size={15} />Test tool</button>
     </div>
