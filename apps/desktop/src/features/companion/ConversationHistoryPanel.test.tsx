@@ -68,7 +68,24 @@ describe("ConversationHistoryPanel compact interaction", () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     vi.clearAllMocks()
+  })
+
+  it("shows relative age with an exact timestamp on the hover target", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date(2026, 9, 6, 12))
+    const updatedAt = new Date(2026, 9, 5, 21, 37, 8).toISOString()
+    getConversations.mockResolvedValue({
+      conversations: [{ ...conversationList.conversations[0], updated_at: updatedAt }],
+    })
+    renderPanel()
+
+    const time = await screen.findByText("昨天")
+    expect(time.tagName).toBe("TIME")
+    expect(time.getAttribute("datetime")).toBe(updatedAt)
+    expect(time.getAttribute("title")).toMatch(/^2026年10月5日 21:37:08 GMT/)
+    expect(time.getAttribute("aria-label")).toBe(time.getAttribute("title"))
   })
 
   it("keeps list rows compact and moves actions into the context menu", async () => {

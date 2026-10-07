@@ -635,6 +635,8 @@ button { -webkit-tap-highlight-color:transparent; }
 
 .ait-chat-conversation-time {
   flex:none;
+  padding:6px;
+  margin:-6px;
   color:#9a9a9a;
   font-size:10px;
   font-variant-numeric:tabular-nums;

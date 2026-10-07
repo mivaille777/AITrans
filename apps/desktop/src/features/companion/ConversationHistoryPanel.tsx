@@ -16,6 +16,7 @@ import {
   filterConversationHistory,
   groupConversationHistory,
 } from "./conversation-history"
+import { formatConversationTime, formatConversationTimestamp } from "./conversation-time"
 
 const HISTORY_LIMIT = 50
 
@@ -29,12 +30,6 @@ type ConversationContextMenuState = {
 type ConversationDeleteDialogState = {
   conversationId: string
   title: string
-}
-
-function formatConversationTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 }
 
 export default function ConversationHistoryPanel({
@@ -53,6 +48,7 @@ export default function ConversationHistoryPanel({
   onDeletedActive: () => void
 }) {
   const queryClient = useQueryClient()
+  const [now, setNow] = useState(() => new Date())
   const [search, setSearch] = useState("")
   const [editingId, setEditingId] = useState("")
   const [editingTitle, setEditingTitle] = useState("")
@@ -91,7 +87,7 @@ export default function ConversationHistoryPanel({
 
   const conversations = conversationsQuery.data?.conversations ?? []
   const filtered = filterConversationHistory(conversations, search)
-  const groups = groupConversationHistory(filtered).map((group) => ({
+  const groups = groupConversationHistory(filtered, now).map((group) => ({
     ...group,
     conversations: [...group.conversations].sort((left, right) => {
       const leftPinned = pinnedConversationIds.has(left.conversation_id) ? 1 : 0
@@ -99,6 +95,16 @@ export default function ConversationHistoryPanel({
       return rightPinned - leftPinned
     }),
   }))
+
+  useEffect(() => {
+    const updateTime = () => setNow(new Date())
+    const timer = window.setInterval(updateTime, 60_000)
+    document.addEventListener("visibilitychange", updateTime)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", updateTime)
+    }
+  }, [])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -280,6 +286,7 @@ export default function ConversationHistoryPanel({
                 {group.conversations.map((conversation) => {
                   const active = conversation.conversation_id === activeConversationId
                   const editing = conversation.conversation_id === editingId
+                  const timestamp = formatConversationTimestamp(conversation.updated_at)
                   return (
                     <div
                       key={conversation.conversation_id}
@@ -336,9 +343,14 @@ export default function ConversationHistoryPanel({
                               <p className="ait-chat-conversation-title">
                                 {conversation.title}
                               </p>
-                              <span className="ait-chat-conversation-time">
-                                {formatConversationTime(conversation.updated_at)}
-                              </span>
+                              <time
+                                className="ait-chat-conversation-time"
+                                dateTime={timestamp ? conversation.updated_at : undefined}
+                                title={timestamp || undefined}
+                                aria-label={timestamp || undefined}
+                              >
+                                {formatConversationTime(conversation.updated_at, now)}
+                              </time>
                             </div>
                             <p className="ait-chat-conversation-snippet">
                               {conversation.section_heading || conversation.resource_title || (
