@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class ManagementModel(BaseModel):
@@ -51,3 +51,8 @@ class ToolCatalog(ManagementModel):
     matched_total: int
     next_cursor: str | None = None
     catalog_revision: str
+
+
+class ToolUpdate(ManagementModel):
+    revision: str
+    enabled: StrictBool

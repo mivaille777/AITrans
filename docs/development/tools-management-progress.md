@@ -30,4 +30,10 @@ Implemented Overview, Parameters, Returns, Permissions and Examples. Visual sche
 
 Verification: 4 detail/schema behavior tests passed; 4 backend management/example tests passed; input/output schema viewed against live backend in browser. Typecheck and application compilation passed after correcting the new test's locator options. T02 remote SHA: 9f8c1037bdd5c8f0da099641d1cee6dffe0746a0 (verified).
 
-T04–T08 pending. Actual Electron interaction not yet verified.
+## T04 — persistent policy across entry points
+
+Enabled state is persisted in tools.sqlite3 with atomic optimistic revisions. Management keeps disabled tools visible; Agent automatic/explicit choices, native Chat, full-document dependencies, fallback retrieval, and legacy calls share execution checks. Legacy scoped/confirmed calls now require the governed test endpoint because the old DTO cannot express scope or approval. UI keeps persisted state after failed updates, provides reload on conflicts, and periodically refreshes catalogs.
+
+Verification: 99 registry/native/runtime/API regression tests passed, followed by 82 policy/management/native tests including the new entry-point checks. Five frontend behavior/schema tests, test typecheck and app compilation passed. T03 remote SHA: 43a5258c3b1b872dd9a4f29313207345658bab4b (verified). No live model used.
+
+T05–T08 pending. Actual Electron interaction not yet verified.

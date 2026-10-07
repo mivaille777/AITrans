@@ -83,7 +83,8 @@ def parse_arguments(name, encoded):
 
 class KnowledgeFunctionRun:
     def __init__(self, *, client, messages, state, tools_factory, request_id, stream,
-                 on_state, reset_output, cancel_event=None, on_phase=None):
+                 on_state, reset_output, cancel_event=None, on_phase=None, tool_policy=None):
+        self.tool_policy = tool_policy
         self.client, self.messages, self.state = client, messages, state
         self.tools_factory, self.request_id = tools_factory, request_id
         self.stream, self.on_state, self.reset_output, self.on_phase = stream, on_state, reset_output, on_phase
@@ -201,6 +202,8 @@ class KnowledgeFunctionRun:
 
     def available(self):
         names = list(contract._MODELS) if self.state.policy is not KnowledgeAccessPolicy.NEVER else []
+        if self.tool_policy is not None:
+            names = [name for name in names if self.tool_policy.is_enabled(name)]
         if self.searches >= 2:
             names = [name for name in names if name != "search_knowledge_base"]
         if self.reads >= 4:

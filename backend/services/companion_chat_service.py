@@ -130,6 +130,7 @@ class CompanionChatService:
         function_calling_enabled: bool = False,
         knowledge_tools_factory: Callable[[], KnowledgeAgentTools] | None = None,
         skill_runtime_factory: Callable[[], Any] | None = None,
+        tool_policy: Any | None = None,
     ) -> None:
         self._text_service = text_service
         self._chat_service = chat_service
@@ -148,6 +149,7 @@ class CompanionChatService:
         self._grounded_context_builder = GroundedContextBuilder()
         self.function_calling_enabled = bool(function_calling_enabled)
         self._knowledge_tools_factory = knowledge_tools_factory
+        self._tool_policy = tool_policy
         self._skill_runtime_factory = skill_runtime_factory
         if not isinstance(rag_rewrite_enabled, bool) or not isinstance(
             rag_router_enabled, bool
@@ -360,6 +362,12 @@ class CompanionChatService:
         trace_id: str | None = None,
     ) -> CompanionKnowledgeGrounding:
         trace_id = trace_id or f"companion_{uuid4().hex[:20]}"
+        if self._tool_policy is not None and not self._tool_policy.is_enabled("search_knowledge_base"):
+            return CompanionKnowledgeGrounding(
+                tool_context="Knowledge search is disabled in Tools management. Do not cite knowledge sources.",
+                fallback_reason="tool_disabled:search_knowledge_base",
+                debug_metadata={"trace_id": trace_id},
+            )
         try:
             retrieval_service = self._ensure_retrieval_service()
         except Exception as exc:
@@ -1145,6 +1153,7 @@ class CompanionChatService:
                 return self._knowledge_tools_factory()
             retrieval = self._ensure_retrieval_service()
             return KnowledgeAgentTools(
+                tool_policy=self._tool_policy,
                 retrieval_service=retrieval,
                 chunk_store=getattr(retrieval, "_sparse", None),
                 jit_search_read_enabled=True,
@@ -1168,7 +1177,7 @@ class CompanionChatService:
 
         try:
             yield from run_knowledge_functions(
-                client=client, messages=messages, state=state, tools_factory=tools_factory,
+                client=client, messages=messages, state=state, tools_factory=tools_factory, tool_policy=self._tool_policy,
                 request_id=request.request_id, stream=stream, on_state=on_state,
                 reset_output=reset_output or (lambda: None), cancel_event=cancel_event, on_phase=on_phase,
             )

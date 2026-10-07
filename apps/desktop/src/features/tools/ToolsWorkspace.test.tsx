@@ -61,3 +61,13 @@ it("switches detail tabs and fills the tool-specific test draft", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Use in test →" }))
   expect((screen.getByRole("textbox", { name: "Input parameters JSON" }) as HTMLTextAreaElement).value).toContain("agent")
 })
+
+it("reports failed policy updates while keeping the prior enabled state", async () => {
+  vi.mocked(api.getTool).mockResolvedValue({ ...record, editable_fields: ["enabled"] })
+  vi.mocked(api.setToolEnabled).mockRejectedValue(new Error("Configuration changed. Reload."))
+  setup()
+  await screen.findByRole("heading", { name: /search_knowledge_base/ })
+  await userEvent.click(screen.getByRole("switch", { name: "Enable tool" }))
+  await screen.findByRole("alert")
+  expect(screen.getByRole("switch", { name: "Enable tool" }).getAttribute("aria-checked")).toBe("true")
+})

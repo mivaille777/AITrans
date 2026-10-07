@@ -164,7 +164,9 @@ class AgentToolRegistry:
         sandbox_debug_service: Any | None = None,
         sandbox_network_permission_service: Any | None = None,
         external_tool_definitions: Iterable[TypedAgentToolDefinition] = (),
+        tool_policy: Any | None = None,
     ) -> None:
+        self.tool_policy = tool_policy
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         if translation_fallback_service is not None:
             fallback_service = translation_fallback_service
@@ -237,6 +239,7 @@ class AgentToolRegistry:
             )
 
         knowledge_tools = KnowledgeAgentTools(
+            tool_policy=tool_policy,
             retrieval_service=retrieval_service,
             query_planner=query_planner,
             chunk_store=chunk_store,
@@ -295,6 +298,9 @@ class AgentToolRegistry:
         }
 
     def list_tools(self) -> tuple[AgentToolSpec, ...]:
+        return tuple(spec for spec in self.list_all_tools() if self.tool_policy is None or self.tool_policy.is_enabled(spec.name))
+
+    def list_all_tools(self) -> tuple[AgentToolSpec, ...]:
         return tuple(definition.spec for definition in self._definitions)
 
     def get_tool(self, name: str) -> AgentToolSpec | None:
@@ -354,6 +360,8 @@ class AgentToolRegistry:
         return AgentToolRegistry._invocation_context(payload).reading_payload()
 
     def execute(self, name: str, **payload: Any) -> AgentToolExecutionResult:
+        if self.tool_policy is not None:
+            self.tool_policy.assert_enabled(name)
         definition = self.get_definition(name)
         if definition is None:
             raise KeyError(f"Unknown agent tool: {name}")

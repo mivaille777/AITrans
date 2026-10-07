@@ -26,6 +26,7 @@ from backend.sandbox.errors import SandboxError, SandboxImageBuildError
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxRuntimeHealth
 from backend.services.agent_tool_registry import AgentToolRegistry
+from backend.services.tool_policy_service import get_tool_policy_service
 from backend.services.browser_context_service import BrowserContextService
 from backend.services.companion_chat_service import CompanionChatService
 from backend.services.companion_handoff_service import CompanionHandoffService
@@ -238,9 +239,11 @@ def get_companion_chat_service() -> CompanionChatService:
             if not isinstance(rag_settings, dict):
                 rag_settings = {}
             _companion_chat_service = CompanionChatService(
+                tool_policy=get_tool_policy_service(),
                 function_calling_enabled=True,
                 skill_runtime_factory=get_skill_runtime,
                 knowledge_tools_factory=lambda: KnowledgeAgentTools(
+                    tool_policy=get_tool_policy_service(),
                     retrieval_service=get_retrieval_service(), chunk_store=get_rag_runtime().sparse_retriever,
                     jit_search_read_enabled=True, library_service=get_knowledge_library_service()),
                 query_router=CompanionQueryRouter(),
@@ -324,6 +327,7 @@ def get_agent_tool_registry() -> AgentToolRegistry:
             )
             rag_runtime = get_rag_runtime()
             _agent_tool_registry = AgentToolRegistry(
+                tool_policy=get_tool_policy_service(),
                 translation_service=get_translation_service(),
                 quick_action_service=get_quick_action_service(),
                 research_note_service=research_note_service,

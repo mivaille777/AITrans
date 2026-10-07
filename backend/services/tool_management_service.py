@@ -27,8 +27,9 @@ def fingerprint(value: Any) -> str:
 
 
 class ToolManagementService:
-    def __init__(self, registry):
+    def __init__(self, registry, policy=None):
         self.registry = registry
+        self.policy = policy or getattr(registry, "tool_policy", None)
 
     def detail(self, tool_id: str) -> ToolDetail:
         name = tool_id.removeprefix("builtin:")
@@ -70,6 +71,12 @@ class ToolManagementService:
         output = definition.result_model.model_json_schema()
         examples = self._examples(name, schema, definition.args_model)
         revision = fingerprint([spec.tool_version, schema, output, spec.description])
+        settings = (
+            self.policy.repository.settings(tool_id)
+            if self.policy
+            else {"enabled": True, "revision": 0, "updated_at": None}
+        )
+        enabled = bool(settings["enabled"])
         return ToolDetail(
             tool_id=tool_id,
             name=name,
@@ -78,13 +85,14 @@ class ToolManagementService:
             category=spec.category,
             effect=spec.effect,
             available=not reason,
-            effective_enabled=not reason,
+            enabled=enabled,
+            effective_enabled=enabled and not reason,
             unavailable_reason=reason,
             risk_level="confirmation_required"
             if spec.requires_confirmation
             else "unknown",
             tool_version=spec.tool_version,
-            revision=revision,
+            revision=revision + "." + str(settings["revision"]),
             input_schema=schema,
             output_schema=output,
             input_profiles=profiles,
@@ -116,7 +124,26 @@ class ToolManagementService:
                 "cancel_stops_executor": False,
                 "supports_test": True,
             },
+            editable_fields=["enabled"],
+            updated_at=settings["updated_at"],
         )
+
+    def update(self, tool_id, payload):
+        current = self.detail(tool_id)
+        if payload.revision != current.revision:
+            raise ToolManagementError(
+                "revision_conflict",
+                "Tool configuration changed. Reload and retry.",
+                409,
+            )
+        if self.policy is None:
+            raise ToolManagementError(
+                "policy_unavailable", "Tool policy is unavailable.", 503
+            )
+        self.policy.update(
+            tool_id, int(current.revision.rsplit(".", 1)[1]), payload.enabled
+        )
+        return self.detail(tool_id)
 
     @staticmethod
     def _examples(name, schema, model):
@@ -147,7 +174,12 @@ class ToolManagementService:
         if status not in {"all", "enabled", "disabled"} or not 1 <= limit <= 200:
             raise ToolManagementError("invalid_filter", "Invalid catalog filter.")
         details = [
-            self.detail("builtin:" + spec.name) for spec in self.registry.list_tools()
+            self.detail("builtin:" + spec.name)
+            for spec in (
+                self.registry.list_all_tools()
+                if hasattr(self.registry, "list_all_tools")
+                else self.registry.list_tools()
+            )
         ]
         details.sort(key=lambda item: (item.category, item.name))
         revision = fingerprint([item.model_dump() for item in details])

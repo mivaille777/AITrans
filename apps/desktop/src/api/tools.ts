@@ -1,4 +1,4 @@
-import { apiGet } from "./client"
+import { apiGet, apiPatch } from "./client"
 
 export interface ToolSummary {
   tool_id: string
@@ -63,3 +63,4 @@ export function getTools(filters: { q?: string; category?: string; status?: stri
   return apiGet<ToolCatalog>(`/api/tools?${query}`)
 }
 export const getTool = (id: string) => apiGet<ToolDetail>(`/api/tools/${encodeURIComponent(id)}`)
+export const setToolEnabled = (tool: ToolDetail, enabled: boolean) => apiPatch<ToolDetail, { revision: string; enabled: boolean }>(`/api/tools/${encodeURIComponent(tool.tool_id)}`, { revision: tool.revision, enabled })

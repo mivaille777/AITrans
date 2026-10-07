@@ -14,13 +14,14 @@ export function useToolsWorkspace() {
     const timer = setTimeout(() => setQuery(search), 250)
     return () => clearTimeout(timer)
   }, [search])
-  const totals = useQuery({ queryKey: ["tools", "counts"], queryFn: () => getTools(), retry: false })
+  const totals = useQuery({ queryKey: ["tools", "counts"], queryFn: () => getTools(), retry: false, refetchInterval: 10_000 })
   const library = useInfiniteQuery({
     queryKey: [...queryKeys.tools.list(query, status), category],
     queryFn: ({ pageParam }) => getTools({ q: query, status, category, ...(pageParam ? { cursor: pageParam } : {}) }),
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     retry: false,
+    refetchInterval: 10_000,
   })
   const items = library.data?.pages.flatMap((page) => page.items) ?? []
   const selected = params.get("tool") ?? items.find((tool) => tool.name === "search_knowledge_base")?.tool_id ?? items[0]?.tool_id ?? ""

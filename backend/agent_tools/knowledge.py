@@ -337,6 +337,7 @@ class KnowledgeAgentTools:
         jit_search_read_enabled: bool = False,
         workspace_service: KnowledgeWorkspaceService | None = None,
         library_service: Any | None = None,
+        tool_policy: Any | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._query_planner = query_planner
@@ -344,11 +345,17 @@ class KnowledgeAgentTools:
         self.jit_search_read_enabled = bool(jit_search_read_enabled)
         self._workspace_service = workspace_service
         self._library_service = library_service
+        self.tool_policy = tool_policy
+
+    def _assert_tool_enabled(self, name):
+        if self.tool_policy is not None:
+            self.tool_policy.assert_enabled(name)
 
     def list_knowledge_documents(
         self, context: AgentToolInvocationContext, args: BaseModel,
     ) -> AgentToolExecutionResult:
         typed = cast(KnowledgeListArgs, args)
+        self._assert_tool_enabled("list_knowledge_documents")
         if self._library_service is None:
             raise RuntimeError("Knowledge library is unavailable.")
         if not context.knowledge_document_ids and not context.knowledge_scope_allow_global:
@@ -378,6 +385,7 @@ class KnowledgeAgentTools:
         args: BaseModel,
     ) -> AgentToolExecutionResult:
         typed = cast(KnowledgeSearchArgs, args)
+        self._assert_tool_enabled("search_knowledge_base")
         if self._retrieval_service is None:
             raise RuntimeError("Knowledge retrieval service is unavailable.")
 
@@ -579,6 +587,8 @@ class KnowledgeAgentTools:
     def snapshot_document(self, context: AgentToolInvocationContext, document_id: str, *, generation_id: str | None = None):
         """Server-selected inventory; never exposed as model-controlled arguments."""
         allowed = context.knowledge_document_ids
+        self._assert_tool_enabled("list_knowledge_documents")
+        self._assert_tool_enabled("read_knowledge_section")
         if (allowed and document_id not in allowed) or (not allowed and not context.knowledge_scope_allow_global):
             raise PermissionError("Document is outside the permitted scope")
         snapshot = getattr(self._retrieval_service, "snapshot_document_chunks", None)
@@ -588,6 +598,8 @@ class KnowledgeAgentTools:
 
     def read_document_batch(self, context: AgentToolInvocationContext, chunks: list[DocumentChunk]):
         """Validate every server-selected chunk through the normal citation boundary."""
+        self._assert_tool_enabled("read_knowledge_chunk")
+        self._assert_tool_enabled("read_knowledge_section")
         return self._read_chunks(
             context=context, tool_name="read_document_batch", anchor_chunk_id=chunks[0].chunk_id,
             chunks=chunks, neighbor_radius=0,
@@ -609,6 +621,7 @@ class KnowledgeAgentTools:
         args: BaseModel,
     ) -> AgentToolExecutionResult:
         typed = cast(KnowledgeReadChunkArgs, args)
+        self._assert_tool_enabled("read_knowledge_chunk")
         if self._chunk_store is None:
             raise RuntimeError("Knowledge chunk store is unavailable.")
         chunk = self._get_read_chunk(typed.chunk_id, context)
@@ -629,6 +642,7 @@ class KnowledgeAgentTools:
         args: BaseModel,
     ) -> AgentToolExecutionResult:
         typed = cast(KnowledgeReadSectionArgs, args)
+        self._assert_tool_enabled("read_knowledge_section")
         if self._chunk_store is None:
             raise RuntimeError("Knowledge chunk store is unavailable.")
         anchor = self._get_read_chunk(typed.chunk_id, context)
@@ -664,6 +678,7 @@ class KnowledgeAgentTools:
         _: BaseModel,
     ) -> AgentToolExecutionResult:
         service = self._workspace_service
+        self._assert_tool_enabled("save_knowledge_card")
         if service is None:
             raise RuntimeError("Knowledge workspace service is unavailable.")
 

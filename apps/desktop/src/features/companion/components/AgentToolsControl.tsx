@@ -138,6 +138,7 @@ export function AgentToolsControl({
             </div>
           )}
           <p className="ait-chat-tools-footnote">
+            {selectedTools.some((name) => !tools.some((tool) => tool.name === name)) && <span role="status">A selected tool is unavailable or disabled. Update your selection before running. </span>}
             Selecting a tool routes the next message through Agent WebSocket execution.
           </p>
         </div>

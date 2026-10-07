@@ -551,7 +551,12 @@ def execute_agent_tool(
     registry: AgentToolRegistryDependency,
 ) -> AgentToolExecuteResponse:
     try:
+        spec = registry.get_tool(tool_name)
+        if spec and (spec.requires_confirmation or spec.category == "knowledge"):
+            raise PermissionError("Use the governed Tools test endpoint for scoped or confirmed calls.")
         result = registry.execute(tool_name, **payload.model_dump())
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail={"code": "tool_access_denied", "message": str(exc)}) from exc
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)

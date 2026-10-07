@@ -18,6 +18,7 @@ from backend.services.product_agent_service import ProductAgentService
 from backend.services.quick_action_service import QuickActionService
 from backend.services.reading_selection_resolver import ReadingSelectionResolver
 from backend.services.skill_dependencies import get_skill_runtime
+from backend.services.tool_policy_service import get_tool_policy_service
 
 _gateway: LLMGateway | None = None
 _gateway_lock = Lock()
@@ -84,6 +85,7 @@ def build_routed_product_agent_service(
         text_service=planner_text_service
     )
     synthesis = CompanionChatService(
+        tool_policy=get_tool_policy_service(),
         text_service=gateway.create_text_service("agent_synthesis"),
         reading_resolver=resolver,
         function_calling_enabled=True,

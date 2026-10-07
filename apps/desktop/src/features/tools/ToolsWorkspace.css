@@ -30,6 +30,7 @@
 .tools-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .tools-title>div{min-width:0}.tools-tool-icon{width:46px;height:46px;flex:none;display:grid;place-items:center;background:#e8f3ed;color:#356c57;border-radius:10px}
 .tools-title h2{margin:0;font-size:21px;letter-spacing:-.03em;font-weight:650;overflow-wrap:anywhere;display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.tools-toggle{display:flex;align-items:center;gap:7px;border:0;background:none;font-size:10px;color:#71808b;cursor:pointer;white-space:nowrap}.tools-toggle i{display:block;width:30px;height:17px;border-radius:20px;background:#d0d6dc;position:relative}.tools-toggle i:after{content:"";position:absolute;top:2px;left:2px;background:white;width:13px;height:13px;border-radius:50%}.tools-toggle[aria-checked=true] i{background:#43806a}.tools-toggle[aria-checked=true] i:after{left:15px}.tools-toggle:disabled{opacity:.5;cursor:wait}
 .tools-title>.tools-tool-icon+div{flex:1}
 .tools-badge{font-size:10px;font-weight:500;padding:4px 7px;border-radius:7px;background:#f0f2f4;color:#74808e;letter-spacing:0}
 .tools-badge.is-green{background:#e8f3ed;color:#3b7762}

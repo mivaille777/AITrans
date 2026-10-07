@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.dependencies import get_agent_tool_registry
-from backend.models.tool_management import ToolCatalog, ToolDetail
+from backend.models.tool_management import ToolCatalog, ToolDetail, ToolUpdate
 from backend.services.tool_management_service import (
     ToolManagementError,
     ToolManagementService,
@@ -43,3 +43,8 @@ def list_tools(
 @router.get("/{tool_id}", response_model=ToolDetail)
 def tool_detail(tool_id: str, service: Service):
     return call(lambda: service.detail(tool_id))
+
+
+@router.patch("/{tool_id}", response_model=ToolDetail)
+def update_tool(tool_id: str, payload: ToolUpdate, service: Service):
+    return call(lambda: service.update(tool_id, payload))
