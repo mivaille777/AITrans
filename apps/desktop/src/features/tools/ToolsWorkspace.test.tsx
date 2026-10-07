@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import * as api from "../../api/tools"
-import type { ToolDetail } from "../../api/tools"
+import type { ToolDetail, ToolTestRun } from "../../api/tools"
 import ToolsWorkspace from "./ToolsWorkspace"
 
 vi.mock("../../api/tools")
@@ -107,4 +107,32 @@ it("requires a preview and explicit resolution before replacing imported presets
   await userEvent.click(screen.getByRole("checkbox", { name: "Replace existing configurations and disable them" }))
   await userEvent.click(screen.getByRole("button", { name: "Apply import" }))
   await waitFor(() => expect(api.applyToolImport).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preview_token: "preview" }), true))
+})
+
+it("refreshes stored logs when polling observes completion without SSE", async () => {
+  const finished: ToolTestRun = {
+    test_run_id: "test_complete", tool_id: record.tool_id, tool_name: record.name,
+    trace_id: "trace_complete", tool_call_id: "call_complete", status: "succeeded", execution_state: "stopped",
+    created_at: "2026-10-07T00:00:00Z", updated_at: "2026-10-07T00:00:01Z", finished_at: "2026-10-07T00:00:01Z",
+    elapsed_ms: 1000, result: {}, result_truncated: false, error: null, approval_id: null, approval_summary: null,
+  }
+  vi.mocked(api.getToolTestHistory).mockResolvedValue({ items: [finished], next_cursor: null })
+  vi.mocked(api.getToolTest).mockResolvedValue(finished)
+  vi.mocked(api.getToolTestEvents).mockResolvedValueOnce({ items: [] }).mockResolvedValue({ items: [{ seq: 3, type: "test_succeeded", test_run_id: finished.test_run_id, status: "succeeded", execution_state: "stopped", at: finished.finished_at!, elapsed_ms: 1000, error_code: null }] })
+  setup()
+  await screen.findByRole("heading", { name: /search_knowledge_base/ })
+  await userEvent.click(screen.getByRole("tab", { name: "Logs" }))
+  await screen.findByText(/test succeeded · stopped/)
+  expect(api.getToolTestEvents).toHaveBeenCalledTimes(2)
+})
+
+it("opens the test drawer with focus and returns it on Escape", async () => {
+  setup()
+  await screen.findByRole("heading", { name: /search_knowledge_base/ })
+  const trigger = screen.getByRole("button", { name: "Test tool" })
+  await userEvent.click(trigger)
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close test panel" }))
+  await userEvent.keyboard("{Escape}")
+  expect(trigger.getAttribute("aria-expanded")).toBe("false")
+  expect(document.activeElement).toBe(trigger)
 })

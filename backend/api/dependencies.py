@@ -26,7 +26,6 @@ from backend.sandbox.errors import SandboxError, SandboxImageBuildError
 from backend.sandbox.manager import SandboxManager
 from backend.sandbox.models import SandboxRuntimeHealth
 from backend.services.agent_tool_registry import AgentToolRegistry
-from backend.services.tool_policy_service import get_tool_policy_service
 from backend.services.browser_context_service import BrowserContextService
 from backend.services.companion_chat_service import CompanionChatService
 from backend.services.companion_handoff_service import CompanionHandoffService
@@ -51,6 +50,7 @@ from backend.services.sandbox_network_permission_service import (
     SandboxNetworkPermissionService,
 )
 from backend.services.skill_dependencies import get_skill_runtime
+from backend.services.tool_policy_service import get_tool_policy_service
 from backend.services.translation_service import TranslationService
 from backend.services.workspace_apply_service import WorkspaceApplyService
 
@@ -335,7 +335,11 @@ def get_agent_tool_registry() -> AgentToolRegistry:
                 cross_document_research_service=cross_document_service,
                 evidence_ledger_service=get_evidence_ledger_service(),
                 retrieval_service=rag_runtime.retrieval_service,
-                query_planner=build_rag_query_planner(),
+                query_planner=(
+                    build_rag_query_planner()
+                    if rag_runtime.config.query_rewrite_enabled
+                    else None
+                ),
                 chunk_store=rag_runtime.sparse_retriever,
                 jit_search_read_enabled=rag_runtime.config.jit_search_read_enabled,
                 knowledge_library_service=get_knowledge_library_service(),

@@ -60,4 +60,32 @@ Added create/edit/archive APIs and versioned JSON import preview. Imports valida
 
 Verification: 23 preset/policy/execution/runtime tests passed, with actual Agent dispatch into a typed test executor; four preset tests cover scope/budget/primitive policy, immutable authority, stale preview/atomic rollback and archive identity. Seven frontend workflow tests and typechecks passed. T06 remote SHA: 03319fab8346963c91c1aa6028283fa1550c7759 (verified). Real indexed retrieval and desktop/browser acceptance remain T08.
 
-T08 pending. Actual Electron interaction not yet verified.
+## T08 — integrated verification and delivery
+
+Implementation complete; automated and real API/browser acceptance passed. Required native Windows Electron GUI acceptance remains pending, so the overall T08 acceptance is not marked complete. Docker engine is unavailable; real Sandbox integration is separately unverified.
+
+Added offline isolated server and real HTTP acceptance scripts, authored Markdown fixtures, sanitized machine-readable evidence, browser screenshots, usage/API/troubleshooting guide and an acceptance record. The repeatable server ran actual local Qwen3 Embedding/Reranker retrieval, scoped chunk reads, reading context, approved Research Note persistence, custom preset execution, atomic import and archival. All nine real integration checks passed; the control document was excluded. No generative Chat/Agent LLM run is claimed.
+
+Acceptance found and fixed optional RAG rewriting ignoring its disabled configuration, SSE final-event drain race, stale final logs in polling fallback, primitive call-name collision during imports, and narrow drawer keyboard focus/escape return. Added regressions for those paths and bounded durable Unicode result previews. Browser verified 1680 full workbench, 1366 test drawer, 900 library drawer, real bound write approval, restored history, keyboard tabs/modal/drawer and complete final logs. Temporary viewport override restored.
+
+Verification: full frontend Vitest 116 files/529 tests passed; new test locator type error fixed and test typecheck rechecked; 183 backend tests passed with 3 existing SWIG warnings; desktop:check 16 files/66 contract tests plus Electron compilation/typechecks passed; full build/PDF.js offline guard passed; lint exits 0 with old unrelated warnings, Tools lint clean; changed Tools Python/tests/scripts Ruff clean. Earlier dependency-link scanning failure and the corrected test type error are recorded in tools-management-acceptance.md. Latest targeted Tools UI test is also rerun after the locator correction.
+
+Evidence: docs/development/evidence/tools-management-live.json and docs/design/acceptance/. Instructions: tools-management-guide.md. Detailed limits: tools-management-acceptance.md. The original D:/AITrans uncommitted Chat/RAG/full-read/startup changes remain untouched and need separate integration before merge. No deployment or automatic merge.
+
+T07 remote SHA: 4adbaa96f218b9139ab211a4b8833617ca7e1618 (verified).
+
+### Phase status and remote records
+
+| Phase | Implementation | Acceptance | Remote sync / verified commit |
+| --- | --- | --- | --- |
+| T00 | Complete | Complete | 68b38c42440d7a8a69fc776773696abf1242f631 |
+| T01 | Complete | Complete | dd947d3542f5e0aabac453583db5981b34ef13af |
+| T02 | Complete | Complete | 9f8c1037bdd5c8f0da099641d1cee6dffe0746a0 |
+| T03 | Complete | Complete | 43a5258c3b1b872dd9a4f29313207345658bab4b |
+| T04 | Complete | Complete | c7e18b48cbe9dc4944a4a8ae851badc29d36927a |
+| T05 | Complete | Complete | 2fc3cdfc17160683caa0676293a863021039eeb5 |
+| T06 | Complete | Complete | 03319fab8346963c91c1aa6028283fa1550c7759 |
+| T07 | Complete | Complete | 4adbaa96f218b9139ab211a4b8833617ca7e1618 |
+| T08 | Complete | API/browser/automated passed; native Electron pending | Pending current stage push |
+
+T08 commit and remote verification will be appended after this stage is pushed. No later development phase starts while synchronization is pending.

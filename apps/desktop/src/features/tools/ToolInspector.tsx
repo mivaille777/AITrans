@@ -17,20 +17,22 @@ export function ToolInspector({ tool, draft, onDraft }: { tool: ToolDetail; draf
   const [error, setError] = useState("")
   const [run, setRun] = useState<ToolTestRun | null>(null)
   const [events, setEvents] = useState<ToolTestEvent[]>([])
-  const [connected, setConnected] = useState(false)
+  const [connection, setConnection] = useState({ id: "", value: false })
   const cache = useQueryClient()
   const history = useInfiniteQuery({ queryKey: ["tools", "history", tool.tool_id], queryFn: ({ pageParam }) => getToolTestHistory(tool.tool_id, pageParam), initialPageParam: undefined as string | undefined, getNextPageParam: (page) => page?.next_cursor ?? undefined, refetchInterval: 3000 })
   const recent = history.data?.pages.flatMap((page) => page?.items ?? []) ?? []
   const selectedRun = run?.test_run_id ?? recent[0]?.test_run_id
+  const connected = connection.id === selectedRun && connection.value
   const retryRequest = useRef<{ body: ToolTestRequest; digest: string } | null>(null)
   const query = useQuery({ queryKey: ["tools", "test", tool.tool_id, selectedRun], queryFn: () => getToolTest(tool.tool_id, selectedRun!), enabled: Boolean(selectedRun), refetchInterval: (q) => { const value = q.state.data ?? run; return value && (!value.finished_at || ["running", "unknown"].includes(value.execution_state)) ? (connected ? 3000 : 700) : false } })
   const current = query.data ?? run
   const active = current && !current.finished_at
   const log = useQuery({ queryKey: ["tools", "events", tool.tool_id, selectedRun], queryFn: () => getToolTestEvents(tool.tool_id, selectedRun!), enabled: Boolean(selectedRun), refetchInterval: active && !connected ? 2000 : false })
-  const combinedEvents = [...new Map([...(log.data?.items ?? []), ...events].map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq)
+  const combinedEvents = [...new Map([...(log.data?.items ?? []), ...events.filter((event) => event.test_run_id === selectedRun)].map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq)
+  useEffect(() => { if (current?.finished_at) void cache.invalidateQueries({ queryKey: ["tools", "events", tool.tool_id, selectedRun] }) }, [current?.finished_at, current?.updated_at, cache, tool.tool_id, selectedRun])
   useEffect(() => {
-    setEvents([]); setConnected(false)
     if (!selectedRun || typeof EventSource === "undefined") return
+    const setConnected = (value: boolean) => setConnection({ id: selectedRun, value })
     let highest = 0
     const source = new EventSource(`${API_BASE_URL}/api/tools/${encodeURIComponent(tool.tool_id)}/test-runs/${encodeURIComponent(selectedRun)}/events`)
     source.onopen = () => setConnected(true)
@@ -40,8 +42,9 @@ export function ToolInspector({ tool, draft, onDraft }: { tool: ToolDetail; draf
         const event = JSON.parse(message.data) as ToolTestEvent
         if (event.test_run_id !== selectedRun || event.seq <= highest) return
         highest = event.seq
-        setEvents((previous) => [...previous, event].slice(-200))
+        setEvents((previous) => [...(previous[0]?.test_run_id === selectedRun ? previous : []), event].slice(-200))
         void cache.invalidateQueries({ queryKey: ["tools", "test", tool.tool_id, selectedRun] })
+        void cache.invalidateQueries({ queryKey: ["tools", "events", tool.tool_id, selectedRun] })
       } catch { setConnected(false) }
     }
     source.addEventListener("closed", () => { source.close(); setConnected(false) })

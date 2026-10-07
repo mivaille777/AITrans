@@ -42,6 +42,8 @@ class ToolCustomService:
                 "import_duplicate", "Duplicate call names in import."
             )
         for item in document.tools:
+            if item.name in self.management.registry._definition_by_name:
+                raise ToolManagementError("import_conflict", "Call name belongs to a registered primitive.", 409)
             preset_definition(self.management.registry, item.model_dump())
 
     def preview(self, document):

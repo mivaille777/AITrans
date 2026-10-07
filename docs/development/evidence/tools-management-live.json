@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-07T06:46:42.799252+00:00",
+  "base_url": "http://127.0.0.1:8772",
+  "source": "real localhost API; authored Markdown; configured local embedding runtime",
+  "checks": [
+    "Two authored Markdown documents indexed by the configured embedding runtime",
+    "Actual scoped search returned indexed chunks; control document excluded",
+    "Duplicate reuse, conflicting reuse and scope/identifier injection rejected",
+    "Real source chunk read through the governed execution endpoint",
+    "Management policy blocks actual test and legacy execution, then restores",
+    "A real research note requires bound approval; grant replay and rejected writes cannot execute",
+    "A persisted custom preset runs real retrieval and obeys primitive disabled policy",
+    "Preview/apply/stale-token import and archive preserve test history",
+    "Ordered persisted lifecycle includes final success without source text"
+  ],
+  "runs": [
+    {
+      "test_run_id": "test_ac97005aea304831a283297ce4997134",
+      "tool_id": "builtin:search_knowledge_base",
+      "trace_id": "trace_0faeb0a24f8a4df2854d2102c58cba8c",
+      "tool_call_id": "call_a272d773adf443d79b0c4248276a77d2",
+      "status": "succeeded",
+      "execution_state": "stopped",
+      "elapsed_ms": 1375
+    },
+    {
+      "test_run_id": "test_db488217462146aaa87033dc3f6a92b4",
+      "tool_id": "builtin:read_knowledge_chunk",
+      "trace_id": "trace_83932ec7c1b1451a9f06f485f0c7b5b9",
+      "tool_call_id": "call_42fbba53b4c04e7c8365eef12dd88e91",
+      "status": "succeeded",
+      "execution_state": "stopped",
+      "elapsed_ms": 62
+    },
+    {
+      "test_run_id": "test_3ffad5d1537c4ffb8fe652df01ed05a7",
+      "tool_id": "builtin:inspect_reading_context",
+      "trace_id": "trace_09fa6f524ae14ef2bbd5f32204f04c76",
+      "tool_call_id": "call_e4c0a99a83fe4090aed93dda4b67abd0",
+      "status": "succeeded",
+      "execution_state": "stopped",
+      "elapsed_ms": 63
+    },
+    {
+      "test_run_id": "test_b3c540ff0e2848f1aad3d5c8802ab3f1",
+      "tool_id": "builtin:save_research_note",
+      "trace_id": "trace_a2b6032ddbbc489f9772b82681d10d00",
+      "tool_call_id": "call_d8102774a7054a56916df321bbc5cd1c",
+      "status": "succeeded",
+      "execution_state": "stopped",
+      "elapsed_ms": 77
+    },
+    {
+      "test_run_id": "test_f5534850dfc24d548496cfd83d170831",
+      "tool_id": "custom:custom_acceptance_search_7c5c1328",
+      "trace_id": "trace_36cfe17b6f2242749f0f7f93d652f350",
+      "tool_call_id": "call_27db4cc686d547299d55880e47c45501",
+      "status": "succeeded",
+      "execution_state": "stopped",
+      "elapsed_ms": 1108
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "doc_86fba39a3767e36fee9b5083",
+      "chunk_count": 5,
+      "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+      "embedding_dimension": 1024
+    },
+    {
+      "document_id": "doc_d1de85d73a55fb0b8e3dff0c",
+      "chunk_count": 2,
+      "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+      "embedding_dimension": 1024
+    }
+  ],
+  "retrieval_strategy": "hybrid",
+  "dense_candidates": 3,
+  "sparse_candidates": 2,
+  "research_note_id": "a34e314dc01d4d82940fcde14acf0c2a",
+  "status": "passed"
+}

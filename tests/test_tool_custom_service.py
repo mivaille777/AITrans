@@ -189,3 +189,15 @@ def test_archive_blocks_calls_and_preserves_identity_for_history(tmp_path):
     with pytest.raises(ToolManagementError):
         service.create(preset())
     assert service.management.detail(tool.tool_id).tool_id == tool.tool_id
+
+
+def test_import_cannot_shadow_a_server_registered_primitive(tmp_path):
+    service, registry, _ = setup(tmp_path)
+    primitive = registry.get_definition("search_knowledge_base")
+    name = "custom_reserved_search"
+    registry._definition_by_name[name] = replace(
+        primitive, spec=replace(primitive.spec, name=name)
+    )
+    with pytest.raises(ToolManagementError, match="registered"):
+        service.preview(ToolImportDocument(tools=[preset(name)]))
+    assert service.repository.custom(name) is None

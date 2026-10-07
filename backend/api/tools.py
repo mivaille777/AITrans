@@ -17,6 +17,7 @@ from backend.models.tool_configuration import (
 )
 from backend.models.tool_management import ToolCatalog, ToolDetail, ToolUpdate
 from backend.models.tool_test import ToolTestApproval, ToolTestRequest, ToolTestRun
+from backend.services.sandbox_approval_service import SandboxApprovalError
 from backend.services.tool_custom_service import ToolCustomService
 from backend.services.tool_management_service import (
     ToolManagementError,
@@ -69,6 +70,11 @@ def call(operation):
         return operation()
     except ToolManagementError as exc:
         raise HTTPException(exc.status, detail=exc.detail()) from exc
+    except SandboxApprovalError as exc:
+        raise HTTPException(
+            exc.status_code,
+            detail={"code": exc.code, "message": str(exc), "field_errors": []},
+        ) from exc
 
 
 @router.get("", response_model=ToolCatalog)
@@ -183,6 +189,16 @@ async def test_events(
                 yield f"id: {cursor}\ndata: {json.dumps(event)}\n\n"
             current = await asyncio.to_thread(service.get, tool_id, run_id)
             if current.finished_at and current.execution_state == "stopped":
+                # A worker can finish between the first events read and get().
+                # Drain the final committed events before closing the stream.
+                tail = (
+                    await asyncio.to_thread(service.store.events, run_id, cursor)
+                    if service.store
+                    else []
+                )
+                for event in tail:
+                    cursor = event["seq"]
+                    yield f"id: {cursor}\ndata: {json.dumps(event)}\n\n"
                 yield "event: closed\ndata: {}\n\n"
                 break
             yield ": heartbeat\n\n"

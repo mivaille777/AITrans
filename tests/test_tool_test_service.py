@@ -232,3 +232,61 @@ def test_api_rejects_raw_confirmation_and_context_ids(tmp_path):
         restarted.create(finished.tool_id, request()).test_run_id
         == finished.test_run_id
     )
+
+
+def test_sse_drains_final_event_committed_between_poll_and_status(
+    tmp_path, monkeypatch
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.api.tools import get_tool_test_service, router
+
+    service, _, _ = setup(tmp_path)
+    run = service.create("builtin:inspect_reading_context", request())
+    finished = wait(service, run.test_run_id, "succeeded")
+    original = service.store.events
+    events = original(run.test_run_id, 0)
+    assert events[-1]["status"] == "succeeded"
+    reads = []
+
+    def race(run_id, after):
+        reads.append(after)
+        # Simulate a worker committing the last event after the initial read.
+        return events[:-1] if len(reads) == 1 else original(run_id, after)
+
+    monkeypatch.setattr(service.store, "events", race)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_tool_test_service] = lambda: service
+    response = TestClient(app).get(
+        f"/api/tools/{finished.tool_id}/test-runs/{run.test_run_id}/events"
+    )
+    assert response.status_code == 200
+    assert f"id: {events[-1]['seq']}\n" in response.text
+    assert '"status": "succeeded"' in response.text
+    assert response.text.index('"status": "succeeded"') < response.text.index(
+        "event: closed"
+    )
+    assert len(reads) == 2
+
+
+def test_large_unicode_result_is_explicitly_bounded_and_restored(tmp_path):
+    import json
+
+    service, registry, _ = setup(tmp_path)
+    definition = registry.get_definition("inspect_reading_context")
+
+    def large(context, args):
+        return replace(definition.executor(context, args), output_text="内容" * 100_000)
+
+    registry._definition_by_name[definition.spec.name] = replace(
+        definition, executor=large
+    )
+    run = service.create("builtin:inspect_reading_context", request())
+    finished = wait(service, run.test_run_id, "succeeded")
+    assert finished.result_truncated and set(finished.result) == {"preview"}
+    assert len(json.dumps(finished.result, ensure_ascii=False).encode()) <= 256 * 1024
+    restarted = ToolTestService(service.management, store=service.store)
+    restored = restarted.get(run.tool_id, run.test_run_id)
+    assert restored.result_truncated and restored.result == finished.result
