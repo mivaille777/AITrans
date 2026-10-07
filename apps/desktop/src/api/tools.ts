@@ -14,6 +14,7 @@ export interface ToolSummary {
   effective_enabled: boolean
   unavailable_reason: string
   risk_level: string
+  archived?: boolean
 }
 export interface JsonSchema {
   title?: string
@@ -47,6 +48,7 @@ export interface ToolDetail extends ToolSummary {
   execution_capabilities: Record<string, boolean>
   editable_fields: string[]
   updated_at: string | null
+  configuration?: Record<string, unknown>
 }
 export interface ToolCatalog {
   items: ToolSummary[]
@@ -87,3 +89,9 @@ export const approveToolTest = (id: string, run: string, approval: string) => ap
 export interface ToolTestEvent { seq: number; type: string; test_run_id: string; status: string; execution_state: string; at: string; elapsed_ms: number; error_code: string | null }
 export const getToolTestHistory = (id: string, cursor?: string) => apiGet<{ items: ToolTestRun[]; next_cursor: string | null }>(testPath(id) + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""))
 export const getToolTestEvents = (id: string, run: string) => apiGet<{ items: ToolTestEvent[] }>(testPath(id, run) + "/event-log")
+export const createCustomTool = (preset: Record<string, unknown>) => apiPost<ToolDetail, Record<string, unknown>>("/api/tools/custom", preset)
+export const editToolConfiguration = (tool: ToolDetail, config: Record<string, unknown>) => apiPatch<ToolDetail, object>(`/api/tools/${encodeURIComponent(tool.tool_id)}`, { revision: tool.revision, [tool.origin === "custom" ? "preset" : "config"]: config })
+export interface ToolImportPreview { preview_token: string; items: { name: string; template_id: string; enabled: boolean }[]; conflicts: { name: string; archived: boolean }[]; message: string }
+export const previewToolImport = (document: Record<string, unknown>) => apiPost<ToolImportPreview, object>("/api/tools/imports/preview", document)
+export const applyToolImport = (document: Record<string, unknown>, preview: ToolImportPreview, replace: boolean) => apiPost<{ items: ToolDetail[] }, object>("/api/tools/imports", { document, preview_token: preview.preview_token, conflict_mode: replace ? "replace" : "reject" })
+export const archiveTool = (tool: ToolDetail) => apiPost<ToolDetail, object>(`/api/tools/${encodeURIComponent(tool.tool_id)}/archive`, { revision: tool.revision })

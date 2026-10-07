@@ -20,6 +20,9 @@ class ToolManagementRepository:
             db.execute("""CREATE TABLE IF NOT EXISTS tool_settings
                        (tool_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL,
                         revision INTEGER NOT NULL, config_json TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS custom_tools
+                       (tool_id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+                        preset_json TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)""")
 
     @contextmanager
     def transaction(self):
@@ -72,3 +75,50 @@ class ToolManagementRepository:
                     datetime.now(UTC).isoformat(),
                 ),
             )
+
+    def custom_tools(self, *, include_archived=False):
+        with self.transaction() as db:
+            rows = db.execute(
+                "SELECT * FROM custom_tools WHERE (? OR archived=0) ORDER BY name",
+                (int(include_archived),),
+            ).fetchall()
+        return [{**dict(row), "preset": json.loads(row["preset_json"])} for row in rows]
+
+    def custom(self, identity):
+        with self.transaction() as db:
+            row = db.execute(
+                "SELECT * FROM custom_tools WHERE tool_id=? OR name=?",
+                (identity, identity),
+            ).fetchone()
+        return {**dict(row), "preset": json.loads(row["preset_json"])} if row else None
+
+    @staticmethod
+    def state(db):
+        from backend.services.tool_management_service import fingerprint
+
+        return fingerprint(
+            [
+                list(
+                    map(
+                        tuple,
+                        db.execute("SELECT * FROM tool_settings ORDER BY tool_id"),
+                    )
+                ),
+                list(
+                    map(
+                        tuple, db.execute("SELECT * FROM custom_tools ORDER BY tool_id")
+                    )
+                ),
+            ]
+        )
+
+    @staticmethod
+    def insert_custom(db, preset):
+        tool_id = "custom:" + preset["name"]
+        stamp = datetime.now(UTC).isoformat()
+        db.execute(
+            "INSERT INTO custom_tools VALUES(?,?,?,0)",
+            (tool_id, preset["name"], json.dumps(preset)),
+        )
+        db.execute("INSERT INTO tool_settings VALUES(?,0,1,'{}',?)", (tool_id, stamp))
+        return tool_id

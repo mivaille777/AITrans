@@ -25,6 +25,7 @@ class ToolSummary(ManagementModel):
     effective_enabled: bool = True
     unavailable_reason: str = ""
     risk_level: str = "unknown"
+    archived: bool = False
 
 
 class ToolDetail(ToolSummary):
@@ -40,6 +41,7 @@ class ToolDetail(ToolSummary):
     execution_capabilities: dict[str, bool] = Field(default_factory=dict)
     editable_fields: list[str] = Field(default_factory=list)
     updated_at: str | None = None
+    configuration: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCatalog(ManagementModel):
@@ -55,4 +57,6 @@ class ToolCatalog(ManagementModel):
 
 class ToolUpdate(ManagementModel):
     revision: str
-    enabled: StrictBool
+    enabled: StrictBool | None = None
+    config: dict[str, Any] | None = None
+    preset: dict[str, Any] | None = None

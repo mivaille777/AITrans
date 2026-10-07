@@ -11,6 +11,13 @@ class ToolPolicyService:
         self.repository = repository or ToolManagementRepository()
 
     def is_enabled(self, name: str) -> bool:
+        custom = self.repository.custom(name)
+        if custom:
+            return (
+                not custom["archived"]
+                and bool(self.repository.settings(custom["tool_id"])["enabled"])
+                and self.is_enabled(custom["preset"]["template_id"])
+            )
         tool_id = name if ":" in name else "builtin:" + name
         return bool(self.repository.settings(tool_id)["enabled"])
 

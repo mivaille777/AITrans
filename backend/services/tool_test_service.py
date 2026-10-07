@@ -177,9 +177,10 @@ class ToolTestService:
                         404,
                     )
             # Arguments may narrow the trusted scope, never expand it.
-            requested = set(args.get("document_ids", [])) | {
+            scope_args = {**detail.configuration.get("fixed_arguments", {}), **args}
+            requested = set(scope_args.get("document_ids", [])) | {
                 x.strip()
-                for x in str(args.get("document_scope", ""))
+                for x in str(scope_args.get("document_scope", ""))
                 .replace("\n", ",")
                 .split(",")
                 if x.strip()

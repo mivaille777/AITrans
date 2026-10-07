@@ -52,4 +52,12 @@ UI now restores last runs, offers paged history, Input/Result/Logs tabs, dedupli
 
 Verification: 9 store/execution/API tests passed, including stable same-timestamp paging, retention/protected records, restart invalidation, durable duplicate requests and SSE cursor replay. Five frontend tests and typechecks passed. T05 remote SHA: 2fc3cdfc17160683caa0676293a863021039eeb5 (verified).
 
-T07–T08 pending. Actual Electron interaction not yet verified.
+## T07 — real configuration presets and atomic imports
+
+Implemented custom knowledge-search presets, default disabled, with immutable call names, disjoint fixed/exposed fields, typed defaults/examples and bounded timeout. Registry dynamically exposes persisted presets to Agent execution; primitive policy, trusted knowledge scope, search budget, grounding and trace minimization remain effective. Primitive timeout overrides also bound custom calls. Native Chat capability is explicitly unsupported for presets. Built-in metadata edits preserve executor authority and model validators.
+
+Added create/edit/archive APIs and versioned JSON import preview. Imports validate all records before a transaction, bind preview to current configuration, require explicit replace for conflicts, disable imported/replaced tools and roll back the entire batch on failure. Archived names remain reserved and history links remain readable. UI includes data-only configuration editors, bounded JSON upload, preview/conflict resolution, edit and archive actions.
+
+Verification: 23 preset/policy/execution/runtime tests passed, with actual Agent dispatch into a typed test executor; four preset tests cover scope/budget/primitive policy, immutable authority, stale preview/atomic rollback and archive identity. Seven frontend workflow tests and typechecks passed. T06 remote SHA: 03319fab8346963c91c1aa6028283fa1550c7759 (verified). Real indexed retrieval and desktop/browser acceptance remain T08.
+
+T08 pending. Actual Electron interaction not yet verified.

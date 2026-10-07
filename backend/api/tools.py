@@ -9,8 +9,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from backend.api.dependencies import get_agent_tool_registry
+from backend.models.tool_configuration import (
+    CustomToolPreset,
+    ToolArchiveRequest,
+    ToolImportDocument,
+    ToolImportRequest,
+)
 from backend.models.tool_management import ToolCatalog, ToolDetail, ToolUpdate
 from backend.models.tool_test import ToolTestApproval, ToolTestRequest, ToolTestRun
+from backend.services.tool_custom_service import ToolCustomService
 from backend.services.tool_management_service import (
     ToolManagementError,
     ToolManagementService,
@@ -84,6 +91,26 @@ def tool_detail(tool_id: str, service: Service):
 @router.patch("/{tool_id}", response_model=ToolDetail)
 def update_tool(tool_id: str, payload: ToolUpdate, service: Service):
     return call(lambda: service.update(tool_id, payload))
+
+
+@router.post("/custom", response_model=ToolDetail, status_code=201)
+def create_custom_tool(payload: CustomToolPreset, service: Service):
+    return call(lambda: ToolCustomService(service).create(payload))
+
+
+@router.post("/imports/preview")
+def preview_import(payload: ToolImportDocument, service: Service):
+    return call(lambda: ToolCustomService(service).preview(payload))
+
+
+@router.post("/imports")
+def import_tools(payload: ToolImportRequest, service: Service):
+    return call(lambda: ToolCustomService(service).apply(payload))
+
+
+@router.post("/{tool_id}/archive", response_model=ToolDetail)
+def archive_tool(tool_id: str, payload: ToolArchiveRequest, service: Service):
+    return call(lambda: ToolCustomService(service).archive(tool_id, payload.revision))
 
 
 @router.post("/{tool_id}/validate")

@@ -301,14 +301,34 @@ class AgentToolRegistry:
         return tuple(spec for spec in self.list_all_tools() if self.tool_policy is None or self.tool_policy.is_enabled(spec.name))
 
     def list_all_tools(self) -> tuple[AgentToolSpec, ...]:
-        return tuple(definition.spec for definition in self._definitions)
+        names = [definition.spec.name for definition in self._definitions]
+        if self.tool_policy is not None:
+            names.extend(row["name"] for row in self.tool_policy.repository.custom_tools())
+        return tuple(definition.spec for name in names if (definition := self.get_definition(name)) is not None)
 
     def get_tool(self, name: str) -> AgentToolSpec | None:
-        definition = self._definition_by_name.get(str(name or "").strip())
+        definition = self.get_definition(name)
         return definition.spec if definition is not None else None
 
+    def primitive_name(self, name: str) -> str:
+        custom = self.tool_policy.repository.custom(name) if self.tool_policy else None
+        return custom["preset"]["template_id"].removeprefix("builtin:") if custom else name
+
     def get_definition(self, name: str) -> TypedAgentToolDefinition | None:
-        return self._definition_by_name.get(str(name or "").strip())
+        name = str(name or "").strip()
+        definition = self._definition_by_name.get(name)
+        if self.tool_policy is None:
+            return definition
+        if definition is not None:
+            import json
+            from backend.services.tool_configuration import metadata_definition
+            config = json.loads(self.tool_policy.repository.settings("builtin:" + name)["config_json"])
+            return metadata_definition(definition, config) if config else definition
+        custom = self.tool_policy.repository.custom(name)
+        if custom and not custom["archived"]:
+            from backend.services.tool_configuration import preset_definition
+            return preset_definition(self, custom["preset"])
+        return None
 
     def validate_planner_arguments(
         self,
@@ -362,6 +382,9 @@ class AgentToolRegistry:
     def execute(self, name: str, **payload: Any) -> AgentToolExecutionResult:
         if self.tool_policy is not None:
             self.tool_policy.assert_enabled(name)
+            custom = self.tool_policy.repository.custom(name)
+            if custom and set(payload) & set(custom["preset"]["fixed_arguments"]):
+                raise ValueError("Fixed preset arguments cannot be supplied by callers.")
         definition = self.get_definition(name)
         if definition is None:
             raise KeyError(f"Unknown agent tool: {name}")

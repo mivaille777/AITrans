@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.models.tool_management import ToolCatalog, ToolDetail, ToolSummary
@@ -33,9 +34,20 @@ class ToolManagementService:
 
     def detail(self, tool_id: str) -> ToolDetail:
         name = tool_id.removeprefix("builtin:")
-        if not tool_id.startswith("builtin:"):
+        custom = (
+            self.policy.repository.custom(tool_id)
+            if self.policy and tool_id.startswith("custom:")
+            else None
+        )
+        if not tool_id.startswith("builtin:") and custom is None:
             raise ToolManagementError("tool_not_found", "Tool was not found.", 404)
+        if custom:
+            name = custom["name"]
         definition = self.registry.get_definition(name)
+        if custom and custom["archived"]:
+            from backend.services.tool_configuration import preset_definition
+
+            definition = preset_definition(self.registry, custom["preset"])
         if definition is None:
             raise ToolManagementError("tool_not_found", "Tool was not found.", 404)
         spec = definition.spec
@@ -77,16 +89,36 @@ class ToolManagementService:
             else {"enabled": True, "revision": 0, "updated_at": None}
         )
         enabled = bool(settings["enabled"])
+        configuration = json.loads(settings.get("config_json", "{}"))
+        if "examples" in configuration:
+            examples = configuration["examples"] or []
+        if custom:
+            primitive = self.detail(custom["preset"]["template_id"])
+            reason = (
+                "Archived tool."
+                if custom["archived"]
+                else primitive.unavailable_reason
+                or ("Primitive tool is disabled." if not primitive.enabled else "")
+            )
+            if custom["preset"].get("examples"):
+                examples = custom["preset"]["examples"]
+            revision = fingerprint(
+                [revision, primitive.revision, custom["preset"], custom["archived"]]
+            )
         return ToolDetail(
             tool_id=tool_id,
             name=name,
+            origin="custom" if custom else "builtin",
+            archived=bool(custom and custom["archived"]),
             title=spec.title,
             description=spec.description,
             category=spec.category,
             effect=spec.effect,
             available=not reason,
             enabled=enabled,
-            effective_enabled=enabled and not reason,
+            effective_enabled=enabled
+            and not reason
+            and (primitive.effective_enabled if custom else True),
             unavailable_reason=reason,
             risk_level="confirmation_required"
             if spec.requires_confirmation
@@ -123,8 +155,13 @@ class ToolManagementService:
                 "supports_cancel": True,
                 "cancel_stops_executor": False,
                 "supports_test": True,
+                "supports_native_chat": not bool(custom) and bool(profiles),
             },
-            editable_fields=["enabled"],
+            editable_fields=["enabled", "config"]
+            + (["preset", "archive"] if custom and not custom["archived"] else [])
+            if not (custom and custom["archived"])
+            else [],
+            configuration=custom["preset"] if custom else configuration,
             updated_at=settings["updated_at"],
         )
 
@@ -140,9 +177,89 @@ class ToolManagementService:
             raise ToolManagementError(
                 "policy_unavailable", "Tool policy is unavailable.", 503
             )
-        self.policy.update(
-            tool_id, int(current.revision.rsplit(".", 1)[1]), payload.enabled
-        )
+        if current.archived:
+            raise ToolManagementError(
+                "tool_archived", "Archived tools cannot be edited.", 409
+            )
+        if payload.config is not None or payload.preset is not None:
+            from pydantic import ValidationError
+
+            from backend.models.tool_configuration import CustomToolPreset, ToolMetadata
+            from backend.services.tool_configuration import (
+                metadata_definition,
+                preset_definition,
+            )
+
+            try:
+                if payload.preset is not None:
+                    if current.origin != "custom" or payload.config is not None:
+                        raise ToolManagementError(
+                            "invalid_configuration",
+                            "Presets only apply to custom tools.",
+                        )
+                    preset = CustomToolPreset.model_validate(payload.preset)
+                    if preset.name != current.name:
+                        raise ToolManagementError(
+                            "immutable_name", "Call name is immutable."
+                        )
+                    preset_definition(self.registry, preset.model_dump())
+                else:
+                    if current.origin == "custom":
+                        raise ToolManagementError(
+                            "invalid_configuration",
+                            "Edit this tool's preset configuration.",
+                        )
+                    metadata = ToolMetadata.model_validate(payload.config)
+                    config = {
+                        **current.configuration,
+                        **metadata.model_dump(exclude_unset=True, exclude_none=True),
+                    }
+                    metadata_definition(
+                        self.registry._definition_by_name[current.name], config
+                    )
+            except ValidationError as exc:
+                raise ToolManagementError(
+                    "invalid_configuration",
+                    "Unsupported configuration fields or values.",
+                ) from exc
+            if payload.preset is not None:
+                with self.policy.repository.transaction() as db:
+                    saved = db.execute(
+                        "SELECT revision FROM tool_settings WHERE tool_id=?", (tool_id,)
+                    ).fetchone()
+                    if saved[0] != int(current.revision.rsplit(".", 1)[1]):
+                        raise ToolManagementError(
+                            "revision_conflict", "Tool configuration changed.", 409
+                        )
+                    db.execute(
+                        "UPDATE custom_tools SET preset_json=? WHERE tool_id=?",
+                        (json.dumps(preset.model_dump()), tool_id),
+                    )
+                    db.execute(
+                        "UPDATE tool_settings SET revision=revision+1,enabled=COALESCE(?,enabled),updated_at=? WHERE tool_id=?",
+                        (
+                            int(payload.enabled)
+                            if payload.enabled is not None
+                            else None,
+                            datetime.now(UTC).isoformat(),
+                            tool_id,
+                        ),
+                    )
+            else:
+                self.policy.repository.update(
+                    tool_id,
+                    int(current.revision.rsplit(".", 1)[1]),
+                    enabled=payload.enabled,
+                    config=config,
+                )
+        else:
+            if payload.enabled is None:
+                raise ToolManagementError(
+                    "empty_update", "No editable fields supplied."
+                )
+            self.policy.update(
+                tool_id, int(current.revision.rsplit(".", 1)[1]), payload.enabled
+            )
         return self.detail(tool_id)
 
     @staticmethod
@@ -174,7 +291,13 @@ class ToolManagementService:
         if status not in {"all", "enabled", "disabled"} or not 1 <= limit <= 200:
             raise ToolManagementError("invalid_filter", "Invalid catalog filter.")
         details = [
-            self.detail("builtin:" + spec.name)
+            self.detail(
+                (self.policy.repository.custom(spec.name) or {}).get(
+                    "tool_id", "builtin:" + spec.name
+                )
+                if self.policy
+                else "builtin:" + spec.name
+            )
             for spec in (
                 self.registry.list_all_tools()
                 if hasattr(self.registry, "list_all_tools")

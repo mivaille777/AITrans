@@ -210,6 +210,10 @@ class ProductAgentService:
             history.append((role, content))
         return tuple(history[-32:])
 
+    def _primitive_tool_name(self, name: str) -> str:
+        resolve = getattr(self._registry, "primitive_name", None)
+        return resolve(name) if callable(resolve) else name
+
     def _tools_for_payload(self, payload: dict[str, Any]):
         """Return the catalog allowed for this run.
 
@@ -542,7 +546,7 @@ class ProductAgentService:
             ).strip()
             execution_payload["run_id"] = str(payload.get("run_id", "") or "").strip()
             execution_payload["trace_id"] = str(payload.get("trace_id", "") or "").strip()
-        if spec.name in {
+        if self._primitive_tool_name(spec.name) in {
             "search_knowledge_base",
             "read_knowledge_chunk",
             "read_knowledge_section",
@@ -571,7 +575,7 @@ class ProductAgentService:
             if trusted_source_ids:
                 execution_payload["source_ids"] = trusted_source_ids
 
-        control.claim_knowledge_action(spec.name)
+        control.claim_knowledge_action(self._primitive_tool_name(spec.name))
         tool_started = monotonic()
         if typed:
             call_id = ""
@@ -664,7 +668,7 @@ class ProductAgentService:
                     fallback_reason="safe_tool_retries_exhausted",
                 )
 
-        if tool_result.tool_name == "search_knowledge_base":
+        if self._primitive_tool_name(tool_result.tool_name) == "search_knowledge_base":
             seen_rag_events: set[str] = set()
             for raw_event in (tool_result.data or {}).get("observability", []):
                 if not isinstance(raw_event, dict):
@@ -682,7 +686,7 @@ class ProductAgentService:
 
         trace_data = (
             {}
-            if tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS
+            if self._primitive_tool_name(tool_result.tool_name) in _GROUNDED_RETRIEVAL_TOOLS
             else tool_result.data or {}
         )
         result_data = tool_result.data if isinstance(tool_result.data, dict) else {}
@@ -713,7 +717,7 @@ class ProductAgentService:
             # storage only receives byte counts and execution metadata.
             trace_output_text = ""
         tool_metrics: dict[str, int] = {}
-        if tool_result.tool_name == "search_knowledge_base":
+        if self._primitive_tool_name(tool_result.tool_name) == "search_knowledge_base":
             results = result_data.get("results", ())
             tool_metrics["candidate_count"] = (
                 len(results) if isinstance(results, (list, tuple)) else 0
@@ -937,7 +941,7 @@ class ProductAgentService:
         grounded_results = [
             item
             for item in results
-            if str(item.get("tool_name", "") or item.get("name", "") or "")
+            if self._primitive_tool_name(str(item.get("tool_name", "") or item.get("name", "") or ""))
             in _GROUNDED_RETRIEVAL_TOOLS
         ]
         evidence: list[AgentEvidenceItem] = []
@@ -945,9 +949,9 @@ class ProductAgentService:
         if grounded_results:
             seen_evidence: set[str] = set()
             for item in grounded_results:
-                if self.jit_search_read_enabled and str(
+                if self.jit_search_read_enabled and self._primitive_tool_name(str(
                     item.get("tool_name", "") or item.get("name", "") or ""
-                ) == "search_knowledge_base":
+                )) == "search_knowledge_base":
                     continue
                 item_evidence, _item_citations = self._retrieval_grounding(
                     dict(item.get("data", {}) or {})
@@ -1095,9 +1099,9 @@ class ProductAgentService:
         evidence: list[AgentEvidenceItem] = []
         citations: list[AgentCitationRef] = []
         if (
-            tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS
+            self._primitive_tool_name(tool_result.tool_name) in _GROUNDED_RETRIEVAL_TOOLS
             and (
-                tool_result.tool_name != "search_knowledge_base"
+                self._primitive_tool_name(tool_result.tool_name) != "search_knowledge_base"
                 or not self.jit_search_read_enabled
             )
         ):
@@ -1117,7 +1121,7 @@ class ProductAgentService:
                 citations=tuple(citations),
             )
 
-        if tool_result.tool_name in _GROUNDED_RETRIEVAL_TOOLS:
+        if self._primitive_tool_name(tool_result.tool_name) in _GROUNDED_RETRIEVAL_TOOLS:
             answer = self._synthesize_grounded(
                 payload=payload,
                 reading=reading,
