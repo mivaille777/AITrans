@@ -19,6 +19,7 @@ const ResearchRoute = lazy(() => import("./features/research/ResearchRoute"))
 const KnowledgeRoute = lazy(() => import("./features/knowledge/KnowledgeRoute"))
 const SettingsWorkspace = lazy(() => import("./features/settings/SettingsWorkspace"))
 const SkillWorkspace = lazy(() => import("./features/skills/SkillWorkspace"))
+const ToolsWorkspace = lazy(() => import("./features/tools/ToolsWorkspace"))
 
 function WorkspaceRouteFallback() {
   return (
@@ -46,6 +47,7 @@ const CACHED_WORKSPACE_PATHS: readonly CachedWorkspaceRoutePath[] = [
   "/research",
   "/settings",
   "/skills",
+  "/tools",
 ]
 
 function isCachedWorkspacePath(pathname: string): pathname is CachedWorkspaceRoutePath {
@@ -76,6 +78,7 @@ function renderCachedWorkspaceRoute(
   if (path === "/reading") return <ReadingWorkspace workspace={workspace} />
   if (path === "/agent") return <AgentWorkspace workspace={workspace} />
   if (path === "/skills") return <SkillWorkspace />
+  if (path === "/tools") return <ToolsWorkspace />
   if (path === "/knowledge") {
     return <KnowledgeRoute backendState={workspace.backendState} workspace={workspace} />
   }

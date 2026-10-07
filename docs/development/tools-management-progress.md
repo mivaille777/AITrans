@@ -16,4 +16,12 @@ Conda baseline: 24 passed. New management API + legacy API tests: 8 passed. Fron
 
 ## Remaining
 
-T02–T08 pending. No live desktop claims yet.
+## T02 — workspace and real library
+
+Implemented /tools with lazy cached route, existing sidebar and an owned heading. Search debounce, state/category filters, group folding, cursor paging, URL selection, empty/error/retry states and responsive panels are implemented. Live isolated backend at port 8772 returned 23 actual tools; browser inspection at 1680×1050 confirmed the full workbench. Future-stage actions explicitly disabled.
+
+Verification: 8 frontend behavior/API/navigation tests passed; test typecheck passed; lint completed with existing unrelated warnings; full build and PDF.js offline guard passed. Initial PDF guard failure was caused by Vite resolving the dependency junction outside this worktree. Dependencies were copied locally without upgrades; build then passed without changing the guard or Vite behavior.
+
+T01 remote SHA: dd947d3542f5e0aabac453583db5981b34ef13af (verified).
+
+T03–T08 pending. Actual Electron interaction not yet verified.

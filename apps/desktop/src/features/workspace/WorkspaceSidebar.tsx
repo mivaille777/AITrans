@@ -12,6 +12,7 @@ import {
   PanelLeftOpen,
   Puzzle,
   Settings2,
+  Wrench,
 } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
@@ -27,6 +28,7 @@ const icons: Record<WorkspaceRoutePath, typeof MessageCircle> = {
   "/translation": FileText,
   "/settings": Settings2,
   "/skills": Puzzle,
+  "/tools": Wrench,
 }
 
 const recentResearch = [

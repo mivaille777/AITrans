@@ -20,7 +20,8 @@ export default function WorkspaceShell({ children, llmStatus }: {
   const routeMeta = getWorkspaceRouteMeta(location.pathname)
   const readingRoute = location.pathname === "/reading"
   const settingsRoute = location.pathname === "/settings"
-  const defaultHeaderRoute = !readingRoute && !settingsRoute && location.pathname !== "/research" && location.pathname !== "/knowledge"
+  const toolsRoute = location.pathname === "/tools"
+  const defaultHeaderRoute = !readingRoute && !settingsRoute && !toolsRoute && location.pathname !== "/research" && location.pathname !== "/knowledge"
   const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
   const shellColumns = sidebarCollapsed
     ? "grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)]"
@@ -49,13 +50,13 @@ export default function WorkspaceShell({ children, llmStatus }: {
               ) : null}
             </div>
             <main
-              className={settingsRoute || readingRoute
+              className={settingsRoute || readingRoute || toolsRoute
                 ? "h-full min-h-0 overflow-hidden"
                 : `min-h-0 flex-1 workspace-route-enter ${fixedHeightRoute
                     ? "overflow-hidden"
                     : "ait-scroll-page overflow-y-auto overflow-x-hidden overscroll-contain"}`}
             >
-              <div className={settingsRoute || readingRoute
+              <div className={settingsRoute || readingRoute || toolsRoute
                 ? "h-full min-h-0"
                 : fixedHeightRoute
                   ? "h-full min-h-0 overflow-hidden"

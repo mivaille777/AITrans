@@ -4,7 +4,7 @@
 
 Implementation lives in a managed independent worktree. D:/AITrans contains uncommitted Chat/RAG/startup changes, including full-read refinements; they are intentionally not incorporated into this branch. Their regression results cannot be claimed for this base. Integration with those changes must be separately verified before merging.
 
-Python: use Conda environment aitrans. System/base Python cannot collect backend HTTP tests (missing faiss). Desktop dependencies reuse the existing node_modules via a local ignored junction; no dependency upgrade.
+Python: use Conda environment aitrans. System/base Python cannot collect backend HTTP tests (missing faiss). Desktop dependencies initially reused a junction; T02 copied the same dependencies locally because Vite emitted external absolute manifest keys that failed the existing PDF guard. No dependency upgrade. Baseline tests: 24 passed in the project environment.
 
 Default lightweight AgentToolRegistry exposes 16 tools: inspect_reading_context; translate_selection; explain_selection; summarize_selection; analyze_section_role; polish_selection; save_research_note; list_research_notes; search_research_notes; get_research_note; update_research_note; define_terms; analyze_equation; summarize_current_section; search_knowledge_base; save_knowledge_card. Production dependencies additionally register knowledge catalog/reads, memory/research/ledger and sandbox tools. Counts therefore come from the active registry, never a constant.
 

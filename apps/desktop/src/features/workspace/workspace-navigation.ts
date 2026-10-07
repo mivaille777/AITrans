@@ -7,6 +7,7 @@ export type WorkspaceRoutePath =
   | "/research"
   | "/settings"
   | "/skills"
+  | "/tools"
 
 export interface WorkspaceRouteMeta {
   path: WorkspaceRoutePath
@@ -58,6 +59,7 @@ export const workspaceRoutes: readonly WorkspaceRouteMeta[] = [
     label: "Settings",
     description: "Configure native overlay placement and interaction behavior.",
   },
+  { path: "/tools", label: "Tools", description: "Manage tools, inspect schemas, and test agent capabilities." },
 ] as const
 
 const sidebarRouteOrder: readonly WorkspaceRoutePath[] = [
@@ -67,6 +69,7 @@ const sidebarRouteOrder: readonly WorkspaceRoutePath[] = [
   "/knowledge",
   "/agent",
   "/skills",
+  "/tools",
 ]
 
 export const workspaceSidebarRoutes: readonly WorkspaceRouteMeta[] = sidebarRouteOrder.map((path) => {
@@ -86,5 +89,5 @@ export function getWorkspaceRouteMeta(pathname: string): WorkspaceRouteMeta {
  * workspace <main> element scroll the whole page.
  */
 export function workspaceRouteUsesFixedHeight(pathname: string): boolean {
-  return pathname === "/chat" || pathname === "/research" || pathname === "/knowledge" || pathname === "/settings" || pathname === "/skills"
+  return pathname === "/chat" || pathname === "/research" || pathname === "/knowledge" || pathname === "/settings" || pathname === "/skills" || pathname === "/tools"
 }
