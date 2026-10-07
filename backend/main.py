@@ -74,6 +74,7 @@ from backend.api.routes.knowledge_v2 import router as knowledge_v2_router
 from backend.api.sandbox_approvals import router as sandbox_approvals_router
 from backend.api.sandbox_debug import router as sandbox_debug_router
 from backend.api.skills import router as skills_router
+from backend.api.tools import router as tools_router
 from backend.api.translation import router as translation_router
 from backend.api.translation_cascade import router as translation_cascade_router
 from backend.api.workspace_apply import router as workspace_apply_router
@@ -192,6 +193,7 @@ def create_app():
         sandbox_debug_router,
         sandbox_approvals_router,
         skills_router,
+        tools_router,
         memory_router,
         translation_router,
         translation_cascade_router,

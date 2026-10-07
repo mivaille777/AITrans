@@ -1,4 +1,10 @@
 export const queryKeys = {
+  tools: {
+    all: ["tools"] as const,
+    list: (q: string, status: string) => ["tools", "list", q, status] as const,
+    detail: (id: string) => ["tools", "detail", id] as const,
+    runs: (id: string) => ["tools", "runs", id] as const,
+  },
   health: ["health"] as const,
   llm: {
     settings: ["llm", "settings"] as const,
