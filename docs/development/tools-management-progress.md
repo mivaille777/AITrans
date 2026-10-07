@@ -86,6 +86,6 @@ T07 remote SHA: 4adbaa96f218b9139ab211a4b8833617ca7e1618 (verified).
 | T05 | Complete | Complete | 2fc3cdfc17160683caa0676293a863021039eeb5 |
 | T06 | Complete | Complete | 03319fab8346963c91c1aa6028283fa1550c7759 |
 | T07 | Complete | Complete | 4adbaa96f218b9139ab211a4b8833617ca7e1618 |
-| T08 | Complete | API/browser/automated passed; native Electron pending | Pending current stage push |
+| T08 | Complete | API/browser/automated passed; native Electron pending | 1a324179fe0522ea1a3ed714b3817d60fa14a112 |
 
-T08 commit and remote verification will be appended after this stage is pushed. No later development phase starts while synchronization is pending.
+T08 implementation commit 1a324179fe0522ea1a3ed714b3817d60fa14a112 was pushed to origin/codex/tools-management. git rev-parse HEAD and git ls-remote returned the same full SHA. This documentation-only follow-up records that verification. The isolated acceptance server, its owned model workers and Vite server were stopped after verification; the temporary browser tab was closed and viewport override reset. The managed worktree remains attached for review and further integration.
