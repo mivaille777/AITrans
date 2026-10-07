@@ -1,7 +1,8 @@
 import { useState } from "react"
-import { Box, FlaskConical, Menu, Plus, Upload, X } from "lucide-react"
+import { FlaskConical, Menu, Plus, Upload, X } from "lucide-react"
 import { Button } from "../../shared/ui/Button"
 import { ToolLibrary } from "./ToolLibrary"
+import { ToolDetailPanel } from "./ToolDetailPanel"
 import { useToolsWorkspace } from "./useToolsWorkspace"
 import "./ToolsWorkspace.css"
 
@@ -9,6 +10,7 @@ export default function ToolsWorkspace() {
   const state = useToolsWorkspace()
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const tool = state.detail.data
   return <section className="tools-workspace" aria-label="Tools management">
     <header className="tools-header">
@@ -20,10 +22,10 @@ export default function ToolsWorkspace() {
       <main className="tools-detail">
         {state.detail.isError && <div className="tools-notice" role="alert">Unable to load this tool.<button onClick={() => { void state.detail.refetch() }}>Retry</button></div>}
         {!tool && !state.detail.isError && <p className="tools-note">{state.selected ? "Loading tool details…" : "Select a tool to inspect its definition."}</p>}
-        {tool && <><div className="tools-detail-header"><div className="tools-title"><div className="tools-tool-icon"><Box size={25} /></div><div><h2>{tool.name}<span className={`tools-badge ${tool.enabled ? "is-green" : ""}`}>{tool.enabled ? "Enabled" : "Disabled"}</span></h2><div className="tools-meta"><code>{tool.namespace}.{tool.name}</code><span>{tool.category}</span><span>{tool.origin}</span></div></div></div><p>{tool.description}</p>{tool.unavailable_reason && <p className="tools-notice">{tool.unavailable_reason}</p>}<div className="tools-meta"><span>{tool.effect}</span><span>{String(tool.limits.timeout_seconds)}s timeout</span><span>{tool.risk_level.replaceAll("_", " ")}</span></div></div><div className="tools-detail-content"><h3>Tool definition</h3><p className="tools-note">Input and output schemas are provided by the registered executor.</p><pre className="tools-code">{JSON.stringify(tool.input_schema, null, 2)}</pre></div></>}
+        {tool && <ToolDetailPanel key={tool.tool_id} tool={tool} onExample={(value) => { setDrafts((previous) => ({ ...previous, [tool.tool_id]: value })); setInspectorOpen(true) }} />}
       </main>
       <aside className="tools-inspector" aria-label="Test tool">
-        <header><h2><FlaskConical size={18} />Test tool</h2><button className="tools-close-inspector" aria-label="Close test panel" onClick={() => setInspectorOpen(false)}><X size={16} /></button></header><p className="tools-note">Try a call before using it in an agent.</p><div className="tools-notice">Test execution will be available after the governed execution stage.</div>
+        <header><h2><FlaskConical size={18} />Test tool</h2><button className="tools-close-inspector" aria-label="Close test panel" onClick={() => setInspectorOpen(false)}><X size={16} /></button></header><p className="tools-note">Try a call before using it in an agent.</p><label className="tools-input-label">Input parameters (JSON)<textarea className="tools-input-editor" aria-label="Input parameters JSON" value={drafts[state.selected] ?? "{}"} onChange={(event) => setDrafts((previous) => ({ ...previous, [state.selected]: event.target.value }))} /></label><div className="tools-notice">Test execution will be available after the governed execution stage.</div>
       </aside>
       <button className="tools-open-inspector" onClick={() => setInspectorOpen(true)}><FlaskConical size={15} />Test tool</button>
     </div>

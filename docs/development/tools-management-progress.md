@@ -24,4 +24,10 @@ Verification: 8 frontend behavior/API/navigation tests passed; test typecheck pa
 
 T01 remote SHA: dd947d3542f5e0aabac453583db5981b34ef13af (verified).
 
-T03–T08 pending. Actual Electron interaction not yet verified.
+## T03 — five detail tabs
+
+Implemented Overview, Parameters, Returns, Permissions and Examples. Visual schema resolves referenced objects/array items and shows requirements/defaults/constraints, with full JSON fallback for alternatives and recursive schemas. Native Chat schema is separately identified. Copy and Use in test fill per-tool drafts; output data and execution envelope remain distinct. Keyboard arrow tab selection supported.
+
+Verification: 4 detail/schema behavior tests passed; 4 backend management/example tests passed; input/output schema viewed against live backend in browser. Typecheck and application compilation passed after correcting the new test's locator options. T02 remote SHA: 9f8c1037bdd5c8f0da099641d1cee6dffe0746a0 (verified).
+
+T04–T08 pending. Actual Electron interaction not yet verified.

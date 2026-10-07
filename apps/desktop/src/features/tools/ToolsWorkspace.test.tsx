@@ -9,7 +9,7 @@ import type { ToolDetail } from "../../api/tools"
 import ToolsWorkspace from "./ToolsWorkspace"
 
 vi.mock("../../api/tools")
-export const record: ToolDetail = {
+const record: ToolDetail = {
   tool_id: "builtin:search_knowledge_base", name: "search_knowledge_base", title: "Search knowledge",
   description: "Search indexed workspace documents.", category: "knowledge", namespace: "agent", origin: "builtin",
   effect: "read", enabled: true, available: true, effective_enabled: true, unavailable_reason: "", risk_level: "unknown",
@@ -47,4 +47,17 @@ it("shows actionable backend failures and reloads the library", async () => {
   await screen.findByRole("alert")
   await userEvent.click(screen.getByRole("button", { name: "Retry" }))
   await waitFor(() => expect(screen.getByRole("button", { name: "search_knowledge_base" })).toBeTruthy())
+})
+
+it("switches detail tabs and fills the tool-specific test draft", async () => {
+  vi.mocked(api.getTool).mockResolvedValue({ ...record, examples: [{ id: "basic", title: "Basic example", description: "Search", arguments: { query: "agent" } }] })
+  setup()
+  await screen.findByRole("heading", { name: /search_knowledge_base/ })
+  await userEvent.click(screen.getByRole("tab", { name: "Returns" }))
+  expect(screen.getByRole("heading", { name: "Output schema" })).toBeTruthy()
+  await userEvent.click(screen.getByRole("tab", { name: "Permissions" }))
+  expect(screen.getByRole("heading", { name: "Permissions & security" })).toBeTruthy()
+  await userEvent.click(screen.getByRole("tab", { name: "Examples" }))
+  await userEvent.click(screen.getByRole("button", { name: "Use in test →" }))
+  expect((screen.getByRole("textbox", { name: "Input parameters JSON" }) as HTMLTextAreaElement).value).toContain("agent")
 })

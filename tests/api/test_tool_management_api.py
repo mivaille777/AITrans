@@ -63,3 +63,12 @@ def test_empty_registry_is_supported():
 
     result = ToolManagementService(Empty()).list()
     assert result.total == result.matched_total == 0
+
+
+def test_all_published_examples_match_the_executor_model():
+    registry = AgentToolRegistry(jit_search_read_enabled=True)
+    service = ToolManagementService(registry)
+    for spec in registry.list_tools():
+        definition = registry.get_definition(spec.name)
+        for example in service.detail("builtin:" + spec.name).examples:
+            definition.args_model.model_validate(example["arguments"], strict=True)
