@@ -17,6 +17,8 @@ from backend.services.tool_test_service import ToolTestService
 
 
 def setup(tmp_path):
+    from backend.services.tool_test_store import ToolTestStore
+
     policy = ToolPolicyService(ToolManagementRepository(tmp_path / "settings.sqlite3"))
     registry = AgentToolRegistry(tool_policy=policy, retrieval_service=object())
     service = ToolTestService(
@@ -24,6 +26,7 @@ def setup(tmp_path):
         library=SimpleNamespace(
             get_document=lambda id: object() if id == "doc" else None
         ),
+        store=ToolTestStore(tmp_path / "agent_runtime.sqlite3"),
     )
     return service, registry, policy
 
@@ -217,4 +220,15 @@ def test_api_rejects_raw_confirmation_and_context_ids(tmp_path):
     assert (
         client.post(url, json=body).json()["test_run_id"]
         == response.json()["test_run_id"]
+    )
+    finished = wait(service, response.json()["test_run_id"], "succeeded")
+    events_url = url + "/" + finished.test_run_id + "/events"
+    stream = client.get(events_url, headers={"Last-Event-ID": "1"})
+    assert stream.status_code == 200
+    assert "id: 1\n" not in stream.text and "event: closed" in stream.text
+    assert client.get(url).json()["items"][0]["test_run_id"] == finished.test_run_id
+    restarted = ToolTestService(service.management, store=service.store)
+    assert (
+        restarted.create(finished.tool_id, request()).test_run_id
+        == finished.test_run_id
     )

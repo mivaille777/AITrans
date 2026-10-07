@@ -44,4 +44,12 @@ Frontend has JSON validation, field error feedback, required context inputs, tim
 
 Verification: 12 execution/approval/API tests passed, previous 14 execution/catalog tests passed, 5 Tools UI tests passed, test typecheck/app compilation/Ruff passed. T04 remote SHA: c7e18b48cbe9dc4944a4a8ae851badc29d36927a (verified).
 
-T06–T08 pending. Actual Electron interaction not yet verified.
+## T06 — durable history and live lifecycle
+
+Added inspector extension tables in agent_runtime.sqlite3, separate from Agent run queues. Immutable request hashes support durable idempotency; inputs and approval review text remain ephemeral. Lifecycle events have ordered sequence IDs, Last-Event-ID replay and polling fallback, without replaying execution. History pages are bound to the tool and use timestamp/ID cursors. Restart interrupts active tests and invalidates approvals; unknown physical completion stays protected. Retention is 100 finalized/stopped tests or 30 days globally, with events removed transactionally; unresolved and pending records are protected.
+
+UI now restores last runs, offers paged history, Input/Result/Logs tabs, deduplicates SSE events and falls back to polling for results and stored logs. Results above 256 KiB expose an explicit preview marker; streaming is still truthfully unsupported by current executors.
+
+Verification: 9 store/execution/API tests passed, including stable same-timestamp paging, retention/protected records, restart invalidation, durable duplicate requests and SSE cursor replay. Five frontend tests and typechecks passed. T05 remote SHA: 2fc3cdfc17160683caa0676293a863021039eeb5 (verified).
+
+T07–T08 pending. Actual Electron interaction not yet verified.

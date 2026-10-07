@@ -84,3 +84,6 @@ export const createToolTest = (id: string, body: ToolTestRequest) => apiPost<Too
 export const getToolTest = (id: string, run: string) => apiGet<ToolTestRun>(testPath(id, run))
 export const cancelToolTest = (id: string, run: string) => apiPost<ToolTestRun, object>(testPath(id, run) + "/cancel", {})
 export const approveToolTest = (id: string, run: string, approval: string) => apiPost<ToolTestRun, { approval_id: string }>(testPath(id, run) + "/approve", { approval_id: approval })
+export interface ToolTestEvent { seq: number; type: string; test_run_id: string; status: string; execution_state: string; at: string; elapsed_ms: number; error_code: string | null }
+export const getToolTestHistory = (id: string, cursor?: string) => apiGet<{ items: ToolTestRun[]; next_cursor: string | null }>(testPath(id) + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""))
+export const getToolTestEvents = (id: string, run: string) => apiGet<{ items: ToolTestEvent[] }>(testPath(id, run) + "/event-log")

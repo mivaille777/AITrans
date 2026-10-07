@@ -21,6 +21,8 @@ const record: ToolDetail = {
 const other = { ...record, tool_id: "builtin:explain_selection", name: "explain_selection", category: "reading" }
 
 beforeEach(() => {
+  vi.mocked(api.getToolTestHistory).mockResolvedValue({ items: [], next_cursor: null })
+  vi.mocked(api.getToolTestEvents).mockResolvedValue({ items: [] })
   vi.mocked(api.getTools).mockImplementation(async (filters) => {
     const items = [record, other].filter((tool) => (!filters?.q || tool.name.includes(filters.q)) && (!filters?.status || filters.status !== "disabled"))
     return { items, categories: Object.fromEntries(items.map((item) => [item.category, 1])), total: 2, enabled: 2, disabled: 0, matched_total: items.length, next_cursor: null, catalog_revision: "v1" }

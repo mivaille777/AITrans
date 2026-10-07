@@ -1,9 +1,12 @@
 """Tools management API, independent of legacy catalog DTOs."""
 
+import asyncio
+import json
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from backend.api.dependencies import get_agent_tool_registry
 from backend.models.tool_management import ToolCatalog, ToolDetail, ToolUpdate
@@ -26,12 +29,14 @@ Service = Annotated[ToolManagementService, Depends(get_tool_management_service)]
 
 @lru_cache(maxsize=1)
 def get_tool_test_service():
+    from backend.api.agent_runtime_jobs import get_agent_run_store
     from backend.api.dependencies import (
         get_filesystem_workspace_service,
         get_research_workspace_service,
         get_sandbox_approval_service,
     )
     from backend.api.knowledge_dependencies import get_knowledge_library_service
+    from backend.services.tool_test_store import ToolTestStore
 
     return ToolTestService(
         get_tool_management_service(),
@@ -39,6 +44,7 @@ def get_tool_test_service():
         library=get_knowledge_library_service(),
         research=get_research_workspace_service(),
         filesystem=get_filesystem_workspace_service(),
+        store=ToolTestStore(get_agent_run_store().storage_path),
     )
 
 
@@ -106,3 +112,65 @@ def approve_test(
     tool_id: str, run_id: str, payload: ToolTestApproval, service: TestService
 ):
     return call(lambda: service.approve(tool_id, run_id, payload.approval_id))
+
+
+@router.get("/{tool_id}/test-runs")
+def test_history(
+    tool_id: str,
+    service: TestService,
+    limit: int = Query(25, ge=1, le=100),
+    cursor: str | None = Query(None, max_length=2048),
+):
+    call(lambda: service.management.detail(tool_id))
+    if not service.store:
+        return {"items": [], "next_cursor": None}
+    return call(lambda: service.store.history(tool_id, limit=limit, before=cursor))
+
+
+@router.get("/{tool_id}/test-runs/{run_id}/events")
+async def test_events(
+    tool_id: str,
+    run_id: str,
+    request: Request,
+    service: TestService,
+    after: int = Query(0, ge=0),
+):
+    call(lambda: service.get(tool_id, run_id))
+    try:
+        cursor = max(after, int(request.headers.get("last-event-id", "0")))
+        if cursor < 0:
+            raise ValueError()
+    except ValueError as exc:
+        raise HTTPException(422, detail="Invalid event cursor") from exc
+
+    async def stream():
+        nonlocal cursor
+        while not await request.is_disconnected():
+            events = (
+                await asyncio.to_thread(service.store.events, run_id, cursor)
+                if service.store
+                else []
+            )
+            for event in events:
+                cursor = event["seq"]
+                yield f"id: {cursor}\ndata: {json.dumps(event)}\n\n"
+            current = await asyncio.to_thread(service.get, tool_id, run_id)
+            if current.finished_at and current.execution_state == "stopped":
+                yield "event: closed\ndata: {}\n\n"
+                break
+            yield ": heartbeat\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/{tool_id}/test-runs/{run_id}/event-log")
+def test_event_log(
+    tool_id: str, run_id: str, service: TestService, after: int = Query(0, ge=0)
+):
+    call(lambda: service.get(tool_id, run_id))
+    return {"items": service.store.events(run_id, after) if service.store else []}

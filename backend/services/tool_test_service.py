@@ -55,6 +55,7 @@ class ToolTestService:
         library=None,
         research=None,
         filesystem=None,
+        store=None,
     ):
         self.management = management
         self.registry = management.registry
@@ -66,6 +67,9 @@ class ToolTestService:
         self._idempotency = {}
         self._controls = {}
         self._closed = False
+        self.store = store
+        if store:
+            store.recover()
 
     def validate(self, tool_id, request: ToolTestRequest):
         detail = self.management.detail(tool_id)
@@ -201,6 +205,10 @@ class ToolTestService:
             [tool_id, request.model_dump(exclude={"client_request_id"})]
         )
         with self._lock:
+            if self.store:
+                existing = self.store.find(tool_id, request.client_request_id, digest)
+                if existing:
+                    return self.get(tool_id, existing.test_run_id)
             key = (tool_id, request.client_request_id)
             if key in self._idempotency:
                 old_digest, run_id = self._idempotency[key]
@@ -227,6 +235,10 @@ class ToolTestService:
                 updated_at=now(),
             )
             context.update(run_id=run_id, trace_id=run.trace_id, tool_call_id=call_id)
+            if self.store:
+                run, owned = self.store.claim(run, request.client_request_id, digest)
+                if not owned:
+                    return run
             self._runs[run_id] = run
             self._requests[run_id] = (request, args, context, detail.revision)
             self._idempotency[key] = (digest, run_id)
@@ -271,11 +283,14 @@ class ToolTestService:
 
     def get(self, tool_id, run_id):
         with self._lock:
-            run = self._runs.get(run_id)
+            run = self._runs.get(run_id) or (
+                self.store.get(tool_id, run_id) if self.store else None
+            )
             if run is None or run.tool_id != tool_id:
                 raise ToolManagementError(
                     "test_not_found", "Test run was not found.", 404
                 )
+            self._runs[run_id] = run
             if run.status == "awaiting_approval":
                 try:
                     if self.approvals.get(run.approval_id).status == "expired":
@@ -366,6 +381,18 @@ class ToolTestService:
             self._runs[run_id] = self._runs[run_id].model_copy(
                 update={**values, "updated_at": now()}
             )
+            if self.store:
+                self.store.save(self._runs[run_id])
+                if self._runs[run_id].finished_at:
+                    self._requests.pop(run_id, None)
+                    for old_id in self.store.prune():
+                        self._runs.pop(old_id, None)
+                        self._requests.pop(old_id, None)
+                        self._idempotency = {
+                            key: value
+                            for key, value in self._idempotency.items()
+                            if value[1] != old_id
+                        }
 
     def _start(self, run_id, *, confirmed):
         run = self._runs[run_id]
