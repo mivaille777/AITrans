@@ -99,6 +99,9 @@ def _tool_response(result: AgentToolExecutionResult) -> AgentToolExecuteResponse
         model=result.model,
         request_id=result.request_id,
         data=result.data or {},
+        status=result.status, tool_call_id=result.tool_call_id,
+        duration_ms=result.duration_ms, attempt=result.attempt,
+        verification=result.verification, error_code=result.error_code,
     )
 
 
@@ -154,20 +157,29 @@ def _state_from_run_request(
             "source_text",
         }
     )
-    filesystem_workspace_id = payload.filesystem_workspace_id.strip()
+    if payload.chat_configuration:
+        from backend.api.chat_sessions import get_chat_session_service
+        configuration, imported_text = get_chat_session_service().context(payload.session_id)
+        if configuration.pending_run_id:
+            raise ValueError("请先执行或取消当前计划。")
+        context["filesystem_workspace_id"] = configuration.filesystem_workspace_id
+        context["execution_mode"] = configuration.execution_mode
+        context["chat_imported_text"] = imported_text
+    filesystem_workspace_id = str(context.get("filesystem_workspace_id", "")).strip()
     if filesystem_workspace_id:
         from backend.api.dependencies import get_filesystem_workspace_service
 
-        filesystem_snapshot = get_filesystem_workspace_service().snapshot(
-            filesystem_workspace_id
-        )
-        context["filesystem_workspace_files"] = [
-            {
-                "relative_path": str(item.get("relative_path", "")),
-                "size_bytes": int(item.get("size_bytes", 0)),
-            }
-            for item in filesystem_snapshot.manifest
-        ]
+        if payload.chat_configuration:
+            context["filesystem_workspace_files"] = get_chat_session_service().list_files(filesystem_workspace_id)
+        else:
+            filesystem_snapshot = get_filesystem_workspace_service().snapshot(filesystem_workspace_id)
+            context["filesystem_workspace_files"] = [
+                {
+                    "relative_path": str(item.get("relative_path", "")),
+                    "size_bytes": int(item.get("size_bytes", 0)),
+                }
+                for item in filesystem_snapshot.manifest
+            ]
     else:
         context["filesystem_workspace_files"] = []
     active_workspace_id = payload.workspace_id.strip()
@@ -244,6 +256,19 @@ def _apply_resume_request_context(
     if not payload.resume_run_id.strip():
         return state
     context = dict(state.browser_context)
+    if payload.plan_confirmation:
+        if state.session_id != payload.session_id or state.conversation.conversation_id != payload.conversation_id:
+            raise ValueError("计划不属于当前会话。")
+        from backend.services.chat_session_service import plan_fingerprint
+        if payload.plan_hash != plan_fingerprint(state.plan.model_dump(mode="json")):
+            raise ValueError("计划确认已失效，请重新生成计划。")
+        if payload.chat_configuration:
+            from backend.api.chat_sessions import get_chat_session_service
+            if get_chat_session_service().get(payload.session_id).pending_run_id != payload.resume_run_id:
+                raise ValueError("此会话没有匹配的待确认计划。")
+            # A valid approval consumes the pending plan even if execution fails.
+            get_chat_session_service().set_pending_run(payload.session_id, "")
+        context["plan_confirmation_decision"] = {"decision": payload.plan_confirmation, "plan_hash": payload.plan_hash}
     context["confirmed_write_tools"] = list(payload.confirmed_write_tools)
     if payload.enabled_tools:
         context["enabled_tools"] = list(payload.enabled_tools)
@@ -257,6 +282,9 @@ def _associate_workspace_result(
     state: AgentState,
     workspace_service: ResearchWorkspaceService | None,
 ) -> None:
+    if state.browser_context.get("chat_configuration"):
+        from backend.api.chat_sessions import get_chat_session_service
+        get_chat_session_service().set_pending_run(state.session_id, state.run_id if state.browser_context.get("pending_plan_confirmation") else "")
     workspace_id = payload.workspace_id.strip()
     if not workspace_id or workspace_service is None:
         return
@@ -280,6 +308,7 @@ def _associate_workspace_result(
 
 
 def _run_response(state: AgentState) -> AgentRunResponse:
+    from backend.services.markdown_export_service import run_markdown_document
     response = state.response
     tool_result = (
         _state_tool_response(state.tool_results[-1]) if state.tool_results else None
@@ -301,11 +330,15 @@ def _run_response(state: AgentState) -> AgentRunResponse:
         )
     )
     return AgentRunResponse(
+        completion=state.browser_context.get("task_completion", {}),
+        markdown_export=state.browser_context.get("markdown_export") or run_markdown_document(state),
         run_id=state.run_id,
         trace_id=state.trace_id,
         status=str(response.get("status", "completed") or "completed"),
         plan=compatibility_plan,
         multi_step_plan=multi_step,
+        confirmation_kind=("plan" if state.browser_context.get("pending_plan_confirmation") else "tool" if response.get("status") == "confirmation_required" else ""),
+        plan_hash=str(state.browser_context.get("pending_plan_confirmation", {}).get("plan_hash", "")),
         output_text=str(response.get("output_text", "") or ""),
         provider=str(response.get("provider", "") or ""),
         model=str(response.get("model", "") or ""),
@@ -482,6 +515,10 @@ def get_agent_run_snapshot(
         for event in stored_events
     ]
     return AgentRunSnapshotResponse(
+        pending_plan=state.plan if state.browser_context.get("pending_plan_confirmation") else None,
+        plan_hash=str(state.browser_context.get("pending_plan_confirmation", {}).get("plan_hash", "")),
+        conversation_id=state.conversation.conversation_id,
+        session_id=state.session_id,
         run_id=state.run_id,
         trace_id=state.trace_id,
         status=status_value,
@@ -538,9 +575,19 @@ def _consume_background_task(task: asyncio.Task[None]) -> None:
 
 
 @router.get("/tools", response_model=AgentToolCatalogResponse)
-def list_agent_tools(registry: AgentToolRegistryDependency) -> AgentToolCatalogResponse:
+def list_agent_tools(registry: AgentToolRegistryDependency, has_reading_context: bool | None = None,
+                     filesystem_workspace_id: str = "", knowledge_access_policy: str = "auto") -> AgentToolCatalogResponse:
+    payload = None if has_reading_context is None else {"source_text": "present" if has_reading_context else "",
+        "filesystem_workspace_id": filesystem_workspace_id, "knowledge_access_policy": knowledge_access_policy}
+    items = []
+    for spec in registry.list_all_tools():
+        available, reason = registry.availability(spec.name, payload=payload)
+        definition = registry.get_definition(spec.name)
+        items.append(AgentToolDefinition(**asdict(spec), available=available, unavailable_reason=reason,
+            enabled=registry.tool_policy is None or registry.tool_policy.is_enabled(spec.name),
+            output_schema=definition.result_model.model_json_schema()))
     return AgentToolCatalogResponse(
-        tools=[AgentToolDefinition(**asdict(spec)) for spec in registry.list_tools()]
+        tools=items
     )
 
 
@@ -554,7 +601,9 @@ def execute_agent_tool(
         spec = registry.get_tool(tool_name)
         if spec and (spec.requires_confirmation or spec.category == "knowledge"):
             raise PermissionError("Use the governed Tools test endpoint for scoped or confirmed calls.")
-        result = registry.execute(tool_name, **payload.model_dump())
+        from backend.services.agent_tool_execution_service import AgentToolExecutionService
+        from backend.agent_core.reliability import AgentRunControl
+        result = AgentToolExecutionService(registry).execute(tool_name, payload.model_dump(), control=AgentRunControl())
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail={"code": "tool_access_denied", "message": str(exc)}) from exc
     except KeyError as exc:

@@ -15,18 +15,22 @@ export function AgentToolsControl({
   selectedTools,
   disabled,
   hasReadingContext,
+  workspaceId = "",
+  knowledgePolicy = "auto",
   onChange,
 }: {
   selectedTools: string[]
   disabled: boolean
   hasReadingContext: boolean
+  workspaceId?: string
+  knowledgePolicy?: string
   onChange: (toolNames: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const toolsQuery = useQuery({
-    queryKey: queryKeys.agent.tools,
-    queryFn: getAgentTools,
+    queryKey: [...queryKeys.agent.tools, hasReadingContext, workspaceId, knowledgePolicy],
+    queryFn: () => getAgentTools({ hasReadingContext, workspaceId, knowledgePolicy }),
     enabled: open,
     staleTime: 60_000,
     retry: 0,
@@ -51,10 +55,11 @@ export function AgentToolsControl({
   const tools = toolsQuery.data?.tools ?? []
 
   function toggleTool(tool: AgentToolDefinition) {
-    if (tool.requires_reading_context && !hasReadingContext) return
     if (selectedTools.includes(tool.name)) {
       onChange(selectedTools.filter((name) => name !== tool.name))
     } else {
+      if (tool.available === false || tool.enabled === false) return
+      if (tool.requires_reading_context && !hasReadingContext) return
       onChange([...selectedTools, tool.name])
     }
   }
@@ -70,14 +75,14 @@ export function AgentToolsControl({
         onClick={() => setOpen((current) => !current)}
       >
         <Wrench size={14} />
-        <span>Tools{selectedTools.length > 0 ? ` (${selectedTools.length})` : ""}</span>
+        <span>工具{selectedTools.length > 0 ? ` (${selectedTools.length})` : ""}</span>
         <ChevronDown size={14} />
       </button>
 
       {open && (
         <div className="ait-chat-tools-menu" role="menu" aria-label="Agent tools">
           <div className="ait-chat-tools-menu-heading">
-            <span>Agent tools</span>
+            <span>本轮允许使用的工具</span>
             {toolsQuery.isFetching && <LoaderCircle size={13} className="ait-chat-model-menu-spinner" />}
           </div>
           <button
@@ -90,8 +95,8 @@ export function AgentToolsControl({
             }}
           >
             <span>
-              <strong>Automatic</strong>
-              <small>Use the allowed catalog for this request.</small>
+              <strong>自动选择</strong>
+              <small>根据请求选择可用工具，后端校验权限与结果。</small>
             </span>
             {selectedTools.length === 0 && <Check size={15} />}
           </button>
@@ -105,7 +110,7 @@ export function AgentToolsControl({
           ) : (
             <div className="ait-chat-tools-options">
               {tools.map((tool) => {
-                const unavailable = tool.requires_reading_context && !hasReadingContext
+                const unavailable = tool.available === false || tool.enabled === false || (tool.requires_reading_context && !hasReadingContext)
                 const checked = selectedTools.includes(tool.name)
                 return (
                   <button
@@ -113,14 +118,14 @@ export function AgentToolsControl({
                     type="button"
                     role="menuitemcheckbox"
                     aria-checked={checked}
-                    disabled={unavailable}
+                    disabled={unavailable && !checked}
                     className={`ait-chat-tool-option ${checked ? "is-selected" : ""}`}
                     onClick={() => toggleTool(tool)}
                   >
                     <span className="ait-chat-tool-option-check">{checked && <Check size={13} />}</span>
                     <span className="ait-chat-tool-option-copy">
                       <strong>{tool.title || tool.name}</strong>
-                      <small>{tool.description}</small>
+                      <small>{unavailable ? tool.unavailable_reason || "缺少阅读内容。" : tool.description}</small>
                       <span className="ait-chat-tool-option-meta">
                         <span>{tool.category}</span>
                         <span>{effectLabel(tool)}</span>
@@ -139,7 +144,7 @@ export function AgentToolsControl({
           )}
           <p className="ait-chat-tools-footnote">
             {selectedTools.some((name) => !tools.some((tool) => tool.name === name)) && <span role="status">A selected tool is unavailable or disabled. Update your selection before running. </span>}
-            Selecting a tool routes the next message through Agent WebSocket execution.
+            手动选择限制可调用范围；每次调用仍需通过权限校验和结果验证。
           </p>
         </div>
       )}

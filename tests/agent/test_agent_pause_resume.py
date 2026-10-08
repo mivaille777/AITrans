@@ -81,6 +81,7 @@ class RetrievalProbe(RouteProbe):
             model="fake",
             request_id=0,
             tool_result=AgentToolExecuteResponse(
+                verification={"status": "passed", "checks": []},
                 tool_name="search_knowledge_base",
                 output_text="evidence",
                 effect="read",

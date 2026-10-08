@@ -205,6 +205,7 @@ class AgentRuntime:
         context = dict(state.browser_context)
         context["confirmed_write_tools"] = []
         context.pop("write_confirmation_decision", None)
+        context.pop("plan_confirmation_decision", None)
         context.pop("native_task_retry_resume", None)
         state.browser_context = context
         state.sync_contract()
@@ -255,6 +256,7 @@ class AgentRuntime:
                 "confirmed_write_tools",
                 "enabled_tools",
                 "write_confirmation_decision",
+                "plan_confirmation_decision",
                 "native_task_retry_resume",
                 "retry_task_id",
             )
@@ -372,6 +374,8 @@ class AgentRuntime:
                 # completed result. A confirmed write may have finished while a
                 # late cancel request was arriving; reporting the real side
                 # effect is safer than claiming it was cancelled.
+                if state.browser_context.get("task_completion"):
+                    self._emit(AgentEventType.TASK_VERIFICATION, state.browser_context["task_completion"])
                 self._emit(
                     AgentEventType.AGENT_END,
                     {
@@ -429,6 +433,7 @@ class AgentRuntime:
                     "fallback_reason": "user_cancelled",
                 },
             )
+            self._record_incomplete_acceptance(state, exc, cancelled=True)
             self._emit(
                 AgentEventType.AGENT_END,
                 {
@@ -452,6 +457,7 @@ class AgentRuntime:
                     "fallback_reason": _fallback_reason(exc),
                 },
             )
+            self._record_incomplete_acceptance(state, exc)
             self._emit(
                 AgentEventType.AGENT_END,
                 {
@@ -476,3 +482,13 @@ class AgentRuntime:
             self._event_sink = previous_sink
             self._active_state = previous_state
             self._control = previous_control
+
+    def _record_incomplete_acceptance(self, state, error, *, cancelled=False):
+        uncertain = any(event.event_type == AgentEventType.FAILURE and event.payload.get("execution_outcome") == "unknown" for event in self.events)
+        status = "cancelled" if cancelled else "unknown" if uncertain else "failed"
+        report = {"status": status, "passed": 0, "total": 1, "reason": str(error)[:1000],
+            "semantic_quality": "not_assessed", "criteria": [{"criterion_id": "runtime_execution",
+                "label": "任务执行完成且结果可确认", "required": True,
+                "status": "unknown" if uncertain else "failed", "evidence": {"error_code": type(error).__name__}}]}
+        state.browser_context["task_completion"] = report
+        self._emit(AgentEventType.TASK_VERIFICATION, report)

@@ -255,6 +255,7 @@ export default function ConversationHistoryPanel({
         <Search size={17} className="shrink-0" />
         <input
           className="min-w-0 flex-1 bg-transparent outline-none"
+          aria-label="Search conversations"
           value={search}
           placeholder="Search conversations…"
           onChange={(event) => setSearch(event.target.value)}
@@ -354,7 +355,7 @@ export default function ConversationHistoryPanel({
                             </div>
                             <p className="ait-chat-conversation-snippet">
                               {conversation.section_heading || conversation.resource_title || (
-                                conversation.context_mode === "reading" ? "Continue from reading context…" : "Start a new conversation…"
+                                conversation.context_mode === "reading" ? "Reading conversation" : "General conversation"
                               )}
                             </p>
                           </button>

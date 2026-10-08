@@ -31,6 +31,7 @@ from backend.api.agent_runtime_jobs import (
 )
 from backend.api.browser_context import router as browser_context_router
 from backend.api.companion import router as companion_router
+from backend.api.chat_sessions import router as chat_sessions_router
 from backend.api.companion_stream import router as companion_stream_router
 from backend.api.conversations import router as conversations_router
 from backend.api.curator import router as curator_router
@@ -216,6 +217,7 @@ def create_app():
         rag_models_router,
         rag_debug_router,
         companion_router,
+        chat_sessions_router,
         companion_stream_router,
         conversations_router,
         writing_router,

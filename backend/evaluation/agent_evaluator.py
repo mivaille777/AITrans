@@ -31,6 +31,11 @@ class AgentEvaluationExpectation:
 
 @dataclass(frozen=True, slots=True)
 class AgentTrajectoryMetrics:
+    tool_verification_count: int = 0
+    tool_verification_pass_count: int = 0
+    final_task_completion_status: str | None = None
+    required_acceptance_count: int = 0
+    required_acceptance_pass_count: int = 0
     available: bool = False
     react_started: bool = False
     react_iteration_count: int = 0
@@ -283,6 +288,11 @@ def derive_agent_trajectory_metrics(
         ).strip()
 
     return AgentTrajectoryMetrics(
+        tool_verification_count=len(by_type.get("tool_verification", [])),
+        tool_verification_pass_count=sum(_event_payload(event).get("status") == "passed" for event in by_type.get("tool_verification", [])),
+        final_task_completion_status=_event_payload(by_type["task_verification"][-1]).get("status") if by_type.get("task_verification") else None,
+        required_acceptance_count=_safe_int(_event_payload(by_type["task_verification"][-1]).get("total")) if by_type.get("task_verification") else 0,
+        required_acceptance_pass_count=_safe_int(_event_payload(by_type["task_verification"][-1]).get("passed")) if by_type.get("task_verification") else 0,
         available=True,
         react_started=bool(by_type.get("react_started")),
         react_iteration_count=max(iterations, default=0),

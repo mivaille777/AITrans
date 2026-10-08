@@ -12,6 +12,15 @@ from backend.services.conversation_store_service import (
     ConversationStoreService,
     StoredConversation,
 )
+from backend.services.markdown_export_service import (
+    conversation_markdown,
+    export_scope,
+    is_markdown_export_only,
+    load_markdown_export,
+    markdown_document,
+    run_markdown_document,
+    save_markdown_export,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,18 +228,54 @@ class AgentConversationService:
             raise
 
     def apply_to_state(self, state: AgentState, run: AgentConversationRun) -> AgentState:
-        return state.apply_conversation(
+        state.apply_conversation(
             conversation_id=run.conversation_id,
             history=run.history,
             user_message_id=run.user_message_id,
             assistant_message_id=run.assistant_message_id,
             context_mode=self._conversation_context_mode(state),
         )
+        if is_markdown_export_only(state.user_input):
+            conversation = self._store.get(run.conversation_id)
+            if conversation:
+                messages = [
+                    item for item in conversation.messages
+                    if item.message_id not in {run.user_message_id, run.assistant_message_id}
+                ]
+                document = None
+                if export_scope(state.user_input) == "conversation" and any(
+                    item.status == "complete" and item.content.strip() for item in messages
+                ):
+                    document = conversation_markdown(conversation.title, messages)
+                else:
+                    previous_answer = next((
+                        item for item in reversed(messages)
+                        if item.role == "assistant" and item.status == "complete"
+                        and item.content.strip()
+                    ), None)
+                    content = previous_answer.content if previous_answer else ""
+                    if content.strip() or state.selected_text.strip():
+                        document = (
+                            load_markdown_export(self._store.storage_path, previous_answer.message_id)
+                            if previous_answer else None
+                        ) or markdown_document(content or state.selected_text, conversation.title)
+                if document:
+                    state.browser_context["markdown_export_arguments"] = {
+                        "markdown": document.markdown, "filename": document.filename,
+                    }
+        return state
 
     def complete(self, run: AgentConversationRun, state: AgentState) -> None:
         try:
             status = str(state.response.get("status", "completed") or "completed")
             if status == "confirmation_required":
+                if state.browser_context.get("pending_plan_confirmation"):
+                    self._store.finalize_message(
+                        run.assistant_message_id,
+                        status="complete",
+                        content=str(state.response.get("output_text", "") or ""),
+                    )
+                    return
                 self._store.finalize_message(
                     run.assistant_message_id,
                     status="cancelled",
@@ -249,6 +294,10 @@ class AgentConversationService:
                 provider=str(state.response.get("provider", "") or ""),
                 model=str(state.response.get("model", "") or ""),
             )
+            document = run_markdown_document(state)
+            if document:
+                save_markdown_export(self._store.storage_path, run.assistant_message_id, document)
+                state.browser_context["markdown_export"] = document.model_dump()
             evidence = tuple(state.evidence or ())
             citations = tuple(state.citations or ())
             source_ids = {item.source_id for item in evidence if item.source_id}

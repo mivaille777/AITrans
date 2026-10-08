@@ -218,6 +218,9 @@ def test_real_docker_python_request_flows_through_agent_and_cleans_up(tmp_path) 
         assert result.route is not None and result.route.tool_name == "python_execute"
         assert result.tool_result is not None
         assert result.tool_result.data["stdout"].strip() == "285"
+        assert result.tool_result.status == "success"
+        assert result.tool_result.verification["status"] == "passed"
+        assert result.tool_result.tool_call_id
         assert result.output_text == "The result is 285."
         containers = runtime._get_client().containers.list(
             all=True,
@@ -229,3 +232,35 @@ def test_real_docker_python_request_flows_through_agent_and_cleans_up(tmp_path) 
     finally:
         manager.close()
         shutil.rmtree(host_root, ignore_errors=True)
+
+
+@pytest.mark.docker_integration
+@pytest.mark.parametrize("code", ["raise RuntimeError('expected test failure')", "import sys; sys.exit(3)"])
+def test_real_docker_failure_cannot_be_reported_as_task_success(tmp_path, code):
+    from backend.agent_core.product_adapter import ProductAgentRuntimeAdapter
+    from backend.agent_core.runtime import AgentRuntime
+    from backend.agent_core.state import AgentState
+    from backend.services.markdown_export_service import run_markdown_document
+
+    docker_runtime = DockerSandboxRuntime()
+    assert docker_runtime.health().available, "Start Docker Desktop before this acceptance test."
+    with tempfile.TemporaryDirectory(prefix="aitrans-tool-verification-") as directory:
+        manager = SandboxManager(docker_runtime, SandboxWorkspaceManager(
+            sandbox_root=Path(directory) / "sandboxes", artifact_root=tmp_path / "artifacts"))
+        try:
+            service = ProductAgentService(registry=AgentToolRegistry(sandbox_manager=manager), chat_service=FakeChatService())
+            runtime = AgentRuntime(workflow_adapter=ProductAgentRuntimeAdapter(service))
+            state = runtime.execute(AgentState(session_id="docker-failure",
+                user_input=f"执行这段 Python 代码：\n```python\n{code}\n```\n并导出 Markdown 文档",
+                browser_context={"context_mode": "general", "enabled_tools": ["python_execute"]}))
+            result = state.tool_results[-1]
+            assert result["data"]["exit_code"] != 0
+            assert result["status"] == "failed" and result["verification"]["status"] == "failed"
+            assert state.browser_context["task_completion"]["status"] != "completed"
+            # The fake synthesizer always claims 285, regardless of the actual exit.
+            assert "The result is 285" not in state.response["output_text"]
+            assert run_markdown_document(state) is None
+            assert docker_runtime._get_client().containers.list(all=True,
+                filters={"label": f"{SANDBOX_ID_LABEL}={result['data']['sandbox_id']}"}) == []
+        finally:
+            manager.close()

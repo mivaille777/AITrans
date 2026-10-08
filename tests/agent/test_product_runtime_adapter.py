@@ -27,6 +27,7 @@ class FakeProductAgentService:
             model="fake-model",
             request_id=11,
             tool_result=AgentToolExecutionResult(
+                verification={"status": "passed", "checks": []},
                 tool_name="translate_selection",
                 output_text="高斯过程",
                 effect="compute",
@@ -119,5 +120,6 @@ def test_agent_runtime_emits_tool_events_for_product_workflow():
         AgentEventType.PLAN_READY,
         AgentEventType.TOOL_CALL,
         AgentEventType.TOOL_RESULT,
+        AgentEventType.TASK_VERIFICATION,
         AgentEventType.AGENT_END,
     ]

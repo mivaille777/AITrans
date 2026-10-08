@@ -332,6 +332,10 @@ class AgentDeterministicRouterService:
         if not command:
             return AgentRouteDecision()
 
+        from backend.services.markdown_export_service import is_markdown_export_only
+        if is_markdown_export_only(user_message):
+            return self._tool_route(tool_name="export_markdown_document", available_tools=available, reason="将已有内容导出为 Markdown 文档。")
+
         if _looks_like_knowledge_structure_query(command):
             return AgentRouteDecision(
                 kind="answer",

@@ -258,6 +258,9 @@ class AgentState(BaseModel):
                 for item in self.tool_results
                 if isinstance(item, dict)
             ) else "pending"
+            matching = [item for item in self.tool_results if item.get("tool_name", item.get("name")) == tool_name]
+            if matching and matching[-1].get("status") in {"failed", "unknown"}:
+                step_status = "failed"
             if explicit_route is None:
                 self.route = AgentRouteDecision(
                     kind="tool",

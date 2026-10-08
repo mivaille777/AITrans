@@ -10,6 +10,7 @@ from backend.models.agent_runtime import (
     AgentPlanContext,
 )
 from backend.models.knowledge_access import KnowledgeAccessPolicy
+from backend.models.markdown_export import MarkdownDocument
 from backend.models.quick_actions import ReadingContextPayload
 
 AgentToolEffect = Literal["read", "compute", "write"]
@@ -70,6 +71,9 @@ AgentTraceEventType = Literal[
     "write_rejected",
     "retry",
     "tool_result",
+    "tool_verification",
+    "task_verification",
+    "capability_routed",
     "observation_ready",
     "evidence_gate_evaluated",
     "evidence_sufficiency",
@@ -134,6 +138,15 @@ class AgentToolDefinition(BaseModel):
     requires_reading_context: bool = True
     requires_confirmation: bool = False
     input_schema: dict[str, Any] = Field(default_factory=dict)
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    available: bool = True
+    enabled: bool = True
+    unavailable_reason: str = ""
+    timeout_seconds: float = 20
+    parallel_safe: bool = False
+    idempotent: bool = False
+    tool_version: str = "1"
 
 
 class AgentToolCatalogResponse(BaseModel):
@@ -153,6 +166,12 @@ class AgentToolExecuteRequest(ReadingContextPayload):
 
 
 class AgentToolExecuteResponse(BaseModel):
+    status: str = "success"
+    tool_call_id: str = ""
+    duration_ms: int = 0
+    attempt: int = 1
+    verification: dict[str, Any] = Field(default_factory=dict)
+    error_code: str = ""
     tool_name: str
     output_text: str
     effect: AgentToolEffect
@@ -213,6 +232,10 @@ class AgentRunRequest(ReadingContextPayload):
     temporary: bool = False
     workflow_action: AgentWorkflowAction = ""
     retry_task_id: str = Field(default="", max_length=256)
+    chat_configuration: bool = False
+    execution_mode: Literal["auto", "react", "plan_execute"] = "auto"
+    plan_confirmation: Literal["", "approve", "reject"] = ""
+    plan_hash: str = Field(default="", max_length=64)
 
     @model_validator(mode="after")
     def migrate_legacy_knowledge_toggle(self) -> AgentRunRequest:
@@ -233,11 +256,15 @@ class AgentRunRequest(ReadingContextPayload):
 
 
 class AgentRunResponse(BaseModel):
+    completion: dict[str, Any] = Field(default_factory=dict)
+    markdown_export: MarkdownDocument | None = None
     run_id: str = ""
     trace_id: str = ""
     status: AgentRunStatus
     plan: AgentPlan
     multi_step_plan: AgentPlanContext | None = None
+    confirmation_kind: Literal["", "tool", "plan"] = ""
+    plan_hash: str = ""
     output_text: str = ""
     provider: str = ""
     model: str = ""
@@ -277,6 +304,10 @@ class AgentRunTraceResponse(BaseModel):
 
 
 class AgentRunSnapshotResponse(BaseModel):
+    pending_plan: AgentPlanContext | None = None
+    plan_hash: str = ""
+    conversation_id: str = ""
+    session_id: str = ""
     run_id: str
     trace_id: str
     status: str

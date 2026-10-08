@@ -16,6 +16,12 @@ vi.mock("../../api/companion-stream", () => ({ streamCompanionChat: vi.fn() }))
 vi.mock("./ConversationHistoryPanel", () => ({ default: () => null }))
 vi.mock("./components/AgentToolsControl", () => ({ AgentToolsControl: () => null }))
 vi.mock("./components/KnowledgeRetrievalControl", () => ({ KnowledgeRetrievalControl: () => null }))
+// Keep these existing Companion transport regressions separate from the new
+// Agent-mode integration tests in ChatSessionControls.test.tsx.
+vi.mock("./hooks/useChatConfiguration", () => ({useChatConfiguration: () => ({
+  configuration:{data:{execution_mode:"",attachments:[],pending_run_id:"",filesystem_workspace_id:""},isPending:false,isError:false},
+  workspaces:{data:[]}, mutation:{isPending:false,error:null,mutate:vi.fn()},
+})}))
 
 const fetchMock = vi.fn<typeof fetch>()
 const clients: QueryClient[] = []
@@ -77,6 +83,76 @@ afterEach(() => {
 })
 
 describe("Chat Send interaction", () => {
+  it("labels a stage outline without claiming full-text reading", async () => {
+    renderChat()
+    await userEvent.type(composer(), "任务书有几个阶段")
+    await waitFor(() => expect(sendButton().disabled).toBe(false))
+    await userEvent.click(sendButton())
+    const requestId = vi.mocked(streamCompanionChat).mock.calls[0][0].request_id ?? 0
+    const coverage = { basis: "stage_headers", total_chunks: 11, processed_chunks: 11, total_chars: 216,
+      processed_chars: 216, total_batches: 1, processed_batches: 1, complete: true }
+    act(() => handlers.onEvent({
+      type: "phase", phase: "reading_document", route: "document_scoped_search", request_id: requestId,
+      conversation_id: "", message_id: "", knowledge_recovery: { outcome: "recovering", reading_coverage: coverage },
+    }))
+    expect(screen.getAllByText("正在核对阶段目录… 11/11").length).toBeGreaterThan(0)
+    act(() => handlers.onEvent({
+      type: "done", request_id: requestId, conversation_id: "", message_id: "outline", output_text: "共11个阶段",
+      provider: "deepseek", model: "test-model", knowledge_access_policy: "auto", knowledge_enabled: true,
+      knowledge_decision: null, knowledge_retrieved: true, knowledge_document_count: 1, knowledge_chunk_count: 11,
+      knowledge_fallback_reason: "", evidence: [], citations: [], knowledge_recovery: { outcome: "normal", reading_coverage: coverage },
+    }))
+    expect(screen.getByText("阶段目录已核验")).toBeTruthy()
+    expect(screen.queryByText("索引正文已完整读取")).toBeNull()
+  })
+
+  it("shows body and stage coverage separately from final citations", async () => {
+    renderChat()
+    await userEvent.type(composer(), "任务书讲什么")
+    await waitFor(() => expect(sendButton().disabled).toBe(false))
+    await userEvent.click(sendButton())
+    const requestId = vi.mocked(streamCompanionChat).mock.calls[0][0].request_id ?? 0
+    act(() => handlers.onEvent({
+      type: "done", request_id: requestId, conversation_id: "", message_id: "rag-overview",
+      output_text: "概览 [1][3]，后续阶段 [3]", provider: "deepseek", model: "test-model",
+      knowledge_access_policy: "auto", knowledge_enabled: true, knowledge_decision: null,
+      knowledge_retrieved: true, knowledge_document_count: 1, knowledge_chunk_count: 29,
+      knowledge_fallback_reason: "", evidence: [], citations: [],
+      knowledge_recovery: { outcome: "normal", full_read: { basis: "indexed_text", total_chunks: 29,
+        processed_chunks: 29, total_chars: 20203, processed_chars: 20203, total_batches: 2,
+        processed_batches: 2, complete: true }, rag_reading: { contract_version: "section-coverage-v1", documents: [{
+        basis: "indexed_text", inventory_chunks: 29, selected_chunks: 29, read_chunks: 29,
+        expected_sections: ["intro", "s1"], read_complete_sections: ["intro", "s1"],
+        expected_stages: ["MA00", "MA01"], read_stages: ["MA00", "MA01"], read_complete: true, budget_truncated: false,
+      }] } },
+    }))
+    expect(screen.getByText("正文 29/29 · 阶段 2/2 · 引用 2 个片段")).toBeTruthy()
+  })
+
+  it.each([
+    ["grounding_verification_failed", "正文已读完，摘要未通过核验"],
+    ["full_read_synthesis_failed", "正文已读完，摘要生成失败"],
+    ["answer_incomplete", "正文已读完，回答不完整"],
+  ])("distinguishes complete reading from a failed summary: %s", async (reason, label) => {
+    renderChat()
+    await userEvent.type(composer(), "把任务书全看完，告诉我它讲的内容是什么")
+    await waitFor(() => expect(sendButton().disabled).toBe(false))
+    await userEvent.click(sendButton())
+    const requestId = vi.mocked(streamCompanionChat).mock.calls[0][0].request_id ?? 0
+    const full = { basis: "indexed_text", total_chunks: 29, processed_chunks: 29, total_chars: 20203,
+      processed_chars: 20203, total_batches: 2, processed_batches: 2, complete: true }
+    act(() => handlers.onEvent({
+      type: "done", request_id: requestId, conversation_id: "", message_id: "fallback",
+      output_text: "正文读取已完成，但摘要未能通过核验", provider: "deepseek", model: "test-model",
+      knowledge_access_policy: "auto", knowledge_enabled: true, knowledge_decision: null,
+      knowledge_retrieved: true, knowledge_document_count: 1, knowledge_chunk_count: 29,
+      knowledge_fallback_reason: "grounding_verification_failed", evidence: [], citations: [],
+      knowledge_recovery: { outcome: "fallback", reason, full_read: full },
+    }))
+    expect(screen.getByText(label)).toBeTruthy()
+    expect(screen.queryByText("全文读取未完成")).toBeNull()
+  })
+
   it("shows full reading progress and distinguishes partial completion", async () => {
     renderChat()
     await userEvent.type(composer(), "读取全文")

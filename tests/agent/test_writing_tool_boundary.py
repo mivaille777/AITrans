@@ -139,6 +139,7 @@ def test_registry_uses_dedicated_writing_owner_and_preserves_catalog_order() -> 
             "read_knowledge_chunk",
             "read_knowledge_section",
             "save_knowledge_card",
+            "export_markdown_document",
     ]
 
     definition = registry.get_definition("polish_selection")

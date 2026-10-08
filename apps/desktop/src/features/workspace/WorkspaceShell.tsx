@@ -21,7 +21,8 @@ export default function WorkspaceShell({ children, llmStatus }: {
   const readingRoute = location.pathname === "/reading"
   const settingsRoute = location.pathname === "/settings"
   const toolsRoute = location.pathname === "/tools"
-  const defaultHeaderRoute = !readingRoute && !settingsRoute && !toolsRoute && location.pathname !== "/research" && location.pathname !== "/knowledge"
+  const chatRoute = location.pathname === "/chat"
+  const defaultHeaderRoute = !chatRoute && !readingRoute && !settingsRoute && !toolsRoute && location.pathname !== "/research" && location.pathname !== "/knowledge"
   const fixedHeightRoute = workspaceRouteUsesFixedHeight(location.pathname)
   const shellColumns = sidebarCollapsed
     ? "grid-cols-1 md:grid-cols-[72px_minmax(0,1fr)]"
@@ -30,11 +31,13 @@ export default function WorkspaceShell({ children, llmStatus }: {
 
   return (
     <WindowFrame>
-      <div className={`ait-app-shell${settingsRoute ? " ait-settings-shell" : ""} grid h-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-transparent text-slate-950 ${shellColumns}`}>
+      <div className={`ait-app-shell${settingsRoute ? " ait-settings-shell" : ""}${chatRoute ? " ait-chat-app-shell" : ""} grid h-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-transparent text-slate-950 ${shellColumns}`}>
         <WorkspaceSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
 
         <div className={`min-h-0 min-w-0 overflow-hidden ${settingsRoute ? "bg-white" : readingRoute ? "p-3 pl-0" : "p-3"}`}>
-          <div className={settingsRoute
+          <div className={chatRoute
+            ? "ait-chat-route-frame flex h-full min-h-0 flex-col overflow-hidden"
+            : settingsRoute
             ? "h-full min-h-0"
             : readingRoute
               ? "h-full min-h-0 overflow-hidden rounded-[22px] border border-slate-200/70 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.08)]"

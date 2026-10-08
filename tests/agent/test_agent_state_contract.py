@@ -108,6 +108,7 @@ class _FakeProductAgentService:
             model="fake-model",
             request_id=11,
             tool_result=AgentToolExecutionResult(
+                verification={"status": "passed", "checks": []},
                 tool_name="translate_selection",
                 output_text="高斯过程",
                 effect="compute",

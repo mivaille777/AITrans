@@ -58,6 +58,8 @@ class ToolManagementService:
             requirements.append("knowledge_scope")
         if name in {"python_execute", "command_execute"}:
             requirements.extend(["filesystem_workspace", "sandbox"])
+        if name == "read_workspace_file":
+            requirements.append("filesystem_workspace")
         owner = getattr(definition.executor, "__self__", None)
         reason = ""
         if (
@@ -72,7 +74,11 @@ class ToolManagementService:
             and getattr(owner, "_chunk_store", None) is None
         ):
             reason = "Knowledge chunk storage is unavailable."
-        profiles = {}
+        availability = getattr(self.registry, "availability", None)
+        if callable(availability):
+            available, availability_reason = availability(name)
+            reason = reason or (availability_reason if not available else "")
+        profiles = {"planner": spec.parameter_schema or {"type": "object", "properties": spec.input_schema}}
         # Same invocation name can have a stricter native Chat parameter model.
         if spec.category == "knowledge":
             from backend.services.knowledge_function_calling import _MODELS
@@ -155,7 +161,9 @@ class ToolManagementService:
                 "supports_cancel": True,
                 "cancel_stops_executor": False,
                 "supports_test": True,
-                "supports_native_chat": not bool(custom) and bool(profiles),
+                "supports_native_chat": not bool(custom) and "native_chat" in profiles,
+                "supports_native_react": True,
+                "supports_result_verification": True,
             },
             editable_fields=["enabled", "config"]
             + (["preset", "archive"] if custom and not custom["archived"] else [])

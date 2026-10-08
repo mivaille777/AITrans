@@ -179,6 +179,14 @@ class AgentToolRegistry:
 
         shared_quick_action_service = quick_action_service or QuickActionService()
         shared_research_note_service = research_note_service or ResearchNoteService()
+        from backend.services.tool_result_validator import ToolResultValidator
+        from backend.services.chat_session_service import ChatSessionService
+        self.result_validator = ToolResultValidator(
+            filesystem=(lambda: ChatSessionService(filesystem_workspace_service)) if filesystem_workspace_service else None,
+            research=shared_research_note_service, library=knowledge_library_service,
+            workspace=knowledge_workspace_service,
+            chunks=chunk_store,
+        )
 
         translation_tool = TranslationAgentTool(
             translation_service=translation_service,
@@ -284,6 +292,12 @@ class AgentToolRegistry:
             *sandbox_definitions,
         )
         definitions = list(built_in_definitions)
+        from backend.agent_tools.markdown_export import build_markdown_export_definition
+        definitions.append(build_markdown_export_definition())
+        if filesystem_workspace_service is not None:
+            from backend.agent_tools.chat_files import build_read_workspace_file_definition
+            from backend.services.chat_session_service import ChatSessionService
+            definitions.append(build_read_workspace_file_definition(lambda: ChatSessionService(filesystem_workspace_service)))
         known_names = {item.spec.name for item in definitions}
         for definition in external_tool_definitions:
             _validate_external_definition(definition)
@@ -339,6 +353,33 @@ class AgentToolRegistry:
         if spec is None:
             raise KeyError(f"Unknown agent tool: {name}")
         return spec.validate_planner_arguments(arguments)
+
+    def verify_result(self, name, payload, result):
+        primitive = self.primitive_name(name)
+        custom = self.tool_policy.repository.custom(name) if self.tool_policy else None
+        arguments = {**(custom["preset"]["fixed_arguments"] if custom else {}), **payload}
+        return self.result_validator.verify(primitive, arguments, result)
+
+    def availability(self, name, *, payload=None):
+        definition = self.get_definition(name)
+        if definition is None:
+            return False, "工具不存在或已归档。"
+        if self.tool_policy and not self.tool_policy.is_enabled(name):
+            return False, "工具已禁用。"
+        primitive = self.primitive_name(name)
+        owner = getattr(definition.executor, "__self__", None)
+        if primitive == "search_knowledge_base" and owner and getattr(owner, "_retrieval_service", None) is None:
+            return False, "知识检索服务不可用。"
+        if primitive in {"read_knowledge_chunk", "read_knowledge_section"} and owner and getattr(owner, "_chunk_store", None) is None:
+            return False, "知识片段存储不可用。"
+        if payload is not None:
+            if definition.spec.requires_reading_context and not str(payload.get("source_text", "")).strip():
+                return False, "缺少阅读内容。"
+            if primitive == "read_workspace_file" and not payload.get("filesystem_workspace_id"):
+                return False, "请先选择工作区。"
+            if primitive in {"list_knowledge_documents", "search_knowledge_base", "read_knowledge_chunk", "read_knowledge_section"} and str(payload.get("knowledge_access_policy", "auto")) == "never":
+                return False, "当前会话已关闭知识检索。"
+        return True, ""
 
     def trace_arguments(
         self,

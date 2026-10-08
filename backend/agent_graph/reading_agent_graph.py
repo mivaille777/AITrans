@@ -9,7 +9,7 @@ from typing import Any
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_config
 from langgraph.runtime import Runtime
-from langgraph.types import Command, Overwrite, Send
+from langgraph.types import Command, Overwrite, Send, interrupt
 from pydantic import ConfigDict
 from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import TypedDict
@@ -58,6 +58,10 @@ from backend.models.agent_runtime import (
 from backend.rag.observability import bind_rag_trace
 from backend.services.agent_evidence_gate_service import AgentEvidenceGateService
 from backend.services.agent_react_decision_service import AgentReActDecisionService
+from backend.services.markdown_export_service import (
+    export_scope,
+    is_markdown_export_only,
+)
 
 GraphEventSink = Callable[[AgentEventType, dict[str, Any]], None]
 _KNOWLEDGE_SEARCH_TOOL = "search_knowledge_base"
@@ -370,12 +374,10 @@ class ReadingAgentGraph:
         agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._adapter = adapter
-        native_service = getattr(adapter, "_service", None)
-        self._skill_runtime_factory = getattr(getattr(native_service, "_chat_service", None), "_skill_runtime_factory", None)
-        planner = getattr(getattr(native_service, "_semantic_router", None), "_planner", None)
-        self._react_decision_service = react_decision_service or AgentReActDecisionService(
-            text_service=getattr(planner, "_text_service", None)
-            if getattr(native_service, "function_calling_enabled", False) else None)
+        self._skill_runtime_factory = None
+        self._native_dependencies_ready = False
+        self._use_service_decision_dependencies = react_decision_service is None
+        self._react_decision_service = react_decision_service or AgentReActDecisionService()
         self._evidence_gate_service = (
             evidence_gate_service or AgentEvidenceGateService()
         )
@@ -723,6 +725,12 @@ class ReadingAgentGraph:
         if resolved is None:
             return None
         snapshot, state = resolved
+        for task in getattr(snapshot, "tasks", ()) or ():
+            for item in getattr(task, "interrupts", ()) or ():
+                pending = getattr(item, "value", {})
+                if isinstance(pending, dict) and pending.get("kind") == "plan":
+                    state.browser_context["pending_plan_confirmation"] = pending
+                    state.apply_response({"status": "confirmation_required", "request_id": state.execution.request_id})
         pending_write = self._pending_checkpoint_write_tool(state, snapshot.next)
         if pending_write and not self._checkpoint_has_write_interrupt(
             snapshot, pending_write, state.run_id
@@ -1937,7 +1945,15 @@ class ReadingAgentGraph:
         runtime: Runtime[ReadingAgentRuntimeContext],
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
-        _, control = self._runtime(runtime)
+        emit, control = self._runtime(runtime)
+        from backend.services.tool_capability_router import requested_capabilities
+        capabilities = sorted(requested_capabilities(state.user_input))
+        state.browser_context["requested_capabilities"] = capabilities
+        if emit:
+            emit(AgentEventType.CAPABILITY_ROUTED, {"capabilities": capabilities,
+                "tool_count": len(self._run_registered_tools(state)),
+                "allowed_tools": [tool.name for tool in self._run_registered_tools(state)],
+                "reason": "已按请求能力、会话选择与后端权限确定可用工具。"})
         if (
             state.browser_context.get("orchestration_direct_delivery")
             and state.response_state.status == "completed"
@@ -1955,6 +1971,54 @@ class ReadingAgentGraph:
                 "route_metadata": {"direct_delivery": True},
             }
         try:
+            execution_mode = state.browser_context.get("execution_mode", "auto")
+            export_only = is_markdown_export_only(state.user_input)
+            if export_only:
+                allowed = {tool.name for tool in self._run_registered_tools(state)}
+                if "export_markdown_document" not in allowed:
+                    raise AgentRuntimeError("Markdown 导出工具未启用，请在工具设置中启用。", stage="routing")
+                history = state.conversation.history
+                if export_scope(state.user_input) == "conversation":
+                    body = "\n\n".join(
+                        ("## 用户" if item.role == "user" else "## AITrans") + "\n\n" + item.content
+                        for item in history if item.role in {"user", "assistant"}
+                    )
+                else:
+                    body = next((
+                        item.content for item in reversed(history)
+                        if item.role == "assistant" and item.content.strip()
+                    ), state.selected_text)
+                if not body.strip():
+                    raise AgentRuntimeError("没有可导出的回答，请先生成内容或选择文本。", stage="routing")
+                if not state.browser_context.get("markdown_export_arguments"):
+                    state.browser_context["markdown_export_arguments"] = {
+                        "markdown": body,
+                        "filename": "conversation.md" if export_scope(state.user_input) == "conversation" else "answer.md",
+                    }
+            if execution_mode in {"react", "plan_execute"}:
+                metadata = {}
+                route = AgentRouteDecision(kind="complex", source="planner", intent=execution_mode, user_visible_reason="按已选择的执行模式处理。")
+                state.apply_route(route)
+                if execution_mode == "plan_execute":
+                    if self._checkpointer is None or state.browser_context.get("temporary"):
+                        raise AgentRuntimeError("Plan–Execute requires durable checkpoints.", stage="planning")
+                    if export_only:
+                        state.apply_multi_step_plan({
+                            "mode": "multi_step", "goal": "导出 Markdown 文档",
+                            "steps": [{
+                                "step_id": "export-markdown",
+                                "tool_name": "export_markdown_document",
+                                "arguments": state.browser_context["markdown_export_arguments"],
+                            }],
+                        })
+                    else:
+                        _, metadata = run_node_operation_with_timeout(
+                            lambda: self._adapter.plan_multi_step(state, control=control),
+                            control=control,
+                            node_timeout_seconds=control.policy.node_timeout_seconds,
+                            stage="chat_plan",
+                        )
+                return {"agent_state": _dump_agent_state(state), "route": route.model_dump(mode="json"), "route_metadata": metadata}
             working_state = state.model_copy(deep=True)
 
             def resolve_route() -> tuple[AgentRouteDecision, dict[str, Any], AgentState]:
@@ -2025,6 +2089,15 @@ class ReadingAgentGraph:
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         emit, control = self._runtime(runtime)
+        if state.browser_context.get("execution_mode") == "plan_execute":
+            from backend.services.chat_session_service import plan_fingerprint
+            plan = state.plan.model_dump(mode="json")
+            plan_hash = plan_fingerprint(plan)
+            decision = interrupt({"kind": "plan", "plan_hash": plan_hash, "plan": plan})
+            if not isinstance(decision, dict) or decision.get("plan_hash") != plan_hash or decision.get("decision") not in {"approve", "reject"}:
+                raise AgentRuntimeError("计划确认已失效，请重新生成计划。", stage="plan_confirmation")
+            state.browser_context.pop("pending_plan_confirmation", None)
+            state.browser_context["plan_rejected"] = decision["decision"] == "reject"
         state.start_react()
         emitted: set[AgentEventType] = set()
         if emit is not None:
@@ -2032,7 +2105,7 @@ class ReadingAgentGraph:
             emit(
                 AgentEventType.PLAN_READY,
                 {
-                    "mode": "react",
+                    "mode": state.browser_context.get("execution_mode", "react"),
                     "route_kind": state.route.kind,
                     "route_source": state.route.source,
                     "request_id": state.execution.request_id,
@@ -2064,6 +2137,55 @@ class ReadingAgentGraph:
     ) -> dict[str, Any]:
         state = _coerce_agent_state(graph_state["agent_state"])
         emit, control = self._runtime(runtime)
+        export_arguments = state.browser_context.get("markdown_export_arguments")
+        if (export_arguments and not state.browser_context.get("plan_rejected")
+                and state.browser_context.get("execution_mode") != "plan_execute"):
+            if state.tool_results:
+                decision = AgentReActDecision(
+                    iteration=state.react.iteration + 1, kind="final",
+                    action_summary="Markdown 文档已准备",
+                    final_answer="Markdown 文档已生成，可通过下载文件保存。",
+                )
+            else:
+                decision = AgentReActDecision(
+                    iteration=state.react.iteration + 1, kind="tool",
+                    tool_name="export_markdown_document", arguments=export_arguments,
+                    action_summary="导出已有内容为 Markdown",
+                )
+            state.record_react_decision(decision)
+            if emit:
+                emit(AgentEventType.DECISION_READY, {
+                    "iteration": decision.iteration, "kind": decision.kind,
+                    "tool_name": decision.tool_name, "action_summary": decision.action_summary,
+                })
+            return {
+                "agent_state": _dump_agent_state(state),
+                "emitted_event_types": _merge_emitted(
+                    graph_state.get("emitted_event_types", ()), {AgentEventType.DECISION_READY}
+                ),
+            }
+        if state.browser_context.get("execution_mode") == "plan_execute":
+            if state.browser_context.get("plan_rejected"):
+                decision = AgentReActDecision(iteration=state.react.iteration + 1, kind="final", action_summary="取消计划", final_answer="计划已取消，未执行任何步骤。")
+            else:
+                step = next((step for step in state.plan.steps if step.status == "pending"), None)
+                if any(item.status == "failed" for item in state.plan.steps):
+                    step = None
+                if step is not None:
+                    completed = {item.step_id for item in state.plan.steps if item.status == "completed"}
+                    if not set(step.depends_on).issubset(completed):
+                        raise AgentRuntimeError("计划步骤的依赖尚未完成。", stage="plan_execution")
+                    decision = AgentReActDecision(iteration=state.react.iteration + 1, kind="tool", tool_name=step.tool_name, arguments=step.arguments, action_summary=step.step_id)
+                elif state.tool_results:
+                    decision = AgentReActDecision(iteration=state.react.iteration + 1, kind="final", action_summary="汇总已执行的计划")
+                else:
+                    decision = run_react_decision_with_timeout(lambda: self._react_decision_service.decide(iteration=1, tools=(), observations=(), **self._adapter.build_payload(state)), control=control)
+                    if decision.kind != "final":
+                        raise AgentRuntimeError("已确认的计划未授权工具调用。", stage="plan_execution")
+            state.record_react_decision(decision)
+            if emit:
+                emit(AgentEventType.DECISION_READY, {"iteration": decision.iteration, "kind": decision.kind, "tool_name": decision.tool_name, "action_summary": decision.action_summary, "mode": "plan_execute"})
+            return {"agent_state": _dump_agent_state(state), "emitted_event_types": _merge_emitted(graph_state.get("emitted_event_types", ()), {AgentEventType.DECISION_READY})}
         if state.react.iteration >= control.policy.max_react_iterations:
             emitted = self._emit_react_limit(
                 state, emit, reason="iteration_budget_exhausted"
@@ -2121,6 +2243,13 @@ class ReadingAgentGraph:
         knowledge_read_count = _knowledge_read_count(state)
         payload = self._adapter.build_payload(state)
         try:
+            if not self._native_dependencies_ready:
+                service = getattr(self._adapter, "_service", None)
+                self._skill_runtime_factory = getattr(getattr(service, "_chat_service", None), "_skill_runtime_factory", None)
+                if self._use_service_decision_dependencies and getattr(service, "function_calling_enabled", False):
+                    planner = getattr(getattr(service, "_semantic_router", None), "_planner", None)
+                    self._react_decision_service = AgentReActDecisionService(text_service=getattr(planner, "_text_service", None))
+                self._native_dependencies_ready = True
             if self._skill_runtime_factory is not None and control.skill_session is None:
                 control.skill_session = self._skill_runtime_factory().start(
                     state.user_input, str(payload.get("context_mode", "general")))
@@ -2309,6 +2438,9 @@ class ReadingAgentGraph:
             tool_name=decision.tool_name,
             arguments=dict(decision.arguments),
         )
+        planned_execution = state.browser_context.get("execution_mode") == "plan_execute"
+        if planned_execution:
+            step = next(item for item in state.plan.steps if item.status == "pending")
         try:
             state, emitted = self._adapter.execute_plan_step(
                 state,
@@ -2408,6 +2540,9 @@ class ReadingAgentGraph:
                 ),
             }
 
+        if planned_execution:
+            verification = (state.tool_results[-1].get("verification") or {}) if state.tool_results else {}
+            state.mark_plan_step(step.step_id, "completed" if verification.get("status") == "passed" else "failed")
         result = state.tool_results[-1] if state.tool_results else {}
         summary = str(result.get("output_text", "") or "").strip()
         if not summary:
@@ -2500,7 +2635,7 @@ class ReadingAgentGraph:
         observation = AgentObservation(
             iteration=decision.iteration,
             tool_name=decision.tool_name,
-            success=True,
+            success=result.get("status", "success") == "success",
             summary=summary,
             evidence_ids=[item.evidence_id for item in state.evidence],
             citation_ids=[item.citation_id for item in state.citations],
@@ -2572,6 +2707,10 @@ class ReadingAgentGraph:
             return "confirmation"
         if state.react.status == "limit_reached":
             return "finalize"
+        if state.tool_results and state.tool_results[-1].get("effect") == "write" and state.tool_results[-1].get("status") in {"failed", "unknown"}:
+            return "finalize"
+        if state.browser_context.get("execution_mode") == "plan_execute":
+            return "continue"
         if state.react.observations:
             latest = state.react.observations[-1]
             if (
@@ -2595,7 +2734,14 @@ class ReadingAgentGraph:
         emitted: set[AgentEventType] = set()
 
         try:
-            if state.tool_results:
+            if state.browser_context.get("plan_rejected"):
+                state.apply_response({"status": "completed", "output_text": "计划已取消，未执行任何步骤。", "request_id": state.execution.request_id})
+            elif state.browser_context.get("markdown_export_arguments") and state.tool_results:
+                state.apply_response({"status": "completed", "output_text": "Markdown 文档已生成，可通过下载文件保存。", "request_id": state.execution.request_id})
+                if emit:
+                    emit(AgentEventType.SYNTHESIS_READY, {"source": "markdown_export", "request_id": state.execution.request_id})
+                emitted.add(AgentEventType.SYNTHESIS_READY)
+            elif state.tool_results:
                 state, emitted = self._adapter.synthesize_multi_step(
                     state,
                     emit,
@@ -2769,7 +2915,7 @@ class ReadingAgentGraph:
             )
             if resume and not temporary:
                 self._restore_memory_snapshot_context(state, runtime_context)
-        resume_decision = runtime_context.get("write_confirmation_decision")
+        resume_decision = state.browser_context.get("plan_confirmation_decision") or runtime_context.get("write_confirmation_decision")
         graph_input = (
             Command(resume=resume_decision)
             if resume and resume_decision
@@ -2799,7 +2945,17 @@ class ReadingAgentGraph:
         if interrupts:
             first = interrupts[0] if isinstance(interrupts, (tuple, list)) else interrupts
             pending = getattr(first, "value", first)
-            if isinstance(pending, dict) and pending.get("intent_id"):
+            if isinstance(pending, dict) and pending.get("kind") == "plan":
+                lines = [f"计划目标：{final_state.plan.goal}"]
+                lines += [f"{index}. {step.tool_name} · {json.dumps(step.arguments, ensure_ascii=False)}\n验收：{'；'.join(step.acceptance_criteria)}" for index, step in enumerate(final_state.plan.steps, 1)]
+                if not final_state.plan.steps:
+                    lines.append("直接回答问题，无需调用工具。")
+                lines.append("确认后执行，或取消此计划。")
+                final_state.apply_response({"status": "confirmation_required", "output_text": "\n\n".join(lines), "request_id": final_state.execution.request_id})
+                final_state.browser_context["pending_plan_confirmation"] = pending
+                self._adapter.complete_conversation(_load_conversation_run(result.get("conversation_run")), final_state)
+                final_state.sync_contract()
+            elif isinstance(pending, dict) and pending.get("intent_id"):
                 final_state.apply_response(
                     {
                         "status": "confirmation_required",

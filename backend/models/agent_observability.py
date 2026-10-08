@@ -71,6 +71,11 @@ class AgentEvaluationRequest(BaseModel):
 
 
 class AgentTrajectoryMetricsResponse(BaseModel):
+    tool_verification_count: int = Field(default=0, ge=0)
+    tool_verification_pass_count: int = Field(default=0, ge=0)
+    final_task_completion_status: str | None = None
+    required_acceptance_count: int = Field(default=0, ge=0)
+    required_acceptance_pass_count: int = Field(default=0, ge=0)
     available: bool
     react_started: bool
     react_iteration_count: int = Field(ge=0)

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
+import { downloadMarkdown } from "../../shared/files/markdown-export"
 import {
   getAgentRunSnapshot,
   type AgentRunRequest,
   type AgentRunSnapshot,
+  type AgentRunResponse,
   type AgentTraceEvent,
   type KnowledgeAccessDecision,
   type KnowledgeAccessPolicy,
@@ -100,6 +102,10 @@ export interface UseCompanionConversationRuntimeOptions {
 }
 
 export interface CompanionConversationRuntime {
+  sessionId: string
+  pendingPlan: AgentRunResponse | null
+  restorePendingPlan: (runId: string) => Promise<void>
+  confirmAgentPlan: (decision: "approve" | "reject") => boolean
   messages: CompanionRuntimeMessage[]
   draft: string
   setDraft: (value: string) => void
@@ -144,6 +150,7 @@ export interface CompanionConversationRuntime {
       transport?: CompanionTransport
       enabledTools?: string[]
       agentContextMode?: AgentContextMode
+      chatConfiguration?: boolean
     },
   ) => boolean
   confirmAgentWrite: () => boolean
@@ -225,6 +232,7 @@ export function useCompanionConversationRuntime(
   const [errorMessage, setErrorMessage] = useState("")
   const [activeRequestId, setActiveRequestId] = useState<number | null>(null)
   const [conversationId, setConversationId] = useState("")
+  const [sessionId, setSessionId] = useState(() => options.initialSessionId ?? createCompanionScope("session"))
   const [context, setContext] = useState<CompanionContextSnapshot>(
     options.initialContext ?? EMPTY_COMPANION_CONTEXT,
   )
@@ -244,6 +252,7 @@ export function useCompanionConversationRuntime(
   const [agentConfirmationTool, setAgentConfirmationTool] = useState("")
   const [agentEvents, setAgentEvents] = useState<AgentTraceEvent[]>([])
   const [agentSnapshot, setAgentSnapshot] = useState<AgentRunSnapshot | null>(null)
+  const [pendingPlan, setPendingPlan] = useState<AgentRunResponse | null>(null)
   const [selectedTools, setSelectedToolsState] = useState<string[]>([])
   const [inspectorView, setInspectorView] = useState<CompanionInspectorView>("context")
   const [recoveryState, setRecoveryState] = useState<CompanionRecoveryState>("idle")
@@ -262,9 +271,7 @@ export function useCompanionConversationRuntime(
   const contextRef = useRef(context)
   const contextModeRef = useRef(contextMode)
   const conversationIdRef = useRef("")
-  const sessionIdRef = useRef(
-    options.initialSessionId ?? createCompanionScope("session"),
-  )
+  const sessionIdRef = useRef(sessionId)
   const scopeRef = useRef(
     options.initialScopeId ?? createCompanionScope("companion"),
   )
@@ -370,6 +377,7 @@ export function useCompanionConversationRuntime(
     applyContext(next.context ?? EMPTY_COMPANION_CONTEXT)
     applyContextMode(next.contextMode ?? "general")
     sessionIdRef.current = next.sessionId ?? createCompanionScope("session")
+    setSessionId(sessionIdRef.current)
     scopeRef.current = next.scopeId ?? createCompanionScope("companion")
     setMessages([])
     setDraft(next.draft ?? "")
@@ -394,6 +402,7 @@ export function useCompanionConversationRuntime(
     agentPayloadRef.current = null
     setAgentEvents([])
     setAgentSnapshot(null)
+    setPendingPlan(null)
     setSelectedTools(next.selectedTools ?? [])
     setInspectorView("context")
   }, [
@@ -414,6 +423,7 @@ export function useCompanionConversationRuntime(
     applyContext(companionContextSnapshot(conversation))
     applyContextMode(conversation.context_mode)
     sessionIdRef.current = conversation.session_id
+    setSessionId(sessionIdRef.current)
     scopeRef.current = `stored:${conversation.conversation_id}`
     setMessages(restoreCompanionMessages(conversation.messages))
     if (!options.preserveDraft) setDraft("")
@@ -568,6 +578,7 @@ export function useCompanionConversationRuntime(
       agentPayloadRef.current = null
       setAgentEvents([])
       setAgentSnapshot(null)
+      setPendingPlan(null)
       setSelectedTools([])
       setInspectorView("context")
     }
@@ -874,6 +885,17 @@ export function useCompanionConversationRuntime(
     if (event.type === "done") {
       const trace = event.trace
       const run = trace.run
+      let deliveryState = ""
+      if (run.status === "completed" && run.markdown_export) {
+        try {
+          downloadMarkdown(run.markdown_export)
+          deliveryState = "triggered"
+        } catch {
+          deliveryState = "failed"
+          setErrorMessage("自动下载未成功，请点击回答旁的‘导出 Markdown’重试。")
+        }
+      }
+      setPendingPlan(run.confirmation_kind === "plan" ? run : null)
       const nextRunId = trace.run_id || event.run_id
       const nextTraceId = trace.trace_id || event.trace_id
       const nextConversationId = run.conversation_id
@@ -890,7 +912,13 @@ export function useCompanionConversationRuntime(
         run.status === "confirmation_required" ? run.plan.tool_name : "",
       )
       setAgentPhase(run.status === "confirmation_required" ? "confirmation_required" : "completed")
-      setAgentEvents((current) => mergeAgentEvents(current, trace.events, nextRunId))
+      setAgentEvents((current) => {
+        const merged = mergeAgentEvents(current, trace.events, nextRunId)
+        if (!deliveryState) return merged
+        return [...merged, { event_id: `${nextRunId}:markdown-delivery`, event_type: "artifact_delivery", sequence: Math.max(0, ...merged.map(item => item.sequence)) + 1,
+          timestamp: new Date().toISOString(), run_id: nextRunId, trace_id: nextTraceId, elapsed_ms: 0,
+          payload: { status: deliveryState, filename: run.markdown_export?.filename, detail: deliveryState === "triggered" ? "Markdown 下载已触发；保存位置由浏览器／桌面端决定。" : "下载未触发，请手动导出重试。" } }]
+      })
       const knowledgeOutcome = agentKnowledgeOutcome(trace.events, run.evidence)
       setMessages((current) =>
         current.map((message) =>
@@ -908,7 +936,7 @@ export function useCompanionConversationRuntime(
                 knowledgeRetrieved: knowledgeOutcome.retrieved,
                 knowledgeDocumentCount: knowledgeOutcome.documentCount,
                 knowledgeChunkCount: knowledgeOutcome.chunkCount,
-                status: run.status === "confirmation_required" ? "cancelled" : "complete",
+                status: run.status === "confirmation_required" && run.confirmation_kind !== "plan" ? "cancelled" : "complete",
                 errorCode: run.status === "confirmation_required" ? "confirmation_required" : undefined,
               }
             : message,
@@ -941,6 +969,7 @@ export function useCompanionConversationRuntime(
           setMessages(restoreCompanionMessages(conversation.messages))
           applyConversationId(conversation.conversation_id)
           sessionIdRef.current = conversation.session_id
+          setSessionId(sessionIdRef.current)
         }).catch(() => undefined)
       }
 
@@ -995,6 +1024,7 @@ export function useCompanionConversationRuntime(
     if (!preserveEvents) {
       setAgentEvents([])
       setAgentSnapshot(null)
+      setPendingPlan(null)
     }
     setInspectorView("run")
 
@@ -1044,6 +1074,7 @@ export function useCompanionConversationRuntime(
       transport?: CompanionTransport
       enabledTools?: string[]
       agentContextMode?: AgentContextMode
+      chatConfiguration?: boolean
     } = {},
   ) => {
     if (activeRequestRef.current !== null) return false
@@ -1095,6 +1126,7 @@ export function useCompanionConversationRuntime(
 
     if (!sessionIdRef.current) {
       sessionIdRef.current = createCompanionScope("session")
+      setSessionId(sessionIdRef.current)
     }
     if (!scopeRef.current) {
       scopeRef.current = createCompanionScope("companion")
@@ -1133,6 +1165,7 @@ export function useCompanionConversationRuntime(
         knowledgeAccessPolicy,
         knowledgeDocumentIds,
       })
+      agentPayload.chat_configuration = options.chatConfiguration ?? agentPayloadRef.current?.chat_configuration ?? false
 
       startAgentStream(agentPayload, {
         scopeId,
@@ -1250,8 +1283,11 @@ export function useCompanionConversationRuntime(
 
     const payload: AgentRunRequest = {
       ...previous,
+      conversation_id: conversationIdRef.current,
       resume_run_id: runId,
       confirmed_write_tools: [toolName],
+      plan_confirmation: "",
+      plan_hash: "",
       request_id: requestId,
     }
     startAgentStream(
@@ -1270,8 +1306,59 @@ export function useCompanionConversationRuntime(
     agentPhase,
     clearRecovery,
     knowledgeAccessPolicy,
+    knowledgeEnabled,
     startAgentStream,
   ])
+
+  const restorePendingPlan = useCallback(async (runId: string) => {
+    if (activeRequestRef.current !== null || openingConversationRef.current) return
+    const sessionId = sessionIdRef.current
+    let snapshot: AgentRunSnapshot
+    try {
+      snapshot = await getAgentRunSnapshot(runId)
+    } catch (error) {
+      if (sessionIdRef.current === sessionId) {
+        setErrorMessage(error instanceof Error ? error.message : "恢复待确认计划失败，请重试。")
+      }
+      return
+    }
+    if (sessionIdRef.current !== sessionId || snapshot.session_id !== sessionId || !snapshot.pending_plan) return
+    agentRunIdRef.current = runId
+    setAgentRunId(runId)
+    setAgentTraceId(snapshot.trace_id)
+    setAgentSnapshot(snapshot)
+    setAgentPhase("confirmation_required")
+    setPendingPlan({run_id:runId,trace_id:snapshot.trace_id,status:"confirmation_required",confirmation_kind:"plan",plan_hash:snapshot.plan_hash,multi_step_plan:snapshot.pending_plan,plan:{action:"answer",tool_name:"",user_visible_reason:snapshot.pending_plan.goal,arguments:{}},output_text:"",provider:"",model:"",request_id:0,conversation_id:snapshot.conversation_id || conversationIdRef.current,tool_result:null,evidence:[],citations:[]})
+  }, [])
+
+  const confirmAgentPlan = useCallback((decision: "approve" | "reject") => {
+    if (activeRequestRef.current !== null || !pendingPlan || conversationBusyElsewhere) return false
+    const requestId = ++requestCounterRef.current
+    activeRequestRef.current = requestId
+    activeRequestConversationIdRef.current = conversationIdRef.current
+    activeRequestDetachedRef.current = false
+    setActiveRequestId(requestId)
+    setErrorMessage("")
+    const localAssistantId = `assistant-local-${requestId}`
+    setMessages(current => [...current, {id:localAssistantId,role:"assistant",content:"",status:"streaming",knowledgeAccessPolicy,knowledgeEnabled}])
+    const payload: AgentRunRequest = {
+      ...contextRef.current,
+      session_id: sessionIdRef.current,
+      conversation_id: conversationIdRef.current,
+      client_id: clientId,
+      client_surface: clientSurface,
+      context_mode: contextModeRef.current,
+      user_message: "执行已确认的计划",
+      request_id: requestId,
+      resume_run_id: pendingPlan.run_id,
+      plan_confirmation: decision,
+      plan_hash: pendingPlan.plan_hash,
+      chat_configuration: true,
+      enabled_tools: selectedTools,
+    }
+    startAgentStream(payload, {scopeId:scopeRef.current,requestId,localUserId:"",localAssistantId}, true)
+    return true
+  }, [pendingPlan, conversationBusyElsewhere, knowledgeAccessPolicy, knowledgeEnabled, clientId, clientSurface, selectedTools, startAgentStream])
 
   const persistContextUpdate = useCallback(async (
     payload: ConversationContextUpdate,
@@ -1405,6 +1492,10 @@ export function useCompanionConversationRuntime(
   }, [])
 
   return {
+    sessionId,
+    pendingPlan,
+    restorePendingPlan,
+    confirmAgentPlan,
     messages,
     draft,
     setDraft,

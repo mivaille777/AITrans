@@ -211,7 +211,7 @@ def test_react_iteration_limit_synthesizes_existing_observation_and_stops() -> N
     assert result.react.status == "limit_reached"
     assert len(result.react.decisions) == 1
     assert len(result.react.observations) == 1
-    assert result.response["output_text"] == "bounded fallback answer"
+    assert result.browser_context["task_completion"]["status"] != "completed"
     assert AgentEventType.REACT_LIMIT_REACHED in {
         event.event_type for event in runtime.events
     }
@@ -240,7 +240,7 @@ def test_react_repeated_action_guard_stops_before_second_tool_execution() -> Non
     assert result.react.status == "limit_reached"
     assert len(result.react.decisions) == 2
     assert len(result.react.observations) == 1
-    assert result.response["output_text"] == "bounded fallback answer"
+    assert result.browser_context["task_completion"]["status"] != "completed"
 
     limit_event = next(
         event

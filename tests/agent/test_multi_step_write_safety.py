@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 
 from types import SimpleNamespace
 
@@ -54,6 +55,10 @@ class FakeRegistry:
     def allows_safe_retry(self, name: str) -> bool:
         spec = self.get_tool(name)
         return bool(spec and spec.effect != "write")
+
+    def verify_result(self, name, payload, result):
+        # This fixture owns the simulated persisted writes in self.executions.
+        return replace(result, verification={"status": "passed", "checks": []})
 
     def execute(self, name: str, **payload):
         self.executions.append(name)

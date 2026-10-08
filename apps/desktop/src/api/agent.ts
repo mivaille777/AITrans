@@ -36,6 +36,11 @@ export interface KnowledgeAccessDecision {
 }
 
 export interface AgentToolDefinition {
+  available?: boolean
+  enabled?: boolean
+  unavailable_reason?: string
+  parameter_schema?: Record<string, unknown>
+  output_schema?: Record<string, unknown>
   name: string
   title: string
   description: string
@@ -95,6 +100,10 @@ export type AgentTraceEventType =
   | "write_rejected"
   | "retry"
   | "tool_result"
+  | "tool_verification"
+  | "task_verification"
+  | "artifact_delivery"
+  | "capability_routed"
   | "observation_ready"
   | "evidence_gate_evaluated"
   | "evidence_sufficiency"
@@ -121,6 +130,7 @@ export interface AgentPlan {
 }
 
 export interface AgentPlanStep {
+  acceptance_criteria?: string[]
   step_id: string
   tool_name: string
   arguments: Record<string, unknown>
@@ -136,6 +146,12 @@ export interface AgentMultiStepPlan {
 }
 
 export interface AgentToolExecuteResponse {
+  status?: string
+  verification?: Record<string, unknown>
+  tool_call_id?: string
+  duration_ms?: number
+  attempt?: number
+  error_code?: string
   tool_name: string
   output_text: string
   effect: AgentToolEffect
@@ -206,14 +222,22 @@ export interface AgentRunRequest extends ReadingContextFields {
   temporary?: boolean
   workflow_action?: AgentWorkflowAction
   retry_task_id?: string
+  chat_configuration?: boolean
+  execution_mode?: "auto" | "react" | "plan_execute"
+  plan_confirmation?: "" | "approve" | "reject"
+  plan_hash?: string
 }
 
 export interface AgentRunResponse {
+  completion?: Record<string, unknown>
+  markdown_export?: { filename: string; markdown: string; mime_type: string } | null
   run_id: string
   trace_id: string
   status: AgentRunStatus
   plan: AgentPlan
   multi_step_plan?: AgentMultiStepPlan | null
+  confirmation_kind?: "" | "tool" | "plan"
+  plan_hash?: string
   output_text: string
   provider: string
   model: string
@@ -291,6 +315,10 @@ export interface AgentArtifact {
 }
 
 export interface AgentRunSnapshot {
+  pending_plan?: AgentMultiStepPlan | null
+  plan_hash?: string
+  conversation_id?: string
+  session_id?: string
   run_id: string
   trace_id: string
   status: string
@@ -307,8 +335,9 @@ export function runAgentTrace(payload: AgentRunRequest): Promise<AgentRunTraceRe
   return apiPost<AgentRunTraceResponse, AgentRunRequest>("/api/agent/run/trace", payload)
 }
 
-export function getAgentTools(): Promise<AgentToolCatalogResponse> {
-  return apiGet<AgentToolCatalogResponse>("/api/agent/tools")
+export function getAgentTools(context?: { hasReadingContext: boolean; workspaceId: string; knowledgePolicy: string }): Promise<AgentToolCatalogResponse> {
+  const params = context ? `?${new URLSearchParams({ has_reading_context: String(context.hasReadingContext), filesystem_workspace_id: context.workspaceId, knowledge_access_policy: context.knowledgePolicy })}` : ""
+  return apiGet<AgentToolCatalogResponse>(`/api/agent/tools${params}`)
 }
 
 export function getAgentRunSnapshot(runId: string): Promise<AgentRunSnapshot> {

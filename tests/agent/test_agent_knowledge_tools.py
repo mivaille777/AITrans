@@ -66,11 +66,12 @@ def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
     search_tool = registry.get_tool("search_knowledge_base")
     save_tool = registry.get_tool("save_knowledge_card")
 
-    assert names[-4:] == [
+    assert names[-5:] == [
         "search_knowledge_base",
         "read_knowledge_chunk",
         "read_knowledge_section",
         "save_knowledge_card",
+        "export_markdown_document",
     ]
     assert names[:11] == [
         "inspect_reading_context",
@@ -85,7 +86,7 @@ def test_registry_lists_read_and_confirmed_write_knowledge_tools_last() -> None:
         "get_research_note",
         "update_research_note",
     ]
-    assert names[11:-4] == [
+    assert names[11:-5] == [
         "define_terms",
         "analyze_equation",
         "summarize_current_section",

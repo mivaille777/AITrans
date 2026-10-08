@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -83,6 +83,7 @@ class AgentToolSpec:
     parallel_safe: bool = False
     idempotent: bool = False
     tool_version: str = "1"
+    parameter_schema: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.effect not in {"read", "compute", "write"}:
@@ -101,10 +102,21 @@ class AgentToolSpec:
                 "Agent planner attempted arguments outside its authority; "
                 f"{names} not accepted by tool {self.name}."
             )
+        missing = set(self.parameter_schema.get("required", [])) - set(raw)
+        if missing:
+            raise ValueError(f"Agent planner omitted required arguments for {self.name}: {sorted(missing)}")
 
         sanitized: dict[str, Any] = {}
         for key, value in raw.items():
             schema = self.input_schema.get(key, {})
+            if isinstance(schema, dict) and schema.get("anyOf"):
+                variants = schema["anyOf"]
+                if value is None and any(item.get("type") == "null" for item in variants):
+                    sanitized[key] = None
+                    continue
+                options = [item for item in variants if item.get("type") != "null"]
+                if len(options) == 1:
+                    schema = {**schema, **options[0]}
             if isinstance(schema, dict) and schema.get("type") == "array":
                 if not isinstance(value, list):
                     raise ValueError(
@@ -185,7 +197,9 @@ class AgentToolSpec:
                 sanitized[key] = value
                 continue
 
-            text = str(value or "")
+            if not isinstance(value, str):
+                raise ValueError(f"Agent planner argument {key} must be a string for tool {self.name}.")
+            text = value
             if self.name != "python_execute":
                 text = text.strip()
             validation_text = text.strip() if self.name == "python_execute" else text
@@ -215,6 +229,12 @@ class AgentToolExecutionResult:
     model: str = ""
     request_id: int = 0
     data: dict[str, Any] | None = None
+    status: str = "success"
+    tool_call_id: str = ""
+    duration_ms: int = 0
+    attempt: int = 1
+    verification: dict[str, Any] = field(default_factory=dict)
+    error_code: str = ""
 
 
 AgentToolExecutor = Callable[
@@ -300,6 +320,12 @@ class TypedAgentToolDefinition:
             model=str(result.model or ""),
             request_id=request_id,
             data=self.normalize_result_data(result.data),
+            status=result.status,
+            tool_call_id=result.tool_call_id,
+            duration_ms=result.duration_ms,
+            attempt=result.attempt,
+            verification=result.verification,
+            error_code=result.error_code,
         )
 
 
@@ -349,6 +375,7 @@ def typed_tool_definition(
             ),
             idempotent=(effect != "write" if idempotent is None else idempotent),
             tool_version=tool_version,
+            parameter_schema=(planner_args_model or args_model).model_json_schema(),
         ),
         args_model=args_model,
         result_model=result_model,

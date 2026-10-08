@@ -18,6 +18,7 @@ from backend.models.conversations import (
     ConversationRewindRequest,
     ConversationSummaryResponse,
 )
+from backend.models.markdown_export import MarkdownDocument
 from backend.services.companion_ownership_service import (
     CompanionConversationOwnershipService,
 )
@@ -26,6 +27,11 @@ from backend.services.conversation_store_service import (
     ConversationStoreService,
     StoredConversation,
     StoredMessage,
+)
+from backend.services.markdown_export_service import (
+    conversation_markdown,
+    load_markdown_export,
+    markdown_document,
 )
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -153,6 +159,28 @@ def get_conversation(
             detail="Conversation not found.",
         )
     return _detail_response(service, conversation)
+
+
+@router.get("/{conversation_id}/export/markdown", response_model=MarkdownDocument)
+def export_conversation_markdown(
+    conversation_id: str,
+    service: ConversationStoreDependency,
+    message_id: str = Query(default="", max_length=128),
+) -> MarkdownDocument:
+    conversation = service.get(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    try:
+        if not message_id:
+            return conversation_markdown(conversation.title, conversation.messages)
+        message = next((item for item in conversation.messages if item.message_id == message_id), None)
+        if message is None:
+            raise HTTPException(status_code=404, detail="Message not found in this conversation.")
+        if message.role != "assistant" or message.status != "complete":
+            raise HTTPException(status_code=409, detail="只能导出已完成的回答。")
+        return load_markdown_export(service.storage_path, message_id) or markdown_document(message.content, conversation.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.patch("/{conversation_id}", response_model=ConversationDetailResponse)

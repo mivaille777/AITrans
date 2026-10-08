@@ -229,9 +229,14 @@ class ProductAgentService:
             tool
             for tool in self._registry.list_tools()
             if str(getattr(tool, "name", "") or "") not in blocked
+            and (str(getattr(tool, "name", "") or "") != "read_workspace_file" or payload.get("filesystem_workspace_id"))
         )
         if not selected:
-            return tools
+            availability = getattr(self._registry, "availability", None)
+            if callable(availability):
+                tools = tuple(tool for tool in tools if availability(tool.name, payload=payload)[0])
+            from backend.services.tool_capability_router import filter_capabilities
+            return filter_capabilities(tools, payload.get("user_message", ""), primitive_name=self._primitive_tool_name)
 
         available = {str(getattr(tool, "name", "") or "") for tool in tools}
         unknown = sorted(set(selected) - available)
@@ -369,6 +374,7 @@ class ProductAgentService:
         history = self._conversation_history(payload)
         plan = self._multi_step_planner.plan(
             tools=self._tools_for_payload(payload),
+            **({"allow_simple_plan": True} if payload.get("execution_mode") == "plan_execute" else {}),
             max_steps=min(
                 active_control.policy.max_plan_steps,
                 active_control.policy.max_tool_calls,
@@ -448,6 +454,11 @@ class ProductAgentService:
             "request_id": request_id,
             "step_id": str(payload.get("step_id", "direct") or "direct"),
         }
+        availability = getattr(self._registry, "availability", None)
+        if callable(availability):
+            available, reason = availability(spec.name, payload={**reading, **payload})
+            if not available:
+                raise AgentToolError(reason, stage="tool", fallback_reason="tool_unavailable")
         get_definition = getattr(self._registry, "get_definition", None)
         typed = callable(get_definition) and get_definition(spec.name) is not None
 
@@ -537,10 +548,16 @@ class ProductAgentService:
         # Knowledge/Canvas context is prompt context for planning and synthesis,
         # not an implicit argument to registered product tools.
         execution_payload.pop("knowledge_context", None)
+        if spec.name == "export_markdown_document":
+            export_arguments = payload.get("markdown_export_arguments")
+            if export_arguments:
+                execution_payload.update(export_arguments)
+            previous_answer = next((str(item[1]) for item in reversed(payload.get("history", ())) if len(item) >= 2 and item[0] == "assistant"), "")
+            execution_payload["ai_content"] = str(payload.get("ai_content", "") or previous_answer)[:50_000]
         workspace_id = str(payload.get("workspace_id", "") or "").strip()
         if workspace_id:
             execution_payload["workspace_id"] = workspace_id
-        if spec.name == "python_execute":
+        if spec.name in {"python_execute", "read_workspace_file"}:
             execution_payload["filesystem_workspace_id"] = str(
                 payload.get("filesystem_workspace_id", "") or ""
             ).strip()
@@ -609,6 +626,9 @@ class ProductAgentService:
                 self._emit(event_sink, "failure", {
                     "stage": "tool", "tool_name": spec.name,
                     "error_type": type(exc).__name__,
+                    "message": str(exc)[:2000],
+                    "error_code": str(getattr(exc, "fallback_reason", "") or "tool_execution_failed"),
+                    "execution_outcome": "unknown" if spec.effect == "write" or isinstance(exc, AgentToolTimeoutError) else "failed",
                     "tool_call_id": call_id,
                     "step_id": str(payload.get("step_id", "direct") or "direct"),
                 })
@@ -667,6 +687,9 @@ class ProductAgentService:
                     stage="tool",
                     fallback_reason="safe_tool_retries_exhausted",
                 )
+
+        if not typed:
+            tool_result = AgentToolExecutionService(self._registry)._verify(spec.name, execution_payload, tool_result, control)
 
         if self._primitive_tool_name(tool_result.tool_name) == "search_knowledge_base":
             seen_rag_events: set[str] = set()
@@ -741,10 +764,19 @@ class ProductAgentService:
                 "request_id": tool_result.request_id,
                 "data": trace_data,
                 "duration_ms": _duration_ms(tool_started),
+                "status": tool_result.status,
+                "verification": tool_result.verification,
+                "attempt": tool_result.attempt,
+                "error_code": tool_result.error_code,
                 "tool_call_id": call_id if typed else "",
                 "step_id": str(payload.get("step_id", "direct") or "direct"),
             },
         )
+        self._emit(event_sink, "tool_verification", {
+            "tool_name": tool_result.tool_name, "tool_call_id": tool_result.tool_call_id,
+            "step_id": str(payload.get("step_id", "direct") or "direct"),
+            **tool_result.verification,
+        })
         return tool_result, False
 
     @staticmethod
@@ -1107,7 +1139,7 @@ class ProductAgentService:
         ):
             evidence, citations = self._retrieval_grounding(tool_result.data)
 
-        if tool_result.effect == "write" or skip_synthesis:
+        if tool_result.effect == "write" or skip_synthesis or tool_result.tool_name == "export_markdown_document":
             return ProductAgentRunResult(
                 status="completed",
                 plan=plan,

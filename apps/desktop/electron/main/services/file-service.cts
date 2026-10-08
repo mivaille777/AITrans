@@ -20,7 +20,7 @@ export async function pickKnowledgeDocument(
   owner: BrowserWindow,
 ): Promise<string | null> {
   const result = await dialog.showOpenDialog(owner, {
-    title: "Add document to Knowledge Library",
+    title: "选择要导入的本地文档",
     properties: ["openFile"],
     filters: [
       {

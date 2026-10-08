@@ -418,6 +418,9 @@ class ToolTestService:
             def get_definition(self, name):
                 return parent.registry.get_definition(name)
 
+            def verify_result(self, name, payload, result):
+                return parent.registry.verify_result(name, payload, result)
+
             def execute(self, name, **payload):
                 try:
                     control.checkpoint("test_executor")
@@ -455,9 +458,10 @@ class ToolTestService:
                     if self._runs[run_id].status not in _FINAL:
                         self._update(
                             run_id,
-                            status="succeeded",
+                            status="failed" if result.status in {"failed", "unknown"} else "succeeded",
                             execution_state="stopped",
                             result=data,
+                            error={"code": result.error_code or "verification_unknown", "message": "工具结果未通过验证，查看验证报告。"} if result.status in {"failed", "unknown"} else None,
                             result_truncated=truncated,
                             finished_at=now(),
                             elapsed_ms=control.elapsed_ms,

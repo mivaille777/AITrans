@@ -128,15 +128,17 @@ def test_bound_write_approval_rechecks_policy_and_cannot_replay(tmp_path):
     with pytest.raises(ToolManagementError, match="match"):
         service.approve(run.tool_id, run.test_run_id, "wrong")
     policy.update(run.tool_id, 0, False)
-    with pytest.raises(ToolManagementError, match="disabled"):
+    with pytest.raises(ToolManagementError) as unavailable:
         service.approve(run.tool_id, run.test_run_id, run.approval_id)
+    assert unavailable.value.code == "tool_unavailable"
     assert calls == []
     policy.update(run.tool_id, 1, True)
     with pytest.raises(ToolManagementError, match="changed"):
         service.approve(run.tool_id, run.test_run_id, run.approval_id)
     fresh = service.create(run.tool_id, request(client_request_id="fresh"))
     service.approve(fresh.tool_id, fresh.test_run_id, fresh.approval_id)
-    wait(service, fresh.test_run_id, "succeeded")
+    finished = wait(service, fresh.test_run_id, "failed")
+    assert finished.result["verification"]["status"] == "unknown"
     assert calls == [fresh.tool_call_id]
     with pytest.raises(ToolManagementError):
         service.approve(fresh.tool_id, fresh.test_run_id, fresh.approval_id)

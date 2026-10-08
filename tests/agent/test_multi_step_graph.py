@@ -80,6 +80,7 @@ class FakeComplexProductAgentService:
                 },
             )
         result = AgentToolExecutionResult(
+            verification={"status": "passed", "checks": []},
             tool_name=tool_name,
             output_text=f"result:{tool_name}",
             effect="compute",
@@ -252,6 +253,7 @@ def test_reading_agent_graph_executes_bounded_react_loop_and_synthesizes_once() 
         AgentEventType.KNOWLEDGE_DECISION,
         AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
         AgentEventType.KNOWLEDGE_SKIPPED,
+        AgentEventType.CAPABILITY_ROUTED,
         AgentEventType.PLAN_READY,
         AgentEventType.REACT_STARTED,
         AgentEventType.DECISION_READY,
@@ -264,6 +266,7 @@ def test_reading_agent_graph_executes_bounded_react_loop_and_synthesizes_once() 
         AgentEventType.OBSERVATION_READY,
         AgentEventType.DECISION_READY,
         AgentEventType.SYNTHESIS_READY,
+        AgentEventType.TASK_VERIFICATION,
         AgentEventType.AGENT_END,
     ]
 

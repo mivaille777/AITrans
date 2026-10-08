@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { BookOpen, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, MoreHorizontal, Paperclip, Share2 } from "lucide-react"
+import { BookOpen, Bot, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, MessageCircle, PanelRightClose, Send, Share2, Square } from "lucide-react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import {
@@ -9,6 +9,8 @@ import {
 } from "../../api/companion"
 import { getAvailableLlmModels, getLlmSettings, updateLlmSettings } from "../../api/llm-settings"
 import { saveResearchNote } from "../../api/quick-actions"
+import { exportConversationMarkdown } from "../../api/conversations"
+import { downloadMarkdown } from "../../shared/files/markdown-export"
 import type { ResearchNoteSaveRequest } from "../../api/types"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
 import { Badge } from "../../shared/ui/Badge"
@@ -29,12 +31,19 @@ import {
 } from "./companion-runtime"
 import { companionLayoutClassNames } from "./companion-layout"
 import ConversationHistoryPanel from "./ConversationHistoryPanel"
-import { AgentToolsControl } from "./components/AgentToolsControl"
+import { ChatSessionControls } from "./components/ChatSessionControls"
+import { useChatConfiguration } from "./hooks/useChatConfiguration"
 import { AgentRunInspector } from "./components/AgentRunInspector"
+import { ChatConversationHeader } from "./components/ChatConversationHeader"
 import { KnowledgeRetrievalControl } from "./components/KnowledgeRetrievalControl"
 import { useCompanionConversationRuntime } from "./useCompanionConversationRuntime"
+import "./ChatWorkspace.css"
 
 function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase, message?: CompanionRuntimeMessage): string {
+  const outline = message?.knowledgeRecovery?.reading_coverage
+  if (phase === "reading_document" && outline?.basis === "stage_headers") {
+    return outline.total_chunks ? `正在核对阶段目录… ${outline.processed_chunks}/${outline.total_chunks}` : "正在核对阶段目录…"
+  }
   const coverage = message?.knowledgeRecovery?.full_read
   if (phase === "reading_document" && coverage?.total_chunks) {
     return `正在阅读全文… ${coverage.processed_chunks}/${coverage.total_chunks}`
@@ -51,6 +60,8 @@ function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase, message
     case "verifying":
       return "Verifying sources…"
     case "generating":
+      if (message?.knowledgeRecovery?.reading_task?.answer_kind === "overview") return "正在整理文档概览…"
+      if (message?.knowledgeRecovery?.reading_task?.answer_kind === "stages") return "正在整理阶段划分…"
       return "Generating…"
     default:
       return "Generating…"
@@ -61,7 +72,29 @@ function companionKnowledgeBehaviorLabel(message: CompanionRuntimeMessage): stri
   const recovery = message.knowledgeRecovery
   if (recovery?.outcome === "partial") return "全文读取未完成"
   if (recovery?.outcome === "blocked") return "暂时无法核验"
-  if (recovery?.outcome === "fallback") return "已使用证据兜底"
+  if (recovery?.outcome === "fallback") {
+    if (recovery.reading_coverage?.basis === "stage_headers") return "阶段回答未通过核验"
+    if (recovery.full_read?.complete) {
+      if (recovery.reason === "answer_incomplete") return "正文已读完，回答不完整"
+      return recovery.reason === "full_read_synthesis_failed"
+        ? "正文已读完，摘要生成失败" : "正文已读完，摘要未通过核验"
+    }
+    return "已使用证据兜底"
+  }
+  const ragDocuments = recovery?.rag_reading?.documents
+  if (ragDocuments?.length) {
+    const expectedStages = ragDocuments.reduce((sum, d) => sum + d.expected_stages.length, 0)
+    const readStages = ragDocuments.reduce((sum, d) => sum + d.read_stages.length, 0)
+    const stageLabel = expectedStages ? ` · 阶段 ${readStages}/${expectedStages}` : ""
+    if (recovery?.reading_coverage?.complete) return `阶段目录已核验${stageLabel}`
+    if (recovery?.full_read?.complete) {
+      const total = ragDocuments.reduce((sum, d) => sum + d.inventory_chunks, 0)
+      const read = ragDocuments.reduce((sum, d) => sum + d.read_chunks, 0)
+      const labels = new Set([...message.content.matchAll(/\[(\d+)\]/g)].map(match => match[1]))
+      return `正文 ${read}/${total}${stageLabel} · 引用 ${labels.size} 个片段`
+    }
+  }
+  if (recovery?.reading_coverage?.basis === "stage_headers" && recovery.reading_coverage.complete) return "阶段目录已核验"
   if (recovery?.full_read?.complete) return "索引正文已完整读取"
   const decision = message.knowledgeDecision
   const retrieved = message.knowledgeRetrieved
@@ -72,7 +105,7 @@ function companionKnowledgeBehaviorLabel(message: CompanionRuntimeMessage): stri
     ).size
     const chunkCount = message.knowledgeChunkCount ?? message.evidence?.length ?? 0
     if (documentCount > 0 || chunkCount > 0) {
-      return `Knowledge · ${documentCount} document${documentCount === 1 ? "" : "s"} · ${chunkCount} chunk${chunkCount === 1 ? "" : "s"}`
+      return `Knowledge · ${documentCount} document${documentCount === 1 ? "" : "s"} · 已读取 ${chunkCount} 个片段`
     }
     return "Knowledge · searched · no evidence"
   }
@@ -97,11 +130,12 @@ export default function CompanionWorkspaceV2() {
   const [editingText, setEditingText] = useState("")
   const [branchingMessageId, setBranchingMessageId] = useState("")
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
-  const [contextPickerOpen, setContextPickerOpen] = useState(false)
+  const [contextPanelOpen, setContextPanelOpen] = useState(() =>
+    typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 1100px)").matches,
+  )
   const handoffIdRef = useRef("")
   const usingHandoffRef = useRef(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
-  const contextPickerRef = useRef<HTMLDivElement>(null)
   const messageScrollerRef = useRef<HTMLDivElement>(null)
   const messageNearBottomRef = useRef(true)
 
@@ -119,6 +153,27 @@ export default function CompanionWorkspaceV2() {
     clientSurface: "main",
     onConversationAccepted: setConversationRoute,
   })
+  const markdownExportMutation = useMutation({
+    mutationFn: async (messageId?: string) => {
+      const document = await exportConversationMarkdown(runtime.conversationId, messageId)
+      downloadMarkdown(document)
+    },
+  })
+  const chatConfig = useChatConfiguration(runtime.sessionId)
+  const restorePendingPlan = runtime.restorePendingPlan
+  const currentAgentRunId = runtime.agentRunId
+  const openingChatConversation = runtime.openingConversation
+  useEffect(() => {
+    const runId = chatConfig.configuration.data?.pending_run_id
+    if (runId && currentAgentRunId !== runId && !openingChatConversation) {
+      void restorePendingPlan(runId).catch(() => undefined)
+    }
+  }, [chatConfig.configuration.data?.pending_run_id, currentAgentRunId, openingChatConversation, restorePendingPlan])
+  useEffect(() => {
+    if (runtime.agentPhase === "completed" || runtime.agentPhase === "confirmation_required" || runtime.agentPhase === "cancelled") {
+      void queryClient.invalidateQueries({queryKey:["chat-configuration",runtime.sessionId]})
+    }
+  }, [runtime.agentPhase, runtime.sessionId, queryClient])
   const runtimeConversationId = runtime.conversationId
   const openRuntimeConversation = runtime.openConversation
   const resetRuntime = runtime.reset
@@ -175,24 +230,6 @@ export default function CompanionWorkspaceV2() {
       document.removeEventListener("keydown", closeOnEscape)
     }
   }, [modelPickerOpen])
-
-  useEffect(() => {
-    if (!contextPickerOpen) return undefined
-    const closeOnPointerDown = (event: PointerEvent) => {
-      if (!contextPickerRef.current?.contains(event.target as Node)) {
-        setContextPickerOpen(false)
-      }
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setContextPickerOpen(false)
-    }
-    document.addEventListener("pointerdown", closeOnPointerDown)
-    document.addEventListener("keydown", closeOnEscape)
-    return () => {
-      document.removeEventListener("pointerdown", closeOnPointerDown)
-      document.removeEventListener("keydown", closeOnEscape)
-    }
-  }, [contextPickerOpen])
 
   const handoffQuery = useQuery({
     queryKey: queryKeys.companion.handoff,
@@ -357,7 +394,8 @@ export default function CompanionWorkspaceV2() {
     event.preventDefault()
     if (!canSend) return
     runtime.sendMessage(undefined, undefined, {
-      transport: runtime.selectedTools.length > 0 ? "agent" : "companion",
+      transport: chatConfig.configuration.data?.execution_mode || runtime.selectedTools.length > 0 ? "agent" : "companion",
+      chatConfiguration: Boolean(chatConfig.configuration.data?.execution_mode),
       enabledTools: runtime.selectedTools,
       agentContextMode: isKnowledgeContext ? "knowledge" : runtime.contextMode === "reading" ? "reading" : "general",
     })
@@ -365,7 +403,13 @@ export default function CompanionWorkspaceV2() {
 
   const isKnowledgeContext = runtime.contextMode === "reading"
     && runtime.context.source_kind.startsWith("knowledge_")
-  const sendBlockedReason = runtime.openingConversation
+  const sendBlockedReason = chatConfig.configuration.isPending || chatConfig.mutation.isPending
+    ? "正在更新会话配置…"
+    : chatConfig.configuration.isError
+      ? "会话配置加载失败，请重试。"
+      : chatConfig.configuration.data?.pending_run_id || runtime.pendingPlan
+        ? "请先确认执行或取消当前计划。"
+        : runtime.openingConversation
     ? "正在加载会话…"
     : runtime.recoveryState !== "idle"
       ? runtime.recoveryDetail || "会话连接需要恢复，请重试。"
@@ -389,18 +433,15 @@ export default function CompanionWorkspaceV2() {
     ? "General Chat"
     : runtime.context.resource_title || runtime.context.section_heading || "Reading context"
   const canAttachSaved = Boolean(runtime.context.source_text)
-  const branchBusy = Boolean(branchingMessageId) || runtime.activeRequestId !== null
+  const branchBusy = Boolean(branchingMessageId) || runtime.activeRequestId !== null || Boolean(runtime.pendingPlan) || Boolean(chatConfig.configuration.data?.pending_run_id)
   const activeModel = llmSettingsQuery.data?.model
     || [...runtime.messages]
       .reverse()
       .find((message) => message.model)?.model
-    || "Llama 3.1 8B (Local)"
+    || (llmSettingsQuery.isPending ? "模型加载中…" : "选择模型")
   const modelSwitchError = modelSwitchMutation.error instanceof Error
     ? modelSwitchMutation.error.message
     : ""
-  const contextControlLabel = runtime.selectedTools.length > 0
-    ? isKnowledgeContext ? "Knowledge" : "Research"
-    : runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge" : "Reading" : "General"
   const latestAssistant = [...runtime.messages]
     .reverse()
     .find((message) => message.role === "assistant")
@@ -438,7 +479,7 @@ export default function CompanionWorkspaceV2() {
   )
 
   return (
-    <section className={companionLayoutClassNames.shell}>
+    <section className={`${companionLayoutClassNames.shell}${contextPanelOpen ? "" : " is-context-closed"}`} aria-label="Chat workspace">
       <ConversationHistoryPanel
         activeConversationId={runtime.conversationId}
         hasCurrentReading={Boolean(readingHandoff)}
@@ -452,7 +493,10 @@ export default function CompanionWorkspaceV2() {
         onDeletedActive={handleDeletedActive}
       />
 
-      <aside className={companionLayoutClassNames.contextPanel}>
+      <aside id="chat-context-panel" className={companionLayoutClassNames.contextPanel} hidden={!contextPanelOpen} aria-label="Chat context and run details">
+        <button type="button" className="ait-chat-context-close" onClick={() => setContextPanelOpen(false)} aria-label="Close context panel">
+          <PanelRightClose size={18} />
+        </button>
         {showAgentInspector ? (
           <AgentRunInspector
             context={runtime.context}
@@ -673,21 +717,24 @@ export default function CompanionWorkspaceV2() {
       </aside>
 
       <div className={companionLayoutClassNames.chatColumn}>
-        <header className={companionLayoutClassNames.conversationHeader}>
-          <div className="ait-chat-conversation-heading">
-            <h1 className="ait-chat-conversation-name">
-              {contextTitle === "General Chat" ? "New conversation" : contextTitle}
-            </h1>
-            <p className="ait-chat-conversation-meta-line">
-              {runtime.contextMode === "reading" ? "Reading context" : "Local workspace"}
-              <span aria-hidden="true">·</span>
-              {runtime.contextMode === "reading" ? "Today" : "Ready to chat"}
-            </p>
-          </div>
-          <button type="button" className="ait-chat-conversation-menu" aria-label="Conversation actions">
-            <MoreHorizontal size={19} />
-          </button>
-        </header>
+        <ChatConversationHeader
+          title={contextTitle === "General Chat" ? "New conversation" : contextTitle}
+          contextLabel={runtime.contextMode === "reading" ? "Reading context" : "Local workspace"}
+          statusLabel={runtime.activeRequestId !== null ? "Generating…" : runtime.openingConversation ? "Loading conversation…" : "Ready to chat"}
+          contextPanelOpen={contextPanelOpen}
+          newChatDisabled={runtime.activeRequestId !== null || runtime.openingConversation}
+          onToggleContext={() => setContextPanelOpen((open) => !open)}
+          onNewChat={startNewGeneralConversation}
+          onExportMarkdown={runtime.conversationId && runtime.messages.some((message) => message.status === "complete" && message.content) && !markdownExportMutation.isPending ? () => markdownExportMutation.mutate(undefined) : undefined}
+          onViewContext={() => {
+            runtime.setInspectorView("context")
+            setContextPanelOpen(true)
+          }}
+          onViewRun={runtime.agentRunId || runtime.agentEvents.length > 0 ? () => {
+            runtime.setInspectorView("run")
+            setContextPanelOpen(true)
+          } : undefined}
+        />
 
         <div
           ref={messageScrollerRef}
@@ -696,6 +743,8 @@ export default function CompanionWorkspaceV2() {
         >
           {runtime.messages.length === 0 && (
             <EmptyState
+              className="ait-chat-empty-state"
+              icon={<MessageCircle size={24} />}
               title={runtime.contextMode === "general"
                 ? "Start a General Chat"
                 : isKnowledgeContext ? "Continue from this Knowledge card" : "Ask about this reading context"}
@@ -715,7 +764,7 @@ export default function CompanionWorkspaceV2() {
             />
           )}
 
-          <div className="mt-4 space-y-3">
+          <div className="ait-chat-messages">
             {runtime.messages.map((message, index) => {
               const userBefore = message.role === "assistant"
                 ? previousCompanionUserMessage(runtime.messages, index)
@@ -732,6 +781,7 @@ export default function CompanionWorkspaceV2() {
                 >
                   {message.role === "assistant" ? (
                     <>
+                      <span className="ait-chat-avatar" aria-label="AITrans assistant"><Bot size={23} strokeWidth={2} /></span>
                       {message.content ? (
                         <div className="ait-chat-answer max-w-none">
                           {(message.citations?.length ?? 0) > 0 ? (
@@ -755,6 +805,11 @@ export default function CompanionWorkspaceV2() {
                         </p>
                       )}
                       <div className="ait-chat-message-meta">
+                        {message.status === "complete" && message.content && runtime.conversationId && message.serverMessageId && (
+                          <button type="button" className="ait-chat-message-action disabled:opacity-40" disabled={markdownExportMutation.isPending} onClick={() => markdownExportMutation.mutate(message.serverMessageId)}>
+                            导出 Markdown
+                          </button>
+                        )}
                         {message.status === "streaming" && (
                           <Badge className="ait-chat-message-badge" tone="info">
                             {companionGenerationPhaseLabel(message.generationPhase, message)}
@@ -852,10 +907,28 @@ export default function CompanionWorkspaceV2() {
           className={companionLayoutClassNames.composer}
           onSubmit={handleSubmit}
         >
+          {runtime.pendingPlan && (
+            <div className="ait-chat-unavailable-message" role="status">
+              <span>计划已生成：{runtime.pendingPlan.multi_step_plan?.goal}。确认后执行。</span>
+              <Button size="sm" disabled={runtime.activeRequestId !== null} onClick={() => runtime.confirmAgentPlan("approve")}>确认执行</Button>
+              <Button size="sm" disabled={runtime.activeRequestId !== null} onClick={() => runtime.confirmAgentPlan("reject")}>取消计划</Button>
+            </div>
+          )}
+          {chatConfig.mutation.error && <p role="alert" className="ait-chat-model-menu-message is-error">{chatConfig.mutation.error instanceof Error ? chatConfig.mutation.error.message : "操作失败，请重试。"}</p>}
+          {markdownExportMutation.error && <p role="alert" className="ait-chat-model-menu-message is-error">{markdownExportMutation.error instanceof Error ? markdownExportMutation.error.message : "Markdown 导出失败，请重试。"}</p>}
+          {runtime.agentPhase === "confirmation_required" && !runtime.pendingPlan && (
+            <div className="ait-chat-unavailable-message" role="status">
+              <span>A tool is waiting for your confirmation.</span>
+              <Button size="sm" onClick={() => {
+                runtime.setInspectorView("run")
+                setContextPanelOpen(true)
+              }}>Review tool action</Button>
+            </div>
+          )}
           {runtime.activeRequestId === null && sendBlockedReason && (
             <div className="ait-chat-unavailable-message" role="status" id="chat-send-status">
               <span>{sendBlockedReason}</span>
-              {!runtime.openingConversation && runtime.recoveryState === "offline" ? (
+              {chatConfig.configuration.data?.pending_run_id && !runtime.pendingPlan ? <Button size="sm" onClick={() => void restorePendingPlan(chatConfig.configuration.data!.pending_run_id)}>恢复待确认计划</Button> : chatConfig.configuration.isError ? <Button size="sm" onClick={() => void chatConfig.configuration.refetch()}>重试</Button> : !runtime.openingConversation && runtime.recoveryState === "offline" ? (
                 <Button size="sm" onClick={() => void runtime.retryRecovery()}>重试连接</Button>
               ) : !runtime.chatAvailable && runtime.chatStatusLoaded && runtime.recoveryState === "idle" ? (
                 <Button size="sm" onClick={() => void queryClient.invalidateQueries({ queryKey: queryKeys.companion.chatStatus })}>重试连接</Button>
@@ -863,72 +936,29 @@ export default function CompanionWorkspaceV2() {
             </div>
           )}
           <div className="ait-chat-composer-controls">
-            <div className="ait-chat-context-picker" ref={contextPickerRef}>
-              <button
-                type="button"
-                className="ait-chat-composer-control ait-chat-context-picker-button"
-                aria-haspopup="menu"
-                aria-expanded={contextPickerOpen}
-                disabled={runtime.activeRequestId !== null || runtime.contextUpdating}
-                onClick={() => setContextPickerOpen((open) => !open)}
-              >
-                <span>{contextControlLabel}</span>
-                <ChevronDown size={14} />
-              </button>
-              {contextPickerOpen && (
-                <div className="ait-chat-context-picker-menu" role="menu" aria-label="Chat context">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`ait-chat-context-picker-option ${runtime.contextMode === "general" ? "is-active" : ""}`}
-                    onClick={() => {
-                      void runtime.detachReadingContext()
-                      runtime.setSelectedTools([])
-                      setContextPickerOpen(false)
-                    }}
-                  >
-                    <span><strong>General</strong><small>Chat without a reading selection.</small></span>
-                    {runtime.contextMode === "general" && <Check size={14} />}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={!canAttachSaved && !readingHandoff}
-                    className={`ait-chat-context-picker-option ${runtime.contextMode === "reading" ? "is-active" : ""}`}
-                    onClick={() => {
-                      if (canAttachSaved) void runtime.attachSavedContext()
-                      else void attachCurrentReading()
-                      setContextPickerOpen(false)
-                    }}
-                  >
-                    <span><strong>{isKnowledgeContext ? "Knowledge" : "Reading"}</strong><small>Ground the next message in current context.</small></span>
-                    {runtime.contextMode === "reading" && <Check size={14} />}
-                  </button>
-                </div>
-              )}
-            </div>
             <div className="ait-chat-model-picker" ref={modelPickerRef}>
               <button
                 type="button"
                 className="ait-chat-composer-control ait-chat-composer-model-button"
                 aria-haspopup="listbox"
                 aria-expanded={modelPickerOpen}
-                disabled={runtime.activeRequestId !== null || modelSwitchMutation.isPending}
+                disabled={branchBusy || modelSwitchMutation.isPending}
                 onClick={() => setModelPickerOpen((open) => !open)}
               >
+                <Bot size={18} />
                 <span className="ait-chat-composer-model-label">{activeModel}</span>
                 <ChevronDown size={14} />
               </button>
               {modelPickerOpen && (
                 <div className="ait-chat-model-menu" role="listbox" aria-label="Available models">
                   <div className="ait-chat-model-menu-heading">
-                    <span>Available models</span>
+                    <span>选择模型</span>
                     {modelCatalogQuery.isFetching && <LoaderCircle size={13} className="ait-chat-model-menu-spinner" />}
                   </div>
                   {modelCatalogQuery.isPending ? (
-                    <p className="ait-chat-model-menu-message">Checking the current API key…</p>
+                    <p className="ait-chat-model-menu-message">正在加载可用模型…</p>
                   ) : modelCatalogQuery.isError ? (
-                    <p className="ait-chat-model-menu-message is-error">Unable to load models. Try again.</p>
+                    <p className="ait-chat-model-menu-message is-error">模型列表加载失败，请重试。</p>
                   ) : !modelCatalogQuery.data?.available ? (
                     <p className="ait-chat-model-menu-message is-error">
                       {modelCatalogQuery.data?.detail || "No models are available for this API key."}
@@ -955,34 +985,15 @@ export default function CompanionWorkspaceV2() {
                 </div>
               )}
             </div>
-            <label className="ait-chat-composer-knowledge ait-chat-composer-knowledge-button">
-              <span className="ait-chat-composer-knowledge-dot" />
-              <span>Knowledge ·</span>
-              <select
-                aria-label="Knowledge policy"
-                value={runtime.knowledgeAccessPolicy}
-                disabled={runtime.activeRequestId !== null || runtime.openingConversation}
-                onChange={(event) => runtime.setKnowledgeAccessPolicy(event.target.value as "auto" | "always" | "never")}
-              >
-                <option value="auto">Auto</option>
-                <option value="always">Always search</option>
-                <option value="never">Never search</option>
-              </select>
-            </label>
-            <AgentToolsControl
-              selectedTools={runtime.selectedTools}
-              disabled={runtime.activeRequestId !== null || runtime.openingConversation}
-              hasReadingContext={Boolean(runtime.context.source_text.trim())}
-              onChange={runtime.setSelectedTools}
-            />
+            <ChatSessionControls config={chatConfig} disabled={runtime.activeRequestId !== null || runtime.openingConversation || runtime.conversationBusyElsewhere} selectedTools={runtime.selectedTools} onToolsChange={runtime.setSelectedTools} hasReadingContext={Boolean(runtime.context.source_text.trim()) || Boolean(chatConfig.configuration.data?.attachments.length)} knowledgePolicy={runtime.knowledgeAccessPolicy} onKnowledgePolicyChange={runtime.setKnowledgeAccessPolicy}/>
           </div>
           <div className="ait-chat-composer-row">
             <label className="ait-chat-composer-field">
-              <Paperclip size={19} className="ait-chat-composer-attach" />
               <textarea
                 className="ait-chat-composer-input"
+                aria-label="Message"
                 placeholder={runtime.activeRequestId === null
-                  ? runtime.contextMode === "general" ? "Ask anything, or type '/' for commands…" : "Ask a question, or type '/' for commands…"
+                  ? runtime.contextMode === "general" ? "Ask anything…" : "Ask about the current context…"
                   : "当前回复仍在生成，可先编辑下一条消息…"}
                 value={runtime.draft}
                 disabled={runtime.openingConversation}
@@ -997,6 +1008,7 @@ export default function CompanionWorkspaceV2() {
             </label>
             {runtime.activeRequestId !== null ? (
               <Button className="ait-chat-send-button" type="button" variant="danger" size="md" onClick={runtime.cancelStream}>
+                <Square size={16} />
                 Stop
               </Button>
             ) : (
@@ -1009,12 +1021,13 @@ export default function CompanionWorkspaceV2() {
                 title={sendBlockedReason || (!runtime.draft.trim() ? "请输入消息" : "发送消息")}
                 aria-describedby={sendBlockedReason ? "chat-send-status" : undefined}
               >
+                <Send size={19} />
                 Send
               </Button>
             )}
           </div>
           <p className="ait-chat-composer-helper">
-            Enter to send · Shift+Enter for a new line · {runtime.contextMode === "reading" ? isKnowledgeContext ? "Knowledge context" : "Reading context" : "General"} · Knowledge {runtime.knowledgeAccessPolicy === "auto" ? "Auto" : runtime.knowledgeAccessPolicy === "always" ? "Always search" : "Never search"}
+            Enter 发送 · Shift+Enter 换行 · {chatConfig.configuration.data?.execution_mode === "plan_execute" ? "Plan–Execute：确认计划后执行" : "常规（ReAct）"}
           </p>
         </form>
       </div>

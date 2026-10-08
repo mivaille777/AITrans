@@ -87,9 +87,10 @@ def test_runtime_emits_structured_failure_with_correlation_ids() -> None:
         AgentEventType.AGENT_START,
         AgentEventType.CONTEXT_READY,
         AgentEventType.FAILURE,
+        AgentEventType.TASK_VERIFICATION,
         AgentEventType.AGENT_END,
     ]
-    failure = runtime.events[-2]
+    failure = runtime.events[-3]
     assert failure.run_id == state.run_id
     assert failure.trace_id == state.trace_id
     assert failure.payload["stage"] == "runtime"
@@ -108,6 +109,7 @@ def test_runtime_cooperative_cancellation_emits_cancelled_terminal_state() -> No
 
     assert [event.event_type for event in runtime.events] == [
         AgentEventType.CANCELLED,
+        AgentEventType.TASK_VERIFICATION,
         AgentEventType.AGENT_END,
     ]
     assert runtime.events[0].run_id == state.run_id

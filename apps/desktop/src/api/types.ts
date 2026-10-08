@@ -341,6 +341,24 @@ export interface KnowledgeRecovery {
   outcome?: "normal" | "recovering" | "repaired" | "fallback" | "partial" | "blocked"
   reason?: string
   repair_rounds?: number
+  reading_task?: { intent: string; coverage: string; answer_kind: string; decision_basis: string }
+  answer_completeness?: { passed: boolean; expected_stages: string[]; covered_stages: string[]; missing_stages: string[]; reason_codes: string[] }
+  reading_coverage?: KnowledgeRecovery["full_read"]
+  rag_reading?: {
+    contract_version: string
+    documents: Array<{
+      basis: string
+      inventory_chunks: number
+      selected_chunks: number
+      read_chunks: number
+      expected_sections: string[]
+      read_complete_sections: string[]
+      expected_stages: string[]
+      read_stages: string[]
+      read_complete: boolean
+      budget_truncated: boolean
+    }>
+  }
   full_read?: {
     basis: string
     total_chunks: number

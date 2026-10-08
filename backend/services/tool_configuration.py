@@ -59,6 +59,10 @@ def metadata_definition(definition, raw):
             "invalid_configuration", "Timeout may only be shortened."
         )
     model = configured_model(definition, defaults)
+    properties = deepcopy(definition.spec.input_schema)
+    for key, value in defaults.items():
+        if key in properties:
+            properties[key]["default"] = value
     spec = replace(
         definition.spec,
         title=metadata.title or definition.spec.title,
@@ -66,6 +70,11 @@ def metadata_definition(definition, raw):
         if metadata.description is not None
         else definition.spec.description,
         timeout_seconds=metadata.timeout_seconds or definition.spec.timeout_seconds,
+        input_schema=properties,
+        parameter_schema={**definition.spec.parameter_schema,
+            "type": "object", "additionalProperties": False,
+            "properties": properties,
+            "required": [key for key in definition.spec.parameter_schema.get("required", []) if key not in defaults]},
     )
     result = replace(definition, spec=spec, args_model=model)
     validate_examples(result, metadata.examples or [])
@@ -139,6 +148,7 @@ def preset_definition(registry, raw):
         title=preset.title,
         description=preset.description or base.spec.description,
         input_schema=_model_properties(model),
+        parameter_schema=model.model_json_schema(),
         timeout_seconds=min(preset.timeout_seconds, base.spec.timeout_seconds),
     )
 

@@ -26,6 +26,7 @@ class FakeProductAgentService:
             arguments={"target_language": "zh-CN"},
         )
         tool_result = AgentToolExecutionResult(
+            verification={"status": "passed", "checks": []},
             tool_name="translate_selection",
             output_text="高斯过程",
             effect="compute",
@@ -175,9 +176,11 @@ def test_reading_agent_graph_preserves_runtime_events_and_conversation_history()
         AgentEventType.KNOWLEDGE_DECISION,
         AgentEventType.KNOWLEDGE_SCOPE_RESOLVED,
         AgentEventType.KNOWLEDGE_SKIPPED,
+        AgentEventType.CAPABILITY_ROUTED,
         AgentEventType.PLAN_READY,
         AgentEventType.TOOL_CALL,
         AgentEventType.TOOL_RESULT,
+        AgentEventType.TASK_VERIFICATION,
         AgentEventType.AGENT_END,
     ]
 

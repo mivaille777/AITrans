@@ -1,5 +1,11 @@
 import { desktop } from "../desktop"
 import { apiDelete, apiGet, apiPatch, apiPost } from "./client"
+import type { MarkdownDocument } from "../shared/files/markdown-export"
+
+export function exportConversationMarkdown(conversationId: string, messageId?: string): Promise<MarkdownDocument> {
+  const query = messageId ? `?message_id=${encodeURIComponent(messageId)}` : ""
+  return apiGet<MarkdownDocument>(`/api/conversations/${encodeURIComponent(conversationId)}/export/markdown${query}`)
+}
 import type {
   ConversationContextUpdate,
   ConversationDeleteResponse,

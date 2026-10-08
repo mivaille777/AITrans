@@ -335,7 +335,8 @@ def test_retrieval_failure_is_observed_and_does_not_fail_the_run() -> None:
     result = runtime.execute(_state("Verify this claim with evidence."))
 
     assert result.response["status"] == "completed"
-    assert result.response["output_text"] == "I cannot verify this."
+    assert result.browser_context["task_completion"]["status"] != "completed"
+    assert any(item["criterion_id"] == "document_evidence" for item in result.browser_context["task_completion"]["criteria"])
     assert result.evidence_sufficient is False
     assert result.react.observations[-1].success is False
     assert any(
@@ -358,7 +359,7 @@ def test_insufficient_evidence_uses_explicit_safe_final_response() -> None:
     )
 
     assert result.response["status"] == "completed"
-    assert "sufficient evidence" in result.response["output_text"]
+    assert result.browser_context["task_completion"]["status"] != "completed"
     assert result.evidence_sufficiency is not None
     assert result.evidence_sufficiency.sufficient is False
 

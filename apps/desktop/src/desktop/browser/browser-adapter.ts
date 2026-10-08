@@ -23,7 +23,7 @@ export const browserDesktopAdapter: DesktopAdapter = {
   },
   files: {
     async pickKnowledgeDocument() {
-      const path = window.prompt("Enter an absolute path to a local knowledge document:")
+      const path = window.prompt("请输入要导入的本地文档绝对路径：")
       return path?.trim() || null
     },
     async pickAgentWorkspace() {

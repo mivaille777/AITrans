@@ -109,6 +109,9 @@ def _percentile_95(values: list[int]) -> int:
 
 
 _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
+    "tool_verification": frozenset({"tool_name", "status", "scope", "semantic_quality"}),
+    "task_verification": frozenset({"status", "passed", "total", "semantic_quality"}),
+    "capability_routed": frozenset({"capabilities", "tool_count"}),
     "agent_start": frozenset({"budget_ms", "resumed"}),
     "write_confirmation_required": frozenset({"tool_name", "request_id"}),
     "write_confirmed": frozenset({"tool_name", "request_id"}),
@@ -232,6 +235,9 @@ _ALLOWED_EVENT_FIELDS: dict[str, frozenset[str]] = {
             "request_id",
             "duration_ms",
             "sandbox_id",
+            "status",
+            "attempt",
+            "error_code",
         }
     ),
     "observation_ready": frozenset(

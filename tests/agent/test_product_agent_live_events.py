@@ -136,11 +136,13 @@ def test_product_agent_emits_phase_timings_at_execution_boundaries() -> None:
         "plan_ready",
         "tool_call",
         "tool_result",
+        "tool_verification",
         "synthesis_ready",
     ]
     assert events[0][1]["duration_ms"] >= 0
     assert events[2][1]["duration_ms"] >= 0
-    assert events[3][1]["duration_ms"] >= 0
+    assert events[3][1]["status"] == "passed"
+    assert events[4][1]["duration_ms"] >= 0
     assert registry.executions[0][0] == "translate_selection"
 
 

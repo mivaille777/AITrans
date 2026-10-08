@@ -12,6 +12,7 @@ from app.ai.service import AITextService
 from backend.models.agent_runtime import AgentPlanContext, AgentPlanStep
 from backend.services.agent_security_service import AgentSecurityService
 from backend.services.agent_tool_registry import AgentToolSpec
+from backend.services.tool_result_validator import acceptance_criteria_for
 
 MULTI_STEP_PLANNER_SYSTEM_PROMPT = """You are the bounded multi-step planning layer for AITranslator's reading agent.
 The request has already been classified as requiring multiple registered product actions.
@@ -224,8 +225,9 @@ class AgentMultiStepPlannerService:
         *,
         tools: tuple[AgentToolSpec, ...],
         max_steps: int,
+        min_steps: int = 2,
     ) -> AgentPlanContext:
-        if len(envelope.steps) < 2:
+        if len(envelope.steps) < min_steps:
             raise AIResponseError("Multi-step planner must return at least two steps.")
         if len(envelope.steps) > max_steps:
             raise AIResponseError(
@@ -275,6 +277,7 @@ class AgentMultiStepPlannerService:
                     arguments=arguments,
                     depends_on=list(step.depends_on),
                     status="pending",
+                    acceptance_criteria=acceptance_criteria_for(spec.name, spec.effect),
                 )
             )
             seen.add(step.step_id)
@@ -283,7 +286,7 @@ class AgentMultiStepPlannerService:
             goal=str(envelope.goal or "").strip()[:500],
             mode="multi_step",
             steps=normalized,
-            current_step_id=normalized[0].step_id,
+            current_step_id=normalized[0].step_id if normalized else "",
         )
 
     def plan(
@@ -291,6 +294,7 @@ class AgentMultiStepPlannerService:
         *,
         tools: tuple[AgentToolSpec, ...],
         max_steps: int = 4,
+        allow_simple_plan: bool = False,
         **payload: Any,
     ) -> AgentPlanContext:
         max_steps = max(2, int(max_steps))
@@ -298,7 +302,7 @@ class AgentMultiStepPlannerService:
         spec = self._prompt_registry.get("agent.multi_step_planner")
         try:
             raw = self._client().complete(
-                system_prompt=spec.system_prompt,
+                system_prompt=(spec.system_prompt.replace("The request has already been classified as requiring multiple registered product actions.", "Create a plan for the user's request. It will be shown for approval before any action executes.").replace("Produce between 2 and max_steps steps.", "Produce between 0 and max_steps steps. Use zero steps for a conversational answer that needs no tools; the final answer is generated after approval.") if allow_simple_plan else spec.system_prompt),
                 user_prompt=prompt,
                 temperature=spec.temperature,
                 max_tokens=spec.max_tokens,
@@ -308,7 +312,7 @@ class AgentMultiStepPlannerService:
         except Exception as exc:
             raise AIResponseError("Multi-step planner provider failed.") from exc
 
-        return self._validate(self._decode(raw), tools=tools, max_steps=max_steps)
+        return self._validate(self._decode(raw), tools=tools, max_steps=max_steps, min_steps=0 if allow_simple_plan else 2)
 
     def close(self) -> None:
         if self._text_service is None:

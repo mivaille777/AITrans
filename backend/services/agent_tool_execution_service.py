@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from time import monotonic, sleep
 from typing import Any
@@ -29,6 +29,7 @@ from backend.agent_core.reliability import (
 from backend.agent_tools.base import AgentToolExecutionResult
 from backend.models.agent_run import AgentToolCallRecord, AgentToolCallStatus
 from backend.services.agent_run_store import AgentRunStore
+from backend.services.tool_result_validator import ToolResultValidator
 
 _BOUND_STORE: ContextVar[AgentRunStore | None] = ContextVar("agent_tool_run_store", default=None)
 
@@ -84,6 +85,20 @@ class AgentToolExecutionService:
         self.registry = registry
         self.store = store
         self.retry_sleep = retry_sleep
+
+    def _verify(self, name, payload, result, control):
+        verify = getattr(self.registry, "verify_result", None)
+        try:
+            # Verification performs reads only, even when checking a completed write.
+            return run_safe_tool_with_timeout(
+                lambda: verify(name, payload, result) if callable(verify) else ToolResultValidator().verify(name, payload, result),
+                control=control, tool_name=f"verify:{name}", timeout_seconds=10,
+            )
+        except Exception as exc:
+            # A readback failure may occur after a write. Retain the execution
+            # receipt and never replay the effect to repair verification.
+            return replace(result, status="unknown", verification={"status": "unknown", "checks": [
+                {"code": "verification_unavailable", "status": "unknown", "detail": str(exc)[:1000]}]})
 
     def execute_many(
         self, requests: list[ToolExecutionRequest], *, control: AgentRunControl,
@@ -188,7 +203,7 @@ class AgentToolExecutionService:
                 if call.status is AgentToolCallStatus.SUCCEEDED and saved is not None:
                     if on_call:
                         on_call(call.tool_call_id)
-                    return AgentToolExecutionResult(**saved)
+                    return self._verify(name, payload, AgentToolExecutionResult(**saved), control)
                 # A concurrent caller may be waiting for the owner. A stale or
                 # crashed write is deliberately blocked, never physically replayed.
                 until = monotonic() + min(5.0, control.remaining_seconds)
@@ -200,7 +215,7 @@ class AgentToolExecutionService:
                         if saved is not None:
                             if on_call:
                                 on_call(call.tool_call_id)
-                            return AgentToolExecutionResult(**saved)
+                            return self._verify(name, payload, AgentToolExecutionResult(**saved), control)
                 raise AgentToolError(
                     f"Agent tool {name} has an existing unresolved call {call.tool_call_id}.",
                     stage="tool", fallback_reason="tool_call_already_claimed",
@@ -233,6 +248,12 @@ class AgentToolExecutionService:
                             control=control, tool_name=name,
                             timeout_seconds=spec.timeout_seconds,
                         )
+                    result = self._verify(name, payload, result, control)
+                    result = replace(result, tool_call_id=call.tool_call_id,
+                                     duration_ms=max(0, int((datetime.now(UTC) - call.started_at).total_seconds() * 1000)),
+                                     attempt=attempt)
+                    # SUCCEEDED is the physical execution receipt. Business
+                    # verification is persisted in the independent result report.
                     call.status = AgentToolCallStatus.SUCCEEDED
                     call.finished_at = datetime.now(UTC)
                     if store is not None and effective_run_id:

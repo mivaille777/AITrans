@@ -474,7 +474,8 @@ def test_agent_native_replays_call_ids_and_located_candidates(resources):
         user_message="Local paper?",
         knowledge_document_ids=["doc-A"],
         native_decisions=(first,),
-        native_results=({"step_id": "react-1", "data": result.data},),
+        native_results=({"step_id": "react-1", "data": result.data,
+            "status": "success", "verification": {"status": "passed"}},),
     )
     assert second.tool_name == "read_knowledge_chunk"
     assert native.calls[-1]["tool_choice"] == "required"
