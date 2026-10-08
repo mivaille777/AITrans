@@ -16,6 +16,8 @@ export function AgentToolsControl({
   disabled,
   hasReadingContext,
   workspaceId = "",
+  sessionId = "",
+  filesystemAccess = "read_only",
   knowledgePolicy = "auto",
   onChange,
 }: {
@@ -23,14 +25,16 @@ export function AgentToolsControl({
   disabled: boolean
   hasReadingContext: boolean
   workspaceId?: string
+  sessionId?: string
+  filesystemAccess?: "read_only" | "read_write"
   knowledgePolicy?: string
   onChange: (toolNames: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const toolsQuery = useQuery({
-    queryKey: [...queryKeys.agent.tools, hasReadingContext, workspaceId, knowledgePolicy],
-    queryFn: () => getAgentTools({ hasReadingContext, workspaceId, knowledgePolicy }),
+    queryKey: [...queryKeys.agent.tools, hasReadingContext, workspaceId, knowledgePolicy, sessionId, filesystemAccess],
+    queryFn: () => getAgentTools({ hasReadingContext, workspaceId, knowledgePolicy, sessionId }),
     enabled: open,
     staleTime: 60_000,
     retry: 0,

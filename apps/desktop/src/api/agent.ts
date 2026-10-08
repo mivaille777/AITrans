@@ -130,6 +130,7 @@ export interface AgentPlan {
 }
 
 export interface AgentPlanStep {
+  file_preview?: {relative_path: string; operation?: string; diff: string; diff_truncated: boolean; size_before: number; size_after: number}
   acceptance_criteria?: string[]
   step_id: string
   tool_name: string
@@ -335,8 +336,8 @@ export function runAgentTrace(payload: AgentRunRequest): Promise<AgentRunTraceRe
   return apiPost<AgentRunTraceResponse, AgentRunRequest>("/api/agent/run/trace", payload)
 }
 
-export function getAgentTools(context?: { hasReadingContext: boolean; workspaceId: string; knowledgePolicy: string }): Promise<AgentToolCatalogResponse> {
-  const params = context ? `?${new URLSearchParams({ has_reading_context: String(context.hasReadingContext), filesystem_workspace_id: context.workspaceId, knowledge_access_policy: context.knowledgePolicy })}` : ""
+export function getAgentTools(context?: { hasReadingContext: boolean; workspaceId: string; knowledgePolicy: string; sessionId?: string }): Promise<AgentToolCatalogResponse> {
+  const params = context ? `?${new URLSearchParams({ has_reading_context: String(context.hasReadingContext), filesystem_workspace_id: context.workspaceId, knowledge_access_policy: context.knowledgePolicy, session_id: context.sessionId ?? "" })}` : ""
   return apiGet<AgentToolCatalogResponse>(`/api/agent/tools${params}`)
 }
 

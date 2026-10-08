@@ -14,6 +14,9 @@ _ACTION = r"(?:导出|下载|保存|生成|export|download|save)"
 def wants_markdown_export(message: str) -> bool:
     """Classify only the current user's command, never attached document text."""
     value = message.strip().casefold()
+    from backend.services.workspace_file_intent import file_intent
+    if file_intent(message) in {"write", "undo"}:
+        return False
     if not re.search(_FORMAT, value) or not re.search(_ACTION, value):
         return False
     if re.search(

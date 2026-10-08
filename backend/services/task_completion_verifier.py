@@ -38,6 +38,27 @@ def verify_task_completion(state):
     from backend.agent_tools.base import AgentToolExecutionResult
     from backend.services.tool_result_validator import ToolResultValidator
     capabilities = requested_capabilities(state.user_input)
+    if "filesystem" in capabilities:
+        from backend.services.workspace_file_intent import file_intent
+        from backend.services.workspace_file_service import FILE_TOOLS, FILE_WRITE_TOOLS
+        action = file_intent(state.user_input)
+        needed = FILE_WRITE_TOOLS if action in {"write", "undo"} else FILE_TOOLS - FILE_WRITE_TOOLS | {"read_workspace_file"}
+        if action == "undo":
+            needed = {"undo_workspace_change"}
+        elif action == "write":
+            if re.search(r"(?:创建|新建).{0,12}(?:文件夹|目录)|create\s+(?:a\s+)?(?:directory|folder)", state.user_input, re.I):
+                needed = {"create_workspace_directory"}
+                if re.search(r"文件(?!夹)|\bfile\b|[\w-]+\.[a-z0-9]{1,8}\b", state.user_input, re.I):
+                    directory_verified = any(result.get("tool_name") == "create_workspace_directory"
+                                             and (result.get("verification") or {}).get("status") == "passed" for result in results)
+                    add("filesystem_directory_effect", "请求的工作区文件夹已实际创建并验证", "passed" if directory_verified else "failed")
+                    needed = {"create_workspace_file", "write_workspace_file"}
+            elif re.search(r"修改|编辑|替换|覆盖|重写|追加|\b(?:edit|replace|overwrite|append)\b", state.user_input, re.I):
+                needed = {"edit_workspace_file", "write_workspace_file"}
+            else:
+                needed = {"create_workspace_file", "write_workspace_file"}
+        verified = [result for result in results if result.get("tool_name") in needed and (result.get("verification") or {}).get("status") == "passed"]
+        add("filesystem_effect", "请求的工作区文件操作已实际执行并验证", "passed" if verified else "failed")
     if "export" in capabilities:
         document = state.browser_context.get("markdown_export") or run_markdown_document(state)
         if document:
@@ -54,10 +75,14 @@ def verify_task_completion(state):
     if "writeback" in capabilities:
         add("write_requested", "请求的保存／更新已实际执行", "passed" if any(result.get("effect") == "write" for result in results) else "failed")
     if "reading" in capabilities and state.browser_context.get("filesystem_workspace_id") and any(word in state.user_input for word in ("工作区", "文件", "workspace", "file")):
-        add("file_read_requested", "工作区文件已实际读取", "passed" if any(result.get("tool_name") == "read_workspace_file" for result in results) else "failed")
+        add("file_read_requested", "工作区文件已实际读取", "passed" if any(result.get("tool_name") in {"read_workspace_file", "read_workspace_text"} for result in results) else "failed")
         if re.search(r"全文|完整|全部|whole|entire|complete file", state.user_input, re.I):
             pages = {}
+            text_pages = {}
             for result in results:
+                if result.get("tool_name") == "read_workspace_text" and (result.get("verification") or {}).get("status") == "passed":
+                    data = result.get("data") or {}
+                    text_pages.setdefault(data.get("relative_path", ""), []).append(data)
                 if result.get("tool_name") == "read_workspace_file" and (result.get("verification") or {}).get("status") == "passed":
                     data = result.get("data") or {}
                     pages.setdefault(data.get("relative_path", ""), []).append(data)
@@ -70,6 +95,17 @@ def verify_task_completion(state):
                     end = max(end, item["next_offset"])
                 add(f"file_coverage:{path}", f"{path} 全文读取覆盖", "passed" if end == total else "failed",
                     evidence={"covered_chars": end, "total_chars": total})
+            for path, ranges in text_pages.items():
+                next_line = 1
+                total = max(item["total_lines"] for item in ranges)
+                versions = {item["sha256"] for item in ranges}
+                for item in sorted(ranges, key=lambda item: item["start_line"]):
+                    if item["start_line"] > next_line:
+                        break
+                    next_line = max(next_line, item["next_line"])
+                add(f"text_coverage:{path}", f"{path} 原始文本全文读取覆盖",
+                    "passed" if next_line == total + 1 and len(versions) == 1 else "failed",
+                    evidence={"covered_lines": next_line - 1, "total_lines": total})
     # Preserve the authoritative research workflow's existing acceptance gate.
     workflow_status = state.orchestration_status
     if workflow_status in {"partial", "failed", "blocked"}:

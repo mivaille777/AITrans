@@ -29,6 +29,8 @@ class AgentToolInvocationContext(AgentToolModel):
     ai_action: str = Field(default="", max_length=128)
     workspace_id: str = Field(default="", max_length=128)
     filesystem_workspace_id: str = Field(default="", max_length=128)
+    filesystem_access: Literal["read_only", "read_write"] = "read_only"
+    session_id: str = Field(default="", max_length=128)
     run_id: str = Field(default="", max_length=128)
     trace_id: str = Field(default="", max_length=128)
     tool_call_id: str = Field(default="", max_length=128)
@@ -200,7 +202,9 @@ class AgentToolSpec:
             if not isinstance(value, str):
                 raise ValueError(f"Agent planner argument {key} must be a string for tool {self.name}.")
             text = value
-            if self.name != "python_execute":
+            if self.name != "python_execute" and not (
+                self.category == "filesystem" and key in {"content", "old_text", "new_text", "query"}
+            ):
                 text = text.strip()
             validation_text = text.strip() if self.name == "python_execute" else text
             if isinstance(schema, dict):

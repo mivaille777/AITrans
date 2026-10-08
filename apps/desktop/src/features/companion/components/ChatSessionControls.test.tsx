@@ -81,6 +81,8 @@ beforeEach(() => {
           },
         ])
       if (url.includes("/companion/sessions/")) {
+        if (url.includes("/workspace/changes")) return json([])
+        if (url.includes("/workspace?")) return json({display_path: "D:/Papers", directory: "", entries: [], total: 0, next_offset: 0, has_more: false, filesystem_access: "read_write"})
         config.session_id = decodeURIComponent(
           url.split("/sessions/")[1].split("/")[0],
         )

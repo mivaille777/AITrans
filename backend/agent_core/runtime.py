@@ -257,6 +257,7 @@ class AgentRuntime:
                 "enabled_tools",
                 "write_confirmation_decision",
                 "plan_confirmation_decision",
+                "filesystem_access",
                 "native_task_retry_resume",
                 "retry_task_id",
             )

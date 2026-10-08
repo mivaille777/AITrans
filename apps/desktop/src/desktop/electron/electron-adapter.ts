@@ -45,6 +45,11 @@ export const electronDesktopAdapter: DesktopAdapter = {
     openEvidenceSource(resourceUrl) {
       return bridge().files.openEvidenceSource(resourceUrl)
     },
+    async revealWorkspaceLocation(resourceUrl) {
+      const reveal = bridge().files.revealWorkspaceLocation
+      if (!reveal) throw new Error("请重启桌面程序以使用文件定位。")
+      await reveal(resourceUrl)
+    },
   },
   window: {
     show() {

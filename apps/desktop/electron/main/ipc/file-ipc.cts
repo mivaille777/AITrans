@@ -3,6 +3,7 @@ import { ipcMain } from "electron"
 import { IPC_CHANNELS } from "../../shared/channels.cjs"
 import {
   openEvidenceSource,
+  revealWorkspaceLocation,
   pickAgentWorkspace,
   pickKnowledgeDocument,
 } from "../services/file-service.cjs"
@@ -29,6 +30,11 @@ function validatedResourceUrl(value: unknown): string {
 export function registerFileIpc(
   resolveMainWindow: MainWindowResolver,
 ): void {
+  ipcMain.removeHandler(IPC_CHANNELS.filesRevealWorkspaceLocation)
+  ipcMain.handle(IPC_CHANNELS.filesRevealWorkspaceLocation, async (event, resourceUrl: unknown) => {
+    authorizedMainWindow(event, resolveMainWindow)
+    await revealWorkspaceLocation(validatedResourceUrl(resourceUrl))
+  })
   ipcMain.removeHandler(IPC_CHANNELS.filesPickKnowledgeDocument)
   ipcMain.handle(IPC_CHANNELS.filesPickKnowledgeDocument, (event) =>
     pickKnowledgeDocument(authorizedMainWindow(event, resolveMainWindow)),

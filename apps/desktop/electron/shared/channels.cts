@@ -11,6 +11,7 @@ export const IPC_CHANNELS = {
   filesPickKnowledgeDocument: "aitrans:files:pick-knowledge-document",
   filesPickAgentWorkspace: "aitrans:files:pick-agent-workspace",
   filesOpenEvidenceSource: "aitrans:files:open-evidence-source",
+  filesRevealWorkspaceLocation: "aitrans:files:reveal-workspace-location",
   credentialsStatus: "aitrans:credentials:status",
   credentialsPreview: "aitrans:credentials:preview",
   credentialsSave: "aitrans:credentials:save",

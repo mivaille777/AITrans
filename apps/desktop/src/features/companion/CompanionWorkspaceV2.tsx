@@ -11,6 +11,7 @@ import { getAvailableLlmModels, getLlmSettings, updateLlmSettings } from "../../
 import { saveResearchNote } from "../../api/quick-actions"
 import { exportConversationMarkdown } from "../../api/conversations"
 import { downloadMarkdown } from "../../shared/files/markdown-export"
+import { WorkspaceFilesPanel } from "./components/WorkspaceFilesPanel"
 import type { ResearchNoteSaveRequest } from "../../api/types"
 import { queryKeys, queryPolling } from "../../shared/query/query-keys"
 import { Badge } from "../../shared/ui/Badge"
@@ -38,6 +39,12 @@ import { ChatConversationHeader } from "./components/ChatConversationHeader"
 import { KnowledgeRetrievalControl } from "./components/KnowledgeRetrievalControl"
 import { useCompanionConversationRuntime } from "./useCompanionConversationRuntime"
 import "./ChatWorkspace.css"
+
+const workspaceToolLabels: Record<string, string> = {
+  list_workspace_files: "浏览文件", search_workspace_text: "搜索文件内容", read_workspace_text: "读取文本",
+  create_workspace_file: "新建文件", edit_workspace_file: "编辑文件", write_workspace_file: "重写文件",
+  create_workspace_directory: "新建文件夹", undo_workspace_change: "撤销文件变更",
+}
 
 function companionGenerationPhaseLabel(phase?: CompanionGenerationPhase, message?: CompanionRuntimeMessage): string {
   const outline = message?.knowledgeRecovery?.reading_coverage
@@ -497,6 +504,10 @@ export default function CompanionWorkspaceV2() {
         <button type="button" className="ait-chat-context-close" onClick={() => setContextPanelOpen(false)} aria-label="Close context panel">
           <PanelRightClose size={18} />
         </button>
+        <WorkspaceFilesPanel sessionId={runtime.sessionId} workspaceId={chatConfig.configuration.data?.filesystem_workspace_id || ""}
+          readOnly={chatConfig.configuration.data?.filesystem_access === "read_only"}
+          busy={runtime.activeRequestId !== null || Boolean(chatConfig.configuration.data?.pending_run_id)}
+          refreshKey={`${runtime.agentRunId}:${runtime.agentPhase}:${runtime.agentEvents.filter(event => event.event_type === "tool_result").length}`} />
         {showAgentInspector ? (
           <AgentRunInspector
             context={runtime.context}
@@ -910,6 +921,14 @@ export default function CompanionWorkspaceV2() {
           {runtime.pendingPlan && (
             <div className="ait-chat-unavailable-message" role="status">
               <span>计划已生成：{runtime.pendingPlan.multi_step_plan?.goal}。确认后执行。</span>
+              <div className="w-full">
+                {runtime.pendingPlan.multi_step_plan?.steps.map(step => <div key={step.step_id} className="my-2 text-xs">
+                  <strong>{workspaceToolLabels[step.tool_name] || step.tool_name} · {String(step.arguments.relative_path || "")}</strong>
+                  {step.file_preview && <><p>{step.file_preview.size_before} → {step.file_preview.size_after} 字节</p>
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{step.file_preview.diff || (step.file_preview.operation === "mkdir" ? "创建文件夹" : "变更为上方显示的文件状态。")}</pre>
+                    {step.file_preview.diff_truncated && <p>差异过长，仅显示部分内容。</p>}</>}
+                </div>)}
+              </div>
               <Button size="sm" disabled={runtime.activeRequestId !== null} onClick={() => runtime.confirmAgentPlan("approve")}>确认执行</Button>
               <Button size="sm" disabled={runtime.activeRequestId !== null} onClick={() => runtime.confirmAgentPlan("reject")}>取消计划</Button>
             </div>

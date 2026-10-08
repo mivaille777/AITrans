@@ -32,6 +32,7 @@ class ChatSessionConfiguration(BaseModel):
     session_id: str
     filesystem_workspace_id: str = ""
     execution_mode: Literal["react", "plan_execute"] = "react"
+    filesystem_access: Literal["read_only", "read_write"] = "read_write"
     attachments: list[ChatAttachment] = Field(default_factory=list)
     pending_run_id: str = ""
 
@@ -80,9 +81,16 @@ class ChatSessionService:
         *,
         filesystem_workspace_id: str | None = None,
         execution_mode: str | None = None,
+        filesystem_access: str | None = None,
     ) -> ChatSessionConfiguration:
         with self._lock:
             config = self.get(session_id)
+            if filesystem_access is not None:
+                if filesystem_access not in {"read_only", "read_write"}:
+                    raise ValueError("未知文件访问权限。")
+                if config.pending_run_id and filesystem_access != config.filesystem_access:
+                    raise ValueError("请先执行或取消当前计划，再切换权限。")
+                config.filesystem_access = filesystem_access
             if (
                 filesystem_workspace_id is not None
                 and filesystem_workspace_id != config.filesystem_workspace_id
@@ -108,6 +116,8 @@ class ChatSessionService:
             config = self.get(session_id)
             if not config.filesystem_workspace_id:
                 raise ValueError("请先选择工作区，再导入文件。")
+            if config.filesystem_access == "read_only":
+                raise ValueError("当前工作区为只读，不能导入文件副本。")
             if config.pending_run_id:
                 raise ValueError("请先执行或取消当前计划，再导入文件。")
             if len(config.attachments) >= 16:

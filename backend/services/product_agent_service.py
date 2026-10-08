@@ -384,6 +384,36 @@ class ProductAgentService:
             **reading,
         )
         active_control.checkpoint("multi_step_planner_result")
+        if payload.get("execution_mode") == "plan_execute" and getattr(self._registry, "workspace_files", None):
+            from backend.agent_tools.workspace_files import OPERATIONS
+            from backend.services.workspace_file_service import WorkspaceFileError, digest
+            service = self._registry.workspace_files
+            workspace_id = payload.get("filesystem_workspace_id", "")
+            for step in plan.steps:
+                primitive = self._primitive_tool_name(step.tool_name)
+                if primitive not in OPERATIONS:
+                    continue
+                file_arguments = self._registry.workspace_file_arguments(step.tool_name, step.arguments)
+                if primitive in {"edit_workspace_file", "write_workspace_file"} and not file_arguments.get("expected_sha256"):
+                    version = service.read(workspace_id, file_arguments["relative_path"], max_lines=1)["sha256"]
+                    if "expected_sha256" not in self._registry.get_tool(step.tool_name).input_schema:
+                        raise ValueError("文件工具预设必须允许绑定当前文件版本。")
+                    step.arguments["expected_sha256"] = version
+                    file_arguments["expected_sha256"] = version
+                try:
+                    step.file_preview = service.preview(workspace_id, OPERATIONS[primitive], file_arguments)
+                except WorkspaceFileError as exc:
+                    if exc.code != "parent_missing" or primitive not in {"create_workspace_file", "create_workspace_directory"}:
+                        raise
+                    # A preceding directory creation can satisfy this dependency.
+                    parent = file_arguments["relative_path"].replace("\\", "/").rsplit("/", 1)[0]
+                    if not any(item.tool_name == "create_workspace_directory" and item.arguments.get("relative_path") == parent for item in plan.steps[:plan.steps.index(step)]):
+                        raise
+                    content = file_arguments.get("content", "")
+                    step.file_preview = {"relative_path": file_arguments["relative_path"], "operation": OPERATIONS[primitive],
+                                         "size_before": 0, "size_after": len(content.encode("utf-8")), "diff": content,
+                                         "diff_truncated": False, "before_sha256": "",
+                                         "after_sha256": digest(content.encode("utf-8")) if primitive == "create_workspace_file" else "", "change_id": ""}
         return plan, {
             "duration_ms": _duration_ms(started),
             "provider": str(
@@ -454,6 +484,15 @@ class ProductAgentService:
             "request_id": request_id,
             "step_id": str(payload.get("step_id", "direct") or "direct"),
         }
+        from backend.services.workspace_file_service import FILE_TOOLS
+        if self._primitive_tool_name(spec.name) in FILE_TOOLS and payload.get("chat_configuration"):
+            # Recheck the live session on every call, including checkpoint
+            # resumes: the saved state cannot grant revoked write access.
+            from backend.api.chat_sessions import get_chat_session_service
+            live = get_chat_session_service().get(str(payload.get("session_id", "")))
+            if live.filesystem_workspace_id != payload.get("filesystem_workspace_id", ""):
+                raise AgentToolError("工作区已变化，请重新发起任务。", stage="tool", fallback_reason="workspace_changed")
+            payload = {**payload, "filesystem_access": live.filesystem_access}
         availability = getattr(self._registry, "availability", None)
         if callable(availability):
             available, reason = availability(spec.name, payload={**reading, **payload})
@@ -477,7 +516,31 @@ class ProductAgentService:
             ) from exc
 
         write_confirmed = spec.name in confirmed
-        if spec.effect == "write" and spec.requires_confirmation:
+        from backend.services.workspace_file_service import FILE_TOOLS, FILE_WRITE_TOOLS
+        primitive = self._primitive_tool_name(spec.name)
+        file_preview = None
+        file_preapproved = False
+        if primitive in FILE_WRITE_TOOLS:
+            from backend.agent_tools.workspace_files import OPERATIONS
+            from backend.services.workspace_file_intent import explicit_new_file_request
+            file_service = self._registry.workspace_files
+            file_arguments = self._registry.workspace_file_arguments(spec.name, validated_arguments)
+            file_preview = file_service.preview(payload.get("filesystem_workspace_id", ""), OPERATIONS[primitive], file_arguments)
+            # This exemption is narrow: an explicit new path in the current
+            # request, a writable session, and exclusive creation semantics.
+            if (primitive == "create_workspace_file" and payload.get("execution_mode") != "plan_execute"
+                    and explicit_new_file_request(payload.get("user_message", ""), file_arguments["relative_path"])):
+                write_confirmed = True
+                file_preapproved = True
+            approved = payload.get("approved_file_steps", [])
+            from backend.services.workspace_file_service import preview_fingerprint
+            if any(item == {"tool_name": spec.name, "arguments": validated_arguments,
+                            "workspace_id": payload.get("filesystem_workspace_id", ""),
+                            "file_preview_hash": preview_fingerprint(file_preview)}
+                   for item in approved):
+                write_confirmed = True
+                file_preapproved = True
+        if spec.effect == "write" and spec.requires_confirmation and not file_preapproved:
             if durable_write_interrupt:
                 normalized = json.dumps(
                     validated_arguments,
@@ -508,6 +571,8 @@ class ProductAgentService:
                     # fingerprint. Keep only the fingerprint in the event log.
                     "target_hash": arguments_hash,
                 }
+                if file_preview is not None:
+                    intent["file_preview"] = file_preview
                 raw_decision = payload.get("write_confirmation_decision", {})
                 has_decision = isinstance(raw_decision, dict) and bool(raw_decision)
                 if not has_decision:
@@ -557,12 +622,14 @@ class ProductAgentService:
         workspace_id = str(payload.get("workspace_id", "") or "").strip()
         if workspace_id:
             execution_payload["workspace_id"] = workspace_id
-        if spec.name in {"python_execute", "read_workspace_file"}:
+        if primitive in FILE_TOOLS | {"python_execute", "read_workspace_file"}:
             execution_payload["filesystem_workspace_id"] = str(
                 payload.get("filesystem_workspace_id", "") or ""
             ).strip()
             execution_payload["run_id"] = str(payload.get("run_id", "") or "").strip()
             execution_payload["trace_id"] = str(payload.get("trace_id", "") or "").strip()
+            execution_payload["filesystem_access"] = payload.get("filesystem_access", "read_only")
+            execution_payload["session_id"] = str(payload.get("session_id", ""))
         if self._primitive_tool_name(spec.name) in {
             "search_knowledge_base",
             "read_knowledge_chunk",

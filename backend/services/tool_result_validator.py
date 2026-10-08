@@ -56,6 +56,30 @@ class ToolResultValidator:
             if expected:
                 from backend.services.markdown_export_service import markdown_document
                 check("markdown_content", body == markdown_document(str(expected), filename).markdown, "导出内容与请求正文一致。")
+        elif name in {"create_workspace_file", "edit_workspace_file", "write_workspace_file", "create_workspace_directory", "undo_workspace_change"}:
+            service = getattr(self, "workspace_files", None)
+            if service is None:
+                checks.append({"code": "workspace_adapter", "status": "unknown", "detail": "文件回读服务不可用。"})
+            else:
+                from backend.services.workspace_file_service import WorkspaceFileError
+                valid = True
+                try:
+                    service.verify(payload.get("filesystem_workspace_id", ""), data)
+                except WorkspaceFileError:
+                    valid = False
+                check("file_effect_readback", valid and data.get("workspace_id") == payload.get("filesystem_workspace_id"),
+                      "已核对本地文件实际内容、大小与工作区。",
+                      evidence={key: data.get(key) for key in ("relative_path", "sha256", "size_bytes", "change_id")})
+                if name in {"create_workspace_file", "write_workspace_file"}:
+                    encoding = "utf-8" if name == "create_workspace_file" else service.read(data["workspace_id"], data["relative_path"])["encoding"]
+                    check("exact_file_content", data["sha256"] == sha256(payload["content"].encode(encoding)).hexdigest(), "文件内容与请求写入内容逐字节一致。")
+        elif name == "read_workspace_text":
+            service = getattr(self, "workspace_files", None)
+            if service is None:
+                checks.append({"code": "workspace_adapter", "status": "unknown", "detail": "文件回读服务不可用。"})
+            else:
+                actual = service.read(payload["filesystem_workspace_id"], payload["relative_path"], payload.get("start_line", 1), payload.get("max_lines", 200))
+                check("exact_text_readback", actual == data, "已核对原始文本及文件版本。")
         elif name == "read_workspace_file":
             if not self.filesystem:
                 checks.append({"code": "workspace_adapter", "status": "unknown", "detail": "文件回读适配器不可用。"})

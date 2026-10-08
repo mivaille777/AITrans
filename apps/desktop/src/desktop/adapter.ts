@@ -53,6 +53,7 @@ export interface DesktopFilesAdapter {
   pickKnowledgeDocument(): Promise<string | null>
   pickAgentWorkspace(): Promise<string | null>
   openEvidenceSource(resourceUrl: string): Promise<void>
+  revealWorkspaceLocation?(resourceUrl: string): Promise<void>
 }
 
 export interface DesktopCredentialStatus {

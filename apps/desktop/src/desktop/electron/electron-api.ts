@@ -32,6 +32,7 @@ export interface ElectronDesktopApi {
     pickKnowledgeDocument(): Promise<string | null>
     pickAgentWorkspace(): Promise<string | null>
     openEvidenceSource(resourceUrl: string): Promise<void>
+    revealWorkspaceLocation?(resourceUrl: string): Promise<void>
   }
   credentials: {
     getStatus(provider: string): Promise<DesktopCredentialStatus>

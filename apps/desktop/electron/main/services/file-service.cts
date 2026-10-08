@@ -88,3 +88,18 @@ export async function openEvidenceSource(resourceUrl: string): Promise<void> {
     throw new Error(`Unable to open evidence source: ${error}`)
   }
 }
+
+export async function revealWorkspaceLocation(resourceUrl: string): Promise<void> {
+  const parsed = new URL(resourceUrl)
+  if (parsed.protocol !== "file:") throw new Error("Only local workspace locations can be revealed.")
+  const selected = await canonicalPath(fileURLToPath(parsed))
+  const info = await stat(selected)
+  if (info.isDirectory()) {
+    const error = await shell.openPath(selected)
+    if (error) throw new Error(error)
+  } else if (info.isFile()) {
+    shell.showItemInFolder(selected)
+  } else {
+    throw new Error("Workspace location is unavailable.")
+  }
+}

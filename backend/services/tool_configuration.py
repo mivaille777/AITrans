@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from pydantic import ValidationError, create_model
 
-from backend.agent_tools.base import AgentToolModel, _model_properties
+from backend.agent_tools.base import _model_properties
 from backend.models.tool_configuration import CustomToolPreset, ToolMetadata
 from backend.services.tool_management_service import ToolManagementError
 
@@ -19,7 +19,7 @@ def validate_values(definition, values):
         field = deepcopy(definition.args_model.model_fields[key])
         model = create_model(
             "ConfigurationValue",
-            __base__=AgentToolModel,
+            __config__=definition.args_model.model_config,
             **{key: (field.annotation, field)},
         )
         try:
@@ -42,7 +42,7 @@ def configured_model(definition, defaults, exposed=None):
         fields[key] = (field.annotation, field)
     return create_model(
         "ConfiguredToolArguments",
-        __base__=definition.args_model if exposed is None else AgentToolModel,
+        __base__=definition.args_model if exposed is None else create_model("ConfiguredToolBase", __config__=definition.args_model.model_config),
         **fields,
     )
 

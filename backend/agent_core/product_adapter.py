@@ -121,6 +121,7 @@ class ProductAgentRuntimeAdapter:
             )
         return {
             "session_id": state.session_id or "agent-session",
+            "chat_configuration": bool(context.get("chat_configuration", False)),
             "task_id": state.task_id,
             "run_id": state.run_id,
             "trace_id": state.trace_id,
@@ -150,6 +151,8 @@ class ProductAgentRuntimeAdapter:
             "filesystem_workspace_files": context.get(
                 "filesystem_workspace_files", []
             ),
+            "filesystem_access": context.get("filesystem_access", "read_only"),
+            "approved_file_steps": context.get("approved_file_steps", []),
             "conversation_id": state.conversation.conversation_id,
             "history": history,
             "confirmed_write_tools": [str(item) for item in confirmed if str(item).strip()],

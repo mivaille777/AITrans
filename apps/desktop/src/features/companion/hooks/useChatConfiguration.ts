@@ -35,7 +35,7 @@ export function useChatConfiguration(sessionId: string) {
             update: Partial<
               Pick<
                 ChatSessionConfiguration,
-                "execution_mode" | "filesystem_workspace_id"
+                "execution_mode" | "filesystem_workspace_id" | "filesystem_access"
               >
             >
           }

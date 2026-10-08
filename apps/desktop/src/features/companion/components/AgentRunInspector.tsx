@@ -354,6 +354,14 @@ export function AgentRunInspector({
             <p>
               {awaitingPlan ? "请在输入框上方确认执行或取消计划。" : `${confirmationTool || "A write tool"} is waiting for your confirmation. No persistent change has been executed yet.`}
             </p>
+            {(() => {
+              const intent = [...events].reverse().find(event => event.event_type === "write_confirmation_required")?.payload.intent as {file_preview?: {relative_path: string; diff: string; diff_truncated: boolean; size_before: number; size_after: number}} | undefined
+              const preview = intent?.file_preview
+              return preview ? <div><p>{preview.relative_path} · {preview.size_before} → {preview.size_after} 字节</p>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{preview.diff}</pre>
+                {preview.diff_truncated && <p>差异过长，仅显示部分内容。</p>}
+              </div> : null
+            })()}
             {!awaitingPlan && <button type="button" onClick={onConfirmWrite}>
               <CheckCircle2 size={14} /> Approve and execute
             </button>}

@@ -69,6 +69,8 @@ _CONTEXT_FIELDS = (
     "ai_action",
     "workspace_id",
     "filesystem_workspace_id",
+    "filesystem_access",
+    "session_id",
     "tool_call_id",
     "knowledge_document_ids",
     "knowledge_scope_allow_global",
@@ -161,6 +163,7 @@ class AgentToolRegistry:
         knowledge_workspace_service: KnowledgeWorkspaceService | None = None,
         sandbox_manager: Any | None = None,
         filesystem_workspace_service: Any | None = None,
+        workspace_file_service: Any | None = None,
         sandbox_debug_service: Any | None = None,
         sandbox_network_permission_service: Any | None = None,
         external_tool_definitions: Iterable[TypedAgentToolDefinition] = (),
@@ -187,6 +190,11 @@ class AgentToolRegistry:
             workspace=knowledge_workspace_service,
             chunks=chunk_store,
         )
+        self.workspace_files = None
+        if filesystem_workspace_service is not None:
+            from backend.services.workspace_file_service import WorkspaceFileService
+            self.workspace_files = workspace_file_service or WorkspaceFileService(filesystem_workspace_service)
+            self.result_validator.workspace_files = self.workspace_files
 
         translation_tool = TranslationAgentTool(
             translation_service=translation_service,
@@ -298,6 +306,8 @@ class AgentToolRegistry:
             from backend.agent_tools.chat_files import build_read_workspace_file_definition
             from backend.services.chat_session_service import ChatSessionService
             definitions.append(build_read_workspace_file_definition(lambda: ChatSessionService(filesystem_workspace_service)))
+            from backend.agent_tools.workspace_files import build_workspace_file_definitions
+            definitions.extend(build_workspace_file_definitions(self.workspace_files))
         known_names = {item.spec.name for item in definitions}
         for definition in external_tool_definitions:
             _validate_external_definition(definition)
@@ -358,7 +368,16 @@ class AgentToolRegistry:
         primitive = self.primitive_name(name)
         custom = self.tool_policy.repository.custom(name) if self.tool_policy else None
         arguments = {**(custom["preset"]["fixed_arguments"] if custom else {}), **payload}
+        from backend.services.workspace_file_service import FILE_TOOLS
+        if primitive in FILE_TOOLS:
+            arguments.update(self.workspace_file_arguments(name, payload))
         return self.result_validator.verify(primitive, arguments, result)
+
+    def workspace_file_arguments(self, name, payload):
+        definition = self.get_definition(name)
+        custom = self.tool_policy.repository.custom(name) if self.tool_policy else None
+        fixed = custom["preset"]["fixed_arguments"] if custom else {}
+        return {**fixed, **definition.parse_args(payload).model_dump(mode="json")}
 
     def availability(self, name, *, payload=None):
         definition = self.get_definition(name)
@@ -373,10 +392,13 @@ class AgentToolRegistry:
         if primitive in {"read_knowledge_chunk", "read_knowledge_section"} and owner and getattr(owner, "_chunk_store", None) is None:
             return False, "知识片段存储不可用。"
         if payload is not None:
+            from backend.services.workspace_file_service import FILE_TOOLS, FILE_WRITE_TOOLS
             if definition.spec.requires_reading_context and not str(payload.get("source_text", "")).strip():
                 return False, "缺少阅读内容。"
-            if primitive == "read_workspace_file" and not payload.get("filesystem_workspace_id"):
+            if primitive in FILE_TOOLS | {"read_workspace_file"} and not payload.get("filesystem_workspace_id"):
                 return False, "请先选择工作区。"
+            if primitive in FILE_WRITE_TOOLS and payload.get("filesystem_access", "read_only") != "read_write":
+                return False, "当前工作区为只读。"
             if primitive in {"list_knowledge_documents", "search_knowledge_base", "read_knowledge_chunk", "read_knowledge_section"} and str(payload.get("knowledge_access_policy", "auto")) == "never":
                 return False, "当前会话已关闭知识检索。"
         return True, ""

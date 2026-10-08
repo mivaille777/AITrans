@@ -33,6 +33,9 @@ export const browserDesktopAdapter: DesktopAdapter = {
     async openEvidenceSource() {
       throw new Error("Opening local evidence files requires the desktop app.")
     },
+    async revealWorkspaceLocation() {
+      throw new Error("打开所在文件夹需要桌面程序；浏览器内可以预览文本。")
+    },
   },
   window: {
     async show() {

@@ -93,6 +93,7 @@ class AgentPlanStep(AgentContractModel):
     depends_on: list[str] = Field(default_factory=list)
     status: AgentStepStatus = "pending"
     acceptance_criteria: list[str] = Field(default_factory=lambda: ["工具结果通过确定性验证"])
+    file_preview: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentPlanContext(AgentContractModel):

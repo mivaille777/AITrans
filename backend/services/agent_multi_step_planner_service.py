@@ -27,13 +27,14 @@ Rules:
 - step_id values must be step-1, step-2, ... with no gaps.
 - A step may depend only on earlier step ids.
 - Never invent tools or undeclared arguments.
-- Use write tools only when explicitly requested by the user; a write tool must be the final step.
+- Use write tools only when explicitly requested by the user. Workspace file tools execute sequentially and may create directories before files. Other write tools must be the single final write step.
+- Preserve exact file content. For edits/overwrites, use expected_sha256 from a prior read; in Plan–Execute a missing version is bound by the server while preparing the exact diff for approval.
 - Do not add retrieval, web research, citation, or other capabilities unless a registered tool provides them.
 """
 
 MULTI_STEP_PLANNER_PROMPT = PromptSpec(
     name="agent.multi_step_planner",
-    version="1.1.0",
+    version="1.2.0",
     system_prompt=MULTI_STEP_PLANNER_SYSTEM_PROMPT,
     temperature=0.0,
     max_tokens=900,
@@ -264,7 +265,8 @@ class AgentMultiStepPlannerService:
                     )
 
             if spec.effect == "write":
-                if write_seen or index != len(envelope.steps):
+                from backend.services.workspace_file_service import FILE_WRITE_TOOLS
+                if spec.name not in FILE_WRITE_TOOLS and (write_seen or index != len(envelope.steps)):
                     raise AIResponseError(
                         "A multi-step plan may contain at most one write tool and it must be the final step."
                     )

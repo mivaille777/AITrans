@@ -2098,6 +2098,14 @@ class ReadingAgentGraph:
                 raise AgentRuntimeError("计划确认已失效，请重新生成计划。", stage="plan_confirmation")
             state.browser_context.pop("pending_plan_confirmation", None)
             state.browser_context["plan_rejected"] = decision["decision"] == "reject"
+            if decision["decision"] == "approve":
+                from backend.services.workspace_file_service import FILE_WRITE_TOOLS, preview_fingerprint
+                state.browser_context["approved_file_steps"] = [
+                    {"tool_name": step.tool_name, "arguments": step.arguments,
+                     "workspace_id": state.browser_context.get("filesystem_workspace_id", ""),
+                     "file_preview_hash": preview_fingerprint(step.file_preview)}
+                    for step in state.plan.steps if step.tool_name in FILE_WRITE_TOOLS or step.file_preview
+                ]
         state.start_react()
         emitted: set[AgentEventType] = set()
         if emit is not None:

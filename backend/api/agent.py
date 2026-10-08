@@ -34,6 +34,7 @@ from backend.agent_core.runtime import AgentRuntime
 from backend.agent_core.state import AgentState
 from backend.api.agent_dependencies import get_agent_runtime
 from backend.api.agent_observability_dependencies import get_agent_trace_store_service
+from backend.api.chat_sessions import get_chat_session_service
 from backend.api.dependencies import (
     get_agent_tool_registry,
     get_research_note_service,
@@ -164,6 +165,7 @@ def _state_from_run_request(
             raise ValueError("请先执行或取消当前计划。")
         context["filesystem_workspace_id"] = configuration.filesystem_workspace_id
         context["execution_mode"] = configuration.execution_mode
+        context["filesystem_access"] = configuration.filesystem_access
         context["chat_imported_text"] = imported_text
     filesystem_workspace_id = str(context.get("filesystem_workspace_id", "")).strip()
     if filesystem_workspace_id:
@@ -256,6 +258,12 @@ def _apply_resume_request_context(
     if not payload.resume_run_id.strip():
         return state
     context = dict(state.browser_context)
+    if payload.chat_configuration:
+        from backend.api.chat_sessions import get_chat_session_service
+        configuration = get_chat_session_service().get(payload.session_id)
+        if configuration.filesystem_workspace_id != context.get("filesystem_workspace_id", ""):
+            raise ValueError("工作区已变化，请重新发起任务。")
+        context["filesystem_access"] = configuration.filesystem_access
     if payload.plan_confirmation:
         if state.session_id != payload.session_id or state.conversation.conversation_id != payload.conversation_id:
             raise ValueError("计划不属于当前会话。")
@@ -576,9 +584,14 @@ def _consume_background_task(task: asyncio.Task[None]) -> None:
 
 @router.get("/tools", response_model=AgentToolCatalogResponse)
 def list_agent_tools(registry: AgentToolRegistryDependency, has_reading_context: bool | None = None,
-                     filesystem_workspace_id: str = "", knowledge_access_policy: str = "auto") -> AgentToolCatalogResponse:
+                     filesystem_workspace_id: str = "", knowledge_access_policy: str = "auto",
+                     session_id: str = "") -> AgentToolCatalogResponse:
     payload = None if has_reading_context is None else {"source_text": "present" if has_reading_context else "",
         "filesystem_workspace_id": filesystem_workspace_id, "knowledge_access_policy": knowledge_access_policy}
+    if session_id:
+        configuration = get_chat_session_service().get(session_id)
+        payload = {**(payload or {}), "filesystem_workspace_id": configuration.filesystem_workspace_id,
+                   "filesystem_access": configuration.filesystem_access}
     items = []
     for spec in registry.list_all_tools():
         available, reason = registry.availability(spec.name, payload=payload)

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Check, ChevronDown, Folder, LoaderCircle, Wrench } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { browseChatWorkspace } from "../../../api/chat-sessions"
 import type { KnowledgeAccessPolicy } from "../../../api/agent"
 import type { useChatConfiguration } from "../hooks/useChatConfiguration"
 import { AgentToolsControl } from "./AgentToolsControl"
@@ -30,6 +32,11 @@ export function ChatSessionControls({
   const selectedWorkspace = workspaces.data?.find(
     (item) => item.workspace_id === data?.filesystem_workspace_id,
   )
+  const workspaceInfo = useQuery({
+    queryKey: ["chat-workspace-files", data?.session_id, data?.filesystem_workspace_id, "list", "", 0],
+    queryFn: () => browseChatWorkspace(data!.session_id),
+    enabled: open === "workspace" && Boolean(data?.filesystem_workspace_id), retry: 0,
+  })
   useEffect(() => {
     if (!open) return
     const close = (event: PointerEvent) => {
@@ -72,6 +79,7 @@ export function ChatSessionControls({
             role="menu"
             aria-label="工作区选择"
           >
+            {workspaceInfo.data && <p className="ait-chat-model-menu-message break-all">{workspaceInfo.data.display_path}</p>}
             <button
               type="button"
               role="menuitem"
@@ -81,7 +89,7 @@ export function ChatSessionControls({
             >
               <span>
                 <strong>选择本地文件夹…</strong>
-                <small>确定文件读取和任务执行的工作区。</small>
+                <small>确定文件读取、保存和任务执行的工作区。</small>
               </span>
             </button>
             {workspaces.data
@@ -109,6 +117,13 @@ export function ChatSessionControls({
                   )}
                 </button>
               ))}
+            {data?.filesystem_workspace_id && (
+              <button type="button" role="menuitem" className="ait-chat-context-picker-option" disabled={busy}
+                onClick={() => mutation.mutate({kind: "update", update: {filesystem_access: data.filesystem_access === "read_only" ? "read_write" : "read_only"}})}>
+                <span><strong>{data.filesystem_access === "read_only" ? "仅允许读取" : "允许读取和写入"}</strong>
+                  <small>点击切换文件访问权限；覆盖已有文件仍需确认。</small></span>
+              </button>
+            )}
             {data?.filesystem_workspace_id && (
               <button
                 type="button"
@@ -201,6 +216,8 @@ export function ChatSessionControls({
               onChange={onToolsChange}
               hasReadingContext={hasReadingContext}
               workspaceId={data?.filesystem_workspace_id ?? ""}
+              sessionId={data?.session_id ?? ""}
+              filesystemAccess={data?.filesystem_access ?? "read_write"}
               knowledgePolicy={knowledgePolicy}
             />
             <label className="ait-chat-composer-knowledge">
