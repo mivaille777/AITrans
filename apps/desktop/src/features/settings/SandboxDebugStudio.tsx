@@ -34,6 +34,8 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   const [runtimeStartPending, setRuntimeStartPending] = useState(false)
   const [runtimeActionMessage, setRuntimeActionMessage] = useState("")
   const [latestTrace, setLatestTrace] = useState<SandboxDebugTraceData | null>(null)
+  // Selection is a user/navigation intent; streamed observations must not feed it back.
+  const [selectedTrace, setSelectedTrace] = useState<SandboxDebugTraceData | null>(null)
   const [traceIntentPending, setTraceIntentPending] = useState(false)
   const [traceIntentError, setTraceIntentError] = useState("")
   const inspectedIntentRef = useRef("")
@@ -73,7 +75,10 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
     setTraceIntentPending(true)
     setTraceIntentError("")
     void getSandboxDebugRun(sandboxId)
-      .then(setLatestTrace)
+      .then((trace) => {
+        setSelectedTrace(trace)
+        setLatestTrace(trace)
+      })
       .catch(() => setTraceIntentError("Sandbox trace is unavailable."))
       .finally(() => setTraceIntentPending(false))
   }, [initialSandboxId])
@@ -254,7 +259,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
                       {traceIntentError}
                     </div>
                   ) : null}
-                  <SandboxDebugTrace health={runtimeHealth} selectedTrace={latestTrace} onTraceChange={setLatestTrace} />
+                  <SandboxDebugTrace health={runtimeHealth} selectedTrace={selectedTrace} onTraceChange={setLatestTrace} />
                 </div>
               )}
               {id === "filesystem" && <SandboxDebugFilesystem trace={latestTrace} />}
@@ -263,6 +268,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
               {id === "runs" && (
                 <SandboxDebugRuns
                   onSelectTrace={(nextTrace) => {
+                    setSelectedTrace(nextTrace)
                     setLatestTrace(nextTrace)
                     setActiveTab("trace")
                   }}

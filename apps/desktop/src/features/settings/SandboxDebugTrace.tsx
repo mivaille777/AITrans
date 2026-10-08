@@ -50,6 +50,7 @@ export default function SandboxDebugTrace({
   const streamRef = useRef<SandboxDebugStreamHandle | null>(null)
   const runGenerationRef = useRef(0)
   const streamedTerminalGenerationRef = useRef<number | null>(null)
+  const streamedEventGenerationRef = useRef<number | null>(null)
 
   const runtimeReady = Boolean(health?.available && health.daemon_ready)
   const stages = trace?.stages.length ? trace.stages : INITIAL_STAGES
@@ -82,11 +83,13 @@ export default function SandboxDebugTrace({
   /* oxlint-disable react-hooks/set-state-in-effect -- a Runs-tab selection replaces the inspected trace */
   useEffect(() => {
     if (!selectedTrace) return
-    if (selectedTrace.run.sandbox_id === trace?.run.sandbox_id) return
+    runGenerationRef.current += 1
+    streamRef.current?.close()
+    streamRef.current = null
     setTrace(selectedTrace)
     setRunning(false)
     setError("")
-  }, [selectedTrace, trace?.run.sandbox_id])
+  }, [selectedTrace])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
   const summaryItems = useMemo(() => [
@@ -106,6 +109,7 @@ export default function SandboxDebugTrace({
     const generation = runGenerationRef.current + 1
     runGenerationRef.current = generation
     streamedTerminalGenerationRef.current = null
+    streamedEventGenerationRef.current = null
     setRunning(true)
     setError("")
     setTrace(null)
@@ -117,12 +121,14 @@ export default function SandboxDebugTrace({
         code: code.trim(),
         ...(filesystemWorkspaceId ? { filesystem_workspace_id: filesystemWorkspaceId } : {}),
       })
+      if (runGenerationRef.current !== generation) return
       setTrace(createPendingTrace(accepted.sandbox_id, accepted.run_id, health))
 
       streamRef.current = streamSandboxDebugRun(accepted.sandbox_id, {
         onEvent: (event) => handleStreamEvent(event, generation),
         onTransportError: (streamError) => {
           if (runGenerationRef.current !== generation) return
+          if (streamedTerminalGenerationRef.current === generation) return
           setError(sandboxDebugErrorMessage(streamError, "Sandbox trace is unavailable."))
           setRunning(false)
         },
@@ -131,9 +137,14 @@ export default function SandboxDebugTrace({
       try {
         const initial = await getSandboxDebugRun(accepted.sandbox_id)
         if (runGenerationRef.current !== generation) return
-        if (streamedTerminalGenerationRef.current === generation) return
+        if (streamedEventGenerationRef.current === generation) return
         setTrace(initial)
-        if (isTerminal(initial.run.status)) setRunning(false)
+        if (isTerminal(initial.run.status)) {
+          streamedTerminalGenerationRef.current = generation
+          setRunning(false)
+          streamRef.current?.close()
+          streamRef.current = null
+        }
       } catch {
         // Streaming remains authoritative while the run record is still being created.
       }
@@ -170,6 +181,8 @@ export default function SandboxDebugTrace({
 
   function handleStreamEvent(event: SandboxDebugStreamEvent, generation: number) {
     if (runGenerationRef.current !== generation) return
+    if (streamedTerminalGenerationRef.current === generation) return
+    streamedEventGenerationRef.current = generation
     if (event.type === "trace" || event.type === "terminal") {
       if (event.type === "terminal") {
         streamedTerminalGenerationRef.current = generation
@@ -177,6 +190,7 @@ export default function SandboxDebugTrace({
       setTrace(event.trace)
       if (event.type === "terminal") {
         setRunning(false)
+        streamRef.current?.close()
         streamRef.current = null
       }
       return

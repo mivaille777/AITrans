@@ -247,6 +247,47 @@ describe("SandboxDebugTrace", () => {
     expect(screen.getByText(/complete · 20 ms/)).toBeTruthy()
   })
 
+  it("preserves streamed progress when an older HTTP snapshot arrives", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({ sandbox_id: "sb-1", run_id: "run-1", status: "pending" })
+    let resolveInitial!: (trace: ReturnType<typeof makeTrace>) => void
+    vi.mocked(getSandboxDebugRun).mockReturnValue(new Promise((resolve) => { resolveInitial = resolve }))
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", { name: "Run" }))
+    await waitFor(() => expect(streamHandlers).not.toBeNull())
+    act(() => streamHandlers?.onEvent({ type: "trace", trace: makeTrace({ run: { status: "running" } }) }))
+    await act(async () => resolveInitial(makeTrace({ run: { status: "preparing" } })))
+    expect(screen.getByText("running")).toBeTruthy()
+    expect(screen.queryByText("preparing")).toBeNull()
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
+  })
+
+  it("closes the stream when HTTP already has the final output and ignores replay", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({ sandbox_id: "sb-1", run_id: "run-1", status: "pending" })
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace())
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", { name: "Run" }))
+    await waitFor(() => expect(screen.getByText("285")).toBeTruthy())
+    expect(closeStream).toHaveBeenCalled()
+    act(() => streamHandlers?.onEvent({ type: "trace", trace: makeTrace({ run: { status: "preparing" }, stdout: "" }) }))
+    expect(screen.getByText("285")).toBeTruthy()
+    expect(screen.queryByText("preparing")).toBeNull()
+  })
+
+  it("ignores events from a run after a history selection replaces it", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({ sandbox_id: "sb-1", run_id: "run-1", status: "pending" })
+    vi.mocked(getSandboxDebugRun).mockRejectedValue(new Error("not ready"))
+    const view = render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", { name: "Run" }))
+    await waitFor(() => expect(streamHandlers).not.toBeNull())
+    view.rerender(<SandboxDebugTrace health={health} selectedTrace={makeTrace({
+      run: { ...makeTrace().run, sandbox_id: "sb-history" }, stdout: "history output",
+    })} />)
+    act(() => streamHandlers?.onEvent({ type: "terminal", trace: makeTrace() }))
+    expect(screen.getByText("history output")).toBeTruthy()
+    expect(screen.queryByText("285")).toBeNull()
+    expect(closeStream).toHaveBeenCalled()
+  })
+
   it("disables Run when Docker is unavailable", () => {
     render(<SandboxDebugTrace health={{ ...health, available: false, daemon_ready: false }} />)
 
