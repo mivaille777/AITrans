@@ -49,10 +49,10 @@ Just-in-Time knowledge retrieval policy:
 
 REACT_DECISION_PROMPT = PromptSpec(
     name="agent.react_decision",
-    version="1.5.0",
+    version="1.5.1",
     system_prompt=REACT_DECISION_SYSTEM_PROMPT,
     temperature=0.0,
-    max_tokens=900,
+    max_tokens=8192,
 )
 
 
