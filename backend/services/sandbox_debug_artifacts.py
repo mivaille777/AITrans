@@ -15,8 +15,12 @@ from backend.services.sandbox_debug_service import SandboxDebugError
 def read_artifact(
     trace: SandboxDebugTrace, file_id: str, root: Path
 ) -> tuple[str, bytes]:
-    item = next((item for item in trace.output_files if item.file_id == file_id), None)
-    if item is None or not re.fullmatch(r"sb_[a-f0-9]{32}", trace.run.sandbox_id):
+    return read_manifest_artifact(trace.run.sandbox_id, trace.output_files, file_id, root)
+
+
+def read_manifest_artifact(sandbox_id: str, files, file_id: str, root: Path) -> tuple[str, bytes]:
+    item = next((item for item in files if item.file_id == file_id), None)
+    if item is None or not re.fullmatch(r"sb_[a-f0-9]{32}", sandbox_id):
         raise SandboxDebugError(
             "artifact_not_found", "Artifact not found.", status_code=404
         )
@@ -28,7 +32,7 @@ def read_artifact(
     path = Path(root)
     try:
         # Reject links and Windows reparse points at every component.
-        for part in (trace.run.sandbox_id, *parts):
+        for part in (sandbox_id, *parts):
             path = path / part
             info = path.lstat()
             if (

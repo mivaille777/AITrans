@@ -23,6 +23,7 @@ class SandboxExecutionRequest(SandboxModel):
 
 
 class SandboxOutputFile(SandboxModel):
+    is_source: bool = False
     file_id: str = Field(min_length=1, max_length=128)
     relative_path: str = Field(min_length=1, max_length=1024)
     size_bytes: int = Field(ge=0)
@@ -30,6 +31,7 @@ class SandboxOutputFile(SandboxModel):
 
 
 class SandboxExecutionResult(SandboxModel):
+    source_file_id: str = ""
     sandbox_id: str = Field(min_length=1, max_length=80)
     status: Literal[
         "succeeded",

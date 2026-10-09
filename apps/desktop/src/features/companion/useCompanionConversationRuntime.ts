@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { downloadMarkdown } from "../../shared/files/markdown-export"
+import { wantsPlotExecution } from "../../api/execution-results"
 import {
   getAgentRunSnapshot,
   type AgentRunRequest,
@@ -926,6 +927,8 @@ export function useCompanionConversationRuntime(
             ? {
                 ...message,
                 content: run.output_text,
+                executionResults: run.execution_results ?? [],
+                serverMessageId: run.assistant_message_id || message.serverMessageId,
                 provider: run.provider,
                 model: run.model,
                 evidence: run.evidence,
@@ -1133,7 +1136,7 @@ export function useCompanionConversationRuntime(
     }
 
     const scopeId = scopeRef.current
-    const requestedTransport = options.transport ?? "companion"
+    const requestedTransport = wantsPlotExecution(normalized) ? "agent" : options.transport ?? "companion"
     const enabledTools = [...new Set(
       (options.enabledTools ?? selectedTools).map((name) => name.trim()).filter(Boolean),
     )].slice(0, 64)

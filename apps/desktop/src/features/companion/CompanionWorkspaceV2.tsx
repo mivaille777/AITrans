@@ -19,6 +19,8 @@ import { Button } from "../../shared/ui/Button"
 import { buttonClassName } from "../../shared/ui/button-styles"
 import { EmptyState } from "../../shared/ui/EmptyState"
 import { AnswerMarkdown } from "../evidence/AnswerMarkdown"
+import { ExecutionResultCard } from "../../shared/components/ExecutionResultCard"
+import { conversationArtifactUrl, wantsPlotExecution } from "../../api/execution-results"
 import { CitedAnswer } from "../evidence/CitedAnswer"
 import {
   companionContextSnapshot,
@@ -402,7 +404,7 @@ export default function CompanionWorkspaceV2() {
     if (!canSend) return
     runtime.sendMessage(undefined, undefined, {
       transport: chatConfig.configuration.data?.execution_mode || runtime.selectedTools.length > 0 ? "agent" : "companion",
-      chatConfiguration: Boolean(chatConfig.configuration.data?.execution_mode),
+      chatConfiguration: Boolean(chatConfig.configuration.data?.execution_mode) || wantsPlotExecution(runtime.draft),
       enabledTools: runtime.selectedTools,
       agentContextMode: isKnowledgeContext ? "knowledge" : runtime.contextMode === "reading" ? "reading" : "general",
     })
@@ -793,6 +795,8 @@ export default function CompanionWorkspaceV2() {
                   {message.role === "assistant" ? (
                     <>
                       <span className="ait-chat-avatar" aria-label="AITrans assistant"><Bot size={23} strokeWidth={2} /></span>
+                      {(message.executionResults ?? []).map(result => <ExecutionResultCard key={result.sandbox_id} result={result}
+                        artifactUrl={(fileId, inline) => conversationArtifactUrl(runtime.conversationId, message.serverMessageId || message.id, result.sandbox_id, fileId, inline)} />)}
                       {message.content ? (
                         <div className="ait-chat-answer max-w-none">
                           {(message.citations?.length ?? 0) > 0 ? (
@@ -924,7 +928,7 @@ export default function CompanionWorkspaceV2() {
               <div className="w-full">
                 {runtime.pendingPlan.multi_step_plan?.steps.map(step => <div key={step.step_id} className="my-2 text-xs">
                   <strong>{workspaceToolLabels[step.tool_name] || step.tool_name} · {String(step.arguments.relative_path || "")}</strong>
-                  {step.file_preview && <><p>{step.file_preview.size_before} → {step.file_preview.size_after} 字节</p>
+                  {step.file_preview?.relative_path && <><p>{step.file_preview.size_before} → {step.file_preview.size_after} 字节</p>
                     <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{step.file_preview.diff || (step.file_preview.operation === "mkdir" ? "创建文件夹" : "变更为上方显示的文件状态。")}</pre>
                     {step.file_preview.diff_truncated && <p>差异过长，仅显示部分内容。</p>}</>}
                 </div>)}

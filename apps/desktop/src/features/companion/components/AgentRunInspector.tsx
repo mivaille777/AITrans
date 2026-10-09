@@ -45,6 +45,7 @@ function titleCase(value: string): string {
 }
 
 function eventKey(event: AgentTraceEvent): string {
+  if (event.event_type === "task_verification") return `task-verification:${event.run_id}`
   const payload = event.payload
   const callId = text(event.tool_call_id) || text(payload.tool_call_id)
   const taskId = text(event.task_id) || text(payload.task_id)
@@ -316,11 +317,18 @@ export function AgentRunInspector({
       <section className="ait-chat-run-section">
         <div className="ait-chat-run-section-heading">
           <span><Package size={16} /> Artifacts</span>
-          <small>{snapshot?.artifacts.length ?? 0}</small>
+          <small>{(snapshot?.artifacts.length ?? 0) + (snapshot?.execution_results ?? []).reduce((total, result) => total + result.output_files.length, 0)}</small>
         </div>
-        {snapshot?.artifacts.length ? (
+        {snapshot?.artifacts.length || snapshot?.execution_results?.some(result => result.output_files.length) ? (
           <div className="ait-chat-run-artifacts">
-            {snapshot.artifacts.map((artifact) => <ArtifactCard key={`${artifact.artifact_id}:${artifact.version}`} artifact={artifact} />)}
+            {snapshot?.artifacts.map((artifact) => <ArtifactCard key={`${artifact.artifact_id}:${artifact.version}`} artifact={artifact} />)}
+            {(snapshot?.execution_results ?? []).flatMap(result => result.output_files.map(file => (
+              <div className="ait-chat-run-artifact" key={`${result.sandbox_id}:${file.file_id}`}>
+                <span className="ait-chat-run-artifact-icon"><Package size={16} /></span>
+                <span className="ait-chat-run-artifact-copy"><strong>{file.relative_path}</strong><small>{file.file_id === result.source_file_id ? "原始脚本" : "运行产物"} · {file.size_bytes} bytes · 在回答卡片中查看／下载</small></span>
+                <span className="ait-chat-run-artifact-status is-good">已收集</span>
+              </div>
+            )))}
           </div>
         ) : (
           <p className="ait-chat-run-empty">Verified artifacts returned by this run will appear here.</p>

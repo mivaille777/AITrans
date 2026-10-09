@@ -295,6 +295,10 @@ class AgentConversationService:
                 model=str(state.response.get("model", "") or ""),
             )
             document = run_markdown_document(state)
+            from backend.services.execution_result_service import run_execution_results, save_execution_results
+            executions = run_execution_results(state)
+            if executions:
+                save_execution_results(self._store.storage_path, run.assistant_message_id, executions)
             if document:
                 save_markdown_export(self._store.storage_path, run.assistant_message_id, document)
                 state.browser_context["markdown_export"] = document.model_dump()

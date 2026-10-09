@@ -958,6 +958,15 @@ class ProductAgentService:
         if tool_name:
             kwargs["tool_name"] = tool_name
             kwargs["tool_context"] = tool_context
+            from backend.services.script_plot_intent import wants_plot_execution
+            if wants_plot_execution(str(payload["user_message"])):
+                kwargs["tool_context"] += (
+                    "\nDelivery instructions: the chat already displays the actual image, "
+                    "original source, downloads and execution logs from these receipts. "
+                    "Briefly summarize actual success/failure and refer to 查看代码／下载脚本. "
+                    "Do not regenerate or present a different script as the executed source; "
+                    "do not invent Markdown image URLs, download links, GUI instructions or files."
+                )
         answer = self._chat_service.send(
             session_id=str(payload.get("session_id", "agent-session")),
             user_message=str(payload["user_message"]),

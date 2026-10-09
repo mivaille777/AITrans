@@ -15,6 +15,13 @@ def verify_task_completion(state):
     if state.response.get("status") == "confirmation_required":
         return {"status": "pending", "passed": 0, "total": 0, "criteria": [], "reason": "等待用户确认。"}
     results = state.tool_results
+    from backend.services.script_plot_intent import wants_plot_execution
+    if wants_plot_execution(state.user_input):
+        images = [file for result in results if (result.get("data") or {}).get("status") == "succeeded"
+                  for file in (result.get("data") or {}).get("output_files", [])
+                  if file.get("file_id") in (result.get("data") or {}).get("verified_image_ids", [])]
+        add("plot_artifact", "绘图脚本已执行并生成图片产物", "passed" if images else "failed",
+            evidence={"file_ids": [file.get("file_id") for file in images]})
     assigned = set()
     for step in state.plan.steps:
         matches = [result for result in results if result.get("step_id") == step.step_id]

@@ -30,6 +30,9 @@ def requested_capabilities(user_message):
     actionable = re.sub(r"[‘'\"“「][^‘'\"”」]*[’'\"”」]", "", message)
     actionable = re.sub(r"(?:不要|不用|无需|别|do not|don't)\s*[^，。；;\n]*", "", actionable, flags=re.I)
     capabilities = set()
+    from backend.services.script_plot_intent import wants_plot_execution
+    if wants_plot_execution(message):
+        capabilities.add("compute")
     from backend.services.workspace_file_intent import file_intent
     file_action = file_intent(message)
     if file_action:

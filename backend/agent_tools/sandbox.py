@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import inspect
 
 from pydantic import ConfigDict, Field
 
@@ -25,6 +26,7 @@ class PythonExecuteArgs(AgentToolModel):
 
 
 class PythonOutputFile(AgentToolModel):
+    is_source: bool = False
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     file_id: str
@@ -34,6 +36,8 @@ class PythonOutputFile(AgentToolModel):
 
 
 class PythonExecuteResultData(AgentToolModel):
+    source_file_id: str = ""
+    verified_image_ids: list[str] = Field(default_factory=list)
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     sandbox_id: str
@@ -108,6 +112,8 @@ def build_python_sandbox_tool_definition(
             )
 
         manager_kwargs: dict[str, Any] = {}
+        if "export_source" in inspect.signature(sandbox_manager.execute_python).parameters:
+            manager_kwargs["export_source"] = True
         if snapshot is not None:
             manager_kwargs["input_files"] = snapshot.input_files
         if sandbox_id:
@@ -126,7 +132,25 @@ def build_python_sandbox_tool_definition(
             result = SandboxExecutionResult.model_validate(result)
         if sandbox_id:
             sandbox_debug_service.finish_agent_run(sandbox_id, result)
+        verified_image_ids = []
+        if getattr(sandbox_manager, "artifact_root", None) is not None:
+            from backend.services.sandbox_debug_artifacts import read_manifest_artifact
+            from backend.services.execution_image_service import image_response
+            from backend.services.sandbox_debug_service import SandboxDebugError
+            for file in result.output_files:
+                if not file.relative_path.lower().endswith((".png", ".jpg", ".jpeg")):
+                    continue
+                try:
+                    filename, content = read_manifest_artifact(
+                        result.sandbox_id, result.output_files, file.file_id, sandbox_manager.artifact_root
+                    )
+                    image_response(filename, content)
+                    verified_image_ids.append(file.file_id)
+                except SandboxDebugError:
+                    continue
         data = PythonExecuteResultData(
+            source_file_id=result.source_file_id,
+            verified_image_ids=verified_image_ids,
             sandbox_id=result.sandbox_id,
             runtime=result.runtime,
             image=result.image,
@@ -162,6 +186,9 @@ def build_python_sandbox_tool_definition(
             "for calculations, data processing, and local code tasks. Files "
             "from an explicitly selected read-only workspace are copied under "
             "/input using their relative paths."
+            " Matplotlib, NumPy and Pillow are installed. Use the Agg backend "
+            "and save PNG/JPEG images under /output; source and output files are "
+            "returned as downloadable artifacts. No GUI or package installation."
         ),
         category="compute",
         effect="compute",

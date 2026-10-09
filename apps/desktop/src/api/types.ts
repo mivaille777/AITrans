@@ -1,3 +1,4 @@
+import type { ExecutionResult } from "./execution-results"
 import type {
   AgentCitationRef,
   AgentEvidenceItem,
@@ -446,6 +447,7 @@ export type CompanionChatStreamEvent =
 export type ConversationMessageStatus = "complete" | "streaming" | "cancelled" | "error"
 
 export interface ConversationMessage {
+  execution_results?: ExecutionResult[]
   message_id: string
   conversation_id: string
   request_id: number

@@ -12,6 +12,7 @@ from app.ai.service import AITextService
 from backend.models.agent_runtime import AgentPlanContext, AgentPlanStep
 from backend.services.agent_security_service import AgentSecurityService
 from backend.services.agent_tool_registry import AgentToolSpec
+from backend.services.script_plot_intent import PLOT_INSTRUCTIONS
 from backend.services.tool_result_validator import acceptance_criteria_for
 
 MULTI_STEP_PLANNER_SYSTEM_PROMPT = """You are the bounded multi-step planning layer for AITranslator's reading agent.
@@ -34,10 +35,10 @@ Rules:
 
 MULTI_STEP_PLANNER_PROMPT = PromptSpec(
     name="agent.multi_step_planner",
-    version="1.2.0",
-    system_prompt=MULTI_STEP_PLANNER_SYSTEM_PROMPT,
+    version="1.3.0",
+    system_prompt=MULTI_STEP_PLANNER_SYSTEM_PROMPT + PLOT_INSTRUCTIONS,
     temperature=0.0,
-    max_tokens=900,
+    max_tokens=8192,
 )
 
 

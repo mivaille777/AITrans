@@ -295,6 +295,8 @@ class SandboxWorkspaceManager:
     def collect_outputs(
         self,
         workspace: SandboxWorkspace,
+        *,
+        source_code: str | None = None,
     ) -> list[SandboxOutputFile]:
         self._assert_workspace(workspace)
         output_root = workspace.output_dir.resolve(strict=True)
@@ -376,6 +378,19 @@ class SandboxWorkspaceManager:
                         sha256=digest,
                     )
                 )
+            if source_code is not None:
+                source_bytes = source_code.encode("utf-8")
+                if (len(promoted) >= self.policy.max_output_files
+                    or len(source_bytes) > self.policy.max_output_file_bytes
+                    or sum(item.size_bytes for item in promoted) + len(source_bytes) > self.policy.max_total_output_bytes):
+                    raise SandboxOutputLimitError("Generated source exceeds the artifact budget.")
+                # Publish the original source after container teardown. Sandbox files
+                # cannot overwrite it, and its manifest is bound to these exact bytes.
+                name = f"_generated_script_{uuid4().hex}.py"
+                with (artifact_sandbox_root / name).open("xb") as stream:
+                    stream.write(source_bytes)
+                promoted.append(SandboxOutputFile(file_id=f"sbo_{uuid4().hex}", relative_path=name,
+                    size_bytes=len(source_bytes), sha256=hashlib.sha256(source_bytes).hexdigest(), is_source=True))
         except (SandboxExecutionError, SandboxOutputLimitError):
             if created_artifact_root:
                 shutil.rmtree(artifact_sandbox_root, ignore_errors=True)

@@ -9,6 +9,7 @@ import type {
   SandboxDebugWorkspaceChange,
 } from "../../api/sandbox-debug"
 import { previewSandboxArtifact, sandboxArtifactUrl } from "../../api/sandbox-debug"
+import { ExecutionResultCard } from "../../shared/components/ExecutionResultCard"
 
 type ActivityFilter = "all" | "file" | "network" | "process" | "denied"
 
@@ -127,6 +128,11 @@ export default function SandboxDebugFilesystem({ trace }: { trace: SandboxDebugT
           </div>
         </section>
 
+        {trace.output_files.some(file => /\.(png|jpe?g)$/i.test(file.path)) && <ExecutionResultCard key={`images-${trace.run.sandbox_id}`}
+          result={{ sandbox_id: trace.run.sandbox_id, status: trace.run.status, exit_code: trace.run.exit_code,
+            duration_ms: trace.run.duration_ms, stdout: trace.stdout, stderr: trace.stderr,
+            output_files: trace.output_files.map(file => ({ ...file, relative_path: file.path })) }}
+          artifactUrl={(fileId, inline) => sandboxArtifactUrl(trace.run.sandbox_id, fileId) + (inline ? "?inline=true" : "")} />}
         <FileSection key={trace.run.sandbox_id} title="Collected Outputs" icon={<FileOutput size={14} />} files={trace.output_files} empty="No collected outputs" output sandboxId={trace.run.sandbox_id} />
         {trace.workspace_changes.length > 0 && <WorkspaceRunLink runId={trace.run.run_id} />}
       </div>

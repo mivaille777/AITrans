@@ -15,6 +15,7 @@ dependencies = [
     "cachetools>=5.3",
     "docker>=7.2,<8",
     "psutil>=5.9,<8",
+    "Pillow>=11,<13",
     "certifi>=2024.8.30",
     # Web-compatible translation providers use a persistent browser-like HTTP session.
     "requests>=2.32,<3",

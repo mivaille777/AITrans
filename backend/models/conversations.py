@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from backend.models.execution_results import ExecutionResult
 
 from backend.models.agent_runtime import AgentCitationRef, AgentEvidenceItem
 from backend.models.knowledge_access import (
@@ -16,6 +17,7 @@ ConversationContextMode = Literal["general", "reading"]
 
 
 class ConversationMessageResponse(BaseModel):
+    execution_results: list[ExecutionResult] = Field(default_factory=list)
     message_id: str
     conversation_id: str
     request_id: int

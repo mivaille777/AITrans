@@ -155,9 +155,12 @@ def sandbox_debug_report(sandbox_id: str, service: DebugServiceDependency, forma
 
 
 @router.get("/runs/{sandbox_id}/files/{file_id}")
-def sandbox_debug_artifact(sandbox_id: str, file_id: str, service: DebugServiceDependency, preview: bool = False):
+def sandbox_debug_artifact(sandbox_id: str, file_id: str, service: DebugServiceDependency, preview: bool = False, inline: bool = False):
     try:
         filename, data = read_artifact(service.get_run(sandbox_id), file_id, _require_manager().artifact_root)
+        if inline:
+            from backend.services.execution_image_service import image_response
+            return image_response(filename, data)
         if preview:
             try:
                 text = codecs.getincrementaldecoder("utf-8")().decode(data[:65536], final=len(data) <= 65536)

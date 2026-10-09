@@ -6,6 +6,14 @@ function event(sequence: number, event_type: AgentTraceEvent["event_type"], payl
   return { sequence, event_type, payload, timestamp: "", run_id: "run", trace_id: "trace", elapsed_ms: 0, ...extra }
 }
 
+it("replaces pre-confirmation acceptance with the resumed final receipt", () => {
+  const events = [event(1, "task_verification", {status: "pending"}), event(2, "task_verification", {status: "completed"})]
+  const progress = deriveChatAgentProgress(events, "completed")
+  expect(progress).toHaveLength(1)
+  expect(progress[0].status).toBe("complete")
+  expect(deriveChatTaskAcceptance(events)?.status).toBe("completed")
+})
+
 describe("Agent progress", () => {
   it("preserves failed verification after a physical result and run end", () => {
     const events = [event(0, "tool_call", { name: "python_execute" }, { tool_call_id: "a" }),

@@ -1,2 +1,5 @@
 # Pytest is available for bounded project checks inside disposable sandboxes.
 pytest==9.0.3
+matplotlib==3.11.2
+numpy==2.5.3
+Pillow==12.3.0

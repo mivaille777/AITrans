@@ -58,6 +58,7 @@ from backend.services.agent_tool_registry import (
     AgentToolRegistry,
 )
 from backend.services.agent_trace_store_service import AgentTraceStoreService
+from backend.services.execution_result_service import run_execution_results
 from backend.services.knowledge_scope_resolver import (
     KnowledgeScopeResolver,
     empty_workspace_scope_id,
@@ -338,6 +339,8 @@ def _run_response(state: AgentState) -> AgentRunResponse:
         )
     )
     return AgentRunResponse(
+        assistant_message_id=state.conversation.assistant_message_id,
+        execution_results=run_execution_results(state),
         completion=state.browser_context.get("task_completion", {}),
         markdown_export=state.browser_context.get("markdown_export") or run_markdown_document(state),
         run_id=state.run_id,
@@ -523,6 +526,7 @@ def get_agent_run_snapshot(
         for event in stored_events
     ]
     return AgentRunSnapshotResponse(
+        execution_results=run_execution_results(state),
         pending_plan=state.plan if state.browser_context.get("pending_plan_confirmation") else None,
         plan_hash=str(state.browser_context.get("pending_plan_confirmation", {}).get("plan_hash", "")),
         conversation_id=state.conversation.conversation_id,

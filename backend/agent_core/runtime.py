@@ -316,6 +316,8 @@ class AgentRuntime:
                 )
                 state.sync_contract()
                 self._active_state = state
+                if state.browser_context.get("task_completion"):
+                    self._emit(AgentEventType.TASK_VERIFICATION, state.browser_context["task_completion"])
                 self._emit(
                     AgentEventType.AGENT_END,
                     {

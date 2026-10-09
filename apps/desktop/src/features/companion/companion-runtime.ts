@@ -1,4 +1,5 @@
 import type { CompanionClientSurface } from "../../api/companion"
+import type { ExecutionResult } from "../../api/execution-results"
 import type {
   AgentRunSnapshot,
   AgentTraceEvent,
@@ -37,6 +38,7 @@ export type CompanionAgentPhase =
 export type CompanionInspectorView = "context" | "run"
 
 export interface CompanionRuntimeMessage extends CompanionChatMessage {
+  executionResults?: ExecutionResult[]
   id: string
   status: CompanionMessageStatus
   provider?: string
@@ -193,6 +195,7 @@ export function restoreCompanionMessages(
       provider: message.provider,
       model: message.model,
       serverMessageId: message.message_id,
+      executionResults: message.execution_results ?? [],
       errorCode: message.error_code,
       generationPhase: message.status === "complete" ? "complete" : undefined,
       knowledgeAccessPolicy: grounded.knowledge_access_policy

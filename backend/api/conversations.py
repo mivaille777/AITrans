@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
+from backend.services.execution_result_service import load_execution_results
+from backend.services.sandbox_debug_artifacts import read_manifest_artifact
+from backend.services.sandbox_debug_service import SandboxDebugError
 
 from backend.api.dependencies import (
     get_companion_ownership_service,
@@ -51,6 +56,7 @@ def _message_response(
 ) -> ConversationMessageResponse:
     grounding = load_message_grounding(service.storage_path, message.message_id)
     return ConversationMessageResponse(
+        execution_results=load_execution_results(service.storage_path, message.message_id),
         message_id=message.message_id,
         conversation_id=message.conversation_id,
         request_id=message.request_id,
@@ -159,6 +165,27 @@ def get_conversation(
             detail="Conversation not found.",
         )
     return _detail_response(service, conversation)
+
+
+@router.get("/{conversation_id}/messages/{message_id}/executions/{sandbox_id}/files/{file_id}")
+def conversation_execution_artifact(conversation_id: str, message_id: str, sandbox_id: str, file_id: str,
+                                    service: ConversationStoreDependency, inline: bool = False):
+    conversation = service.get(conversation_id)
+    if conversation is None or not any(item.message_id == message_id and item.role == "assistant" for item in conversation.messages):
+        raise HTTPException(status_code=404, detail="Assistant message not found in this conversation.")
+    receipt = next((r for r in load_execution_results(service.storage_path, message_id) if r.sandbox_id == sandbox_id), None)
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="Execution not found in this message.")
+    from backend.sandbox.workspace import SandboxWorkspaceManager
+    try:
+        filename, data = read_manifest_artifact(sandbox_id, receipt.output_files, file_id, SandboxWorkspaceManager().artifact_root)
+        if inline:
+            from backend.services.execution_image_service import image_response
+            return image_response(filename, data)
+        return Response(data, media_type="application/octet-stream", headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}", "X-Content-Type-Options": "nosniff"})
+    except SandboxDebugError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/{conversation_id}/export/markdown", response_model=MarkdownDocument)

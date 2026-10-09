@@ -80,6 +80,7 @@ class SandboxManager:
         *,
         input_files: tuple[SandboxInputFile, ...] = (),
         workspace_write: bool = False,
+        export_source: bool = False,
         workspace_id: str = "",
         network_policy: NetworkPolicy | None = None,
         sandbox_id: str | None = None,
@@ -209,11 +210,13 @@ class SandboxManager:
             self._emit_stage(
                 on_stage, "collect", "running", "Collecting bounded outputs."
             )
-            output_files = self._workspace_manager.collect_outputs(workspace)
+            output_files = (self._workspace_manager.collect_outputs(workspace, source_code=code)
+                            if export_source else self._workspace_manager.collect_outputs(workspace))
             self._emit_stage(
                 on_stage, "collect", "complete", "Outputs collected safely."
             )
-            return result.model_copy(update={"output_files": output_files})
+            return result.model_copy(update={"output_files": output_files,
+                "source_file_id": next((item.file_id for item in output_files if item.is_source), "")})
         except SandboxError:
             raise
         except ValidationError as exc:

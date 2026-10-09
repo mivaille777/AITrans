@@ -8,6 +8,7 @@ from typing import Any
 from backend.models.agent_runtime import AgentRouteDecision
 from backend.services.agent_planner_service import AgentPlannerService
 from backend.services.agent_tool_registry import AgentToolSpec
+from backend.services.script_plot_intent import wants_plot_execution
 
 _LANGUAGE_ALIASES = {
     "中文": "zh-CN",
@@ -329,6 +330,9 @@ class AgentDeterministicRouterService:
     ) -> AgentRouteDecision:
         command = _normalize_command(user_message)
         available = _tool_names(tools)
+        if wants_plot_execution(user_message) and "python_execute" in available:
+            return AgentRouteDecision(kind="complex", source="deterministic", intent="plot",
+                user_visible_reason="生成绘图脚本，在沙箱中执行并交付图片。")
         if not command:
             return AgentRouteDecision()
 

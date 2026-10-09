@@ -14,6 +14,7 @@ from backend.models.agent_react import AgentObservation, AgentReActDecision
 from backend.rag.context_builder import GroundedContextBuilder
 from backend.services.agent_security_service import AgentSecurityService
 from backend.services.agent_tool_registry import AgentToolSpec
+from backend.services.script_plot_intent import PLOT_INSTRUCTIONS
 from backend.services.knowledge_function_calling import (
     KNOWLEDGE_FUNCTION_PROMPT,
     knowledge_function_schema,
@@ -49,8 +50,8 @@ Just-in-Time knowledge retrieval policy:
 
 REACT_DECISION_PROMPT = PromptSpec(
     name="agent.react_decision",
-    version="1.5.1",
-    system_prompt=REACT_DECISION_SYSTEM_PROMPT,
+    version="1.6.0",
+    system_prompt=REACT_DECISION_SYSTEM_PROMPT + PLOT_INSTRUCTIONS,
     temperature=0.0,
     max_tokens=8192,
 )
@@ -387,6 +388,8 @@ class AgentReActDecisionService:
                 "- Search results provide the evidence and citations used for grounded answers.\n"
                 "- Use the deterministic evidence gate and stop when its budget or quality policy requires it.\n"
             )
+        if PLOT_INSTRUCTIONS not in system_prompt:
+            system_prompt += PLOT_INSTRUCTIONS
         try:
             raw = self._client().complete(
                 system_prompt=system_prompt,
@@ -496,6 +499,7 @@ class AgentReActDecisionService:
                     "Choose one registered function call or answer directly. Never output a JSON decision envelope. "
                     "Use exactly one tool per turn. Write actions require user intent and runtime confirmation. "
                     + KNOWLEDGE_FUNCTION_PROMPT
+                    + PLOT_INSTRUCTIONS
                 ),
             },
             {"role": "user", "content": prompt},
@@ -593,7 +597,7 @@ class AgentReActDecisionService:
                 tools=schemas,
                 tool_choice="required" if required else "auto",
                 temperature=spec.temperature,
-                max_tokens=2048,
+                max_tokens=spec.max_tokens,
             )
             if not response.tool_calls:
                 if required:

@@ -11,6 +11,7 @@ from backend.models.agent_runtime import (
 )
 from backend.models.knowledge_access import KnowledgeAccessPolicy
 from backend.models.markdown_export import MarkdownDocument
+from backend.models.execution_results import ExecutionResult
 from backend.models.quick_actions import ReadingContextPayload
 
 AgentToolEffect = Literal["read", "compute", "write"]
@@ -256,6 +257,8 @@ class AgentRunRequest(ReadingContextPayload):
 
 
 class AgentRunResponse(BaseModel):
+    assistant_message_id: str = ""
+    execution_results: list[ExecutionResult] = Field(default_factory=list)
     completion: dict[str, Any] = Field(default_factory=dict)
     markdown_export: MarkdownDocument | None = None
     run_id: str = ""
@@ -304,6 +307,7 @@ class AgentRunTraceResponse(BaseModel):
 
 
 class AgentRunSnapshotResponse(BaseModel):
+    execution_results: list[ExecutionResult] = Field(default_factory=list)
     pending_plan: AgentPlanContext | None = None
     plan_hash: str = ""
     conversation_id: str = ""

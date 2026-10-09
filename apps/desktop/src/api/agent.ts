@@ -1,4 +1,5 @@
 import { apiGet, apiPost } from "./client"
+import type { ExecutionResult } from "./execution-results"
 import type { ReadingContextFields } from "./types"
 import type { AgentCitationRef, AgentEvidenceItem } from "../features/evidence/evidence-types"
 
@@ -230,6 +231,8 @@ export interface AgentRunRequest extends ReadingContextFields {
 }
 
 export interface AgentRunResponse {
+  assistant_message_id?: string
+  execution_results?: ExecutionResult[]
   completion?: Record<string, unknown>
   markdown_export?: { filename: string; markdown: string; mime_type: string } | null
   run_id: string
@@ -316,6 +319,7 @@ export interface AgentArtifact {
 }
 
 export interface AgentRunSnapshot {
+  execution_results?: ExecutionResult[]
   pending_plan?: AgentMultiStepPlan | null
   plan_hash?: string
   conversation_id?: string
