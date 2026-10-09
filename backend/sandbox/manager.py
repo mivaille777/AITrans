@@ -65,6 +65,15 @@ class SandboxManager:
             return False
         return bool(cancel(sandbox_id))
 
+    def recover(self, *, completed_ids: set[str] | None = None) -> dict:
+        from backend.sandbox.recovery import recover_resources
+        return recover_resources(self._runtime._get_client(), self._workspace_manager.sandbox_root,
+                                 self._workspace_manager.artifact_root, completed_ids=completed_ids)
+
+    @property
+    def artifact_root(self):
+        return self._workspace_manager.artifact_root
+
     def execute_python(
         self,
         code: str,
@@ -75,6 +84,7 @@ class SandboxManager:
         network_policy: NetworkPolicy | None = None,
         sandbox_id: str | None = None,
         on_stage: Callable[[str, str, str], None] | None = None,
+        on_observation: Callable[[dict], None] | None = None,
         cancel_event: Event | None = None,
     ) -> SandboxExecutionResult:
         if not isinstance(code, str) or not code.strip():
@@ -143,6 +153,7 @@ class SandboxManager:
                     request,
                     workspace,
                     on_stage=on_stage,
+                    on_observation=on_observation,
                     cancel_event=cancel_event,
                 )
             if not isinstance(result, SandboxExecutionResult):
@@ -187,12 +198,12 @@ class SandboxManager:
                     "complete",
                     f"Recorded {len(changeset.changes)} workspace changes.",
                 )
-            if result.status == "cancelled":
+            if result.status in {"cancelled", "storage_limit_exceeded"}:
                 self._emit_stage(
                     on_stage,
                     "collect",
                     "skipped",
-                    "Run cancelled before output collection.",
+                    "Execution stopped before output collection.",
                 )
                 return result
             self._emit_stage(
@@ -231,6 +242,7 @@ class SandboxManager:
         workspace,
         *,
         on_stage: Callable[[str, str, str], None] | None,
+        on_observation: Callable[[dict], None] | None = None,
         cancel_event: Event | None,
     ) -> SandboxExecutionResult:
         execute = self._runtime.execute_python
@@ -244,6 +256,8 @@ class SandboxManager:
         )
         if "on_stage" in parameters or supports_kwargs:
             kwargs["on_stage"] = on_stage
+        if "on_observation" in parameters or supports_kwargs:
+            kwargs["on_observation"] = on_observation
         if "cancel_event" in parameters or supports_kwargs:
             kwargs["cancel_event"] = cancel_event
         if on_stage is not None and "on_stage" not in kwargs:

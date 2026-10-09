@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from typing import Annotated
+from typing import Literal
+from urllib.parse import quote
+import json
+import codecs
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
+from pydantic import ValidationError
+from backend.services.sandbox_debug_artifacts import read_artifact, export_report
 
 from backend.api.dependencies import (
     get_filesystem_workspace_service,
@@ -101,7 +108,13 @@ def start_sandbox_debug_run(
             filesystem_workspace_id=payload.filesystem_workspace_id.strip(),
             manager=manager,
             workspace_service=workspaces,
+            retain_content=payload.retain_content,
+            execution_kind=payload.execution_kind,
+            argv=payload.argv,
+            cwd=payload.cwd,
         )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid command arguments or working directory.") from exc
     except SandboxDebugError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return SandboxDebugRunAccepted(
@@ -131,6 +144,49 @@ def get_sandbox_debug_run(
         return service.get_run(sandbox_id)
     except SandboxDebugError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/runs/{sandbox_id}/report")
+def sandbox_debug_report(sandbox_id: str, service: DebugServiceDependency, format: Literal["markdown", "json"] = "markdown") -> dict:
+    try:
+        return export_report(service.get_run(sandbox_id), format)
+    except SandboxDebugError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/runs/{sandbox_id}/files/{file_id}")
+def sandbox_debug_artifact(sandbox_id: str, file_id: str, service: DebugServiceDependency, preview: bool = False):
+    try:
+        filename, data = read_artifact(service.get_run(sandbox_id), file_id, _require_manager().artifact_root)
+        if preview:
+            try:
+                text = codecs.getincrementaldecoder("utf-8")().decode(data[:65536], final=len(data) <= 65536)
+            except UnicodeDecodeError:
+                return {"text": "Binary artifact; use Download to save it.", "truncated": False}
+            if "\x00" in text:
+                text = "Binary artifact; use Download to save it."
+            return {"text": text, "truncated": len(data) > 65536}
+        return Response(content=data, media_type="application/octet-stream", headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}", "X-Content-Type-Options": "nosniff"})
+    except SandboxDebugError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/runtime/recover")
+def recover_sandbox_debug(service: DebugServiceDependency) -> dict:
+    return service.recover(_require_manager())
+
+
+@router.post("/runtime/diagnostics")
+def diagnose_sandbox_debug() -> dict:
+    manager = _require_manager()
+    health = manager.health()
+    if not health.available:
+        raise HTTPException(status_code=503, detail=health.message)
+    # A fixed probe executes under the same immutable sandbox policy.
+    result = manager.execute_python("import sys,json,platform,importlib.metadata as m; print(json.dumps({'python':sys.version.split()[0], 'platform':platform.platform(), 'dependencies':{d.metadata['Name']:d.version for d in m.distributions()}}))")
+    if result.status != "succeeded":
+        raise HTTPException(status_code=503, detail="Runtime environment probe failed.")
+    return {"health": _health_response(health).model_dump(), "runtime_info": result.runtime_info, "environment": json.loads(result.stdout)}
 
 
 @router.websocket("/runs/{sandbox_id}/stream")

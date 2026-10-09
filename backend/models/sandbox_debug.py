@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SandboxRunStatus = Literal[
     "pending",
+    "queued",
+    "cancelling",
+    "interrupted",
     "preparing",
     "running",
     "succeeded",
@@ -15,6 +18,7 @@ SandboxRunStatus = Literal[
     "cancelled",
     "timed_out",
     "output_limit_exceeded",
+    "storage_limit_exceeded",
     "oom_killed",
 ]
 SandboxDebugStageKey = Literal[
@@ -73,6 +77,7 @@ class SandboxRunSummary(SandboxDebugModel):
     finished_at: str | None = None
     duration_ms: int = Field(default=0, ge=0)
     exit_code: int | None = None
+    code_sha256: str = ""
 
 
 class SandboxDebugStage(SandboxDebugModel):
@@ -108,12 +113,13 @@ class SandboxActivityEvent(SandboxDebugModel):
 
 class SandboxResourceSample(SandboxDebugModel):
     timestamp_ms: int = Field(ge=0)
-    cpu_percent: float = Field(default=0, ge=0)
-    memory_bytes: int = Field(default=0, ge=0)
-    pids: int = Field(default=0, ge=0)
+    cpu_percent: float | None = Field(default=None, ge=0)
+    memory_bytes: int | None = Field(default=None, ge=0)
+    pids: int | None = Field(default=None, ge=0)
     stdout_bytes: int = Field(default=0, ge=0)
     stderr_bytes: int = Field(default=0, ge=0)
     output_bytes: int = Field(default=0, ge=0)
+    workspace_bytes: int = Field(default=0, ge=0)
 
 
 class SandboxEffectivePolicy(SandboxDebugModel):
@@ -131,6 +137,11 @@ class SandboxEffectivePolicy(SandboxDebugModel):
     stderr_limit_bytes: int
     output_limit_bytes: int
     docker_socket_mounted: bool | None
+    network_hosts: list[str] = Field(default_factory=list)
+    workspace_disk_limit_bytes: int = 0
+    workspace_entry_limit: int = 0
+    disk_enforcement: str = "sampled total size; hard per-file limit"
+    observed: bool = False
 
 
 class SandboxDebugFile(SandboxDebugModel):
@@ -163,11 +174,20 @@ class SandboxDebugTrace(SandboxDebugModel):
     output_files: list[SandboxDebugFile] = Field(default_factory=list)
     workspace_changes: list[SandboxDebugWorkspaceChange] = Field(default_factory=list)
     error: str = ""
+    sequence: int = 0
+    logs_retained: bool = False
+    code: str | None = None
+    runtime_info: dict = Field(default_factory=dict)
+    execution_kind: Literal["python", "command"] = "python"
 
 
 class SandboxDebugRunRequest(SandboxDebugModel):
     code: str = Field(min_length=1, max_length=50_000)
     filesystem_workspace_id: str = Field(default="", max_length=128)
+    retain_content: bool = False
+    execution_kind: Literal["python", "command"] = "python"
+    argv: list[str] = Field(default_factory=list, max_length=64)
+    cwd: str = "."
 
     @field_validator("code")
     @classmethod

@@ -36,6 +36,7 @@ import {
   cancelSandboxDebugRun,
   getSandboxDebugRun,
   startSandboxDebugRun,
+  streamSandboxDebugRun,
 } from "../../api/sandbox-debug"
 import SandboxDebugTrace from "./SandboxDebugTrace"
 
@@ -50,6 +51,7 @@ const health = {
 }
 
 function makeTrace(overrides: Record<string, unknown> = {}) {
+  const {run: runOverrides, ...otherOverrides} = overrides
   return {
     run: {
       sandbox_id: "sb-1",
@@ -65,7 +67,7 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
       finished_at: "2026-09-26T12:00:01Z",
       duration_ms: 842,
       exit_code: 0,
-      ...(overrides.run as object | undefined),
+      ...(runOverrides as object | undefined),
     },
     stages: [
       { key: "request" as const, label: "Request", status: "complete" as const, elapsed_ms: 2, note: "" },
@@ -95,7 +97,7 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
     input_files: [],
     output_files: [],
     error: "",
-    ...overrides,
+    ...otherOverrides,
   }
 }
 
@@ -107,6 +109,64 @@ afterEach(() => {
 })
 
 describe("SandboxDebugTrace", () => {
+  it("reconnects the original run without posting another execution or replaying stale state", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({sandbox_id: "sb-1", run_id: "run-1", status: "queued"})
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace({run: {status: "running"}, sequence: 10, stdout: "first"}))
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", {name: "Run"}))
+    await waitFor(() => expect(screen.getByText("first")).toBeTruthy())
+    act(() => streamHandlers?.onEvent({type: "output", sequence: 11, stdout: "live output", stderr: ""}))
+    expect(screen.getByText("live output")).toBeTruthy()
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace({run: {status: "running"}, sequence: 12, stdout: "recovered"}))
+    vi.useFakeTimers()
+    try {
+      act(() => streamHandlers?.onTransportError(new Error("disconnected")))
+      expect(screen.getByRole("button", {name: "Stop"})).toBeTruthy()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(streamSandboxDebugRun).toHaveBeenCalledTimes(2)
+      expect(startSandboxDebugRun).toHaveBeenCalledTimes(1)
+      expect(screen.getByText("recovered")).toBeTruthy()
+      act(() => streamHandlers?.onEvent({type: "output", sequence: 11, stdout: "stale", stderr: ""}))
+      expect(screen.queryByText("stale")).toBeNull()
+      act(() => streamHandlers?.onEvent({type: "terminal", sequence: 13, trace: makeTrace({stdout: "finished", sequence: 13})}))
+      expect(screen.getByText("finished")).toBeTruthy()
+      expect(screen.getByRole("button", {name: "Run"})).toBeTruthy()
+    } finally { vi.useRealTimers() }
+  })
+
+  it("subscribes to an active selected history run and leaves Agent cancellation with its owner", async () => {
+    render(<SandboxDebugTrace health={health} selectedTrace={makeTrace({run: {status: "running", source: "agent"}, sequence: 10})} />)
+    await waitFor(() => expect(streamSandboxDebugRun).toHaveBeenCalledWith("sb-1", expect.any(Object)))
+    expect((screen.getByRole("button", {name: "Agent controls this run"}) as HTMLButtonElement).disabled).toBe(true)
+    act(() => streamHandlers?.onEvent({type: "terminal", sequence: 11, trace: makeTrace({stdout: "agent finished", sequence: 11})}))
+    expect(screen.getByText("agent finished")).toBeTruthy()
+    expect(startSandboxDebugRun).not.toHaveBeenCalled()
+  })
+
+  it("keeps cancelling state until cleanup completes", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({sandbox_id: "sb-1", run_id: "run-1", status: "pending"})
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace({run: {status: "running"}, sequence: 10}))
+    vi.mocked(cancelSandboxDebugRun).mockResolvedValue({...makeTrace().run, status: "cancelling"})
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.click(screen.getByRole("button", {name: "Run"}))
+    await waitFor(() => expect(screen.getByRole("button", {name: "Stop"})).toBeTruthy())
+    fireEvent.click(screen.getByRole("button", {name: "Stop"}))
+    await waitFor(() => expect(screen.getByRole("button", {name: "Cancelling…"})).toBeTruthy())
+    expect(screen.queryByRole("button", {name: "Run"})).toBeNull()
+    act(() => streamHandlers?.onEvent({type: "terminal", sequence: 11, trace: makeTrace({run: {status: "cancelled"}, sequence: 11})}))
+    expect(screen.getByRole("button", {name: "Run"})).toBeTruthy()
+  })
+
+  it("submits command arguments with explicit history retention", async () => {
+    vi.mocked(startSandboxDebugRun).mockResolvedValue({sandbox_id: "sb-1", run_id: "run-1", status: "pending"})
+    vi.mocked(getSandboxDebugRun).mockResolvedValue(makeTrace())
+    render(<SandboxDebugTrace health={health} />)
+    fireEvent.change(screen.getByLabelText("Execution kind"), {target: {value: "command"}})
+    fireEvent.click(screen.getByRole("checkbox"))
+    fireEvent.click(screen.getByRole("button", {name: "Run"}))
+    await waitFor(() => expect(startSandboxDebugRun).toHaveBeenCalledWith({code: '["python", "--version"]', execution_kind: "command", argv: ["python", "--version"], cwd: ".", retain_content: true}))
+  })
+
   it("runs Python and renders a completed trace", async () => {
     vi.mocked(startSandboxDebugRun).mockResolvedValue({
       sandbox_id: "sb-1",

@@ -38,6 +38,7 @@ class SandboxExecutionResult(SandboxModel):
         "timed_out",
         "oom_killed",
         "output_limit_exceeded",
+        "storage_limit_exceeded",
     ]
     exit_code: int | None = None
     stdout: str = ""
@@ -50,6 +51,7 @@ class SandboxExecutionResult(SandboxModel):
     stderr_bytes: int = Field(default=0, ge=0)
     runtime: str = "docker"
     image: str = ""
+    runtime_info: dict = Field(default_factory=dict)
     output_files: list[SandboxOutputFile] = Field(default_factory=list)
     workspace_changeset: WorkspaceChangeSet | None = None
 

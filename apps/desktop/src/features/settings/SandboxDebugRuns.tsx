@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import {
   getSandboxDebugRun,
   listSandboxDebugRuns,
+  isSandboxRunActive,
   type SandboxDebugTrace,
   type SandboxRunStatus,
   type SandboxRunSummary,
@@ -44,6 +45,12 @@ export default function SandboxDebugRuns({
     void refresh()
   }, [])
   /* oxlint-enable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (!runs.some((run) => isSandboxRunActive(run.status))) return
+    let disposed = false
+    const timer = setInterval(() => { void listSandboxDebugRuns().then((next) => { if (!disposed) setRuns(next) }).catch(() => {}) }, 3000)
+    return () => { disposed = true; clearInterval(timer) }
+  }, [runs])
 
   const workspaces = useMemo(
     () => [...new Set(runs.map((run) => run.workspace_name).filter(Boolean))].sort(),
@@ -98,7 +105,7 @@ export default function SandboxDebugRuns({
           <div className="grid gap-2 border-b border-slate-100 px-5 py-3 sm:grid-cols-2 lg:grid-cols-4">
             <select aria-label="Run status" value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} className="h-8 rounded-[7px] border border-slate-200 bg-white px-2 text-[10px] text-slate-600">
               <option value="all">All statuses</option>
-              {["completed","failed","cancelled","timed_out","output_limit_exceeded","oom_killed","pending","preparing","running"].map((item) => <option key={item} value={item}>{item}</option>)}
+              {["completed","failed","cancelled","timed_out","output_limit_exceeded","storage_limit_exceeded","interrupted","oom_killed","pending","queued","preparing","running","cancelling"].map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
             <select aria-label="Run source" value={source} onChange={(event) => setSource(event.target.value as SourceFilter)} className="h-8 rounded-[7px] border border-slate-200 bg-white px-2 text-[10px] text-slate-600">
               <option value="all">All sources</option>

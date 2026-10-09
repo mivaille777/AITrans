@@ -94,7 +94,7 @@ class ToolResultValidator:
         elif name in {"python_execute", "command_execute"}:
             check("process_exit", data.get("exit_code") == 0 and not any(data.get(key) for key in
                   ("timed_out", "oom_killed", "output_limit_exceeded"))
-                  and data.get("status") not in {"failed", "cancelled", "timed_out", "blocked", "approval_required"},
+                  and data.get("status") not in {"failed", "cancelled", "timed_out", "blocked", "approval_required", "denied", "storage_limit_exceeded"},
                   "核对沙箱退出码、超时、内存和输出限制。",
                   evidence={key: data.get(key) for key in ("sandbox_id", "status", "exit_code", "timed_out")})
         elif name in {"read_knowledge_chunk", "read_knowledge_section", "search_knowledge_base"}:

@@ -6,6 +6,7 @@ from threading import Lock, Thread
 from typing import Literal
 
 from app.infrastructure.settings import SettingsManager
+from app.infrastructure.paths import data_root
 from backend.agent_tools.base import TypedAgentToolDefinition
 from backend.agent_tools.knowledge import KnowledgeAgentTools
 from backend.api.knowledge_dependencies import (
@@ -414,7 +415,7 @@ def get_sandbox_debug_service() -> SandboxDebugService:
         return _sandbox_debug_service
     with _sandbox_debug_service_lock:
         if _sandbox_debug_service is None:
-            _sandbox_debug_service = SandboxDebugService()
+            _sandbox_debug_service = SandboxDebugService(history_path=data_root() / "runtime" / "sandbox_history.sqlite3")
         return _sandbox_debug_service
 
 
@@ -601,6 +602,7 @@ def _start_sandbox_debug_runtime_worker() -> None:
             return
 
         manager = SandboxManager(runtime)
+        get_sandbox_debug_service().recover(manager)
         with _sandbox_debug_manager_lock:
             previous = _sandbox_debug_manager
             _sandbox_debug_manager = manager
@@ -665,6 +667,7 @@ def get_sandbox_manager() -> SandboxManager | None:
                 runtime.close()
                 return None
             _sandbox_manager = SandboxManager(runtime)
+            get_sandbox_debug_service().recover(_sandbox_manager)
         return _sandbox_manager
 
 

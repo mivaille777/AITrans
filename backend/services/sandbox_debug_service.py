@@ -1,9 +1,12 @@
-"""In-memory Sandbox run history and live events for the debug UI."""
+"""Bounded live telemetry and opt-in persistent Sandbox debug history."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
+from pathlib import Path
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -24,6 +27,7 @@ from backend.models.sandbox_debug import (
     SandboxEffectivePolicy,
     SandboxRunStatus,
     SandboxRunSummary,
+    SandboxResourceSample,
 )
 from backend.sandbox.command_models import SandboxCommandResult
 from backend.sandbox.environment import (
@@ -32,6 +36,8 @@ from backend.sandbox.environment import (
 )
 from backend.sandbox.models import SandboxExecutionResult
 from backend.sandbox.policy import DEFAULT_SANDBOX_POLICY
+from backend.sandbox.ownership import current_owner, owner_alive
+from backend.services.sandbox_history_store import SandboxHistoryStore
 
 _STAGE_LABELS = {
     "request": "Request",
@@ -54,6 +60,8 @@ _TERMINAL = {
     "cancelled",
     "timed_out",
     "output_limit_exceeded",
+    "storage_limit_exceeded",
+    "interrupted",
     "oom_killed",
 }
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"(?i)(?<![\w])(?:[a-z]:[\\/]|\\\\)[^\s\"'<>|,;]+")
@@ -71,14 +79,21 @@ class _RunEntry:
     def __init__(self, trace: SandboxDebugTrace) -> None:
         self.trace = trace
         self.events: list[dict[str, Any]] = []
+        self.event_sizes: list[int] = []
         self.stage_started: dict[str, float] = {}
         self.started_monotonic = monotonic()
         self.cancel_event = Event()
         self.future: Future[None] | None = None
+        self.owner = current_owner()
+        self.event_base = 0
+        self.last_persist = monotonic()
+        self.disk_usage = {"workspace_bytes": 0, "output_bytes": 0}
+        self.owned = True
+        self.command = None
 
 
 class SandboxDebugService:
-    """Own bounded run records while avoiding persistence of user code/output."""
+    """Own bounded run records, retaining scrubbed code/logs only when requested."""
 
     def __init__(
         self,
@@ -86,6 +101,7 @@ class SandboxDebugService:
         max_runs: int = 100,
         max_active_runs: int = 4,
         secret_values_provider: Callable[[], tuple[str, ...]] | None = None,
+        history_path: Path | None = None,
     ) -> None:
         self.max_runs = max(1, int(max_runs))
         self.max_active_runs = max(1, int(max_active_runs))
@@ -99,6 +115,37 @@ class SandboxDebugService:
             secret_values_provider or known_secret_environment_values
         )
         self._closed = False
+        self._store = SandboxHistoryStore(history_path, self.max_runs) if history_path else None
+        self.recovery_result: dict = {"removed": [], "failed": [], "skipped": []}
+        if self._store:
+            for trace, owner in self._store.load():
+                entry = _RunEntry(trace)
+                entry.owner, entry.owned = owner, False
+                entry.event_base = trace.sequence
+                if trace.run.status not in _TERMINAL and not owner_alive(owner):
+                    entry.trace = trace.model_copy(update={"run": trace.run.model_copy(update={"status": "interrupted", "finished_at": self._now()}),
+                                                          "error": "Backend stopped before this run completed; recovery is required."})
+                    self._complete_remaining_stages(entry, "failed")
+                    entry.trace = entry.trace.model_copy(update={"stages": [s.model_copy(update={"status": "pending", "note": "Awaiting abandoned-resource recovery."}) if s.key == "cleanup" else s for s in entry.trace.stages]})
+                    self._store.save(entry.trace, owner, terminal=True)
+                self._runs[trace.run.sandbox_id] = entry
+
+    def recover(self, manager: Any) -> dict:
+        with self._condition:
+            retry_ids = {sid for sid, entry in self._runs.items() if entry.owned and entry.trace.run.status in _TERMINAL
+                         and any(s.key == "cleanup" and s.status in {"failed", "pending", "skipped"} for s in entry.trace.stages)}
+        result = manager.recover(completed_ids=retry_ids) if retry_ids else manager.recover()
+        self.recovery_result = result
+        with self._condition:
+            for entry in self._runs.values():
+                if entry.trace.run.status == "interrupted" or entry.trace.run.sandbox_id in retry_ids:
+                    failed = entry.trace.run.sandbox_id in result["failed"]
+                    skipped = entry.trace.run.sandbox_id in result["skipped"]
+                    state = "failed" if failed else "skipped" if skipped else "complete"
+                    note = "Recovery failed; retry runtime recovery." if failed else "Unverifiable resources preserved." if skipped else "Abandoned resources checked and recovered."
+                    entry.trace = entry.trace.model_copy(update={"stages": [s.model_copy(update={"status": state, "note": note}) if s.key == "cleanup" else s for s in entry.trace.stages]})
+                    self._record_event_locked(entry, {"type": "terminal"})
+        return result
 
     @staticmethod
     def _now() -> str:
@@ -122,6 +169,8 @@ class SandboxDebugService:
             stderr_limit_bytes=int(getattr(policy, "stderr_limit_bytes", 0)),
             output_limit_bytes=int(getattr(policy, "max_total_output_bytes", 0)),
             docker_socket_mounted=False,
+            workspace_disk_limit_bytes=int(getattr(policy, "workspace_disk_limit_bytes", 0)),
+            workspace_entry_limit=int(getattr(policy, "workspace_entry_limit", 0)),
         )
 
     def start_manual_run(
@@ -131,6 +180,10 @@ class SandboxDebugService:
         filesystem_workspace_id: str,
         manager: Any,
         workspace_service: Any,
+        retain_content: bool = False,
+        execution_kind: str = "python",
+        argv: list[str] | None = None,
+        cwd: str = ".",
     ) -> SandboxRunSummary:
         workspace_name = ""
         if filesystem_workspace_id:
@@ -154,30 +207,44 @@ class SandboxDebugService:
             started_at=self._now(),
         )
         trace = self._new_trace(summary, manager, initial_status="pending")
+        command = None
+        if execution_kind == "command":
+            from backend.sandbox.command_models import SandboxCommandRequest
+            command = SandboxCommandRequest(argv=argv or [], cwd=cwd)
+            code = json.dumps(command.argv, ensure_ascii=False)
+        trace = trace.model_copy(update={"logs_retained": retain_content, "code": _safe_trace_text(code, limit=50_000, secret_values=self._secret_values_provider()) if retain_content else None,
+                                        "execution_kind": execution_kind,
+                                        "run": summary.model_copy(update={"code_sha256": hashlib.sha256(code.encode()).hexdigest()})})
         entry = self._add_entry(trace)
+        entry.command = command
         self._set_stage(summary.sandbox_id, "request", "complete", "Debug request accepted.")
-        self._set_stage(summary.sandbox_id, "permission", "complete", "Manual Sandbox execution is allowed by the Debug Studio policy.")
-        self._add_activity(
-            summary.sandbox_id,
-            kind="policy",
-            action="permission.request",
-            target="python_execute",
-            decision="observed",
-            reason="Manual Sandbox execution requested from Debug Studio.",
-            permission_action="python_execute",
-            policy_rule="sandbox.python_execute.safe_default",
-        )
-        self._add_activity(
-            summary.sandbox_id,
-            kind="policy",
-            action="permission.allow",
-            target="python_execute",
-            decision="allowed",
-            reason="Debug Studio permits isolated Python execution.",
-            permission_action="python_execute",
-            policy_rule="sandbox.python_execute.safe_default",
-        )
-        self._set_run_status(summary.sandbox_id, "preparing")
+        self._set_stage(summary.sandbox_id, "permission", "running" if command else "complete", "Evaluating allowlisted command access." if command else "Manual Sandbox execution is allowed by the Debug Studio policy.")
+        if command is None:
+            self._add_activity(
+                summary.sandbox_id,
+                kind="policy",
+                action="permission.request",
+                target="python_execute",
+                decision="observed",
+                reason="Manual Sandbox execution requested from Debug Studio.",
+                permission_action="python_execute",
+                policy_rule="sandbox.python_execute.safe_default",
+            )
+            self._add_activity(
+                summary.sandbox_id,
+                kind="policy",
+                action="permission.allow",
+                target="python_execute",
+                decision="allowed",
+                reason="Debug Studio permits isolated Python execution.",
+                permission_action="python_execute",
+                policy_rule="sandbox.python_execute.safe_default",
+            )
+        self._set_stage(summary.sandbox_id, "approval", "skipped", "Manual execution uses the read-only profile; no host changes or network grant requested.")
+        self._set_stage(summary.sandbox_id, "network", "skipped", "Network disabled by the manual read-only profile.")
+        self._set_stage(summary.sandbox_id, "changes", "skipped", "No editable host changeset requested.")
+        self._set_stage(summary.sandbox_id, "apply", "skipped", "No host writeback requested.")
+        self._set_run_status(summary.sandbox_id, "queued")
         entry.future = self._executor.submit(
             self._run_manual,
             summary.sandbox_id,
@@ -201,6 +268,8 @@ class SandboxDebugService:
         permission_action: str = "python_execute",
         permission_target: str = "python_execute",
         permission_rule: str = "sandbox.python_execute.safe_default",
+        code: str = "",
+        execution_kind: str = "python",
     ) -> tuple[str, Callable[[str, str, str], None]]:
         summary = SandboxRunSummary(
             sandbox_id=f"sb_{uuid4().hex}",
@@ -215,6 +284,8 @@ class SandboxDebugService:
             started_at=self._now(),
         )
         trace = self._new_trace(summary, manager, initial_status="running")
+        trace = trace.model_copy(update={"execution_kind": execution_kind,
+            "run": summary.model_copy(update={"code_sha256": hashlib.sha256(code.encode()).hexdigest() if code else ""})})
         sandbox_id = summary.sandbox_id
         self._add_entry(trace)
         self._set_stage(sandbox_id, "request", "complete", "Agent requested Python execution.")
@@ -316,6 +387,8 @@ class SandboxDebugService:
             runtime=result.runtime,
             image=result.image,
             workspace_changeset=result.workspace_changeset,
+            output_files=result.output_files,
+            runtime_info=result.runtime_info,
         )
         return self._finish_result(
             sandbox_id, command_result, error_override=error_override
@@ -338,6 +411,7 @@ class SandboxDebugService:
                 self._finish_cancelled(sandbox_id)
                 return
             input_files = ()
+            self._set_run_status(sandbox_id, "preparing")
             if filesystem_workspace_id:
                 self._set_stage(sandbox_id, "workspace", "running", "Resolving selected folder capability.")
                 snapshot = workspace_service.snapshot(filesystem_workspace_id)
@@ -372,6 +446,17 @@ class SandboxDebugService:
                 self._finish_cancelled(sandbox_id)
                 return
             self._set_run_status(sandbox_id, "running")
+            if entry.command is not None:
+                from backend.sandbox.command_runtime import SandboxCommandExecutor
+                from backend.models.sandbox_permissions import ExecutionPolicy
+                result = SandboxCommandExecutor(manager).execute(entry.command,
+                    execution_policy=ExecutionPolicy(profile="read_only", workspace_id=filesystem_workspace_id),
+                    input_files=input_files, sandbox_id=sandbox_id,
+                    on_stage=lambda key, status, note: self._set_stage(sandbox_id, key, status, note),
+                    on_activity=lambda **activity: self.record_activity(sandbox_id, **activity),
+                    on_observation=lambda event: self.record_observation(sandbox_id, event), cancel_event=entry.cancel_event)
+                self.finish_command_run(sandbox_id, result)
+                return
             result = manager.execute_python(
                 code,
                 input_files=input_files,
@@ -380,6 +465,7 @@ class SandboxDebugService:
                     sandbox_id, key, status, note
                 ),
                 cancel_event=entry.cancel_event,
+                on_observation=lambda event: self.record_observation(sandbox_id, event),
             )
             self._finish_result(sandbox_id, result)
         except Exception as exc:  # noqa: BLE001 - surfaced as a bounded debug trace.
@@ -412,6 +498,7 @@ class SandboxDebugService:
             sandbox_id = trace.run.sandbox_id
             entry = _RunEntry(trace)
             self._runs[sandbox_id] = entry
+            self._persist_locked(entry)
             self._trim_history()
             self._condition.notify_all()
             return entry
@@ -436,7 +523,7 @@ class SandboxDebugService:
     def _set_run_status(self, sandbox_id: str, status: SandboxRunStatus) -> None:
         with self._condition:
             entry = self._runs.get(sandbox_id)
-            if entry is None:
+            if entry is None or entry.trace.run.status in _TERMINAL or (entry.cancel_event.is_set() and status != "cancelling"):
                 return
             entry.trace = entry.trace.model_copy(
                 update={"run": entry.trace.run.model_copy(update={"status": status})}
@@ -538,6 +625,45 @@ class SandboxDebugService:
         """Expose lifecycle stage updates to command and apply services."""
         self._set_stage(sandbox_id, key, status, note)
 
+    def observation_callback(self, sandbox_id: str) -> Callable[[dict], None]:
+        return lambda event: self.record_observation(sandbox_id, event)
+
+    def record_observation(self, sandbox_id: str, event: dict) -> None:
+        """Observations never grant permissions; publish bounded, scrubbed state."""
+        with self._condition:
+            entry = self._runs.get(sandbox_id)
+            if entry is None or entry.trace.run.status in _TERMINAL:
+                return
+            kind = event.get("type")
+            if kind == "output":
+                secrets = self._secret_values_provider()
+                updates = {}
+                for channel in ("stdout", "stderr"):
+                    value = str(event.get(channel, ""))[:1_048_576]
+                    # Cumulative output can end halfway through a secret. Withhold
+                    # that suffix until another frame or the final result arrives.
+                    withheld = 0
+                    for secret in secrets:
+                        for length in range(1, min(len(value), len(secret) - 1) + 1):
+                            if value.endswith(secret[:length]):
+                                withheld = max(withheld, length)
+                    if withheld:
+                        value = value[:-withheld]
+                    updates[channel] = _safe_trace_text(value, limit=1_048_576, secret_values=secrets)
+                entry.trace = entry.trace.model_copy(update=updates)
+                self._record_event_locked(entry, {"type": "output", **updates})
+            elif kind == "disk":
+                entry.disk_usage = {key: max(0, int(event.get(key, 0))) for key in entry.disk_usage}
+            elif kind == "resource":
+                sample = SandboxResourceSample.model_validate({**event.get("sample", {}), **entry.disk_usage})
+                entry.trace = entry.trace.model_copy(update={"resources": [*entry.trace.resources[-239:], sample]})
+                self._record_event_locked(entry, {"type": "resource", "sample": sample.model_dump(mode="json")})
+            elif kind == "policy":
+                values = {key: value for key, value in event.get("policy", event).items() if key in SandboxEffectivePolicy.model_fields}
+                policy = SandboxEffectivePolicy.model_validate({**entry.trace.policy.model_dump(), **values})
+                entry.trace = entry.trace.model_copy(update={"policy": policy, "runtime_info": event.get("runtime_info", {})})
+                self._record_event_locked(entry, {"type": "trace"})
+
     def record_input_files(
         self,
         sandbox_id: str,
@@ -613,7 +739,7 @@ class SandboxDebugService:
         grant_id: str = "",
     ) -> None:
         activity = SandboxActivityEvent(
-            sequence=len(entry.trace.activities),
+            sequence=entry.trace.activities[-1].sequence + 1 if entry.trace.activities else 0,
             timestamp=self._now(),
             kind=kind,
             action=_safe_trace_text(action, limit=128),
@@ -626,7 +752,7 @@ class SandboxDebugService:
             grant_id=_safe_trace_text(grant_id, limit=128),
         )
         entry.trace = entry.trace.model_copy(
-            update={"activities": [*entry.trace.activities, activity]}
+            update={"activities": [*entry.trace.activities[-499:], activity]}
         )
         self._record_event_locked(
             entry,
@@ -696,6 +822,7 @@ class SandboxDebugService:
                         for item in result.output_files
                     ],
                     "workspace_changes": workspace_changes,
+                    "runtime_info": result.runtime_info or entry.trace.runtime_info,
                     "error": (
                         error_override
                         if error_override is not None
@@ -714,6 +841,9 @@ class SandboxDebugService:
                     policy_rule="workspace_write.sandbox_diff",
                 )
             self._complete_remaining_stages(entry, status)
+            final_sample = SandboxResourceSample(timestamp_ms=result.duration_ms, stdout_bytes=result.stdout_bytes,
+                stderr_bytes=result.stderr_bytes, **entry.disk_usage)
+            entry.trace = entry.trace.model_copy(update={"resources": [*entry.trace.resources[-239:], final_sample]})
             self._record_event_locked(
                 entry,
                 {"type": "terminal", "trace": entry.trace.model_dump(mode="json")},
@@ -798,6 +928,8 @@ class SandboxDebugService:
             return "Python execution timed out."
         if result.status == "output_limit_exceeded":
             return "Python execution exceeded the output limit."
+        if result.status == "storage_limit_exceeded":
+            return "Execution exceeded the workspace or output storage limit."
         if result.status == "oom_killed":
             return "Python execution exceeded the memory limit."
         if result.status == "cancelled":
@@ -807,8 +939,24 @@ class SandboxDebugService:
         return ""
 
     def _record_event_locked(self, entry: _RunEntry, event: dict[str, Any]) -> None:
+        entry.trace = entry.trace.model_copy(update={"sequence": entry.trace.sequence + 1})
+        event = {**event, "sequence": entry.trace.sequence}
+        if event["type"] in {"trace", "terminal"}:
+            event["trace"] = entry.trace.model_dump(mode="json")
         entry.events.append(event)
+        entry.event_sizes.append(len(json.dumps(event, ensure_ascii=False).encode("utf-8")))
+        while len(entry.events) > 1 and (len(entry.events) > 2048 or sum(entry.event_sizes) > 8 * 1024 * 1024):
+            entry.events.pop(0)
+            entry.event_sizes.pop(0)
+        entry.event_base = entry.trace.sequence - len(entry.events)
+        if event["type"] in {"trace", "terminal"} or monotonic() - entry.last_persist >= 1:
+            self._persist_locked(entry)
         self._condition.notify_all()
+
+    def _persist_locked(self, entry: _RunEntry) -> None:
+        if self._store:
+            self._store.save(entry.trace, entry.owner, terminal=entry.trace.run.status in _TERMINAL)
+        entry.last_persist = monotonic()
 
     def list_runs(self) -> list[SandboxRunSummary]:
         with self._condition:
@@ -830,8 +978,11 @@ class SandboxDebugService:
                 return entry.trace.run
             if entry.trace.run.source != "manual":
                 raise SandboxDebugError("agent_run_cancel_unsupported", "Agent-managed sandbox runs cannot be cancelled here.", status_code=409)
+            if not entry.owned:
+                raise SandboxDebugError("foreign_run", "This run belongs to another backend process.", status_code=409)
             entry.cancel_event.set()
             future = entry.future
+        self._set_run_status(sandbox_id, "cancelling")
         if future is not None and future.cancel():
             self._finish_cancelled(sandbox_id)
         else:
@@ -849,19 +1000,26 @@ class SandboxDebugService:
             entry = self._runs.get(sandbox_id)
             if entry is None:
                 raise SandboxDebugError("run_not_found", "Sandbox run not found.", status_code=404)
-            if after_index >= len(entry.events) and entry.trace.run.status not in _TERMINAL:
+            if after_index >= entry.trace.sequence and entry.trace.run.status not in _TERMINAL:
                 self._condition.wait(timeout=max(0.0, timeout))
                 entry = self._runs.get(sandbox_id)
                 if entry is None:
                     raise SandboxDebugError("run_not_found", "Sandbox run not found.", status_code=404)
-            events = entry.events[after_index:]
-            complete = entry.trace.run.status in _TERMINAL and after_index + len(events) >= len(entry.events)
+            if after_index < entry.event_base:
+                events = [{"type": "terminal" if entry.trace.run.status in _TERMINAL else "trace", "sequence": entry.trace.sequence, "trace": entry.trace.model_dump(mode="json")}]
+            else:
+                events = entry.events[max(0, after_index - entry.event_base):]
+            complete = entry.trace.run.status in _TERMINAL
             return [dict(event) for event in events], complete
 
     async def stream(self, websocket: Any, sandbox_id: str) -> None:
         await websocket.accept()
-        cursor = 0
+        trace = self.get_run(sandbox_id)
+        cursor = trace.sequence
         try:
+            await websocket.send_json({"type": "terminal" if trace.run.status in _TERMINAL else "trace", "sequence": cursor, "trace": trace.model_dump(mode="json")})
+            if trace.run.status in _TERMINAL:
+                return
             while True:
                 events, complete = await asyncio.to_thread(
                     self.wait_events,
@@ -869,12 +1027,9 @@ class SandboxDebugService:
                     cursor,
                     timeout=0.5,
                 )
-                if not events and cursor == 0:
-                    trace = self.get_run(sandbox_id)
-                    await websocket.send_json({"type": "trace", "trace": trace.model_dump(mode="json")})
                 for event in events:
                     await websocket.send_json(event)
-                    cursor += 1
+                    cursor = event["sequence"]
                 if complete:
                     return
         except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
@@ -886,9 +1041,12 @@ class SandboxDebugService:
             self._closed = True
             entries = list(self._runs.values())
             for entry in entries:
-                if entry.trace.run.status not in _TERMINAL:
+                if entry.owned and entry.trace.run.status not in _TERMINAL:
                     entry.cancel_event.set()
         self._executor.shutdown(wait=True, cancel_futures=True)
+        for entry in entries:
+            if entry.owned and entry.trace.run.status not in _TERMINAL:
+                self._finish_cancelled(entry.trace.run.sandbox_id)
 
 
 __all__ = ["SandboxDebugError", "SandboxDebugService"]

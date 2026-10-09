@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiWebSocketUrl } from "./client"
+import { API_BASE_URL, apiGet, apiPost, apiWebSocketUrl } from "./client"
 
 export interface SandboxRuntimeHealth {
   available: boolean
@@ -30,6 +30,10 @@ export interface SandboxRuntimeStartStatus {
 
 export type SandboxRunStatus =
   | "pending"
+  | "queued"
+  | "cancelling"
+  | "interrupted"
+  | "storage_limit_exceeded"
   | "preparing"
   | "running"
   | "completed"
@@ -55,6 +59,7 @@ export interface SandboxRunSummary {
   finished_at: string | null
   duration_ms: number
   exit_code: number | null
+  code_sha256?: string
 }
 
 export type SandboxDebugStageKey =
@@ -129,12 +134,13 @@ type RawSandboxActivityEvent = Omit<
 
 export interface SandboxResourceSample {
   timestamp_ms: number
-  cpu_percent: number
-  memory_bytes: number
-  pids: number
+  cpu_percent: number | null
+  memory_bytes: number | null
+  pids: number | null
   stdout_bytes: number
   stderr_bytes: number
   output_bytes: number
+  workspace_bytes?: number
 }
 
 export interface SandboxEffectivePolicy {
@@ -152,6 +158,11 @@ export interface SandboxEffectivePolicy {
   stderr_limit_bytes: number
   output_limit_bytes?: number
   docker_socket_mounted: boolean | null
+  observed?: boolean
+  network_hosts?: string[]
+  workspace_disk_limit_bytes?: number
+  workspace_entry_limit?: number
+  disk_enforcement?: string
 }
 
 type RawSandboxEffectivePolicy = Partial<SandboxEffectivePolicy> & {
@@ -199,6 +210,11 @@ export interface SandboxDebugTrace {
   output_files: SandboxDebugFile[]
   workspace_changes: SandboxDebugWorkspaceChange[]
   error: string
+  sequence?: number
+  logs_retained?: boolean
+  code?: string | null
+  execution_kind?: "python" | "command"
+  runtime_info?: Record<string, unknown>
 }
 
 type RawSandboxDebugTrace = Omit<
@@ -216,6 +232,10 @@ type RawSandboxDebugTrace = Omit<
 export interface StartSandboxDebugRunRequest {
   code: string
   filesystem_workspace_id?: string
+  retain_content?: boolean
+  execution_kind?: "python" | "command"
+  argv?: string[]
+  cwd?: string
 }
 
 export interface SandboxDebugRunAccepted {
@@ -224,13 +244,15 @@ export interface SandboxDebugRunAccepted {
   status: SandboxRunStatus
 }
 
-export type SandboxDebugStreamEvent =
+export type SandboxDebugStreamEvent = { sequence?: number } & (
+  | { type: "output"; stdout: string; stderr: string }
   | { type: "stage"; stage: SandboxDebugStage }
   | { type: "activity"; activity: SandboxActivityEvent }
   | { type: "resource"; sample: SandboxResourceSample }
   | { type: "trace"; trace: SandboxDebugTrace }
   | { type: "terminal"; trace: SandboxDebugTrace }
   | { type: "error"; code: string; message: string }
+)
 
 export interface SandboxDebugStreamHandlers {
   onEvent: (event: SandboxDebugStreamEvent) => void
@@ -310,6 +332,10 @@ export function normalizeSandboxRunStatus(status: RawSandboxRunStatus): SandboxR
   if (status === "succeeded") return "completed"
   if (
     status === "pending"
+    || status === "queued"
+    || status === "cancelling"
+    || status === "interrupted"
+    || status === "storage_limit_exceeded"
     || status === "preparing"
     || status === "running"
     || status === "completed"
@@ -371,6 +397,7 @@ export function normalizeSandboxEffectivePolicy(
   policy: RawSandboxEffectivePolicy,
 ): SandboxEffectivePolicy {
   return {
+    ...policy,
     network: policy.network ?? policy.network_mode ?? "",
     root_filesystem_read_only:
       policy.root_filesystem_read_only ?? policy.read_only_rootfs ?? false,
@@ -402,6 +429,7 @@ function parseSandboxDebugStreamEvent(raw: string): SandboxDebugStreamEvent {
   }
 
   const supportedTypes = new Set([
+    "output",
     "stage",
     "activity",
     "resource",
@@ -456,10 +484,11 @@ export function streamSandboxDebugRun(
     if (closed) return
     closed = true
     handlers.onTransportError(new Error("Unable to connect to the Sandbox debug stream."))
+    socket.close()
   })
 
   socket.addEventListener("close", (event) => {
-    if (closed || event.code === 1000) return
+    if (closed) return
     closed = true
     handlers.onTransportError(
       new Error(`Sandbox debug stream closed unexpectedly (${event.code}).`),
@@ -476,3 +505,34 @@ export function streamSandboxDebugRun(
     },
   }
 }
+
+export function isSandboxRunActive(status: SandboxRunStatus): boolean {
+  return ["pending", "queued", "preparing", "running", "cancelling"].includes(status)
+}
+
+export async function exportSandboxReport(sandboxId: string, format: "markdown" | "json") {
+  const report = await apiGet<{filename: string; content: string; mime_type: string}>(
+    `/api/sandbox/debug/runs/${encodeURIComponent(sandboxId)}/report?format=${format}`,
+  )
+  saveSandboxBlob(new Blob([report.content], {type: report.mime_type}), report.filename)
+}
+
+export function sandboxArtifactUrl(sandboxId: string, fileId: string): string {
+  return `${API_BASE_URL}/api/sandbox/debug/runs/${encodeURIComponent(sandboxId)}/files/${encodeURIComponent(fileId)}`
+}
+
+export async function previewSandboxArtifact(sandboxId: string, fileId: string) {
+  return apiGet<{text: string; truncated: boolean}>(`/api/sandbox/debug/runs/${encodeURIComponent(sandboxId)}/files/${encodeURIComponent(fileId)}?preview=true`)
+}
+
+export function saveSandboxBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export const recoverSandboxRuntime = () => apiPost<{removed: string[]; failed: string[]; skipped: string[]}, Record<string, never>>("/api/sandbox/debug/runtime/recover", {})
+export const diagnoseSandboxRuntime = () => apiPost<Record<string, unknown>, Record<string, never>>("/api/sandbox/debug/runtime/diagnostics", {})

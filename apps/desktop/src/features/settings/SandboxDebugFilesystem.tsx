@@ -1,5 +1,6 @@
 import { Copy, FileInput, FileOutput, ShieldCheck } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useNavigate } from "react-router-dom"
 
 import type {
   SandboxActivityEvent,
@@ -7,6 +8,7 @@ import type {
   SandboxDebugTrace,
   SandboxDebugWorkspaceChange,
 } from "../../api/sandbox-debug"
+import { previewSandboxArtifact, sandboxArtifactUrl } from "../../api/sandbox-debug"
 
 type ActivityFilter = "all" | "file" | "network" | "process" | "denied"
 
@@ -125,10 +127,16 @@ export default function SandboxDebugFilesystem({ trace }: { trace: SandboxDebugT
           </div>
         </section>
 
-        <FileSection title="Collected Outputs" icon={<FileOutput size={14} />} files={trace.output_files} empty="No collected outputs" output />
+        <FileSection key={trace.run.sandbox_id} title="Collected Outputs" icon={<FileOutput size={14} />} files={trace.output_files} empty="No collected outputs" output sandboxId={trace.run.sandbox_id} />
+        {trace.workspace_changes.length > 0 && <WorkspaceRunLink runId={trace.run.run_id} />}
       </div>
     </div>
   )
+}
+
+function WorkspaceRunLink({ runId }: { runId: string }) {
+  const navigate = useNavigate()
+  return <p className="text-[11px] text-slate-500">Host writeback requires the existing Agent approval flow. <button className="underline" onClick={() => navigate("/settings", {state: {studio: "runtime-debug", runtimeRunId: runId}})}>Inspect Agent run</button></p>
 }
 
 function WorkspaceChangesSection({ changes }: { changes: SandboxDebugWorkspaceChange[] }) {
@@ -206,13 +214,35 @@ function FileSection({
   files,
   empty,
   output = false,
+  sandboxId = "",
 }: {
   title: string
   icon: ReactNode
   files: SandboxDebugFile[]
   empty: string
   output?: boolean
+  sandboxId?: string
 }) {
+  const [preview, setPreview] = useState("")
+  const [previewId, setPreviewId] = useState("")
+  const [previewPending, setPreviewPending] = useState(false)
+  const [error, setError] = useState("")
+  const previewGeneration = useRef(0)
+  useEffect(() => () => { previewGeneration.current += 1 }, [])
+  async function inspect(file: SandboxDebugFile) {
+    const generation = ++previewGeneration.current
+    setPreviewId(file.file_id)
+    setPreviewPending(true)
+    setError("")
+    try {
+      const result = await previewSandboxArtifact(sandboxId, file.file_id)
+      if (generation === previewGeneration.current) setPreview(result.text + (result.truncated ? "\n[Preview truncated]" : ""))
+    } catch {
+      if (generation === previewGeneration.current) setError("Artifact unavailable, expired or failed verification.")
+    } finally {
+      if (generation === previewGeneration.current) setPreviewPending(false)
+    }
+  }
   return (
     <section className="rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
       <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
@@ -231,6 +261,9 @@ function FileSection({
               </div>
               {file.sha256 ? <span className="hidden max-w-56 truncate font-mono text-[9px] text-slate-400 md:block">sha256 {file.sha256}</span> : null}
               {output && file.file_id ? (
+                <>
+                <button type="button" disabled={previewPending} onClick={() => void inspect(file)} className="text-[10px] text-slate-600">Preview</button>
+                <a href={sandboxArtifactUrl(sandboxId, file.file_id)} download className="text-[10px] text-slate-600">Download / Save</a>
                 <button
                   type="button"
                   onClick={() => void copyText(file.file_id)}
@@ -239,11 +272,13 @@ function FileSection({
                   <Copy size={10} />
                   Copy file id
                 </button>
+                </>
               ) : null}
             </div>
           ))}
         </div>
       )}
+      {previewId && <div className="border-t p-4"><p className="text-[10px] text-slate-500">{previewPending ? "Loading preview…" : "Text preview"}</p>{error ? <p role="alert">{error}</p> : <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px]">{preview}</pre>}</div>}
     </section>
   )
 }

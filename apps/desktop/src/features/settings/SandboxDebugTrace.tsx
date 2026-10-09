@@ -6,6 +6,7 @@ import { sandboxDebugErrorFromCode, sandboxDebugErrorMessage } from "./sandbox-d
 import {
   cancelSandboxDebugRun,
   getSandboxDebugRun,
+  exportSandboxReport,
   startSandboxDebugRun,
   streamSandboxDebugRun,
   type SandboxDebugStage,
@@ -47,10 +48,17 @@ export default function SandboxDebugTrace({
   const [error, setError] = useState("")
   const [filesystemWorkspaces, setFilesystemWorkspaces] = useState<FilesystemWorkspace[]>([])
   const [filesystemWorkspaceId, setFilesystemWorkspaceId] = useState("")
+  const [executionKind, setExecutionKind] = useState<"python" | "command">("python")
+  const [command, setCommand] = useState('["python", "--version"]')
+  const [cwd, setCwd] = useState(".")
+  const [retainContent, setRetainContent] = useState(false)
   const streamRef = useRef<SandboxDebugStreamHandle | null>(null)
   const runGenerationRef = useRef(0)
   const streamedTerminalGenerationRef = useRef<number | null>(null)
   const streamedEventGenerationRef = useRef<number | null>(null)
+  const sequenceRef = useRef(-1)
+  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const retryCountRef = useRef(0)
 
   const runtimeReady = Boolean(health?.available && health.daemon_ready)
   const stages = trace?.stages.length ? trace.stages : INITIAL_STAGES
@@ -60,6 +68,7 @@ export default function SandboxDebugTrace({
     runGenerationRef.current += 1
     streamRef.current?.close()
     streamRef.current = null
+    if (retryRef.current) clearTimeout(retryRef.current)
   }, [])
 
   useEffect(() => {
@@ -84,11 +93,17 @@ export default function SandboxDebugTrace({
   useEffect(() => {
     if (!selectedTrace) return
     runGenerationRef.current += 1
+    sequenceRef.current = selectedTrace.sequence ?? -1
+    streamedTerminalGenerationRef.current = null
+    streamedEventGenerationRef.current = null
+    if (retryRef.current) clearTimeout(retryRef.current)
     streamRef.current?.close()
     streamRef.current = null
     setTrace(selectedTrace)
-    setRunning(false)
+    setRunning(!isTerminal(selectedTrace.run.status))
     setError("")
+    // oxlint-disable-next-line react/immutability -- This hoisted callback runs after render; reconnect recursion occurs only in timers.
+    if (!isTerminal(selectedTrace.run.status)) subscribe(selectedTrace.run.sandbox_id, runGenerationRef.current)
   }, [selectedTrace])
   /* oxlint-enable react-hooks/set-state-in-effect */
 
@@ -104,12 +119,15 @@ export default function SandboxDebugTrace({
   ], [health?.image, run])
 
   async function runTrace() {
-    if (!runtimeReady || !code.trim() || running) return
+    if (!runtimeReady || !(executionKind === "python" ? code.trim() : command.trim()) || running) return
 
     const generation = runGenerationRef.current + 1
     runGenerationRef.current = generation
     streamedTerminalGenerationRef.current = null
     streamedEventGenerationRef.current = null
+    sequenceRef.current = -1
+    retryCountRef.current = 0
+    if (retryRef.current) clearTimeout(retryRef.current)
     setRunning(true)
     setError("")
     setTrace(null)
@@ -117,34 +135,29 @@ export default function SandboxDebugTrace({
     streamRef.current = null
 
     try {
+      let argv: string[] | undefined
+      if (executionKind === "command") {
+        const parsed: unknown = JSON.parse(command)
+        if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((item) => typeof item === "string")) throw new Error("Enter a JSON array of command arguments.")
+        argv = parsed
+      }
       const accepted = await startSandboxDebugRun({
-        code: code.trim(),
+        code: executionKind === "python" ? code.trim() : command,
+        ...(retainContent ? { retain_content: true } : {}),
+        ...(executionKind === "command" ? { execution_kind: executionKind } : {}),
+        ...(argv ? { argv, cwd } : {}),
         ...(filesystemWorkspaceId ? { filesystem_workspace_id: filesystemWorkspaceId } : {}),
       })
       if (runGenerationRef.current !== generation) return
       setTrace(createPendingTrace(accepted.sandbox_id, accepted.run_id, health))
 
-      streamRef.current = streamSandboxDebugRun(accepted.sandbox_id, {
-        onEvent: (event) => handleStreamEvent(event, generation),
-        onTransportError: (streamError) => {
-          if (runGenerationRef.current !== generation) return
-          if (streamedTerminalGenerationRef.current === generation) return
-          setError(sandboxDebugErrorMessage(streamError, "Sandbox trace is unavailable."))
-          setRunning(false)
-        },
-      })
+      subscribe(accepted.sandbox_id, generation)
 
       try {
         const initial = await getSandboxDebugRun(accepted.sandbox_id)
         if (runGenerationRef.current !== generation) return
-        if (streamedEventGenerationRef.current === generation) return
-        setTrace(initial)
-        if (isTerminal(initial.run.status)) {
-          streamedTerminalGenerationRef.current = generation
-          setRunning(false)
-          streamRef.current?.close()
-          streamRef.current = null
-        }
+        if (initial.sequence === undefined && streamedEventGenerationRef.current === generation) return
+        handleStreamEvent({ type: isTerminal(initial.run.status) ? "terminal" : "trace", trace: initial, sequence: initial.sequence }, generation)
       } catch {
         // Streaming remains authoritative while the run record is still being created.
       }
@@ -159,35 +172,59 @@ export default function SandboxDebugTrace({
     const sandboxId = trace?.run.sandbox_id
     if (!sandboxId || !running) return
 
-    runGenerationRef.current += 1
-    streamRef.current?.close()
-    streamRef.current = null
-
+    const generation = runGenerationRef.current
     try {
       const cancelled = await cancelSandboxDebugRun(sandboxId)
+      if (runGenerationRef.current !== generation) return
       setTrace((current) => current ? { ...current, run: cancelled } : current)
       try {
         const finalTrace = await getSandboxDebugRun(sandboxId)
-        setTrace(finalTrace)
+        handleStreamEvent({type: isTerminal(finalTrace.run.status) ? "terminal" : "trace", trace: finalTrace, sequence: finalTrace.sequence}, generation)
       } catch {
         // The cancellation summary is sufficient to leave running state safely.
       }
     } catch (cancelError) {
       setError(sandboxDebugErrorMessage(cancelError, "Sandbox execution failed."))
-    } finally {
-      setRunning(false)
     }
+  }
+
+  function subscribe(sandboxId: string, generation: number) {
+    if (generation !== runGenerationRef.current || streamedTerminalGenerationRef.current === generation) return
+    streamRef.current?.close()
+    streamRef.current = streamSandboxDebugRun(sandboxId, {
+      onEvent: (event) => handleStreamEvent(event, generation),
+      onTransportError: () => {
+        if (generation !== runGenerationRef.current || streamedTerminalGenerationRef.current === generation) return
+        setError("Connection interrupted; reconnecting to the existing run…")
+        streamRef.current?.close()
+        streamRef.current = null
+        if (retryRef.current) clearTimeout(retryRef.current)
+        retryRef.current = setTimeout(() => {
+          void getSandboxDebugRun(sandboxId).then((snapshot) => {
+            handleStreamEvent({type: isTerminal(snapshot.run.status) ? "terminal" : "trace", trace: snapshot, sequence: snapshot.sequence}, generation)
+          }).catch(() => {}).finally(() => subscribe(sandboxId, generation))
+        }, Math.min(1000 * 2 ** Math.min(retryCountRef.current++, 5), 30000))
+      },
+    })
   }
 
   function handleStreamEvent(event: SandboxDebugStreamEvent, generation: number) {
     if (runGenerationRef.current !== generation) return
     if (streamedTerminalGenerationRef.current === generation) return
+    setError("")
+    retryCountRef.current = 0
+    if (event.sequence !== undefined) {
+      if (event.sequence <= sequenceRef.current) return
+      sequenceRef.current = event.sequence
+    }
     streamedEventGenerationRef.current = generation
     if (event.type === "trace" || event.type === "terminal") {
       if (event.type === "terminal") {
+        if (retryRef.current) clearTimeout(retryRef.current)
         streamedTerminalGenerationRef.current = generation
       }
       setTrace(event.trace)
+      setRunning(!isTerminal(event.trace.run.status))
       if (event.type === "terminal") {
         setRunning(false)
         streamRef.current?.close()
@@ -204,6 +241,7 @@ export default function SandboxDebugTrace({
 
     setTrace((current) => {
       if (!current) return current
+      if (event.type === "output") return { ...current, stdout: event.stdout, stderr: event.stderr, sequence: event.sequence }
       if (event.type === "stage") {
         const found = current.stages.some((stage) => stage.key === event.stage.key)
         return {
@@ -216,7 +254,7 @@ export default function SandboxDebugTrace({
       if (event.type === "activity") {
         return { ...current, activities: [...current.activities, event.activity] }
       }
-      return { ...current, resources: [...current.resources, event.sample] }
+      return { ...current, resources: [...current.resources.slice(-239), event.sample] }
     })
   }
 
@@ -241,14 +279,25 @@ export default function SandboxDebugTrace({
           </div>
 
           <label className="mt-4 block text-[11px] font-medium text-slate-700" htmlFor="sandbox-python-code">Python Code</label>
+          <div className="mt-3 flex gap-3 text-[11px] text-slate-600">
+            <select aria-label="Execution kind" value={executionKind} disabled={running} onChange={(event) => setExecutionKind(event.target.value as "python" | "command")}>
+              <option value="python">Python</option><option value="command">Command (python / pytest)</option>
+            </select>
+            <label><input type="checkbox" checked={retainContent} disabled={running} onChange={(event) => setRetainContent(event.target.checked)} /> Retain scrubbed code and logs in history</label>
+          </div>
           <textarea
             id="sandbox-python-code"
             aria-label="Python Code"
             value={code}
+            hidden={executionKind === "command"}
             onChange={(event) => setCode(event.target.value)}
             spellCheck={false}
             className="mt-2 min-h-36 w-full resize-y rounded-[9px] border border-slate-200 bg-slate-950 px-3.5 py-3 font-mono text-[11px] leading-5 text-slate-100 outline-none transition focus:border-slate-400"
           />
+          {executionKind === "command" && <div className="mt-3 flex flex-col gap-2 text-[11px]">
+            <label>Command argv (JSON array)<input aria-label="Command argv" value={command} onChange={(event) => setCommand(event.target.value)} className="ml-2 w-2/3 rounded border p-2 font-mono" /></label>
+            <label>Workspace relative cwd<input aria-label="Command cwd" value={cwd} onChange={(event) => setCwd(event.target.value)} className="ml-2 rounded border p-2" /></label>
+          </div>}
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <label className="rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-2.5">
@@ -280,16 +329,17 @@ export default function SandboxDebugTrace({
               <button
                 type="button"
                 onClick={() => void stopTrace()}
+                disabled={run?.source === "agent" || run?.status === "cancelling"}
                 className="inline-flex items-center gap-2 rounded-[8px] border border-slate-300 bg-white px-3.5 py-2 text-[12px] font-medium text-slate-800 hover:bg-slate-50"
               >
                 <Square size={13} />
-                Stop
+                {run?.source === "agent" ? "Agent controls this run" : run?.status === "cancelling" ? "Cancelling…" : "Stop"}
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => void runTrace()}
-                disabled={!runtimeReady || !code.trim()}
+                disabled={!runtimeReady || !(executionKind === "python" ? code.trim() : command.trim())}
                 className="inline-flex items-center gap-2 rounded-[8px] bg-slate-950 px-3.5 py-2 text-[12px] font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 <Play size={13} />
@@ -337,6 +387,17 @@ export default function SandboxDebugTrace({
           <OutputPanel title="stdout" value={trace?.stdout ?? ""} />
           <OutputPanel title="stderr" value={trace?.stderr ?? ""} error />
         </section>
+        {trace && <section className="flex flex-wrap gap-3 text-[11px] text-slate-600">
+          <button type="button" onClick={() => void exportSandboxReport(trace.run.sandbox_id, "markdown").catch((e) => setError(sandboxDebugErrorMessage(e, "Export failed.")))}>Export Markdown</button>
+          <button type="button" onClick={() => void exportSandboxReport(trace.run.sandbox_id, "json").catch((e) => setError(sandboxDebugErrorMessage(e, "Export failed.")))}>Export JSON</button>
+          {trace.code && !running && <button type="button" onClick={() => {
+            setExecutionKind(trace.execution_kind ?? "python")
+            if (trace.execution_kind === "command") setCommand(trace.code ?? "")
+            else setCode(trace.code ?? "")
+          }}>Load retained source for review</button>}
+          <span>{trace.logs_retained ? "Scrubbed code and logs retained" : "History retains metadata only"}</span>
+          {trace.error && <span role="alert" className="text-rose-700">{trace.error}</span>}
+        </section>}
 
         {!trace && !running && !error && (
           <section className="rounded-[10px] border border-dashed border-slate-200 bg-white px-8 py-10 text-center">
@@ -393,7 +454,7 @@ function OutputPanel({ title, value, error = false }: { title: string; value: st
 }
 
 function isTerminal(status: SandboxRunStatus): boolean {
-  return ["completed", "failed", "cancelled", "timed_out", "output_limit_exceeded", "oom_killed"].includes(status)
+  return ["completed", "failed", "cancelled", "timed_out", "output_limit_exceeded", "storage_limit_exceeded", "interrupted", "oom_killed"].includes(status)
 }
 
 function formatDuration(durationMs: number): string {

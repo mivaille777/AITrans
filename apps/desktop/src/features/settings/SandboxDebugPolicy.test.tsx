@@ -12,6 +12,7 @@ import SandboxDebugPolicy, { policyWarnings } from "./SandboxDebugPolicy"
 afterEach(() => cleanup())
 
 const safePolicy: SandboxEffectivePolicy = {
+  observed: true,
   network: "none",
   root_filesystem_read_only: true,
   user: "10001:10001",
@@ -62,6 +63,11 @@ function traceWith(
 }
 
 describe("SandboxDebugPolicy", () => {
+  it("does not label configured defaults as observed Docker enforcement", () => {
+    render(<SandboxDebugPolicy trace={traceWith({...safePolicy, observed: false})} />)
+    expect(screen.queryByText("Policy enforced")).toBeNull()
+    expect(screen.getByText("Configured · awaiting Docker observation")).toBeTruthy()
+  })
   it("renders a safe policy as enforced", () => {
     render(<SandboxDebugPolicy trace={traceWith(safePolicy)} />)
     expect(screen.getByText("Policy enforced")).toBeTruthy()
@@ -82,7 +88,7 @@ describe("SandboxDebugPolicy", () => {
 
     render(<SandboxDebugPolicy trace={traceWith(policy)} />)
     expect(screen.getByText("unknown")).toBeTruthy()
-    expect(screen.getByText("Unknown")).toBeTruthy()
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThan(0)
   })
 
   it("detects network, root user and writable root filesystem", () => {

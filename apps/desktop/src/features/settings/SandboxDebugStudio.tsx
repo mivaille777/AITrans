@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import {
   getSandboxDebugRun,
   getSandboxRuntimeHealth,
+  diagnoseSandboxRuntime,
+  recoverSandboxRuntime,
   getSandboxRuntimeStartStatus,
   startSandboxDebugRuntime,
   type SandboxDebugTrace as SandboxDebugTraceData,
@@ -39,6 +41,8 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
   const [traceIntentPending, setTraceIntentPending] = useState(false)
   const [traceIntentError, setTraceIntentError] = useState("")
   const inspectedIntentRef = useRef("")
+  const [diagnostics, setDiagnostics] = useState<Record<string, unknown> | null>(null)
+  const [diagnosticsPending, setDiagnosticsPending] = useState(false)
 
   /* oxlint-disable react/set-state-in-effect -- retain tab-local state after the user visits a tab */
   useEffect(() => {
@@ -51,7 +55,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
 
   useEffect(() => {
     let disposed = false
-    void getSandboxRuntimeHealth()
+    const refresh = () => getSandboxRuntimeHealth()
       .then((health) => {
         if (!disposed) setRuntimeHealth(health)
       })
@@ -61,8 +65,11 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
       .finally(() => {
         if (!disposed) setRuntimeHealthPending(false)
       })
+    void refresh()
+    const timer = setInterval(() => { if (document.visibilityState !== "hidden") void refresh() }, 15000)
     return () => {
       disposed = true
+      clearInterval(timer)
     }
   }, [])
 
@@ -159,6 +166,27 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
     }
   }
 
+  async function inspectEnvironment() {
+    setDiagnosticsPending(true)
+    try {
+      const health = await getSandboxRuntimeHealth()
+      setRuntimeHealth(health)
+      setDiagnostics(await diagnoseSandboxRuntime())
+      setRuntimeActionMessage("Docker and Python environment checked.")
+    } catch (error) {
+      setRuntimeActionMessage(sandboxDebugErrorMessage(error, "Runtime diagnostics failed."))
+    } finally { setDiagnosticsPending(false) }
+  }
+
+  async function recoverRuntime() {
+    setDiagnosticsPending(true)
+    try {
+      const result = await recoverSandboxRuntime()
+      setRuntimeActionMessage(`Recovery: ${result.removed.length} resources removed, ${result.failed.length} failed, ${result.skipped.length} unverified resources preserved.`)
+    } catch (error) { setRuntimeActionMessage(sandboxDebugErrorMessage(error, "Recovery failed.")) }
+    finally { setDiagnosticsPending(false) }
+  }
+
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <header className="shrink-0 border-b border-slate-200 px-8 pt-7">
@@ -170,6 +198,8 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button type="button" disabled={diagnosticsPending || runtimeStartPending} onClick={() => void inspectEnvironment()} className="rounded border px-3 py-2 text-[11px] text-slate-600">Refresh diagnostics</button>
+            <button type="button" disabled={!runtimeReady || diagnosticsPending || runtimeStartPending} onClick={() => void recoverRuntime()} className="rounded border px-3 py-2 text-[11px] text-slate-600">Recover abandoned resources</button>
             {!runtimeReady && !runtimeHealthPending && (
               <button
                 type="button"
@@ -206,6 +236,7 @@ export default function SandboxDebugStudio({ initialSandboxId = "" }: { initialS
             {runtimeActionMessage}
           </p>
         )}
+        {diagnostics && <details className="py-2 text-[11px] text-slate-600"><summary>Runtime environment</summary><pre className="max-h-40 overflow-auto whitespace-pre-wrap">{JSON.stringify(diagnostics, null, 2)}</pre></details>}
 
         <nav className="mt-5 flex gap-8" aria-label="Sandbox Debug Studio tabs" role="tablist">
           {TABS.map((tab, index) => (

@@ -66,6 +66,8 @@ def _output_text(result: SandboxExecutionResult) -> str:
         return "Python execution timed out."
     if result.output_limit_exceeded:
         return "Python execution exceeded the output limit."
+    if result.status == "storage_limit_exceeded":
+        return "Python execution exceeded the storage limit."
     if result.oom_killed:
         return "Python execution exceeded the memory limit."
     if result.exit_code not in (None, 0):
@@ -98,6 +100,7 @@ def build_python_sandbox_tool_definition(
             sandbox_id, on_stage = sandbox_debug_service.begin_agent_run(
                 run_id=context.run_id,
                 tool_call_id=context.tool_call_id,
+                code=args.code,
                 filesystem_workspace_id=workspace_id,
                 workspace_name=(snapshot.workspace.display_name if snapshot else ""),
                 input_manifest=(snapshot.manifest if snapshot else ()),
@@ -110,6 +113,8 @@ def build_python_sandbox_tool_definition(
         if sandbox_id:
             manager_kwargs["sandbox_id"] = sandbox_id
             manager_kwargs["on_stage"] = on_stage
+            if hasattr(sandbox_debug_service, "observation_callback"):
+                manager_kwargs["on_observation"] = sandbox_debug_service.observation_callback(sandbox_id)
         try:
             result = sandbox_manager.execute_python(args.code, **manager_kwargs)
         except Exception as exc:

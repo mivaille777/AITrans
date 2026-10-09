@@ -57,6 +57,11 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
 }
 
 describe("SandboxDebugResources", () => {
+  it("renders missing CPU, memory and PID measurements as unknown", () => {
+    render(<SandboxDebugResources trace={makeTrace({resources: [{timestamp_ms: 0, cpu_percent: null, memory_bytes: null, pids: null, stdout_bytes: 0, stderr_bytes: 0, output_bytes: 0}]})} />)
+    expect(screen.getAllByText("—")).toHaveLength(3)
+    expect(screen.queryByText("0.0%")).toBeNull()
+  })
   it("renders peak values and limits", () => {
     render(<SandboxDebugResources trace={makeTrace()} />)
 

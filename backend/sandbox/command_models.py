@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from backend.models.sandbox_permissions import PermissionDecision
 from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
+from backend.sandbox.models import SandboxOutputFile
 
 SandboxCommandStatus = Literal[
     "succeeded",
@@ -16,6 +17,7 @@ SandboxCommandStatus = Literal[
     "timed_out",
     "oom_killed",
     "output_limit_exceeded",
+    "storage_limit_exceeded",
     "denied",
     "approval_required",
 ]
@@ -95,6 +97,8 @@ class SandboxCommandResult(SandboxCommandModel):
     permission_decision: PermissionDecision | None = None
     approval_id: str | None = Field(default=None, min_length=1, max_length=128)
     workspace_changeset: WorkspaceChangeSet | None = None
+    output_files: list[SandboxOutputFile] = Field(default_factory=list)
+    runtime_info: dict = Field(default_factory=dict)
 
 
 __all__ = ["SandboxCommandRequest", "SandboxCommandResult", "SandboxCommandStatus"]

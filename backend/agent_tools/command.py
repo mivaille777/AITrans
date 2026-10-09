@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import json
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -17,6 +18,7 @@ from backend.models.sandbox_permissions import ExecutionPolicy, PermissionDecisi
 from backend.sandbox.command_models import SandboxCommandRequest, SandboxCommandResult
 from backend.sandbox.command_runtime import SandboxCommandExecutor
 from backend.sandbox.manager import SandboxManager
+from backend.sandbox.models import SandboxOutputFile
 from backend.sandbox.workspace_snapshot import WorkspaceChangeSet
 
 
@@ -64,6 +66,8 @@ class CommandExecuteResultData(AgentToolModel):
     permission_decision: PermissionDecision | None = None
     approval_id: str | None = None
     workspace_changeset: WorkspaceChangeSet | None = None
+    output_files: list[SandboxOutputFile] = Field(default_factory=list)
+    runtime_info: dict = Field(default_factory=dict)
 
 
 def _result_text(result: SandboxCommandResult) -> str:
@@ -87,6 +91,8 @@ def _result_text(result: SandboxCommandResult) -> str:
         return "Command execution timed out."
     if result.output_limit_exceeded:
         return "Command execution exceeded the output limit."
+    if result.status == "storage_limit_exceeded":
+        return "Command execution exceeded the storage limit."
     if result.oom_killed:
         return "Command execution exceeded the memory limit."
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
@@ -131,6 +137,8 @@ def build_command_execute_tool_definition(
                 sandbox_id, on_stage = sandbox_debug_service.begin_agent_run(
                     run_id=context.run_id,
                     tool_call_id=context.tool_call_id,
+                    code=json.dumps({"argv": args.argv, "cwd": args.cwd}, ensure_ascii=False),
+                    execution_kind="command",
                     filesystem_workspace_id=workspace_id,
                     workspace_name=(snapshot.workspace.display_name if snapshot else ""),
                     input_manifest=(),
@@ -173,6 +181,8 @@ def build_command_execute_tool_definition(
                 sandbox_id=sandbox_id or None,
                 on_stage=on_stage,
                 on_activity=on_activity,
+                on_observation=(sandbox_debug_service.observation_callback(sandbox_id)
+                                if sandbox_id and hasattr(sandbox_debug_service, "observation_callback") else None),
             )
         except Exception as exc:
             if sandbox_id:

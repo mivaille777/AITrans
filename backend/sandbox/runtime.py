@@ -24,6 +24,7 @@ class SandboxRuntime(Protocol):
         *,
         workspace: SandboxWorkspace,
         on_stage: Callable[[str, str, str], None] | None = None,
+        on_observation: Callable[[dict], None] | None = None,
         cancel_event: Event | None = None,
     ) -> SandboxExecutionResult:
         """Run one request in a disposable execution environment."""

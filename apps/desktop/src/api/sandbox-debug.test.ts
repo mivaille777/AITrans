@@ -66,6 +66,17 @@ const trace: SandboxDebugTrace = {
 }
 
 describe("sandbox debug api", () => {
+  it("preserves sequenced cumulative output and treats a normal close without a terminal as reconnectable", () => {
+    const sockets: MockWebSocket[] = []
+    vi.stubGlobal("WebSocket", createMockWebSocketConstructor(sockets))
+    const onEvent = vi.fn()
+    const onTransportError = vi.fn()
+    streamSandboxDebugRun("sb-1", {onEvent, onTransportError})
+    sockets[0].emit("message", {data: JSON.stringify({type: "output", sequence: 20, stdout: "live", stderr: ""})})
+    expect(onEvent).toHaveBeenCalledWith({type: "output", sequence: 20, stdout: "live", stderr: ""})
+    sockets[0].emit("close", {code: 1000})
+    expect(onTransportError).toHaveBeenCalledTimes(1)
+  })
   it("reads health, lists runs and gets one trace", async () => {
     const responses = [
       {

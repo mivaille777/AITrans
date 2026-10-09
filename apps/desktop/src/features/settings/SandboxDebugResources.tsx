@@ -13,6 +13,7 @@ export default function SandboxDebugResources({ trace }: { trace: SandboxDebugTr
     stdout: max(samples, (sample) => sample.stdout_bytes),
     stderr: max(samples, (sample) => sample.stderr_bytes),
     output: max(samples, (sample) => sample.output_bytes),
+    workspace: max(samples, (sample) => sample.workspace_bytes ?? 0),
   }
 
   if (!trace) {
@@ -30,16 +31,17 @@ export default function SandboxDebugResources({ trace }: { trace: SandboxDebugTr
     <div className="h-full overflow-auto bg-slate-50/40 px-8 py-6">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="CPU Peak" value={formatPercent(peaks.cpu)} ratio={Math.min(peaks.cpu / 100, 1)} />
+          <MetricCard label="CPU Peak" value={peaks.cpu === null ? "—" : formatPercent(peaks.cpu)} ratio={Math.min((peaks.cpu ?? 0) / 100, 1)} />
           <MetricCard label="Memory Peak" value={formatPair(peaks.memory, memoryLimit, formatBytes)} ratio={ratio(peaks.memory, memoryLimit)} />
           <MetricCard label="PID Peak" value={formatPair(peaks.pids, pidsLimit, (value) => String(Math.round(value)))} ratio={ratio(peaks.pids, pidsLimit)} />
           <MetricCard label="Runtime" value={formatPair(trace.run.duration_ms, timeoutMs, formatDuration)} ratio={ratio(trace.run.duration_ms, timeoutMs)} />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-4">
           <MetricCard label="stdout" value={formatPair(peaks.stdout, stdoutLimit, formatBytes)} ratio={ratio(peaks.stdout, stdoutLimit)} />
           <MetricCard label="stderr" value={formatPair(peaks.stderr, stderrLimit, formatBytes)} ratio={ratio(peaks.stderr, stderrLimit)} />
           <MetricCard label="outputs" value={formatPair(peaks.output, outputLimit, formatBytes)} ratio={ratio(peaks.output, outputLimit)} />
+          <MetricCard label="Workspace disk (sampled)" value={formatPair(peaks.workspace, policy?.workspace_disk_limit_bytes ?? 0, formatBytes)} ratio={ratio(peaks.workspace, policy?.workspace_disk_limit_bytes ?? 0)} />
         </div>
 
         {trace.run.status === "oom_killed" ? (
@@ -109,15 +111,15 @@ function MiniChart({
   limit,
 }: {
   samples: SandboxResourceSample[]
-  value: (sample: SandboxResourceSample) => number
+  value: (sample: SandboxResourceSample) => number | null
   limit: number
 }) {
-  const reduced = downsample(samples, 800)
-  const values = reduced.map(value)
+  const reduced = downsample(samples.filter((sample) => value(sample) !== null), 800)
+  const values = reduced.map((sample) => value(sample) ?? 0)
   const maxValue = Math.max(limit, ...values, 1)
   const points = reduced.map((sample, index) => {
     const x = reduced.length <= 1 ? 0 : (index / (reduced.length - 1)) * 100
-    const y = 34 - (value(sample) / maxValue) * 30
+    const y = 34 - ((value(sample) ?? 0) / maxValue) * 30
     return `${x.toFixed(2)},${Math.max(2, Math.min(34, y)).toFixed(2)}`
   }).join(" ")
 
@@ -141,16 +143,19 @@ function ResourcesEmpty({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function max(samples: SandboxResourceSample[], value: (sample: SandboxResourceSample) => number): number {
-  return samples.reduce((current, sample) => Math.max(current, value(sample)), 0)
+function max(samples: SandboxResourceSample[], value: (sample: SandboxResourceSample) => number | null): number | null {
+  const values = samples.map(value).filter((item): item is number => item !== null)
+  return values.length ? Math.max(...values) : null
 }
 
-function ratio(value: number, limit: number): number {
+function ratio(value: number | null, limit: number): number {
+  if (value === null) return 0
   if (limit <= 0) return 0
   return value / limit
 }
 
-function formatPair(value: number, limit: number, formatter: (value: number) => string): string {
+function formatPair(value: number | null, limit: number, formatter: (value: number) => string): string {
+  if (value === null) return "—"
   if (limit <= 0) return formatter(value)
   return `${formatter(value)} / ${formatter(limit)}`
 }

@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, describe, expect, it } from "vitest"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
+vi.mock("../../api/sandbox-debug", async (importOriginal) => ({...await importOriginal<typeof import("../../api/sandbox-debug")>(), previewSandboxArtifact: vi.fn()}))
+import { previewSandboxArtifact } from "../../api/sandbox-debug"
 
+import { MemoryRouter } from "react-router-dom"
 import SandboxDebugFilesystem from "./SandboxDebugFilesystem"
 
 afterEach(() => cleanup())
@@ -63,8 +66,16 @@ const trace = {
 }
 
 describe("SandboxDebugFilesystem", () => {
+  it("previews artifact text without executing markup and offers verified download", async () => {
+    vi.mocked(previewSandboxArtifact).mockResolvedValue({text: "<script>alert('unsafe')</script>", truncated: false})
+    render(<MemoryRouter><SandboxDebugFilesystem trace={trace} /></MemoryRouter>)
+    fireEvent.click(screen.getByRole("button", {name: "Preview"}))
+    await waitFor(() => expect(screen.getByText("<script>alert('unsafe')</script>")).toBeTruthy())
+    expect(document.querySelector("script")).toBeNull()
+    expect(screen.getByRole("link", {name: "Download / Save"}).getAttribute("href")).toContain("/api/sandbox/debug/runs/sb-1/files/")
+  })
   it("renders staged inputs, activity and collected outputs", () => {
-    render(<SandboxDebugFilesystem trace={trace} />)
+    render(<MemoryRouter><SandboxDebugFilesystem trace={trace} /></MemoryRouter>)
 
     expect(screen.getAllByText("AITrans")).toHaveLength(2)
     expect(screen.getByText("backend/main.py")).toBeTruthy()
@@ -82,7 +93,7 @@ describe("SandboxDebugFilesystem", () => {
   })
 
   it("filters denied activity", () => {
-    render(<SandboxDebugFilesystem trace={trace} />)
+    render(<MemoryRouter><SandboxDebugFilesystem trace={trace} /></MemoryRouter>)
     fireEvent.click(screen.getByRole("button", { name: "Denied only" }))
 
     expect(screen.queryByText("/input/data.csv")).toBeNull()
@@ -90,7 +101,7 @@ describe("SandboxDebugFilesystem", () => {
   })
 
   it("filters process activity", () => {
-    render(<SandboxDebugFilesystem trace={trace} />)
+    render(<MemoryRouter><SandboxDebugFilesystem trace={trace} /></MemoryRouter>)
     fireEvent.click(screen.getByRole("button", { name: "Process" }))
 
     expect(screen.getByText("python3")).toBeTruthy()
@@ -98,7 +109,7 @@ describe("SandboxDebugFilesystem", () => {
   })
 
   it("never displays host paths verbatim across desktop platforms", () => {
-    render(<SandboxDebugFilesystem trace={trace} />)
+    render(<MemoryRouter><SandboxDebugFilesystem trace={trace} /></MemoryRouter>)
 
     expect(screen.queryByText(/C:\\Users\\/)).toBeNull()
     expect(screen.queryByText(/\/Users\/someone/)).toBeNull()

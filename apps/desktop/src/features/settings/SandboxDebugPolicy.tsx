@@ -44,7 +44,7 @@ export default function SandboxDebugPolicy({ trace }: { trace: SandboxDebugTrace
               warnings.length === 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
             }`}>
               {warnings.length === 0 ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-              {warnings.length === 0 ? "Policy enforced" : `${warnings.length} warning${warnings.length === 1 ? "" : "s"}`}
+              {policy.observed !== true ? "Configured · awaiting Docker observation" : warnings.length === 0 ? "Policy enforced" : `${warnings.length} warning${warnings.length === 1 ? "" : "s"}`}
             </span>
           </div>
         </section>
@@ -205,6 +205,10 @@ function buildRows(policy: SandboxEffectivePolicy) {
     { label: "stderr", value: formatBytes(policy.stderr_limit_bytes), state: policy.stderr_limit_bytes > 0 ? "safe" : "unsafe" },
     { label: "Output files", value: formatBytes(policy.output_limit_bytes ?? 0), state: (policy.output_limit_bytes ?? 0) > 0 ? "safe" : "unknown" },
     { label: "Docker socket", value: policy.docker_socket_mounted === null ? "unknown" : policy.docker_socket_mounted ? "mounted" : "not mounted", state: socketState },
+    { label: "Approved hosts", value: policy.network_hosts?.join(", ") || "none", state: "safe" },
+    { label: "Workspace capacity", value: policy.workspace_disk_limit_bytes ? `${formatBytes(policy.workspace_disk_limit_bytes)} · sampled, may overshoot` : "not recorded", state: "unknown" },
+    { label: "Workspace entries", value: String(policy.workspace_entry_limit ?? "not recorded"), state: "unknown" },
+    { label: "Disk enforcement", value: policy.disk_enforcement ?? "not recorded", state: "unknown" },
   ] as Array<{ label: string; value: string; state: "safe" | "unsafe" | "unknown" }>
 }
 

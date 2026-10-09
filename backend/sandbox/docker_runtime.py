@@ -19,6 +19,9 @@ from docker.errors import APIError, DockerException, ImageNotFound, NotFound
 from docker.types import LogConfig, Ulimit
 
 from backend.sandbox.environment import build_sandbox_environment
+from backend.sandbox.monitoring import directory_usage, docker_resource_sample
+from backend.sandbox.ownership import owner_labels
+from backend.sandbox.capacity import bounded_execution
 from backend.sandbox.errors import (
     DockerNotLinuxError,
     DockerUnavailableError,
@@ -115,6 +118,7 @@ class DockerSandboxRuntime:
             client = self._get_client()
             client.ping()
             info = client.info()
+            self._server_version = str(info.get("ServerVersion", ""))
         except DockerUnavailableError as exc:
             return SandboxRuntimeHealth(
                 available=False,
@@ -275,12 +279,14 @@ class DockerSandboxRuntime:
             raise SandboxImageMissingError(message)
         raise DockerUnavailableError(message)
 
+    @bounded_execution
     def execute_python(
         self,
         request: SandboxExecutionRequest,
         *,
         workspace: SandboxWorkspace,
         on_stage: Callable[[str, str, str], None] | None = None,
+        on_observation: Callable[[dict], None] | None = None,
         cancel_event: Event | None = None,
     ) -> SandboxExecutionResult:
         self._ensure_ready()
@@ -308,6 +314,18 @@ class DockerSandboxRuntime:
         stdout_buffer = bytearray()
         stderr_buffer = bytearray()
         primary_error: BaseException | None = None
+        storage_limit_exceeded = False
+        stop_stats = threading.Event()
+        stats_thread: threading.Thread | None = None
+        runtime_info: dict[str, Any] = {}
+        next_output_emit_at = 0.0
+
+        def observe(event: dict[str, Any]) -> None:
+            if on_observation is not None:
+                try:
+                    on_observation(event)
+                except Exception:
+                    pass  # Debug consumers cannot change execution authority.
         active_stage = ""
 
         try:
@@ -337,6 +355,7 @@ class DockerSandboxRuntime:
                     command=["python", "-c", request.code],
                     name=container_name,
                     labels={
+                        **owner_labels(),
                         SANDBOX_LABEL: "true",
                         SANDBOX_ID_LABEL: request.sandbox_id,
                         RUNTIME_LABEL: "python",
@@ -365,7 +384,8 @@ class DockerSandboxRuntime:
                             name="nofile",
                             soft=self.policy.nofile_limit,
                             hard=self.policy.nofile_limit,
-                        )
+                        ),
+                        Ulimit(name="fsize", soft=self.policy.max_output_file_bytes, hard=self.policy.max_output_file_bytes),
                     ],
                     tmpfs={"/tmp": self.policy.tmpfs_options},
                     log_config=LogConfig(
@@ -387,6 +407,25 @@ class DockerSandboxRuntime:
             self._emit_stage(
                 on_stage, "create", "complete", "Isolated Docker container created."
             )
+            attrs = container.attrs or {}
+            config = attrs.get("HostConfig", {})
+            runtime_info = {"image_id": attrs.get("Image", ""), "configured_image": self.image,
+                            "execution_location": "docker", "docker_version": getattr(self, "_server_version", ""),
+                            "docker_network_mode": config.get("NetworkMode", "")}
+            image_env = attrs.get("Config", {}).get("Env", []) or []
+            runtime_info["python_image_version"] = next((item.split("=", 1)[1] for item in image_env if item.startswith("PYTHON_VERSION=")), "")
+            observe({"type": "policy", "network": request.network_policy.mode,
+                     "network_hosts": list(request.network_policy.allowed_hosts),
+                     "observed": bool(config), "runtime_info": runtime_info,
+                     "root_filesystem_read_only": config.get("ReadonlyRootfs", self.policy.read_only_rootfs),
+                     "user": attrs.get("Config", {}).get("User", self.policy.user),
+                     "cpu_limit": config.get("NanoCpus", self.policy.nano_cpus) / 1_000_000_000,
+                     "memory_limit_bytes": config.get("Memory", self.policy.memory_limit_bytes),
+                     "pids_limit": config.get("PidsLimit", self.policy.pids_limit),
+                     "cap_drop": config.get("CapDrop", list(self.policy.cap_drop)) or [],
+                     "no_new_privileges": any(str(opt).startswith("no-new-privileges") and not str(opt).endswith("false") for opt in config.get("SecurityOpt", ["no-new-privileges:true"])),
+                     "seccomp": "unconfined" if "seccomp=unconfined" in config.get("SecurityOpt", []) else "default",
+                     "docker_socket_mounted": any("docker.sock" in mount.get("Destination", "") for mount in attrs.get("Mounts", []))})
             active_stage = ""
 
             if cancel_event is not None and cancel_event.is_set():
@@ -463,6 +502,22 @@ class DockerSandboxRuntime:
                     "Failed to start the Python sandbox container."
                 ) from exc
             self._emit_stage(on_stage, "start", "complete", "Container started.")
+            if on_observation is not None and callable(getattr(container, "stats", None)):
+                def sample_resources() -> None:
+                    previous = None
+                    while not stop_stats.is_set():
+                        try:
+                            current = container.stats(stream=False)
+                            sample = docker_resource_sample(current, previous)
+                            previous = current
+                            sample.update(timestamp_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                                          stdout_bytes=len(stdout_buffer), stderr_bytes=len(stderr_buffer))
+                            observe({"type": "resource", "sample": sample})
+                        except Exception:
+                            return
+                        stop_stats.wait(0.5)
+                stats_thread = threading.Thread(target=sample_resources, daemon=True, name=f"sandbox-stats-{request.sandbox_id}")
+                stats_thread.start()
             active_stage = ""
             self._emit_stage(
                 on_stage,
@@ -477,6 +532,7 @@ class DockerSandboxRuntime:
             kill_deadline: float | None = None
             drain_deadline: float | None = None
             next_inspect_at = 0.0
+            next_disk_check_at = 0.0
             state: dict[str, Any] = {}
 
             while True:
@@ -509,8 +565,22 @@ class DockerSandboxRuntime:
                     output_limit_exceeded = (
                         output_limit_exceeded or stdout_overflow or stderr_overflow
                     )
+                    if time.monotonic() >= next_output_emit_at:
+                        observe({"type": "output", "stdout": self._decode_logs(bytes(stdout_buffer)),
+                                 "stderr": self._decode_logs(bytes(stderr_buffer))})
+                        next_output_emit_at = time.monotonic() + 0.1
 
                 now = time.monotonic()
+                if now >= next_disk_check_at:
+                    workspace_bytes, _, workspace_exceeded = directory_usage(
+                        workspace.workspace_dir, byte_limit=self.policy.workspace_disk_limit_bytes,
+                        entry_limit=self.policy.workspace_entry_limit)
+                    output_bytes, _, output_exceeded = directory_usage(
+                        workspace.output_dir, byte_limit=self.policy.max_total_output_bytes,
+                        entry_limit=self.policy.max_output_files + 64)
+                    storage_limit_exceeded |= workspace_exceeded or output_exceeded
+                    observe({"type": "disk", "workspace_bytes": workspace_bytes, "output_bytes": output_bytes})
+                    next_disk_check_at = now + 0.25
                 if now >= next_inspect_at or output_limit_exceeded:
                     try:
                         container.reload()
@@ -561,7 +631,7 @@ class DockerSandboxRuntime:
                 if (
                     not container_finished
                     and kill_deadline is None
-                    and output_limit_exceeded
+                    and (output_limit_exceeded or storage_limit_exceeded)
                 ):
                     self._stop_output_reader(
                         output_stream,
@@ -591,6 +661,12 @@ class DockerSandboxRuntime:
                 if drain_deadline is not None and now >= drain_deadline:
                     break
 
+            workspace_bytes, _, workspace_exceeded = directory_usage(workspace.workspace_dir,
+                byte_limit=self.policy.workspace_disk_limit_bytes, entry_limit=self.policy.workspace_entry_limit)
+            output_bytes, _, output_exceeded = directory_usage(workspace.output_dir,
+                byte_limit=self.policy.max_total_output_bytes, entry_limit=self.policy.max_output_files + 64)
+            storage_limit_exceeded |= workspace_exceeded or output_exceeded
+            observe({"type": "disk", "workspace_bytes": workspace_bytes, "output_bytes": output_bytes})
             if state.get("ExitCode") is not None:
                 exit_code = int(state["ExitCode"])
             oom_killed = bool(state.get("OOMKilled", oom_killed))
@@ -606,6 +682,8 @@ class DockerSandboxRuntime:
 
             if cancelled:
                 status = "cancelled"
+            elif storage_limit_exceeded:
+                status = "storage_limit_exceeded"
             elif output_limit_exceeded:
                 status = "output_limit_exceeded"
             elif timed_out:
@@ -629,6 +707,7 @@ class DockerSandboxRuntime:
                 stderr_bytes=len(stderr_buffer),
                 runtime="docker",
                 image=self.image,
+                runtime_info=runtime_info,
             )
         except BaseException as exc:
             primary_error = exc
@@ -638,6 +717,9 @@ class DockerSandboxRuntime:
                 )
             raise
         finally:
+            stop_stats.set()
+            if stats_thread is not None:
+                stats_thread.join(timeout=0.2)
             cleanup_error: SandboxCleanupError | None = None
             cleanup_cause: DockerException | None = None
             stop_reader.set()
@@ -701,6 +783,7 @@ class DockerSandboxRuntime:
                 driver="bridge",
                 internal=True,
                 labels={
+                    **owner_labels(),
                     SANDBOX_LABEL: "true",
                     SANDBOX_ID_LABEL: request.sandbox_id,
                     RUNTIME_LABEL: "egress_network",
@@ -715,6 +798,7 @@ class DockerSandboxRuntime:
                 ],
                 name=proxy_name,
                 labels={
+                    **owner_labels(),
                     SANDBOX_LABEL: "true",
                     SANDBOX_ID_LABEL: request.sandbox_id,
                     RUNTIME_LABEL: "egress_proxy",

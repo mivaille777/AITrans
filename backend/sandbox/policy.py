@@ -45,6 +45,8 @@ class SandboxPolicy:
     max_output_files: int = _MAX_OUTPUT_FILES
     max_output_file_bytes: int = _MAX_OUTPUT_FILE_BYTES
     max_total_output_bytes: int = _MAX_TOTAL_OUTPUT_BYTES
+    workspace_disk_limit_bytes: int = 96 * _MIB
+    workspace_entry_limit: int = MAX_WORKSPACE_SNAPSHOT_ENTRIES
 
     def __post_init__(self) -> None:
         if self.network_mode != "none":
@@ -81,6 +83,10 @@ class SandboxPolicy:
             raise ValueError("Sandbox output file size exceeds the fixed policy.")
         if not 0 < self.max_total_output_bytes <= _MAX_TOTAL_OUTPUT_BYTES:
             raise ValueError("Sandbox total output size exceeds the fixed policy.")
+        if not 0 < self.workspace_disk_limit_bytes <= 96 * _MIB:
+            raise ValueError("Sandbox writable workspace budget exceeds the fixed policy.")
+        if not 0 < self.workspace_entry_limit <= MAX_WORKSPACE_SNAPSHOT_ENTRIES:
+            raise ValueError("Sandbox workspace entry budget exceeds the fixed policy.")
 
     @property
     def tmpfs_options(self) -> str:

@@ -148,6 +148,9 @@ class SandboxWorkspaceManager:
             input_dir.chmod(0o755)
             workspace_dir.chmod(0o777)
             output_dir.chmod(0o777)
+            from backend.sandbox.ownership import current_owner
+            from backend.sandbox.recovery import mark_directory
+            mark_directory(root, sandbox_id, current_owner())
             return SandboxWorkspace(
                 sandbox_id=sandbox_id,
                 root=root,
@@ -305,6 +308,8 @@ class SandboxWorkspaceManager:
                 for entry in entries:
                     name = self._safe_filename(entry.name)
                     child_relative = relative / name
+                    if child_relative.parts[0].casefold() == ".aitrans-owner.json":
+                        raise SandboxExecutionError("Sandbox output uses a reserved runtime metadata filename.")
                     child = Path(entry.path)
                     metadata = entry.stat(follow_symlinks=False)
                     if stat.S_ISDIR(metadata.st_mode):
@@ -345,6 +350,9 @@ class SandboxWorkspaceManager:
         try:
             artifact_sandbox_root.mkdir(parents=True, mode=0o700, exist_ok=False)
             created_artifact_root = True
+            from backend.sandbox.ownership import current_owner
+            from backend.sandbox.recovery import mark_directory
+            mark_directory(artifact_sandbox_root, workspace.sandbox_id, current_owner())
             for source, relative_path in candidates:
                 destination = artifact_sandbox_root.joinpath(*relative_path.parts)
                 self._assert_contained(destination, artifact_sandbox_root)
@@ -406,9 +414,14 @@ class SandboxWorkspaceManager:
             self._assert_contained(sandbox_store, store_root)
             sandbox_store.mkdir(mode=0o700, exist_ok=False)
             created_store = True
+            from backend.sandbox.ownership import current_owner
+            from backend.sandbox.recovery import mark_directory
+            mark_directory(sandbox_store, workspace.sandbox_id, current_owner())
             total_bytes = 0
             for change in writes:
                 relative_path = self._safe_relative_path(change.path)
+                if relative_path.parts[0].casefold() == ".aitrans-owner.json":
+                    raise SandboxExecutionError("Workspace change uses a reserved runtime metadata filename.")
                 source = workspace.workspace_dir.joinpath(*relative_path.parts)
                 destination = sandbox_store.joinpath(*relative_path.parts)
                 self._assert_contained(source, workspace.workspace_dir)

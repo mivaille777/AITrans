@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("../../api/sandbox-debug", () => ({
   listSandboxDebugRuns: vi.fn(),
+  isSandboxRunActive: (status: string) => ["pending", "queued", "preparing", "running", "cancelling"].includes(status),
   getSandboxDebugRun: vi.fn(),
 }))
 

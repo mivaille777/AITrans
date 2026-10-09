@@ -51,6 +51,7 @@ class SandboxCommandExecutor:
         sandbox_id: str | None = None,
         on_stage: Callable[[str, str, str], None] | None = None,
         on_activity: Callable[..., None] | None = None,
+        on_observation: Callable[[dict], None] | None = None,
         cancel_event: Event | None = None,
     ) -> SandboxCommandResult:
         if not isinstance(request, SandboxCommandRequest):
@@ -430,6 +431,7 @@ class SandboxCommandExecutor:
                 network_policy=network_policy,
                 sandbox_id=sandbox_id,
                 on_stage=on_stage,
+                on_observation=on_observation,
                 cancel_event=cancel_event,
             )
         except Exception:
@@ -578,6 +580,8 @@ def _command_result(
         image=result.image,
         permission_decision=permission_decision,
         workspace_changeset=result.workspace_changeset,
+        output_files=result.output_files,
+        runtime_info=result.runtime_info,
     )
 
 
